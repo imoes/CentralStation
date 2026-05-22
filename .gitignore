@@ -35,3 +35,5 @@ Thumbs.db
 nginx/ssl/*.pem
 nginx/ssl/*.key
 nginx/ssl/*.crt
+nginx/ssl/key.pem
+nginx/ssl/cert.pem
