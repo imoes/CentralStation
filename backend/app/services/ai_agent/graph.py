@@ -14,9 +14,9 @@ import logging
 import time
 from typing import Any
 
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 
+from app.services.llm_client import generate_text
 from app.services.ai_agent.models import AgentState, AnalysisResult, Finding, Recommendation
 from app.services.ai_agent.prompts import (
     RAG_DECISION_PROMPT, SEARXNG_HYDE_PROMPT, SYSADMIN_SYSTEM,
@@ -150,21 +150,17 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
         for a in alerts[:20]
     )
 
-    # Create LLM
-    llm = ChatOpenAI(
-        base_url=llm_config.base_url,
-        model=llm_config.model,
-        api_key=llm_config.api_key or "none",
-        timeout=llm_config.timeout_seconds,
-    )
-
     rag_context: list[dict] = []
 
     # Step 1: LLM decides if RAG lookup is needed
     try:
         decision_prompt = RAG_DECISION_PROMPT.format(events_summary=events_summary)
-        response = await llm.ainvoke([{"role": "user", "content": decision_prompt}])
-        decision = json.loads(response.content)
+        decision_raw = await generate_text(
+            llm_config,
+            [{"role": "user", "content": decision_prompt}],
+            reasoning_effort="low",
+        )
+        decision = json.loads(decision_raw)
     except Exception as e:
         log.warning("rag_lookup: LLM decision failed: %s", e)
         return {**state, "rag_context": []}
@@ -208,8 +204,11 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
             try:
                 # Generate hypothetical answer (HyDE)
                 hyde_prompt = SEARXNG_HYDE_PROMPT.format(problem=query)
-                hyde_response = await llm.ainvoke([{"role": "user", "content": hyde_prompt}])
-                hypothetical_answer = hyde_response.content
+                hypothetical_answer = await generate_text(
+                    llm_config,
+                    [{"role": "user", "content": hyde_prompt}],
+                    reasoning_effort="low",
+                )
 
                 # Use the hypothetical answer as the search query for SearXNG
                 import httpx
@@ -246,14 +245,6 @@ async def analyze(state: dict, llm_config: Any) -> dict:
         result = AnalysisResult(severity_summary="none")
         return {**state, "analysis": result.model_dump()}
 
-    llm = ChatOpenAI(
-        base_url=llm_config.base_url,
-        model=llm_config.model,
-        api_key=llm_config.api_key or "none",
-        timeout=llm_config.timeout_seconds,
-        temperature=0.1,
-    )
-
     # Build context string
     alerts_text = "\n".join(
         f"[{a.get('severity','?').upper()}] [{a.get('source','?')}] "
@@ -279,13 +270,18 @@ async def analyze(state: dict, llm_config: Any) -> dict:
 
     try:
         t0 = time.time()
-        response = await llm.ainvoke([
-            {"role": "system", "content": SYSADMIN_SYSTEM},
-            {"role": "user", "content": user_content},
-        ])
+        raw = await generate_text(
+            llm_config,
+            [
+                {"role": "system", "content": SYSADMIN_SYSTEM},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.1,
+            reasoning_effort="medium",
+        )
         duration = time.time() - t0
 
-        raw = response.content.strip()
+        raw = raw.strip()
         # Strip possible markdown code fences
         if raw.startswith("```"):
             raw = raw.split("```")[1]
@@ -298,7 +294,7 @@ async def analyze(state: dict, llm_config: Any) -> dict:
             findings=[Finding(**f) for f in parsed.get("findings", [])],
             recommendations=[Recommendation(**r) for r in parsed.get("recommendations", [])],
             rag_queries_used=state.get("rag_context", []),
-            token_usage={"completion_tokens": response.usage_metadata.get("output_tokens") if response.usage_metadata else None},
+            token_usage={},
         )
         log.info("analyze: severity=%s, findings=%d, duration=%.1fs",
                  result.severity_summary, len(result.findings), duration)

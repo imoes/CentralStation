@@ -14,6 +14,20 @@ from app.models.workflow import UserJiraQuery
 router = APIRouter(prefix="/jira-view", tags=["jira-view"])
 
 
+async def _get_preferred_jira_connector(db: AsyncSession, user_id, connector_type: str = "jira"):
+    result = await db.execute(
+        select(ConnectorConfig)
+        .where(
+            ConnectorConfig.type == connector_type,
+            ConnectorConfig.enabled.is_(True),
+            ((ConnectorConfig.owner_user_id == user_id) | ConnectorConfig.owner_user_id.is_(None)),
+        )
+        .order_by(ConnectorConfig.owner_user_id.is_(None), ConnectorConfig.updated_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 @router.get("/my-tickets")
 async def my_tickets(
     user: CurrentUser,
@@ -32,13 +46,7 @@ async def my_tickets(
     if not queries:
         return []
 
-    conn_result = await db.execute(
-        select(ConnectorConfig).where(
-            ConnectorConfig.type == "jira",
-            ConnectorConfig.enabled.is_(True),
-        )
-    )
-    conn = conn_result.scalars().first()
+    conn = await _get_preferred_jira_connector(db, user.id, "jira")
     if not conn:
         return [
             {"id": str(q.id), "name": q.name, "jql": q.jql, "issues": [], "error": "Jira nicht konfiguriert"}

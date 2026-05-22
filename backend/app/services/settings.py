@@ -13,6 +13,7 @@ class LLMConfig:
     model: str
     api_key: str | None = None
     timeout_seconds: int = 120
+    api_mode: str = "chat_completions"
 
     @property
     def is_configured(self) -> bool:
@@ -99,6 +100,7 @@ async def get_llm_config(db: AsyncSession) -> LLMConfig:
         model=s.get("llm.model") or "",
         api_key=s.get("llm.api_key"),
         timeout_seconds=int(s.get("llm.timeout_seconds") or 120),
+        api_mode=s.get("llm.api_mode") or "chat_completions",
     )
 
 

@@ -31,20 +31,33 @@ async def _get_prefs(user_id, db: AsyncSession) -> UserPreference | None:
     return result.scalar_one_or_none()
 
 
+async def _get_preferred_connector(
+    db: AsyncSession,
+    connector_type: str,
+    user_id,
+):
+    from app.models.connector import ConnectorConfig
+
+    result = await db.execute(
+        select(ConnectorConfig)
+        .where(
+            ConnectorConfig.type == connector_type,
+            ConnectorConfig.enabled.is_(True),
+            ((ConnectorConfig.owner_user_id == user_id) | ConnectorConfig.owner_user_id.is_(None)),
+        )
+        .order_by(ConnectorConfig.owner_user_id.is_(None), ConnectorConfig.updated_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def _fetch_and_index_o365(prefs: UserPreference, db: AsyncSession, user_id: str) -> list[dict]:
     """Fetch unread O365 mails, index them, return as feed items."""
     from app.core.security import decrypt_credentials
-    from app.models.connector import ConnectorConfig
     from app.services.connectors.o365 import O365Connector
     from app.services.feed_index import index_items
 
-    r = await db.execute(
-        select(ConnectorConfig).where(
-            ConnectorConfig.type == "o365",
-            ConnectorConfig.enabled.is_(True),
-        ).limit(1)
-    )
-    connector = r.scalar_one_or_none()
+    connector = await _get_preferred_connector(db, "o365", prefs.user_id)
     if not connector:
         return []
 
@@ -84,7 +97,6 @@ async def _fetch_and_index_teams(
 ) -> list[dict]:
     """Fetch Teams channel messages, index them, return as feed items."""
     from app.core.security import decrypt_credentials
-    from app.models.connector import ConnectorConfig
     from app.services.connectors.teams import TeamsConnector
     from app.services.feed_index import index_items
 
@@ -92,13 +104,7 @@ async def _fetch_and_index_teams(
     if not channels:
         return []
 
-    r = await db.execute(
-        select(ConnectorConfig).where(
-            ConnectorConfig.type == "teams",
-            ConnectorConfig.enabled.is_(True),
-        ).limit(1)
-    )
-    connector = r.scalar_one_or_none()
+    connector = await _get_preferred_connector(db, "teams", prefs.user_id)
     if not connector:
         return []
 

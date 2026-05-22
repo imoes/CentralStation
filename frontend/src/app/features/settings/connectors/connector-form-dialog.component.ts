@@ -20,6 +20,7 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'jira',         label: 'Jira' },
   { value: 'jira_sd',      label: 'Jira ServiceDesk' },
   { value: 'o365',         label: 'O365 / Microsoft Graph' },
+  { value: 'teams',        label: 'Microsoft Teams / Graph' },
   { value: 'prometheus',   label: 'Prometheus' },
   { value: 'netbox',       label: 'NetBox' },
   { value: 'id_generator', label: 'ID-Generator' },
@@ -30,13 +31,24 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
   checkmk:      [{ key: 'username', label: 'Benutzername', type: 'text' }, { key: 'password', label: 'Passwort', type: 'password' }],
   graylog:      [{ key: 'username', label: 'Benutzername', type: 'text' }, { key: 'password', label: 'Passwort', type: 'password' }],
   wazuh:        [{ key: 'username', label: 'Benutzername', type: 'text' }, { key: 'password', label: 'Passwort', type: 'password' }],
-  jira:         [{ key: 'token', label: 'Personal Access Token', type: 'password' }],
-  jira_sd:      [{ key: 'token', label: 'Personal Access Token', type: 'password' }],
+  jira:         [
+    { key: 'token', label: 'Personal Access Token', type: 'password' },
+    { key: 'project', label: 'Standardprojekt (optional)', type: 'text' },
+  ],
+  jira_sd:      [
+    { key: 'token', label: 'Personal Access Token', type: 'password' },
+    { key: 'project', label: 'Standardprojekt / Queue (optional)', type: 'text' },
+  ],
   o365:         [
     { key: 'tenant_id',     label: 'Tenant ID',     type: 'text' },
     { key: 'client_id',     label: 'Client ID',     type: 'text' },
     { key: 'client_secret', label: 'Client Secret', type: 'password' },
     { key: 'mailbox',       label: 'Postfach (UPN)', type: 'text' },
+  ],
+  teams:        [
+    { key: 'tenant_id',     label: 'Tenant ID',     type: 'text' },
+    { key: 'client_id',     label: 'Client ID',     type: 'text' },
+    { key: 'client_secret', label: 'Client Secret', type: 'password' },
   ],
   prometheus:   [
     { key: 'username', label: 'Benutzername (optional)', type: 'text' },

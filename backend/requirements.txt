@@ -25,7 +25,6 @@ apscheduler==3.10.4
 
 # AI / LangGraph
 langchain==0.3.7
-langchain-openai==0.2.8
 langgraph==0.2.45
 langgraph-checkpoint-postgres==2.0.5
 

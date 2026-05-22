@@ -16,6 +16,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from app.services.llm_client import generate_text
+
 log = logging.getLogger(__name__)
 
 # ── ITIL Priority Matrix ────────────────────────────────────────────────────
@@ -149,19 +151,16 @@ Format:
 
 
 async def _invoke_llm(llm_config: Any, system: str, user_content: str) -> str:
-    from langchain_openai import ChatOpenAI
-    llm = ChatOpenAI(
-        base_url=llm_config.base_url,
-        model=llm_config.model,
-        api_key=llm_config.api_key or "none",
-        timeout=llm_config.timeout_seconds,
+    response = await generate_text(
+        llm_config,
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ],
         temperature=0.3,
+        reasoning_effort="low",
     )
-    response = await llm.ainvoke([
-        {"role": "system", "content": system},
-        {"role": "user", "content": user_content},
-    ])
-    return response.content.strip()
+    return response.strip()
 
 
 async def generate_comment(

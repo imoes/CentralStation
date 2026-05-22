@@ -12,6 +12,7 @@ import { MatDialogModule, MatDialog } from '@angular/material/dialog';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatBadgeModule } from '@angular/material/badge';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { Subject, takeUntil } from 'rxjs';
 import { KanbanService } from '../../core/services/kanban.service';
 import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
@@ -40,7 +41,7 @@ const PRIORITY_COLORS: Record<string, string> = {
     CommonModule, FormsModule, DragDropModule,
     MatCardModule, MatButtonModule, MatIconModule,
     MatChipsModule, MatDialogModule, MatProgressSpinnerModule,
-    MatTooltipModule, MatBadgeModule,
+    MatTooltipModule, MatBadgeModule, MatSnackBarModule,
   ],
   template: `
     <div class="board-container">
@@ -154,6 +155,7 @@ export class KanbanComponent implements OnInit, OnDestroy {
     private svc: KanbanService,
     private ws: WebsocketService,
     private dialog: MatDialog,
+    private snack: MatSnackBar,
   ) {}
 
   ngOnInit() {
@@ -185,11 +187,20 @@ export class KanbanComponent implements OnInit, OnDestroy {
     const newPosition = event.currentIndex;
 
     if (event.previousContainer === event.container) {
-      this.svc.move(card.id, { status: newStatus, position: newPosition }).subscribe();
+      this.svc.move(card.id, { status: newStatus, position: newPosition }).subscribe({
+        error: (err) => {
+          this.snack.open(err?.error?.detail ?? 'Jira-Sync beim Verschieben fehlgeschlagen', 'OK', { duration: 4000 });
+          this.load();
+        },
+      });
     } else {
       this.svc.move(card.id, { status: newStatus, position: newPosition }).subscribe({
         next: updated => {
           this.cards.update(list => list.map(c => c.id === updated.id ? updated : c));
+        },
+        error: (err) => {
+          this.snack.open(err?.error?.detail ?? 'Jira-Sync beim Verschieben fehlgeschlagen', 'OK', { duration: 4000 });
+          this.load();
         },
       });
     }

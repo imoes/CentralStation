@@ -96,6 +96,63 @@ class JiraConnector(BaseConnector):
                 json={"transition": {"id": target["id"]}},
             )
 
+    async def get_transitions(self, issue_key: str) -> list[dict]:
+        async with self._client(timeout=15.0) as client:
+            r = await client.get(
+                self._api(f"/issue/{issue_key}/transitions"),
+                headers=self._headers(),
+            )
+            r.raise_for_status()
+        return r.json().get("transitions", [])
+
+    async def transition_issue_by_candidates(
+        self,
+        issue_key: str,
+        status_names: list[str],
+    ) -> str | None:
+        transitions = await self.get_transitions(issue_key)
+        for candidate in status_names:
+            target = next(
+                (t for t in transitions if t["name"].lower() == candidate.lower()),
+                None,
+            )
+            if not target:
+                continue
+            async with self._client(timeout=15.0) as client:
+                r = await client.post(
+                    self._api(f"/issue/{issue_key}/transitions"),
+                    headers=self._headers(),
+                    json={"transition": {"id": target["id"]}},
+                )
+                r.raise_for_status()
+            return target["name"]
+        return None
+
+    async def update_issue(
+        self,
+        issue_key: str,
+        *,
+        summary: str | None = None,
+        description: str | None = None,
+        priority: str | None = None,
+    ) -> None:
+        fields: dict = {}
+        if summary is not None:
+            fields["summary"] = summary
+        if description is not None:
+            fields["description"] = description
+        if priority is not None:
+            fields["priority"] = {"name": priority}
+        if not fields:
+            return
+        async with self._client(timeout=30.0) as client:
+            r = await client.put(
+                self._api(f"/issue/{issue_key}"),
+                headers=self._headers(),
+                json={"fields": fields},
+            )
+            r.raise_for_status()
+
     async def get_unassigned_issues(self, project: str) -> list[dict]:
         jql = f'project="{project}" AND assignee is EMPTY AND statusCategory != Done ORDER BY created DESC'
         return await self.search_issues(jql)

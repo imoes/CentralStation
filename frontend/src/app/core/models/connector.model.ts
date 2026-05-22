@@ -1,7 +1,7 @@
 export type ConnectorType =
   | 'checkmk' | 'graylog' | 'wazuh'
   | 'jira' | 'jira_sd'
-  | 'o365' | 'prometheus' | 'netbox'
+  | 'o365' | 'teams' | 'prometheus' | 'netbox'
   | 'id_generator' | 'it_aikb';
 
 export interface Connector {
@@ -10,6 +10,7 @@ export interface Connector {
   type: ConnectorType;
   base_url: string | null;
   enabled: boolean;
+  owner_user_id?: string | null;
   updated_at: string;
 }
 

@@ -11,6 +11,8 @@ from app.core.database import get_db
 from app.models.audit import AuditLog
 from app.models.settings import GlobalSetting
 from app.schemas.settings import SettingItem, SettingUpdate, SettingsResponse
+from app.services.llm_client import generate_text
+from app.services.settings import LLMConfig
 from app.services.settings import get_all_settings, set_setting
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -20,6 +22,13 @@ class TestResult(BaseModel):
     success: bool
     message: str
     detail: str | None = None
+
+
+class LLMStatusResponse(BaseModel):
+    configured: bool
+    base_url_set: bool
+    model_set: bool
+
 
 SECRET_MASK = "••••••••"
 
@@ -36,6 +45,21 @@ async def get_settings(db: Annotated[AsyncSession, Depends(get_db)]):
             display = row.value_plain
         items.append(SettingItem(key=row.key, value=display, is_secret=row.is_secret))
     return SettingsResponse(settings=items)
+
+
+@router.get("/llm-status", response_model=LLMStatusResponse)
+async def get_llm_status(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    s = await get_all_settings(db)
+    base_url_set = bool(s.get("llm.base_url"))
+    model_set = bool(s.get("llm.model"))
+    return LLMStatusResponse(
+        configured=base_url_set and model_set,
+        base_url_set=base_url_set,
+        model_set=model_set,
+    )
 
 
 @router.patch("/{key}", response_model=SettingItem, dependencies=[RequireAdmin])
@@ -79,26 +103,28 @@ async def test_setting_group(
         url = (s.get("llm.base_url") or "").rstrip("/")
         if not url:
             return TestResult(success=False, message="LLM Basis-URL nicht konfiguriert")
-        api_key = s.get("llm.api_key")
         model = s.get("llm.model") or ""
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        if not model:
+            return TestResult(success=False, message="LLM Modell nicht konfiguriert")
+        llm_config = LLMConfig(
+            base_url=url,
+            model=model,
+            api_key=s.get("llm.api_key"),
+            timeout_seconds=int(s.get("llm.timeout_seconds") or 120),
+            api_mode=s.get("llm.api_mode") or "chat_completions",
+        )
         try:
-            async with httpx.AsyncClient(timeout=8, verify=False) as client:
-                r = await client.get(f"{url}/models", headers=headers)
-            if r.status_code >= 400:
-                return TestResult(
-                    success=False,
-                    message=f"HTTP {r.status_code}",
-                    detail=r.text[:300],
-                )
-            ids = [m.get("id", "") for m in r.json().get("data", [])]
-            found = model in ids if model else None
-            suffix = (
-                f" — Modell '{model}' ✓" if found
-                else f" — Modell '{model}' nicht in der Liste" if found is False
-                else f" — {len(ids)} Modelle verfügbar"
+            text = await generate_text(
+                llm_config,
+                [{"role": "user", "content": "Antworte nur mit OK."}],
+                max_output_tokens=20,
+                reasoning_effort="none",
             )
-            return TestResult(success=True, message=f"Verbindung OK{suffix}")
+            return TestResult(
+                success=True,
+                message=f"Verbindung OK — Modell '{model}' antwortet",
+                detail=text[:120] or None,
+            )
         except httpx.ConnectError as e:
             return TestResult(success=False, message="Verbindung fehlgeschlagen", detail=str(e))
         except httpx.TimeoutException:

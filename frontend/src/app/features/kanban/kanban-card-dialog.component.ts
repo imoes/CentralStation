@@ -138,7 +138,10 @@ export class KanbanCardDialogComponent implements OnInit {
         priority: v.priority,
       }).subscribe({
         next: () => { this.saving.set(false); this.ref.close(true); },
-        error: () => this.saving.set(false),
+        error: (err) => {
+          this.saving.set(false);
+          this.snack.open(err?.error?.detail ?? 'Speichern fehlgeschlagen', 'OK', { duration: 4000 });
+        },
       });
     } else {
       this.svc.create({
@@ -148,7 +151,10 @@ export class KanbanCardDialogComponent implements OnInit {
         priority: v.priority,
       }).subscribe({
         next: () => { this.saving.set(false); this.ref.close(true); },
-        error: () => this.saving.set(false),
+        error: (err) => {
+          this.saving.set(false);
+          this.snack.open(err?.error?.detail ?? 'Speichern fehlgeschlagen', 'OK', { duration: 4000 });
+        },
       });
     }
   }
@@ -163,9 +169,9 @@ export class KanbanCardDialogComponent implements OnInit {
         this.snack.open(`Jira-Ticket erstellt: ${res.jira_key}`, 'OK', { duration: 4000 });
         this.ref.close(true);
       },
-      error: () => {
+      error: (err) => {
         this.syncingJira.set(false);
-        this.snack.open('Jira-Sync fehlgeschlagen', 'OK', { duration: 4000 });
+        this.snack.open(err?.error?.detail ?? 'Jira-Sync fehlgeschlagen', 'OK', { duration: 4000 });
       },
     });
   }
