@@ -70,7 +70,8 @@ const PRIORITY_COLORS: Record<string, string> = {
                 (cdkDropListDropped)="onDrop($event)"
                 class="column-drop-zone">
                 @for (card of getColumn(col.id); track card.id) {
-                  <div cdkDrag class="kanban-card" [class.ai-card]="card.ai_generated">
+                  <div cdkDrag class="kanban-card" [class.ai-card]="card.ai_generated"
+                       (click)="openEdit(card)">
                     <div class="card-priority-bar"
                          [style.background-color]="priorityColor(card.priority)">
                     </div>
@@ -90,10 +91,10 @@ const PRIORITY_COLORS: Record<string, string> = {
                           {{ card.priority }}
                         </span>
                         <div class="card-actions">
-                          <button mat-icon-button (click)="openEdit(card)">
+                          <button mat-icon-button (click)="$event.stopPropagation(); openEdit(card)">
                             <mat-icon>edit</mat-icon>
                           </button>
-                          <button mat-icon-button color="warn" (click)="deleteCard(card)">
+                          <button mat-icon-button color="warn" (click)="$event.stopPropagation(); deleteCard(card)">
                             <mat-icon>delete</mat-icon>
                           </button>
                         </div>
@@ -121,8 +122,8 @@ const PRIORITY_COLORS: Record<string, string> = {
     .col-title { font-weight: 600; font-size: 13px; }
     .col-count { background: var(--mat-sys-surface-variant); border-radius: 10px; padding: 1px 7px; font-size: 11px; }
     .column-drop-zone { min-height: 200px; padding: 8px; background: var(--mat-sys-surface-container-low); border-radius: 0 0 4px 4px; flex: 1; }
-    .kanban-card { display: flex; background: var(--mat-sys-surface); border-radius: 4px; margin-bottom: 8px; cursor: grab; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: box-shadow .2s; }
-    .kanban-card:hover { box-shadow: 0 4px 8px rgba(0,0,0,.3); }
+    .kanban-card { display: flex; background: var(--mat-sys-surface); border-radius: 4px; margin-bottom: 8px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: box-shadow .2s; }
+    .kanban-card:hover { box-shadow: 0 4px 8px rgba(0,0,0,.3); transform: translateY(-1px); }
     .kanban-card.ai-card { border: 1px solid var(--mat-sys-primary); }
     .card-priority-bar { width: 4px; border-radius: 4px 0 0 4px; flex-shrink: 0; }
     .card-body { padding: 8px 10px; flex: 1; min-width: 0; }
