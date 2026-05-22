@@ -34,28 +34,33 @@ export const routes: Routes = [
   },
   {
     path: 'settings',
-    canActivate: [authGuard, roleGuard('admin')],
+    canActivate: [authGuard],
     loadComponent: () => import('./features/settings/settings-shell.component').then(m => m.SettingsShellComponent),
     children: [
       { path: '', redirectTo: 'connectors', pathMatch: 'full' },
       {
         path: 'connectors',
+        canActivate: [authGuard],
         loadComponent: () => import('./features/settings/connectors/connectors.component').then(m => m.ConnectorsComponent),
       },
       {
         path: 'users',
+        canActivate: [authGuard, roleGuard('admin')],
         loadComponent: () => import('./features/settings/users/users.component').then(m => m.UsersComponent),
       },
       {
         path: 'ai',
+        canActivate: [authGuard, roleGuard('admin')],
         loadComponent: () => import('./features/settings/ai/ai-settings.component').then(m => m.AiSettingsComponent),
       },
       {
         path: 'audit',
+        canActivate: [authGuard, roleGuard('admin')],
         loadComponent: () => import('./features/settings/audit/audit-log.component').then(m => m.AuditLogComponent),
       },
       {
         path: 'feed',
+        canActivate: [authGuard, roleGuard('admin')],
         loadComponent: () => import('./features/settings/feed/feed-settings.component').then(m => m.FeedSettingsComponent),
       },
     ],
