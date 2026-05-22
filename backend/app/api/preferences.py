@@ -43,6 +43,9 @@ class PreferenceUpdate(BaseModel):
     o365_mailbox: str | None = None
     o365_folder: str | None = None
     notification_settings: dict | None = None
+    feed_checkmk_min_age_minutes: int | None = None
+    feed_sources_enabled: list | None = None
+    feed_teams_channels: list | None = None
 
 
 class JQLQueryCreate(BaseModel):
@@ -95,6 +98,9 @@ async def get_preferences(user: CurrentUser, db: Annotated[AsyncSession, Depends
         "o365_mailbox": prefs.o365_mailbox,
         "o365_folder": prefs.o365_folder,
         "notification_settings": prefs.notification_settings,
+        "feed_checkmk_min_age_minutes": prefs.feed_checkmk_min_age_minutes or 5,
+        "feed_sources_enabled": prefs.feed_sources_enabled or ["checkmk", "graylog", "wazuh"],
+        "feed_teams_channels": prefs.feed_teams_channels or [],
     }
 
 

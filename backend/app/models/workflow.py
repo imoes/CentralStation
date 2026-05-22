@@ -21,6 +21,10 @@ class UserPreference(Base):
     notification_settings: Mapped[dict | None] = mapped_column(JSON)
     o365_mailbox: Mapped[str | None] = mapped_column(String(200))
     o365_folder: Mapped[str | None] = mapped_column(String(100), default="Inbox")
+    # Feed preferences
+    feed_checkmk_min_age_minutes: Mapped[int | None] = mapped_column(Integer, default=5)
+    feed_sources_enabled: Mapped[list | None] = mapped_column(JSON)
+    feed_teams_channels: Mapped[list | None] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
