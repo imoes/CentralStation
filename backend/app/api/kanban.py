@@ -110,3 +110,54 @@ async def delete_card(
     await db.delete(card)
     await db.commit()
     return {"message": "Card deleted"}
+
+
+@router.post("/{card_id}/jira-sync", dependencies=[RequireAnyStaff])
+async def jira_sync(
+    card_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Create a Jira ticket for this card (JQL dedup: reuses existing open ticket)."""
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
+    result = await db.execute(select(KanbanCard).where(KanbanCard.id == card_id))
+    card = result.scalar_one_or_none()
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if card.jira_key:
+        return {"jira_key": card.jira_key}
+
+    conn_result = await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.type.in_(["jira", "jira_sd"]),
+            ConnectorConfig.enabled.is_(True),
+        )
+    )
+    connector = conn_result.scalars().first()
+    if not connector:
+        raise HTTPException(424, "No enabled Jira connector configured")
+
+    creds = decrypt_credentials(connector.encrypted_credentials)
+    project = creds.get("project", "IMIT")
+    jira = JiraConnector(base_url=connector.base_url, credentials=creds)
+
+    existing_key = await jira.issue_exists_by_summary(project, card.title)
+    if existing_key:
+        card.jira_key = existing_key
+        await db.commit()
+        return {"jira_key": existing_key}
+
+    priority_map = {"critical": "Critical", "high": "High", "medium": "Medium", "low": "Low"}
+    issue = await jira.create_issue(
+        project=project,
+        summary=card.title,
+        description=card.description or card.title,
+        issue_type="Task",
+        priority=priority_map.get(card.priority, "Medium"),
+        labels=["CentralStation"],
+    )
+    card.jira_key = issue.get("key")
+    await db.commit()
+    return {"jira_key": card.jira_key}
