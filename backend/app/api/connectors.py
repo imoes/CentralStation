@@ -19,7 +19,7 @@ router = APIRouter(prefix="/connectors", tags=["connectors"])
 VALID_TYPES = {
     "checkmk", "graylog", "wazuh", "jira", "jira_sd",
     "o365", "prometheus", "netbox", "id_generator", "it_aikb",
-}
+}  # keep in sync with get_connector() factory
 
 
 @router.get("/", response_model=list[ConnectorResponse], dependencies=[RequireAdmin])

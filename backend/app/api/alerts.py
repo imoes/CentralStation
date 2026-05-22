@@ -49,6 +49,14 @@ async def alert_summary(
     return {row[0]: row[1] for row in result.all()}
 
 
+@router.post("/aggregate", dependencies=[RequireSysAdmin])
+async def trigger_aggregation(db: Annotated[AsyncSession, Depends(get_db)]):
+    """Manually trigger alert collection from all enabled connectors."""
+    from app.services.alert_aggregator import run_aggregation
+    new_count = await run_aggregation(db)
+    return {"new_alerts": new_count}
+
+
 @router.post("/{alert_id}/acknowledge", dependencies=[RequireSysAdmin])
 async def acknowledge_alert(
     alert_id: uuid.UUID,
