@@ -6,6 +6,7 @@ from app.models.ai import AiAnalysis
 from app.models.network import NetworkSwitchEvent
 from app.models.audit import AuditLog
 from app.models.settings import GlobalSetting
+from app.models.workflow import UserPreference, UserJiraQuery, WorkSession
 
 __all__ = [
     "User", "RefreshToken",
@@ -16,4 +17,5 @@ __all__ = [
     "NetworkSwitchEvent",
     "AuditLog",
     "GlobalSetting",
+    "UserPreference", "UserJiraQuery", "WorkSession",
 ]

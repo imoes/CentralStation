@@ -7,7 +7,9 @@ import { MatInputModule } from '@angular/material/input';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { CommonModule } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
 import { AuthService } from '../../../core/auth/auth.service';
+import { environment } from '../../../../environments/environment';
 
 @Component({
   selector: 'cs-login',
@@ -73,6 +75,7 @@ export class LoginComponent {
     private fb: FormBuilder,
     private auth: AuthService,
     private router: Router,
+    private http: HttpClient,
   ) {
     this.form = this.fb.group({
       email: ['', [Validators.required, Validators.email]],
@@ -87,7 +90,12 @@ export class LoginComponent {
     const { email, password } = this.form.value;
 
     this.auth.login(email!, password!).subscribe({
-      next: () => this.router.navigate(['/dashboard']),
+      next: () => {
+        this.http.get<any>(`${environment.apiUrl}/preferences`).subscribe({
+          next: prefs => this.router.navigate([prefs?.setup_completed === false ? '/setup' : '/dashboard']),
+          error: () => this.router.navigate(['/dashboard']),
+        });
+      },
       error: () => {
         this.error = 'Ungültige Anmeldedaten';
         this.loading = false;
