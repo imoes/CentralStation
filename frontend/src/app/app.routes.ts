@@ -54,6 +54,10 @@ export const routes: Routes = [
         path: 'audit',
         loadComponent: () => import('./features/settings/audit/audit-log.component').then(m => m.AuditLogComponent),
       },
+      {
+        path: 'feed',
+        loadComponent: () => import('./features/settings/feed/feed-settings.component').then(m => m.FeedSettingsComponent),
+      },
     ],
   },
   {

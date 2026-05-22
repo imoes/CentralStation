@@ -26,6 +26,26 @@ services:
       timeout: 5s
       retries: 5
 
+  opensearch:
+    image: opensearchproject/opensearch:2.17.1
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_PASSWORD}
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -u admin:${OPENSEARCH_PASSWORD} https://localhost:9200/_cluster/health --insecure | grep -qv '\"status\":\"red\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
   backend:
     build:
       context: ./backend
@@ -33,17 +53,22 @@ services:
       args:
         HTTP_PROXY: http://proxy.ippen.media:80
         HTTPS_PROXY: http://proxy.ippen.media:80
-        NO_PROXY: localhost,127.0.0.1,db,redis,.ippen.media
+        NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,.ippen.media
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://centralstation:${POSTGRES_PASSWORD}@db:5432/centralstation
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       SECRET_KEY: ${SECRET_KEY}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      OPENSEARCH_URL: https://opensearch:9200
+      OPENSEARCH_USER: admin
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
     depends_on:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      opensearch:
         condition: service_healthy
     volumes:
       - ./backend:/app
@@ -80,3 +105,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  opensearch_data:

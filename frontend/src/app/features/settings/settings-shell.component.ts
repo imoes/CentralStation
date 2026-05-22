@@ -22,6 +22,9 @@ import { MatIconModule } from '@angular/material/icon';
         <a mat-tab-link routerLink="audit" routerLinkActive #audit="routerLinkActive" [active]="audit.isActive">
           <mat-icon>history</mat-icon>&nbsp;Audit-Log
         </a>
+        <a mat-tab-link routerLink="feed" routerLinkActive #feedTab="routerLinkActive" [active]="feedTab.isActive">
+          <mat-icon>feed</mat-icon>&nbsp;Feed
+        </a>
       </nav>
       <mat-tab-nav-panel #tabPanel>
         <router-outlet></router-outlet>
