@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, signal, computed } from '@angular/core';
+import { Component, OnInit, OnDestroy, AfterViewInit, ElementRef, ViewChild, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -15,6 +15,7 @@ import { MatSliderModule } from '@angular/material/slider';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatSelectModule } from '@angular/material/select';
 import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
 import { environment } from '../../../../environments/environment';
 
 interface FeedItem {
@@ -62,7 +63,7 @@ const SEVERITY_COLOR: Record<string, string> = {
     MatCardModule, MatButtonModule, MatIconModule, MatChipsModule,
     MatProgressSpinnerModule, MatDividerModule, MatTooltipModule,
     MatSnackBarModule, MatBadgeModule, MatSliderModule,
-    MatSlideToggleModule, MatSelectModule, MatFormFieldModule,
+    MatSlideToggleModule, MatSelectModule, MatFormFieldModule, MatInputModule,
   ],
   template: `
     <div class="feed-page">
@@ -84,6 +85,9 @@ const SEVERITY_COLOR: Record<string, string> = {
               </mat-chip>
             }
           </mat-chip-set>
+          <button mat-icon-button (click)="showFilters.set(!showFilters())" matTooltip="Filter" [class.active-icon]="hasActiveFilter()">
+            <mat-icon>filter_list</mat-icon>
+          </button>
           <button mat-icon-button (click)="showSettings.set(!showSettings())" matTooltip="Feed-Einstellungen">
             <mat-icon>tune</mat-icon>
           </button>
@@ -92,6 +96,37 @@ const SEVERITY_COLOR: Record<string, string> = {
           </button>
         </div>
       </div>
+
+      <!-- ── Filter panel ───────────────────────────────────────────────────── -->
+      @if (showFilters()) {
+        <mat-card class="settings-card filter-card">
+          <div class="filter-grid">
+            <mat-form-field appearance="outline" class="filter-field">
+              <mat-label>System / Hostname</mat-label>
+              <input matInput [(ngModel)]="hostFilter" placeholder="z.B. srv-web01" (ngModelChange)="onFilterChange()">
+              <mat-icon matSuffix>computer</mat-icon>
+            </mat-form-field>
+            <mat-form-field appearance="outline" class="filter-field">
+              <mat-label>Kritikalität</mat-label>
+              <mat-select [(ngModel)]="severityFilter" (ngModelChange)="onFilterChange()">
+                <mat-option value="">Alle</mat-option>
+                <mat-option value="critical">Critical</mat-option>
+                <mat-option value="high">High</mat-option>
+                <mat-option value="medium">Medium</mat-option>
+                <mat-option value="low">Low</mat-option>
+                <mat-option value="info">Info</mat-option>
+              </mat-select>
+            </mat-form-field>
+          </div>
+          @if (hasActiveFilter()) {
+            <div style="padding: 0 4px 8px">
+              <button mat-button color="warn" (click)="clearFilters()">
+                <mat-icon>clear</mat-icon> Filter zurücksetzen
+              </button>
+            </div>
+          }
+        </mat-card>
+      }
 
       <!-- ── Settings panel ──────────────────────────────────────────────── -->
       @if (showSettings()) {
@@ -214,11 +249,12 @@ const SEVERITY_COLOR: Record<string, string> = {
           </mat-card>
         }
 
-        <!-- Load more -->
-        @if (!loading() && hasMore()) {
-          <div class="load-more">
-            <button mat-stroked-button (click)="loadMore()">Mehr laden</button>
-          </div>
+        <!-- Infinite scroll sentinel -->
+        <div #scrollSentinel class="scroll-sentinel"></div>
+
+        <!-- Loading more indicator -->
+        @if (loadingMore()) {
+          <div class="load-more-spinner"><mat-spinner diameter="32"></mat-spinner></div>
         }
 
         <!-- Empty state -->
@@ -241,8 +277,13 @@ const SEVERITY_COLOR: Record<string, string> = {
     .feed-topbar h2 { margin: 0; font-size: 22px; font-weight: 600; }
     .topbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
-    /* Settings */
+    .active-icon { color: var(--mat-sys-primary) !important; }
+
+    /* Filter + Settings panels */
     .settings-card { padding: 16px 20px; margin-bottom: 20px; }
+    .filter-card { padding: 12px 16px 4px; }
+    .filter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .filter-field { width: 100%; }
     .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 12px; }
     .settings-field label { font-size: 13px; font-weight: 500; color: var(--mat-sys-on-surface-variant); display: block; margin-bottom: 8px; }
     .slider-row { display: flex; align-items: center; gap: 12px; }
@@ -329,8 +370,9 @@ const SEVERITY_COLOR: Record<string, string> = {
     .spacer { flex: 1; }
     .item-type-hint { font-size: 11px; color: var(--mat-sys-outline); padding-right: 8px; }
 
-    /* Load more / empty */
-    .load-more { display: flex; justify-content: center; padding: 16px; }
+    /* Infinite scroll */
+    .scroll-sentinel { height: 1px; }
+    .load-more-spinner { display: flex; justify-content: center; padding: 16px; }
     .empty-state {
       display: flex; flex-direction: column; align-items: center;
       padding: 60px 20px; color: var(--mat-sys-on-surface-variant);
@@ -341,20 +383,28 @@ const SEVERITY_COLOR: Record<string, string> = {
     .empty-state span { font-size: 13px; }
   `],
 })
-export class NewsFeedComponent implements OnInit, OnDestroy {
+export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   readonly allSources = Object.entries(SOURCE_META).map(([id, m]) => ({ id, ...m }));
+
+  @ViewChild('scrollSentinel') private sentinelRef!: ElementRef<HTMLElement>;
+  private observer?: IntersectionObserver;
 
   items = signal<FeedItem[]>([]);
   loading = signal(false);
+  loadingMore = signal(false);
   showSettings = signal(false);
+  showFilters = signal(false);
   activeFilter = signal<string[]>([]);
   expanded = new Set<string>();
+
+  hostFilter = '';
+  severityFilter = '';
 
   editPrefs: FeedPrefs = { checkmk_min_age_minutes: 5, sources_enabled: ['checkmk','graylog','wazuh'], teams_channels: [] };
   sourceEnabled: Record<string, boolean> = {};
   private offset = 0;
   private readonly pageSize = 50;
-  hasMore = signal(false);
+  private hasMore = false;
   private refreshTimer?: ReturnType<typeof setInterval>;
 
   visibleItems = computed(() => {
@@ -371,8 +421,21 @@ export class NewsFeedComponent implements OnInit, OnDestroy {
     this.refreshTimer = setInterval(() => this.load(true), 30_000);
   }
 
+  ngAfterViewInit() {
+    this.observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && this.hasMore && !this.loadingMore() && !this.loading()) {
+          this.loadMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
+    this.observer.observe(this.sentinelRef.nativeElement);
+  }
+
   ngOnDestroy() {
     if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.observer?.disconnect();
   }
 
   loadPrefs() {
@@ -390,25 +453,39 @@ export class NewsFeedComponent implements OnInit, OnDestroy {
     });
   }
 
+  hasActiveFilter(): boolean {
+    return !!(this.hostFilter || this.severityFilter);
+  }
+
+  onFilterChange() {
+    this.load(true);
+  }
+
+  clearFilters() {
+    this.hostFilter = '';
+    this.severityFilter = '';
+    this.load(true);
+  }
+
   load(reset = false) {
     if (reset) {
       this.offset = 0;
       this.items.set([]);
+      this.loading.set(true);
+    } else {
+      this.loadingMore.set(true);
     }
-    this.loading.set(true);
-    this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, {
-      params: { limit: this.pageSize, offset: this.offset },
-    }).subscribe({
+    const params: Record<string, any> = { limit: this.pageSize, offset: this.offset };
+    if (this.severityFilter) params['severity'] = this.severityFilter;
+    if (this.hostFilter)     params['host'] = this.hostFilter;
+    this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params }).subscribe({
       next: (data) => {
-        if (reset) {
-          this.items.set(data);
-        } else {
-          this.items.update(prev => [...prev, ...data]);
-        }
-        this.hasMore.set(data.length === this.pageSize);
+        this.items.update(prev => reset ? data : [...prev, ...data]);
+        this.hasMore = data.length === this.pageSize;
         this.loading.set(false);
+        this.loadingMore.set(false);
       },
-      error: () => this.loading.set(false),
+      error: () => { this.loading.set(false); this.loadingMore.set(false); },
     });
   }
 

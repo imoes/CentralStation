@@ -33,6 +33,7 @@ async def get_feed(
     offset: int = Query(0),
     sources: str | None = Query(None, description="Comma-separated source filter"),
     severity: str | None = Query(None),
+    host: str | None = Query(None, description="Filter by hostname/title substring (CheckMK)"),
 ):
     """Return unified news feed sorted by created_at descending."""
     prefs = await _get_prefs(user.id, db)
@@ -58,6 +59,9 @@ async def get_feed(
 
         if severity:
             q = q.where(Alert.severity == severity)
+
+        if host:
+            q = q.where(Alert.title.ilike(f"%{host}%"))
 
         q = q.order_by(Alert.created_at.desc()).limit(limit + offset)
         rows = (await db.execute(q)).scalars().all()

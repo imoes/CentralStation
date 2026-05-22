@@ -35,6 +35,7 @@ export const routes: Routes = [
   {
     path: 'settings',
     canActivate: [authGuard, roleGuard('admin')],
+    loadComponent: () => import('./features/settings/settings-shell.component').then(m => m.SettingsShellComponent),
     children: [
       { path: '', redirectTo: 'connectors', pathMatch: 'full' },
       {
