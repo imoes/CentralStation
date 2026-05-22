@@ -16,7 +16,7 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatSelectModule } from '@angular/material/select';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import { environment } from '../../../../environments/environment';
+import { environment } from '../../../environments/environment';
 
 interface FeedItem {
   id: string;
@@ -72,19 +72,20 @@ const SEVERITY_COLOR: Record<string, string> = {
       <div class="feed-topbar">
         <h2>News Feed</h2>
         <div class="topbar-right">
-          <mat-chip-set aria-label="Quellen">
+          <mat-chip-listbox multiple aria-label="Quellen">
             @for (src of allSources; track src.id) {
-              <mat-chip
+              <mat-chip-option
+                [value]="src.id"
                 [selected]="activeFilter().includes(src.id)"
-                (click)="toggleFilter(src.id)"
+                (selectionChange)="toggleFilter(src.id)"
                 [style.--mdc-chip-selected-container-color]="src.color + '33'"
                 [style.--mdc-chip-selected-label-text-color]="src.color"
                 [style.border]="activeFilter().includes(src.id) ? '1px solid ' + src.color : '1px solid transparent'">
                 <mat-icon style="font-size:16px;height:16px;width:16px;margin-right:4px">{{ src.icon }}</mat-icon>
                 {{ src.label }}
-              </mat-chip>
+              </mat-chip-option>
             }
-          </mat-chip-set>
+          </mat-chip-listbox>
           <button mat-icon-button (click)="toggleFilters()" matTooltip="Filter" [class.active-icon]="hasActiveFilter()">
             <mat-icon>filter_list</mat-icon>
           </button>
