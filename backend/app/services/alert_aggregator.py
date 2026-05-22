@@ -141,4 +141,32 @@ async def run_aggregation(db: AsyncSession) -> int:
     if new_count > 0:
         await db.commit()
         log.info("Aggregated %d new alerts", new_count)
+
+        # Index new alerts in OpenSearch (best-effort)
+        try:
+            from app.services.feed_index import index_items
+            docs = [
+                {
+                    "id": str(a.id),
+                    "type": "alert",
+                    "source": a.source,
+                    "severity": a.severity,
+                    "title": a.title,
+                    "body": a.body,
+                    "metadata": a.metadata_,
+                    "created_at": a.created_at.isoformat(),
+                    "status": a.status,
+                    "location_name": a.location_name,
+                    "location_city": a.location_city,
+                    "external_url": None,
+                    "external_id": a.external_id,
+                }
+                for a in db.new
+                if hasattr(a, "source")
+            ]
+            if docs:
+                await index_items(docs)
+        except Exception as exc:
+            log.warning("OpenSearch indexing failed (non-fatal): %s", exc)
+
     return new_count

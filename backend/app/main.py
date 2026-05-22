@@ -10,6 +10,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, audit, preferences, jira_view, workflow, feed
 from app.api import settings as settings_router
 from app.core.config import settings
+from app.core.opensearch import close_opensearch
 from app.core.rate_limit import limiter
 from app.core.redis import close_redis
 
@@ -17,10 +18,19 @@ from app.core.redis import close_redis
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.services.ai_agent.scheduler import start_scheduler, stop_scheduler
+    from app.services.feed_index import ensure_indices
+
     start_scheduler()
+    # Ensure OpenSearch feed indices exist (non-fatal if OS not yet ready)
+    try:
+        await ensure_indices()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("OpenSearch index setup deferred: %s", exc)
     yield
     stop_scheduler()
     await close_redis()
+    await close_opensearch()
 
 
 app = FastAPI(
