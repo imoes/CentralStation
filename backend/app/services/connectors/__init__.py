@@ -10,6 +10,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
     from app.services.connectors.prometheus import PrometheusConnector
     from app.services.connectors.netbox import NetBoxConnector
     from app.services.connectors.id_generator import IDGeneratorConnector
+    from app.services.connectors.it_aikb import ITAikbConnector
 
     mapping = {
         "checkmk": CheckMKConnector,
@@ -21,6 +22,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
         "prometheus": PrometheusConnector,
         "netbox": NetBoxConnector,
         "id_generator": IDGeneratorConnector,
+        "it_aikb": ITAikbConnector,
     }
     cls = mapping.get(connector_type)
     if not cls:

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, users, connectors, alerts, kanban, network, ai, ws
+from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, settings
 from app.core.config import settings
 from app.core.redis import close_redis
 
@@ -41,6 +41,7 @@ app.include_router(alerts.router, prefix="/api")
 app.include_router(kanban.router, prefix="/api")
 app.include_router(network.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
+app.include_router(settings.router, prefix="/api")
 app.include_router(ws.router)
 
 
