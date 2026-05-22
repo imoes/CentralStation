@@ -11,21 +11,27 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatDividerModule } from '@angular/material/divider';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { ConnectorService } from '../../../core/services/connector.service';
 import { SettingItem } from '../../../core/models/connector.model';
 
-const SETTING_GROUPS: { title: string; keys: string[] }[] = [
+interface TestResult { success: boolean; message: string; detail: string | null; }
+
+const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = [
   {
     title: 'LLM Konfiguration',
     keys: ['llm.base_url', 'llm.model', 'llm.api_key', 'llm.timeout_seconds'],
+    testGroup: 'llm',
   },
   {
     title: 'Vision Modell',
     keys: ['llm.vision_base_url', 'llm.vision_model', 'llm.vision_api_key'],
+    testGroup: 'vision',
   },
   {
     title: 'SearXNG Web-Suche',
     keys: ['searxng.base_url', 'searxng.enabled', 'searxng.results_count'],
+    testGroup: 'searxng',
   },
   {
     title: 'Agent Einstellungen',
@@ -47,7 +53,7 @@ const SECRET_MASK = '••••••••';
     MatCardModule, MatFormFieldModule, MatInputModule,
     MatButtonModule, MatIconModule, MatSlideToggleModule,
     MatSelectModule, MatProgressSpinnerModule, MatSnackBarModule,
-    MatDividerModule,
+    MatDividerModule, MatTooltipModule,
   ],
   template: `
     <div class="page-container">
@@ -70,6 +76,21 @@ const SECRET_MASK = '••••••••';
             <mat-card class="settings-card">
               <mat-card-header>
                 <mat-card-title>{{ group.title }}</mat-card-title>
+                @if (group.testGroup) {
+                  <div class="card-header-actions">
+                    <button mat-stroked-button
+                            [disabled]="testingGroup() === group.testGroup"
+                            (click)="testGroup(group.testGroup!)"
+                            matTooltip="Verbindung mit gespeicherten Werten testen">
+                      @if (testingGroup() === group.testGroup) {
+                        <mat-spinner diameter="16"></mat-spinner>
+                      } @else {
+                        <ng-container><mat-icon>wifi_tethering</mat-icon></ng-container>
+                      }
+                      Verbindung testen
+                    </button>
+                  </div>
+                }
               </mat-card-header>
               <mat-card-content>
                 @for (key of group.keys; track key) {
@@ -96,6 +117,19 @@ const SECRET_MASK = '••••••••';
                     </mat-form-field>
                   }
                 }
+
+                @if (group.testGroup && testResults()[group.testGroup]) {
+                  @let res = testResults()[group.testGroup]!;
+                  <div class="test-result" [class.success]="res.success" [class.error]="!res.success">
+                    <mat-icon>{{ res.success ? 'check_circle' : 'error' }}</mat-icon>
+                    <div class="test-result-text">
+                      <span class="test-message">{{ res.message }}</span>
+                      @if (res.detail) {
+                        <span class="test-detail">{{ res.detail }}</span>
+                      }
+                    </div>
+                  </div>
+                }
               </mat-card-content>
             </mat-card>
           }
@@ -114,12 +148,31 @@ const SECRET_MASK = '••••••••';
     .key-label { font-size: 14px; }
     .spinner-center { display: flex; justify-content: center; padding: 40px; }
     mat-spinner { display: inline-block; }
+
+    mat-card-header { display: flex; align-items: center; justify-content: space-between; }
+    .card-header-actions { margin-left: auto; }
+    .card-header-actions button { font-size: 13px; }
+    .card-header-actions mat-icon { font-size: 16px; height: 16px; width: 16px; vertical-align: middle; margin-right: 4px; }
+
+    .test-result {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 10px 12px; border-radius: 6px; margin-top: 8px;
+      font-size: 13px;
+    }
+    .test-result.success { background: color-mix(in srgb, #4caf50 12%, transparent); color: #2e7d32; }
+    .test-result.error   { background: color-mix(in srgb, #f44336 12%, transparent); color: #c62828; }
+    .test-result mat-icon { font-size: 18px; height: 18px; width: 18px; flex-shrink: 0; margin-top: 1px; }
+    .test-result-text { display: flex; flex-direction: column; gap: 2px; }
+    .test-message { font-weight: 500; }
+    .test-detail { font-size: 11px; opacity: 0.85; font-family: monospace; word-break: break-all; }
   `],
 })
 export class AiSettingsComponent implements OnInit {
   groups = SETTING_GROUPS;
   loading = signal(true);
   saving = signal(false);
+  testingGroup = signal<string | null>(null);
+  testResults = signal<Record<string, TestResult>>({});
   form: FormGroup | null = null;
   private settingsMap = new Map<string, SettingItem>();
 
@@ -175,6 +228,24 @@ export class AiSettingsComponent implements OnInit {
     }).catch(() => {
       this.saving.set(false);
       this.snack.open('Fehler beim Speichern', 'OK', { duration: 4000 });
+    });
+  }
+
+  testGroup(group: string) {
+    this.testingGroup.set(group);
+    this.testResults.update(r => { const n = { ...r }; delete n[group]; return n; });
+    this.svc.testSettingGroup(group).subscribe({
+      next: result => {
+        this.testResults.update(r => ({ ...r, [group]: result }));
+        this.testingGroup.set(null);
+      },
+      error: err => {
+        this.testResults.update(r => ({
+          ...r,
+          [group]: { success: false, message: err?.error?.detail ?? 'Unbekannter Fehler', detail: null },
+        }));
+        this.testingGroup.set(null);
+      },
     });
   }
 
