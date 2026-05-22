@@ -30,7 +30,7 @@ langgraph==0.2.45
 langgraph-checkpoint-postgres==2.0.5
 
 # Validation
-pydantic==2.10.3
+pydantic[email]==2.10.3
 pydantic-settings==2.6.1
 
 # Rate Limiting
