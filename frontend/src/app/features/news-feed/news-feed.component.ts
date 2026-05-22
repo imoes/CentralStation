@@ -85,7 +85,7 @@ const SEVERITY_COLOR: Record<string, string> = {
               </mat-chip>
             }
           </mat-chip-set>
-          <button mat-icon-button (click)="showFilters.set(!showFilters())" matTooltip="Filter" [class.active-icon]="hasActiveFilter()">
+          <button mat-icon-button (click)="toggleFilters()" matTooltip="Filter" [class.active-icon]="hasActiveFilter()">
             <mat-icon>filter_list</mat-icon>
           </button>
           <button mat-icon-button (click)="showSettings.set(!showSettings())" matTooltip="Feed-Einstellungen">
@@ -107,7 +107,7 @@ const SEVERITY_COLOR: Record<string, string> = {
               <mat-icon matSuffix>computer</mat-icon>
             </mat-form-field>
             <mat-form-field appearance="outline" class="filter-field">
-              <mat-label>Kritikalität</mat-label>
+              <mat-label>Alert-Schwere</mat-label>
               <mat-select [(ngModel)]="severityFilter" (ngModelChange)="onFilterChange()">
                 <mat-option value="">Alle</mat-option>
                 <mat-option value="critical">Critical</mat-option>
@@ -115,6 +115,42 @@ const SEVERITY_COLOR: Record<string, string> = {
                 <mat-option value="medium">Medium</mat-option>
                 <mat-option value="low">Low</mat-option>
                 <mat-option value="info">Info</mat-option>
+              </mat-select>
+            </mat-form-field>
+            <mat-form-field appearance="outline" class="filter-field">
+              <mat-label>Betriebssystem (CheckMK)</mat-label>
+              <mat-select [(ngModel)]="osFilter" (ngModelChange)="onFilterChange()">
+                <mat-option value="">Alle</mat-option>
+                @for (v of filterValues.os; track v) {
+                  <mat-option [value]="v">{{ v }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+            <mat-form-field appearance="outline" class="filter-field">
+              <mat-label>Standort / Location (CheckMK)</mat-label>
+              <mat-select [(ngModel)]="locationFilter" (ngModelChange)="onFilterChange()">
+                <mat-option value="">Alle</mat-option>
+                @for (v of filterValues.location; track v) {
+                  <mat-option [value]="v">{{ v }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+            <mat-form-field appearance="outline" class="filter-field">
+              <mat-label>Kritikalität (CheckMK)</mat-label>
+              <mat-select [(ngModel)]="criticalityFilter" (ngModelChange)="onFilterChange()">
+                <mat-option value="">Alle</mat-option>
+                @for (v of filterValues.criticality; track v) {
+                  <mat-option [value]="v">{{ v }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+            <mat-form-field appearance="outline" class="filter-field">
+              <mat-label>VE / Umgebung (CheckMK)</mat-label>
+              <mat-select [(ngModel)]="veFilter" (ngModelChange)="onFilterChange()">
+                <mat-option value="">Alle</mat-option>
+                @for (v of filterValues.ve; track v) {
+                  <mat-option [value]="v">{{ v }}</mat-option>
+                }
               </mat-select>
             </mat-form-field>
           </div>
@@ -282,7 +318,7 @@ const SEVERITY_COLOR: Record<string, string> = {
     /* Filter + Settings panels */
     .settings-card { padding: 16px 20px; margin-bottom: 20px; }
     .filter-card { padding: 12px 16px 4px; }
-    .filter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .filter-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .filter-field { width: 100%; }
     .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 12px; }
     .settings-field label { font-size: 13px; font-weight: 500; color: var(--mat-sys-on-surface-variant); display: block; margin-bottom: 8px; }
@@ -399,6 +435,14 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
 
   hostFilter = '';
   severityFilter = '';
+  osFilter = '';
+  locationFilter = '';
+  criticalityFilter = '';
+  veFilter = '';
+
+  filterValues: { os: string[]; location: string[]; criticality: string[]; ve: string[] } = {
+    os: [], location: [], criticality: [], ve: [],
+  };
 
   editPrefs: FeedPrefs = { checkmk_min_age_minutes: 5, sources_enabled: ['checkmk','graylog','wazuh'], teams_channels: [] };
   sourceEnabled: Record<string, boolean> = {};
@@ -454,7 +498,22 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   hasActiveFilter(): boolean {
-    return !!(this.hostFilter || this.severityFilter);
+    return !!(this.hostFilter || this.severityFilter || this.osFilter ||
+              this.locationFilter || this.criticalityFilter || this.veFilter);
+  }
+
+  toggleFilters() {
+    const next = !this.showFilters();
+    this.showFilters.set(next);
+    if (next && this.filterValues.os.length === 0) {
+      this.loadFilterValues();
+    }
+  }
+
+  loadFilterValues() {
+    this.http.get<any>(`${environment.apiUrl}/feed/checkmk-filter-values`).subscribe({
+      next: (v) => { this.filterValues = v; },
+    });
   }
 
   onFilterChange() {
@@ -464,6 +523,10 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   clearFilters() {
     this.hostFilter = '';
     this.severityFilter = '';
+    this.osFilter = '';
+    this.locationFilter = '';
+    this.criticalityFilter = '';
+    this.veFilter = '';
     this.load(true);
   }
 
@@ -476,8 +539,12 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       this.loadingMore.set(true);
     }
     const params: Record<string, any> = { limit: this.pageSize, offset: this.offset };
-    if (this.severityFilter) params['severity'] = this.severityFilter;
-    if (this.hostFilter)     params['host'] = this.hostFilter;
+    if (this.severityFilter)    params['severity']    = this.severityFilter;
+    if (this.hostFilter)        params['host']        = this.hostFilter;
+    if (this.osFilter)          params['os']          = this.osFilter;
+    if (this.locationFilter)    params['location']    = this.locationFilter;
+    if (this.criticalityFilter) params['criticality'] = this.criticalityFilter;
+    if (this.veFilter)          params['ve']          = this.veFilter;
     this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params }).subscribe({
       next: (data) => {
         this.items.update(prev => reset ? data : [...prev, ...data]);

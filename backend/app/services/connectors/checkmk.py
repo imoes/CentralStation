@@ -37,7 +37,7 @@ class CheckMKConnector(BaseConnector):
             return ConnectorTestResult(success=False, message=str(e))
 
     async def get_problems(self, time_range_minutes: int = 60) -> list[dict]:
-        """Return open WARN/CRIT services from the last N minutes."""
+        """Return open WARN/CRIT services, including host tags for filtering."""
         payload = {
             "query": {
                 "op": "and",
@@ -52,6 +52,7 @@ class CheckMKConnector(BaseConnector):
             "columns": [
                 "host_name", "description", "state",
                 "plugin_output", "acknowledged", "last_state_change",
+                "host_tags", "host_labels", "host_address",
             ],
         }
         async with self._client() as client:
@@ -67,6 +68,31 @@ class CheckMKConnector(BaseConnector):
         for item in r.json().get("value", []):
             ext = item.get("extensions", {})
             state = ext.get("state", 2)
+            tags: dict = ext.get("host_tags", {}) or {}
+            labels: dict = ext.get("host_labels", {}) or {}
+
+            # Extract well-known tag groups (CheckMK standard + ippen.media custom)
+            os_val = (
+                tags.get("operatingsystem")
+                or tags.get("os")
+                or labels.get("os", "")
+            )
+            criticality = (
+                tags.get("criticality")
+                or labels.get("criticality", "")
+            )
+            ve = (
+                tags.get("virtual")
+                or tags.get("ve")
+                or tags.get("environment")
+                or labels.get("ve", "")
+            )
+            location = (
+                tags.get("networking_segment")
+                or tags.get("location")
+                or labels.get("location", "")
+            )
+
             results.append({
                 "source": "checkmk",
                 "severity": state_map.get(state, "unknown"),
@@ -75,5 +101,14 @@ class CheckMKConnector(BaseConnector):
                 "output": ext.get("plugin_output", ""),
                 "acknowledged": bool(ext.get("acknowledged", 0)),
                 "last_state_change": ext.get("last_state_change"),
+                "host_address": ext.get("host_address", ""),
+                "metadata": {
+                    "os": os_val,
+                    "criticality": criticality,
+                    "ve": ve,
+                    "location": location,
+                    "host_tags": tags,
+                    "host_labels": labels,
+                },
             })
         return results
