@@ -643,7 +643,7 @@ export class WorkSessionDialogComponent implements OnInit {
   }
 
   jiraUrl() {
-    return `${environment.apiUrl.replace('/api', '')}/browse/${this.session()?.jira_key}`;
+    return this.session()?.jira_browse_url ?? null;
   }
 
   isSlaBreached(iso: string | null | undefined): boolean {

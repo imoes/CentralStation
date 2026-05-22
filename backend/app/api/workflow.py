@@ -70,12 +70,17 @@ class AnalyzeMailRequest(BaseModel):
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 
-def _to_dict(s: WorkSession) -> dict:
+def _to_dict(s: WorkSession, jira_base_url: str | None = None) -> dict:
+    browse_url = (
+        f"{jira_base_url.rstrip('/')}/browse/{s.jira_key}"
+        if jira_base_url and s.jira_key else None
+    )
     return {
         "id": str(s.id),
         "user_id": str(s.user_id),
         "jira_key": s.jira_key,
         "jira_issue_id": s.jira_issue_id,
+        "jira_browse_url": browse_url,
         "alert_id": str(s.alert_id) if s.alert_id else None,
         "title": s.title,
         "category": s.category,
@@ -97,6 +102,15 @@ def _to_dict(s: WorkSession) -> dict:
         "created_at": s.created_at.isoformat(),
         "updated_at": s.updated_at.isoformat(),
     }
+
+
+async def _get_jira_base_url(db: AsyncSession) -> str | None:
+    from app.models.connector import ConnectorConfig
+    result = await db.execute(
+        select(ConnectorConfig).where(ConnectorConfig.type == "jira", ConnectorConfig.enabled == True)
+    )
+    c = result.scalars().first()
+    return c.base_url if c else None
 
 
 async def _get_session(session_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> WorkSession:
@@ -135,7 +149,8 @@ async def list_sessions(
     if status:
         q = q.where(WorkSession.status == status)
     result = await db.execute(q)
-    return [_to_dict(s) for s in result.scalars().all()]
+    jira_url = await _get_jira_base_url(db)
+    return [_to_dict(s, jira_url) for s in result.scalars().all()]
 
 
 @router.post("", status_code=201)
@@ -168,7 +183,7 @@ async def create_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
-    return _to_dict(session)
+    return _to_dict(session, await _get_jira_base_url(db))
 
 
 @router.get("/{session_id}")
@@ -177,7 +192,8 @@ async def get_session(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    return _to_dict(await _get_session(session_id, user.id, db))
+    jira_url = await _get_jira_base_url(db)
+    return _to_dict(await _get_session(session_id, user.id, db), jira_url)
 
 
 @router.patch("/{session_id}")
