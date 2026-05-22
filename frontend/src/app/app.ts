@@ -67,7 +67,7 @@ export class App implements OnInit {
     { path: '/kanban',       label: 'Kanban',           icon: 'view_kanban',  roles: ['admin','sysadmin','network_technician'] },
     { path: '/network',      label: 'Netzwerk',         icon: 'router',       roles: ['admin','network_technician'] },
     { path: '/ai-insights',  label: 'KI-Insights',      icon: 'psychology',   roles: ['admin','sysadmin'] },
-    { path: '/settings',     label: 'Einstellungen',    icon: 'settings',     roles: ['admin'] },
+    { path: '/settings',     label: 'Einstellungen',    icon: 'settings',     roles: ['admin','sysadmin','network_technician','viewer'] },
   ];
 
   visibleNavItems = computed(() => {

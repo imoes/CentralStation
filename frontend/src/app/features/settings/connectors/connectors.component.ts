@@ -1,6 +1,6 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, computed, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
+import { ReactiveFormsModule } from '@angular/forms';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -13,6 +13,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { ConnectorService } from '../../../core/services/connector.service';
 import { Connector, ConnectorType } from '../../../core/models/connector.model';
 import { ConnectorFormDialogComponent } from './connector-form-dialog.component';
+import { AuthService } from '../../../core/auth/auth.service';
 
 @Component({
   selector: 'cs-connectors',
@@ -26,7 +27,12 @@ import { ConnectorFormDialogComponent } from './connector-form-dialog.component'
   template: `
     <div class="page-container">
       <div class="page-header">
-        <h2>Connectors</h2>
+        <div>
+          <h2>{{ isAdmin() ? 'Connectors' : 'Meine Konnektoren' }}</h2>
+          @if (!isAdmin()) {
+            <p class="subtle">Hier pflegen Sie Ihre persönlichen Zugänge für Monitoring, Jira, O365 und Teams.</p>
+          }
+        </div>
         <button mat-raised-button color="primary" (click)="openCreate()">
           <mat-icon>add</mat-icon> Connector hinzufügen
         </button>
@@ -74,9 +80,11 @@ import { ConnectorFormDialogComponent } from './connector-form-dialog.component'
                 <button mat-icon-button (click)="openEdit(c)" title="Bearbeiten">
                   <mat-icon>edit</mat-icon>
                 </button>
-                <button mat-icon-button color="warn" (click)="deleteConnector(c)" title="Löschen">
-                  <mat-icon>delete</mat-icon>
-                </button>
+                @if (isAdmin()) {
+                  <button mat-icon-button color="warn" (click)="deleteConnector(c)" title="Löschen">
+                    <mat-icon>delete</mat-icon>
+                  </button>
+                }
               </td>
             </ng-container>
             <tr mat-header-row *matHeaderRowDef="columns"></tr>
@@ -93,6 +101,7 @@ import { ConnectorFormDialogComponent } from './connector-form-dialog.component'
     .page-container { padding: 24px; max-width: 1100px; }
     .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
     .page-header h2 { margin: 0; }
+    .subtle { margin: 4px 0 0; color: var(--mat-sys-on-surface-variant); font-size: 13px; }
     .full-width { width: 100%; }
     .url-cell { font-family: monospace; font-size: 12px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .empty-state { padding: 24px; text-align: center; color: var(--mat-sys-on-surface-variant); }
@@ -105,38 +114,59 @@ export class ConnectorsComponent implements OnInit {
   connectors = signal<Connector[]>([]);
   loading = signal(true);
   testingId = signal<string | null>(null);
+  isAdmin = computed(() => this.auth.userRole() === 'admin');
 
   constructor(
     private svc: ConnectorService,
     private dialog: MatDialog,
     private snack: MatSnackBar,
+    private auth: AuthService,
   ) {}
 
   ngOnInit() { this.load(); }
 
   load() {
     this.loading.set(true);
-    this.svc.list().subscribe({
+    const request$ = this.isAdmin() ? this.svc.list() : this.svc.listMine();
+    request$.subscribe({
       next: list => { this.connectors.set(list); this.loading.set(false); },
       error: () => { this.loading.set(false); },
     });
   }
 
   openCreate() {
-    const ref = this.dialog.open(ConnectorFormDialogComponent, { width: '540px' });
+    const ref = this.dialog.open(ConnectorFormDialogComponent, {
+      width: '540px',
+      data: { personal: !this.isAdmin() },
+    });
     ref.afterClosed().subscribe(result => { if (result) this.load(); });
   }
 
   openEdit(connector: Connector) {
     const ref = this.dialog.open(ConnectorFormDialogComponent, {
       width: '540px',
-      data: { connector },
+      data: { connector, personal: !this.isAdmin() },
     });
     ref.afterClosed().subscribe(result => { if (result) this.load(); });
   }
 
   toggleEnabled(connector: Connector, enabled: boolean) {
-    this.svc.update(connector.id, { enabled }).subscribe({
+    if (this.isAdmin()) {
+      this.svc.update(connector.id, { enabled }).subscribe({
+        next: updated => {
+          this.connectors.update(list => list.map(c => c.id === updated.id ? updated : c));
+        },
+      });
+      return;
+    }
+
+    this.svc.upsertMine(connector.type, {
+      name: connector.name,
+      type: connector.type,
+      base_url: connector.base_url,
+      credentials: {},
+      enabled,
+    }).subscribe({
       next: updated => {
         this.connectors.update(list => list.map(c => c.id === updated.id ? updated : c));
       },
@@ -145,7 +175,8 @@ export class ConnectorsComponent implements OnInit {
 
   testConnector(connector: Connector) {
     this.testingId.set(connector.id);
-    this.svc.test(connector.id).subscribe({
+    const request$ = this.isAdmin() ? this.svc.test(connector.id) : this.svc.testMine(connector.type);
+    request$.subscribe({
       next: result => {
         this.testingId.set(null);
         const msg = result.success ? `✓ ${result.message}` : `✗ ${result.message}`;

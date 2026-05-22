@@ -12,6 +12,7 @@ import { ConnectorService } from '../../../core/services/connector.service';
 import { Connector, ConnectorType } from '../../../core/models/connector.model';
 
 interface CredField { key: string; label: string; type: 'text' | 'password' }
+const PERSONAL_CONNECTOR_TYPES: ConnectorType[] = ['checkmk', 'graylog', 'wazuh', 'jira', 'jira_sd', 'o365', 'teams'];
 
 const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'checkmk',      label: 'CheckMK' },
@@ -132,9 +133,12 @@ export class ConnectorFormDialogComponent implements OnInit {
     private fb: FormBuilder,
     private svc: ConnectorService,
     private ref: MatDialogRef<ConnectorFormDialogComponent>,
-    @Inject(MAT_DIALOG_DATA) public data: { connector?: Connector } | null,
+    @Inject(MAT_DIALOG_DATA) public data: { connector?: Connector; personal?: boolean } | null,
   ) {
     this.isEdit = !!data?.connector;
+    if (data?.personal) {
+      this.connectorTypes = CONNECTOR_TYPES.filter(type => PERSONAL_CONNECTOR_TYPES.includes(type.value));
+    }
   }
 
   ngOnInit() {
@@ -177,6 +181,20 @@ export class ConnectorFormDialogComponent implements OnInit {
     }
 
     if (this.isEdit && this.data?.connector) {
+      if (this.data.personal) {
+        this.svc.upsertMine(this.data.connector.type, {
+          name: v.name,
+          type: this.data.connector.type,
+          base_url: v.base_url || null,
+          credentials,
+          enabled: v.enabled,
+        }).subscribe({
+          next: () => { this.saving.set(false); this.ref.close(true); },
+          error: () => this.saving.set(false),
+        });
+        return;
+      }
+
       const update: Record<string, unknown> = {
         name: v.name,
         base_url: v.base_url || null,
@@ -190,16 +208,29 @@ export class ConnectorFormDialogComponent implements OnInit {
         error: () => this.saving.set(false),
       });
     } else {
-      this.svc.create({
-        name: v.name,
-        type: v.type,
-        base_url: v.base_url || null,
-        credentials,
-        enabled: v.enabled,
-      }).subscribe({
-        next: () => { this.saving.set(false); this.ref.close(true); },
-        error: () => this.saving.set(false),
-      });
+      if (this.data?.personal) {
+        this.svc.upsertMine(v.type, {
+          name: v.name,
+          type: v.type,
+          base_url: v.base_url || null,
+          credentials,
+          enabled: v.enabled,
+        }).subscribe({
+          next: () => { this.saving.set(false); this.ref.close(true); },
+          error: () => this.saving.set(false),
+        });
+      } else {
+        this.svc.create({
+          name: v.name,
+          type: v.type,
+          base_url: v.base_url || null,
+          credentials,
+          enabled: v.enabled,
+        }).subscribe({
+          next: () => { this.saving.set(false); this.ref.close(true); },
+          error: () => this.saving.set(false),
+        });
+      }
     }
   }
 }
