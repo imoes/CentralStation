@@ -65,5 +65,10 @@ export const routes: Routes = [
     canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
     loadComponent: () => import('./features/my-tickets/my-tickets.component').then(m => m.MyTicketsComponent),
   },
+  {
+    path: 'feed',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin', 'network_technician')],
+    loadComponent: () => import('./features/news-feed/news-feed.component').then(m => m.NewsFeedComponent),
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];
