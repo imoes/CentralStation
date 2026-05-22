@@ -55,5 +55,15 @@ export const routes: Routes = [
       },
     ],
   },
+  {
+    path: 'setup',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/setup-wizard/setup-wizard.component').then(m => m.SetupWizardComponent),
+  },
+  {
+    path: 'my-tickets',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
+    loadComponent: () => import('./features/my-tickets/my-tickets.component').then(m => m.MyTicketsComponent),
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];

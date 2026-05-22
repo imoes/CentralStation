@@ -1,0 +1,358 @@
+"""ITIL Work Session API — full ticket lifecycle with AI support."""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import CurrentUser, get_db
+from app.models.workflow import WorkSession
+
+router = APIRouter(prefix="/workflow", tags=["workflow"])
+
+
+# ── Pydantic schemas ────────────────────────────────────────────────────────────
+
+class WorkSessionCreate(BaseModel):
+    title: str
+    jira_key: str | None = None
+    jira_issue_id: str | None = None
+    alert_id: str | None = None
+    category: str | None = None
+    subcategory: str | None = None
+    impact: str | None = None
+    urgency: str | None = None
+
+
+class WorkSessionUpdate(BaseModel):
+    title: str | None = None
+    jira_key: str | None = None
+    category: str | None = None
+    subcategory: str | None = None
+    impact: str | None = None
+    urgency: str | None = None
+    status: str | None = None
+    closure_code: str | None = None
+    resolution_type: str | None = None
+    root_cause: str | None = None
+    resolution_summary: str | None = None
+
+
+class WorkNoteAdd(BaseModel):
+    content: str
+    note_type: str = "user"  # user | ai
+
+
+class GenerateCommentRequest(BaseModel):
+    comment_type: str = "progress"  # progress | pending | escalation | handoff
+
+
+class GenerateResolutionRequest(BaseModel):
+    root_cause: str | None = None
+    resolution_type: str = "permanent_fix"
+    closure_code: str = "solved_permanently"
+
+
+class SuggestSolutionRequest(BaseModel):
+    use_rag: bool = True
+    use_web: bool = True
+
+
+class AnalyzeMailRequest(BaseModel):
+    subject: str
+    preview: str
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────────
+
+def _to_dict(s: WorkSession) -> dict:
+    return {
+        "id": str(s.id),
+        "user_id": str(s.user_id),
+        "jira_key": s.jira_key,
+        "jira_issue_id": s.jira_issue_id,
+        "alert_id": str(s.alert_id) if s.alert_id else None,
+        "title": s.title,
+        "category": s.category,
+        "subcategory": s.subcategory,
+        "impact": s.impact,
+        "urgency": s.urgency,
+        "priority": s.priority,
+        "status": s.status,
+        "closure_code": s.closure_code,
+        "resolution_type": s.resolution_type,
+        "work_notes": s.work_notes or [],
+        "root_cause": s.root_cause,
+        "resolution_summary": s.resolution_summary,
+        "ai_suggested_solution": s.ai_suggested_solution,
+        "kedb_references": s.kedb_references or [],
+        "related_mail_ids": s.related_mail_ids or [],
+        "sla_response_at": s.sla_response_at.isoformat() if s.sla_response_at else None,
+        "sla_resolved_at": s.sla_resolved_at.isoformat() if s.sla_resolved_at else None,
+        "created_at": s.created_at.isoformat(),
+        "updated_at": s.updated_at.isoformat(),
+    }
+
+
+async def _get_session(session_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> WorkSession:
+    result = await db.execute(
+        select(WorkSession).where(WorkSession.id == session_id, WorkSession.user_id == user_id)
+    )
+    s = result.scalar_one_or_none()
+    if not s:
+        raise HTTPException(404, "Session not found")
+    return s
+
+
+async def _get_llm(db: AsyncSession):
+    from app.services.settings import get_llm_config
+    llm = await get_llm_config(db)
+    if not llm.is_configured:
+        raise HTTPException(503, "LLM not configured")
+    return llm
+
+
+# ── CRUD ─────────────────────────────────────────────────────────────────────────
+
+@router.get("")
+async def list_sessions(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    status: str | None = Query(None),
+    limit: int = Query(50, le=200),
+):
+    q = (
+        select(WorkSession)
+        .where(WorkSession.user_id == user.id)
+        .order_by(WorkSession.created_at.desc())
+        .limit(limit)
+    )
+    if status:
+        q = q.where(WorkSession.status == status)
+    result = await db.execute(q)
+    return [_to_dict(s) for s in result.scalars().all()]
+
+
+@router.post("", status_code=201)
+async def create_session(
+    body: WorkSessionCreate,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.services.workflow_ai import calculate_priority
+
+    session = WorkSession(
+        user_id=user.id,
+        title=body.title,
+        jira_key=body.jira_key,
+        jira_issue_id=body.jira_issue_id,
+        alert_id=uuid.UUID(body.alert_id) if body.alert_id else None,
+        category=body.category,
+        subcategory=body.subcategory,
+        impact=body.impact,
+        urgency=body.urgency,
+        work_notes=[],
+    )
+    if body.impact and body.urgency:
+        p = calculate_priority(body.impact, body.urgency)
+        session.priority = p["priority"]
+        now = datetime.now(timezone.utc)
+        session.sla_response_at = now + timedelta(minutes=p["response_minutes"])
+        session.sla_resolved_at = now + timedelta(minutes=p["resolution_minutes"])
+
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    return _to_dict(session)
+
+
+@router.get("/{session_id}")
+async def get_session(
+    session_id: uuid.UUID,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    return _to_dict(await _get_session(session_id, user.id, db))
+
+
+@router.patch("/{session_id}")
+async def update_session(
+    session_id: uuid.UUID,
+    body: WorkSessionUpdate,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.services.workflow_ai import calculate_priority
+
+    s = await _get_session(session_id, user.id, db)
+    updated = body.model_dump(exclude_none=True)
+    for field, value in updated.items():
+        setattr(s, field, value)
+    if ("impact" in updated or "urgency" in updated) and s.impact and s.urgency:
+        p = calculate_priority(s.impact, s.urgency)
+        s.priority = p["priority"]
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{session_id}", status_code=204)
+async def delete_session(
+    session_id: uuid.UUID,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    s = await _get_session(session_id, user.id, db)
+    await db.delete(s)
+    await db.commit()
+
+
+# ── Work Notes ───────────────────────────────────────────────────────────────────
+
+@router.post("/{session_id}/notes")
+async def add_work_note(
+    session_id: uuid.UUID,
+    body: WorkNoteAdd,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    s = await _get_session(session_id, user.id, db)
+    notes = list(s.work_notes or [])
+    notes.append({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "author": user.full_name or user.email,
+        "type": body.note_type,
+        "content": body.content,
+    })
+    s.work_notes = notes
+    await db.commit()
+    return {"ok": True, "notes": notes}
+
+
+# ── AI Actions ───────────────────────────────────────────────────────────────────
+
+@router.post("/{session_id}/generate-comment")
+async def generate_comment(
+    session_id: uuid.UUID,
+    body: GenerateCommentRequest,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.services.workflow_ai import generate_comment as ai_comment
+
+    s = await _get_session(session_id, user.id, db)
+    llm = await _get_llm(db)
+    comment = await ai_comment(llm, s.title, s.root_cause or "", s.work_notes or [], body.comment_type)
+
+    notes = list(s.work_notes or [])
+    notes.append({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "author": "KI-Assistent",
+        "type": "ai",
+        "content": f"[KI-Kommentar / {body.comment_type}]\n{comment}",
+    })
+    s.work_notes = notes
+    await db.commit()
+    return {"comment": comment, "comment_type": body.comment_type}
+
+
+@router.post("/{session_id}/generate-resolution")
+async def generate_resolution(
+    session_id: uuid.UUID,
+    body: GenerateResolutionRequest,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.services.workflow_ai import generate_resolution as ai_resolution
+
+    s = await _get_session(session_id, user.id, db)
+    llm = await _get_llm(db)
+    root_cause = body.root_cause or s.root_cause
+    resolution = await ai_resolution(
+        llm, s.title, s.root_cause or "", s.work_notes or [],
+        root_cause, body.resolution_type, body.closure_code,
+    )
+    s.resolution_summary = resolution
+    s.closure_code = body.closure_code
+    s.resolution_type = body.resolution_type
+    if body.root_cause:
+        s.root_cause = body.root_cause
+    await db.commit()
+    return {"resolution": resolution}
+
+
+@router.post("/{session_id}/5why")
+async def run_5why(
+    session_id: uuid.UUID,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.services.workflow_ai import run_5why_analysis
+
+    s = await _get_session(session_id, user.id, db)
+    llm = await _get_llm(db)
+    analysis = await run_5why_analysis(llm, s.title, s.root_cause or "", s.work_notes or [])
+    if "root_cause" in analysis and not s.root_cause:
+        s.root_cause = analysis["root_cause"]
+        await db.commit()
+    return analysis
+
+
+@router.post("/{session_id}/suggest-solution")
+async def suggest_solution(
+    session_id: uuid.UUID,
+    body: SuggestSolutionRequest,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.services.workflow_ai import suggest_solution as ai_suggest
+
+    s = await _get_session(session_id, user.id, db)
+    llm = await _get_llm(db)
+    solution = await ai_suggest(llm, db, s.title, s.root_cause or "", body.use_rag, body.use_web)
+    if solution.get("solution_steps"):
+        s.ai_suggested_solution = "\n".join(solution["solution_steps"])
+        await db.commit()
+    return solution
+
+
+@router.post("/{session_id}/auto-categorize")
+async def auto_categorize(
+    session_id: uuid.UUID,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.services.workflow_ai import auto_categorize as ai_cat, calculate_priority
+
+    s = await _get_session(session_id, user.id, db)
+    llm = await _get_llm(db)
+    result = await ai_cat(llm, s.title, s.root_cause or "")
+    s.category = result.get("category", s.category)
+    s.subcategory = result.get("subcategory", s.subcategory)
+    if result.get("impact"):
+        s.impact = result["impact"]
+    if result.get("urgency"):
+        s.urgency = result["urgency"]
+    if s.impact and s.urgency:
+        p = calculate_priority(s.impact, s.urgency)
+        s.priority = p["priority"]
+    await db.commit()
+    return result
+
+
+# ── Mail Analysis (stateless) ─────────────────────────────────────────────────────
+
+@router.post("/analyze-mail")
+async def analyze_mail(
+    body: AnalyzeMailRequest,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.services.workflow_ai import analyze_mail as ai_mail
+
+    llm = await _get_llm(db)
+    return await ai_mail(llm, body.subject, body.preview)
