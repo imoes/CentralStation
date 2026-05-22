@@ -40,4 +40,10 @@ export class ConnectorService {
   updateSetting(key: string, value: string | null) {
     return this.http.patch<SettingItem>(`${this.settingsApi}/${key}`, { value });
   }
+
+  testSettingGroup(group: string) {
+    return this.http.post<{ success: boolean; message: string; detail: string | null }>(
+      `${this.settingsApi}/test/${group}`, {}
+    );
+  }
 }
