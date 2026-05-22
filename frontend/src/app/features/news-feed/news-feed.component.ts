@@ -233,14 +233,24 @@ const SEVERITY_COLOR: Record<string, string> = {
               }
             </div>
 
-            <!-- Title -->
-            <div class="card-title" [class.severity-critical]="item.severity === 'critical'">
-              {{ item.title }}
-            </div>
+            <!-- Title — clickable for O365/Teams to open original -->
+            @if (item.external_url && (item.type === 'email' || item.type === 'teams_message')) {
+              <a class="card-title card-title-link" [class.severity-critical]="item.severity === 'critical'"
+                 (click)="openUrl(item.external_url)" role="button" matTooltip="Original öffnen">
+                {{ item.title }}
+                <mat-icon class="open-icon">open_in_new</mat-icon>
+              </a>
+            } @else {
+              <div class="card-title" [class.severity-critical]="item.severity === 'critical'">
+                {{ item.title }}
+              </div>
+            }
 
             <!-- Body -->
             @if (item.body) {
-              <div class="card-body-text" [class.collapsed]="!expanded.has(item.id)">
+              <div class="card-body-text" [class.collapsed]="!expanded.has(item.id)"
+                   [class.body-clickable]="item.external_url && (item.type === 'email' || item.type === 'teams_message')"
+                   (click)="item.external_url && (item.type === 'email' || item.type === 'teams_message') ? openUrl(item.external_url!) : null">
                 {{ item.body }}
               </div>
               @if (item.body.length > 200) {
@@ -250,10 +260,12 @@ const SEVERITY_COLOR: Record<string, string> = {
               }
             }
 
-            <!-- Mail metadata -->
-            @if (item.type === 'email' && item.metadata?.['from']) {
+            <!-- Sender (email / teams) -->
+            @if ((item.type === 'email' || item.type === 'teams_message') && item.metadata?.['from']) {
               <div class="mail-from">
-                <mat-icon style="font-size:14px;height:14px;width:14px">person</mat-icon>
+                <mat-icon style="font-size:14px;height:14px;width:14px">
+                  {{ item.type === 'email' ? 'person' : 'chat' }}
+                </mat-icon>
                 {{ item.metadata!['from'] }}
               </div>
             }
@@ -268,10 +280,9 @@ const SEVERITY_COLOR: Record<string, string> = {
                   Bestätigen
                 </button>
               }
-              @if (item.external_url) {
+              @if (item.external_url && item.type !== 'email' && item.type !== 'teams_message') {
                 <button mat-button class="action-btn" (click)="openUrl(item.external_url!)">
-                  <mat-icon>open_in_new</mat-icon>
-                  {{ item.type === 'email' ? 'Öffnen' : 'Details' }}
+                  <mat-icon>open_in_new</mat-icon> Details
                 </button>
               }
               <button mat-button class="action-btn" (click)="createTicket(item)">
@@ -372,7 +383,16 @@ const SEVERITY_COLOR: Record<string, string> = {
       padding: 0 16px 10px;
       font-size: 15px; font-weight: 600; line-height: 1.4;
     }
+    .card-title-link {
+      display: flex; align-items: center; gap: 6px;
+      cursor: pointer; text-decoration: none; color: inherit;
+      border-radius: 4px; transition: color 0.15s;
+    }
+    .card-title-link:hover { color: var(--mat-sys-primary); }
+    .open-icon { font-size: 14px; height: 14px; width: 14px; opacity: 0.6; }
     .severity-critical { color: #b71c1c; }
+    .body-clickable { cursor: pointer; }
+    .body-clickable:hover { color: var(--mat-sys-on-surface); }
 
     /* Body */
     .card-body-text {
