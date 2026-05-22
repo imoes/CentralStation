@@ -31,6 +31,12 @@ async def collect_checkmk(connector: ConnectorConfig) -> list[dict]:
                 "title": f"{i['host']} — {i['service']}",
                 "body": i.get("output", ""),
                 "external_id": f"cmk:{i['host']}:{i['service']}",
+                "metadata": {
+                    **(i.get("metadata") or {}),
+                    "host": i["host"],
+                    "service": i["service"],
+                    "host_address": i.get("host_address", ""),
+                },
             }
             for i in items
         ]
@@ -127,6 +133,7 @@ async def run_aggregation(db: AsyncSession) -> int:
                 body=item.get("body"),
                 external_id=ext_id,
                 status="new",
+                metadata_=item.get("metadata"),
             )
             db.add(alert)
             new_count += 1

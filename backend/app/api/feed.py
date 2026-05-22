@@ -34,6 +34,10 @@ async def get_feed(
     sources: str | None = Query(None, description="Comma-separated source filter"),
     severity: str | None = Query(None),
     host: str | None = Query(None, description="Filter by hostname/title substring (CheckMK)"),
+    os: str | None = Query(None, description="Filter by OS tag (CheckMK metadata)"),
+    location: str | None = Query(None, description="Filter by location tag"),
+    criticality: str | None = Query(None, description="Filter by criticality tag"),
+    ve: str | None = Query(None, description="Filter by VE/environment tag"),
 ):
     """Return unified news feed sorted by created_at descending."""
     prefs = await _get_prefs(user.id, db)
@@ -62,6 +66,16 @@ async def get_feed(
 
         if host:
             q = q.where(Alert.title.ilike(f"%{host}%"))
+
+        # JSON metadata filters (CheckMK tag groups)
+        if os:
+            q = q.where(Alert.metadata_["os"].astext.ilike(f"%{os}%"))
+        if location:
+            q = q.where(Alert.metadata_["location"].astext.ilike(f"%{location}%"))
+        if criticality:
+            q = q.where(Alert.metadata_["criticality"].astext == criticality)
+        if ve:
+            q = q.where(Alert.metadata_["ve"].astext == ve)
 
         q = q.order_by(Alert.created_at.desc()).limit(limit + offset)
         rows = (await db.execute(q)).scalars().all()
@@ -183,6 +197,46 @@ async def get_feed(
     items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
 
     return items[offset : offset + limit]
+
+
+@router.get("/checkmk-filter-values")
+async def get_checkmk_filter_values(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return distinct OS, location, criticality and VE values from CheckMK alerts in DB."""
+    from sqlalchemy import func, cast, String
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    q = select(Alert.metadata_).where(
+        Alert.source == "checkmk",
+        Alert.metadata_.isnot(None),
+    )
+    rows = (await db.execute(q)).scalars().all()
+
+    os_vals: set[str] = set()
+    loc_vals: set[str] = set()
+    crit_vals: set[str] = set()
+    ve_vals: set[str] = set()
+
+    for m in rows:
+        if not isinstance(m, dict):
+            continue
+        if v := m.get("os"):
+            os_vals.add(v)
+        if v := m.get("location"):
+            loc_vals.add(v)
+        if v := m.get("criticality"):
+            crit_vals.add(v)
+        if v := m.get("ve"):
+            ve_vals.add(v)
+
+    return {
+        "os": sorted(os_vals - {""}),
+        "location": sorted(loc_vals - {""}),
+        "criticality": sorted(crit_vals - {""}),
+        "ve": sorted(ve_vals - {""}),
+    }
 
 
 @router.post("/{alert_id}/acknowledge")
