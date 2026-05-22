@@ -1,0 +1,41 @@
+.app-container { height: 100vh; }
+
+.sidenav {
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+
+  .sidenav-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 16px;
+    font-size: 18px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--mat-sys-outline-variant);
+  }
+
+  mat-nav-list { flex: 1; }
+  a.active {
+    background: var(--mat-sys-primary-container);
+    color: var(--mat-sys-on-primary-container);
+  }
+
+  .sidenav-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    border-top: 1px solid var(--mat-sys-outline-variant);
+  }
+
+  .role-chip {
+    font-size: 12px;
+    background: var(--mat-sys-secondary-container);
+    color: var(--mat-sys-on-secondary-container);
+    padding: 4px 8px;
+    border-radius: 12px;
+  }
+}
+
+mat-sidenav-content { background: var(--mat-sys-surface); }
