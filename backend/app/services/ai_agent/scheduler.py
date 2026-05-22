@@ -17,16 +17,18 @@ async def run_alert_aggregation() -> None:
 
 async def run_sysadmin_agent() -> None:
     logger.info("SysAdmin AI Agent: starting run")
-    # Phase 5: LangGraph workflow
-    # from app.services.ai_agent.graph import sysadmin_graph
-    # await sysadmin_graph.ainvoke(...)
+    from app.core.database import AsyncSessionLocal
+    from app.services.ai_agent.graph import run_sysadmin_workflow
+    async with AsyncSessionLocal() as db:
+        await run_sysadmin_workflow(db)
 
 
 async def run_network_agent() -> None:
     logger.info("Network AI Agent: starting run")
-    # Phase 6: Network LangGraph workflow
-    # from app.services.ai_agent.network_graph import network_graph
-    # await network_graph.ainvoke(...)
+    from app.core.database import AsyncSessionLocal
+    from app.services.ai_agent.network_graph import run_network_workflow
+    async with AsyncSessionLocal() as db:
+        await run_network_workflow(db)
 
 
 def start_scheduler() -> None:
