@@ -30,6 +30,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: http://proxy.ippen.media:80
+        HTTPS_PROXY: http://proxy.ippen.media:80
+        NO_PROXY: localhost,127.0.0.1,db,redis
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://centralstation:${POSTGRES_PASSWORD}@db:5432/centralstation
@@ -50,6 +54,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: http://proxy.ippen.media:80
+        HTTPS_PROXY: http://proxy.ippen.media:80
+        NO_PROXY: localhost,127.0.0.1,backend
     restart: unless-stopped
     depends_on:
       - backend
