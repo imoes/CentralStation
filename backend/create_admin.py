@@ -13,16 +13,16 @@ from datetime import datetime, timezone
 
 
 async def main(email: str, password: str, full_name: str) -> None:
-    from passlib.context import CryptContext
+    import bcrypt
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
     from sqlalchemy.orm import sessionmaker
-    from sqlalchemy import select, text
+    from sqlalchemy import text
 
     db_url = os.environ["DATABASE_URL"]
     engine = create_async_engine(db_url, echo=False)
     Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    hashed_password = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
 
     async with Session() as db:
         result = await db.execute(
@@ -43,7 +43,7 @@ async def main(email: str, password: str, full_name: str) -> None:
                 "id": str(uuid.uuid4()),
                 "email": email,
                 "full_name": full_name,
-                "hashed_password": pwd.hash(password),
+                "hashed_password": hashed_password,
                 "created_at": datetime.now(timezone.utc),
             },
         )
