@@ -7,41 +7,57 @@ Verwendung:
 """
 import argparse
 import asyncio
+import os
 import uuid
 from datetime import datetime, timezone
 
 
 async def main(email: str, password: str, full_name: str) -> None:
-    from app.core.database import AsyncSessionLocal
-    from app.core.security import hash_password
-    from app.models.user import User
-    from sqlalchemy import select
+    from passlib.context import CryptContext
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy import select, text
 
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.email == email))
-        if result.scalar_one_or_none():
+    db_url = os.environ["DATABASE_URL"]
+    engine = create_async_engine(db_url, echo=False)
+    Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+    async with Session() as db:
+        result = await db.execute(
+            text("SELECT id FROM users WHERE email = :email"),
+            {"email": email},
+        )
+        if result.fetchone():
             print(f"[!] Benutzer '{email}' existiert bereits.")
+            await engine.dispose()
             return
 
-        user = User(
-            id=uuid.uuid4(),
-            email=email,
-            full_name=full_name,
-            hashed_password=hash_password(password),
-            role="admin",
-            is_active=True,
-            created_at=datetime.now(timezone.utc),
+        await db.execute(
+            text("""
+                INSERT INTO users (id, email, full_name, hashed_password, role, is_active, created_at)
+                VALUES (:id, :email, :full_name, :hashed_password, 'admin', true, :created_at)
+            """),
+            {
+                "id": str(uuid.uuid4()),
+                "email": email,
+                "full_name": full_name,
+                "hashed_password": pwd.hash(password),
+                "created_at": datetime.now(timezone.utc),
+            },
         )
-        db.add(user)
         await db.commit()
-        print(f"[✓] Admin erstellt: {email}  (Rolle: admin)")
+
+    await engine.dispose()
+    print(f"[✓] Admin erstellt: {email}  (Rolle: admin)")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CentralStation Admin erstellen")
-    parser.add_argument("--email",     default="admin@ippen.media", help="E-Mail-Adresse")
-    parser.add_argument("--password",  default="Admin123!Change",   help="Initiales Passwort")
-    parser.add_argument("--name",      default="Administrator",      help="Anzeigename")
+    parser.add_argument("--email",    default="admin@ippen.media", help="E-Mail-Adresse")
+    parser.add_argument("--password", default="Admin123!Change",   help="Initiales Passwort")
+    parser.add_argument("--name",     default="Administrator",      help="Anzeigename")
     args = parser.parse_args()
 
     print(f"Erstelle Admin: {args.email}")
