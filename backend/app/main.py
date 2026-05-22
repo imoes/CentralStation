@@ -35,7 +35,12 @@ app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:4200", "https://centralstation.ippen.media"],
+    allow_origins=[
+        "http://localhost",
+        "https://localhost",
+        "http://localhost:4200",
+        "https://centralstation.ippen.media",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
