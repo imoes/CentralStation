@@ -49,6 +49,10 @@ export const routes: Routes = [
         path: 'ai',
         loadComponent: () => import('./features/settings/ai/ai-settings.component').then(m => m.AiSettingsComponent),
       },
+      {
+        path: 'audit',
+        loadComponent: () => import('./features/settings/audit/audit-log.component').then(m => m.AuditLogComponent),
+      },
     ],
   },
   { path: '**', redirectTo: 'dashboard' },

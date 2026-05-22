@@ -32,5 +32,8 @@ langgraph-checkpoint-postgres==2.0.5
 pydantic==2.10.3
 pydantic-settings==2.6.1
 
+# Rate Limiting
+slowapi==0.1.9
+
 # Utils
 python-dotenv==1.0.1

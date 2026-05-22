@@ -1,20 +1,23 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
-from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, settings
+from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, settings, audit
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.core.redis import close_redis
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: APScheduler für KI-Agenten
     from app.services.ai_agent.scheduler import start_scheduler, stop_scheduler
     start_scheduler()
     yield
-    # Shutdown
     stop_scheduler()
     await close_redis()
 
@@ -24,6 +27,10 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,9 +49,40 @@ app.include_router(kanban.router, prefix="/api")
 app.include_router(network.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
+app.include_router(audit.router, prefix="/api")
 app.include_router(ws.router)
 
 
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "app": settings.app_name}
+
+
+@app.get("/api/health/detailed")
+async def health_detailed():
+    """Detailed health check for all critical services."""
+    import asyncio
+
+    checks: dict[str, str] = {}
+
+    # Database check
+    try:
+        from app.core.database import AsyncSessionLocal
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+
+    # Redis check
+    try:
+        from app.core.redis import get_redis
+        r = await get_redis()
+        await r.ping()
+        checks["redis"] = "ok"
+    except Exception as e:
+        checks["redis"] = f"error: {e}"
+
+    overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
+    return {"status": overall, "checks": checks}
