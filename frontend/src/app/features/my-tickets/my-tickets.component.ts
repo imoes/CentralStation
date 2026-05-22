@@ -197,7 +197,7 @@ const STATUS_COLOR: Record<string, string> = {
               </mat-form-field>
               <button mat-flat-button color="accent" (click)="generateAiQuery()" [disabled]="aiGenerating()">
                 @if (aiGenerating()) { <mat-spinner diameter="16"></mat-spinner> Generiere… }
-                @else { <mat-icon>auto_awesome</mat-icon> Generieren }
+                @else { <ng-container><mat-icon>auto_awesome</mat-icon> Generieren</ng-container> }
               </button>
             </div>
           }

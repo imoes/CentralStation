@@ -11,7 +11,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { environment } from '../../../../../environments/environment';
+import { environment } from '../../../../environments/environment';
 
 interface RetentionConfig {
   checkmk_days: number;

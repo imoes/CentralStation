@@ -232,7 +232,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                 </div>
                 <button mat-flat-button color="accent" (click)="generateComment()" [disabled]="aiLoading.comment()">
                   @if (aiLoading.comment()) { <mat-spinner diameter="16"></mat-spinner> Generiere… }
-                  @else { <mat-icon>auto_awesome</mat-icon> Kommentar erstellen }
+                  @else { <ng-container><mat-icon>auto_awesome</mat-icon> Kommentar erstellen</ng-container> }
                 </button>
                 @if (generatedComment()) {
                   <div class="ai-result">
@@ -275,7 +275,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                 </div>
                 <button mat-flat-button color="accent" (click)="generateResolution()" [disabled]="aiLoading.resolution()">
                   @if (aiLoading.resolution()) { <mat-spinner diameter="16"></mat-spinner> Generiere… }
-                  @else { <mat-icon>auto_awesome</mat-icon> Dokumentation erstellen }
+                  @else { <ng-container><mat-icon>auto_awesome</mat-icon> Dokumentation erstellen</ng-container> }
                 </button>
                 @if (generatedResolution()) {
                   <div class="ai-result">
@@ -299,7 +299,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
               <div class="panel-body">
                 <button mat-flat-button color="accent" (click)="suggestSolution()" [disabled]="aiLoading.solution()">
                   @if (aiLoading.solution()) { <mat-spinner diameter="16"></mat-spinner> Suche… }
-                  @else { <mat-icon>travel_explore</mat-icon> Lösungen suchen }
+                  @else { <ng-container><mat-icon>travel_explore</mat-icon> Lösungen suchen</ng-container> }
                 </button>
                 @if (solutionData()) {
                   @if (solutionData()!.solution_steps?.length) {
@@ -351,7 +351,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
 
             <button mat-flat-button color="accent" (click)="run5Why()" [disabled]="aiLoading.fiveWhy()">
               @if (aiLoading.fiveWhy()) { <mat-spinner diameter="16"></mat-spinner> Analysiere… }
-              @else { <mat-icon>psychology</mat-icon> 5-Why Analyse starten }
+              @else { <ng-container><mat-icon>psychology</mat-icon> 5-Why Analyse starten</ng-container> }
             </button>
 
             @if (fiveWhyData()) {
