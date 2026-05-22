@@ -21,6 +21,9 @@ class ConnectorConfig(Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc)

@@ -289,8 +289,8 @@ export class MyTicketsComponent implements OnInit {
   }
 
   checkLlm() {
-    this.http.get<any>(`${environment.apiUrl}/settings`).subscribe({
-      next: d => this.hasLlm.set(!!(d?.['llm.base_url'] && d?.['llm.model'])),
+    this.http.get<{ configured: boolean }>(`${environment.apiUrl}/settings/llm-status`).subscribe({
+      next: data => this.hasLlm.set(!!data?.configured),
     });
   }
 

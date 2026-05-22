@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import {
   Connector, ConnectorCreate, ConnectorUpdate,
-  ConnectorTestResult, SettingsResponse, SettingItem,
+  ConnectorTestResult, SettingsResponse, SettingItem, ConnectorType,
 } from '../models/connector.model';
 
 @Injectable({ providedIn: 'root' })
@@ -31,6 +31,18 @@ export class ConnectorService {
 
   test(id: string) {
     return this.http.post<ConnectorTestResult>(`${this.api}/${id}/test`, {});
+  }
+
+  listMine() {
+    return this.http.get<Connector[]>(`${this.api}/my`);
+  }
+
+  upsertMine(type: ConnectorType, data: ConnectorCreate) {
+    return this.http.put<Connector>(`${this.api}/my/${type}`, data);
+  }
+
+  testMine(type: ConnectorType) {
+    return this.http.post<ConnectorTestResult>(`${this.api}/my/${type}/test`, {});
   }
 
   getSettings() {

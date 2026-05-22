@@ -11,7 +11,7 @@ unterstützt mit KI bei der gesamten ITIL-konformen Arbeitsdokumentation.
 | Bereich | Funktionen |
 |---------|------------|
 | **Alert-Aggregation** | CheckMK, Graylog, Wazuh — zentrale Timeline, Acknowledge, Severity-Filter |
-| **Kanban-Board** | Drag-Drop, bidirektionaler Jira-Sync, AI-erstellte Cards |
+| **Kanban-Board** | Drag-Drop, bidirektionaler Jira-/ServiceDesk-Sync, automatische Jira-Importe, AI-erstellte Cards |
 | **Meine Tickets** | Per-User JQL-Filter-Verwaltung, KI-JQL-Generator (Freitext → JQL), Live-Jira-Ergebnisse |
 | **Arbeitsdokumentation** | ITIL Work Sessions: Impact/Urgency/Priorität P1–P4, SLA-Tracking, Arbeitsnotizen |
 | **KI-Kommentare** | Fortschritt, Pending, Eskalation, Übergabe — per KI generiert, direkt in Jira kopierbar |
@@ -45,6 +45,31 @@ Browser (Angular 20 LTS)
 
 Alle KI-Funktionen nutzen OpenAI-kompatible Endpunkte (konfigurierbar über Frontend → Einstellungen → KI).
 
+---
+
+## Persönliche Konnektoren
+
+Neben globalen Admin-Konnektoren unterstützt CentralStation benutzerspezifische Konnektoren für:
+
+- `checkmk`
+- `graylog`
+- `wazuh`
+- `jira`
+- `jira_sd`
+- `o365`
+- `teams`
+
+Diese werden im Setup-Wizard unter **Meine Konnektoren** gepflegt und gelten nur für das jeweilige Benutzerkonto.
+
+Verwendung:
+
+- `checkmk`, `graylog`, `wazuh`: persönliche Zugänge für Monitoring- und Log-Zugriff
+- `jira`, `jira_sd`: persönliche Ticket-Sicht und Kanban-Sync
+- `o365`: persönlicher Microsoft-Graph-Zugriff plus Postfachzuordnung
+- `teams`: persönlicher Microsoft-Graph-Zugriff plus kanalbezogener Feed
+
+Für O365- und Teams-Feeds werden persönliche Konnektoren bevorzugt; nur wenn keine vorhanden sind, fällt das System auf globale Konnektoren zurück.
+
 | Template / Funktion | Endpunkt | Beschreibung |
 |---------------------|----------|--------------|
 | `generate_comment` | `POST /api/workflow/{id}/generate-comment` | Jira-Kommentar (Fortschritt / Pending / Eskalation / Übergabe) |
@@ -66,6 +91,27 @@ Ausgabe:  { "jql": "assignee = currentUser() AND issuetype = Bug AND priority in
 ```
 
 Aufruf über die UI: **Meine Tickets → Filter verwalten → KI erstellen**
+
+---
+
+## Kanban und Jira
+
+Das Kanban-Board arbeitet bidirektional mit Jira bzw. Jira ServiceDesk:
+
+- offene, dem aktuellen Benutzer zugewiesene Jira-/ServiceDesk-Tickets werden automatisch als Kanban-Karten importiert
+- lokale Karten können per Aktion als Jira-Ticket erstellt werden
+- Änderungen an Titel, Beschreibung und Priorität von Jira-verknüpften Karten werden nach Jira zurückgeschrieben
+- Statuswechsel per Drag-and-Drop lösen passende Jira-Transitions aus
+
+Für den Statusabgleich nutzt CentralStation folgende Zuordnung:
+
+- `backlog` → `Backlog`, `Open`, `Selected for Development`
+- `todo` → `To Do`, `Open`, `Ready`
+- `in_progress` → `In Progress`, `Doing`, `Implementing`, `In Bearbeitung`
+- `review` → `Review`, `In Review`, `Testing`, `QA`
+- `done` → `Done`, `Resolved`, `Closed`, `Erledigt`
+
+Wenn im Jira-Projekt keine passende Transition vorhanden ist, bleibt die Karte lokal unverändert und die API liefert einen Fehler zurück.
 
 ---
 
@@ -118,6 +164,9 @@ Alle anderen Konfigurationen (LLM-URL, Connector-Zugangsdaten, SearXNG, RAG) wer
 | `/api/preferences/jira-queries` | GET, POST | JQL-Filter verwalten |
 | `/api/preferences/jira-queries/generate` | POST | **KI JQL-Generator** |
 | `/api/jira-view/my-tickets` | GET | Jira-Tickets nach aktiven JQL-Filtern |
+| `/api/connectors/my` | GET | Persönliche Konnektoren des aktuellen Benutzers |
+| `/api/connectors/my/{type}` | PUT | Persönlichen Konnektor anlegen/aktualisieren |
+| `/api/connectors/my/{type}/test` | POST | Persönlichen Konnektor testen |
 | `/api/workflow` | GET, POST | Work Sessions (ITIL) |
 | `/api/workflow/{id}` | GET, PATCH, DELETE | Work Session CRUD |
 | `/api/workflow/{id}/notes` | POST | Arbeitsnotiz hinzufügen |
@@ -128,7 +177,7 @@ Alle anderen Konfigurationen (LLM-URL, Connector-Zugangsdaten, SearXNG, RAG) wer
 | `/api/workflow/{id}/auto-categorize` | POST | KI Auto-Kategorisierung |
 | `/api/workflow/analyze-mail` | POST | E-Mail-Analyse |
 | `/api/alerts` | GET | Aggregierte Alerts |
-| `/api/kanban` | GET, POST, PATCH | Kanban-Karten |
+| `/api/kanban` | GET, POST, PATCH | Kanban-Karten inkl. Jira-Import |
 | `/api/ai/trigger/{type}` | POST | KI-Agent manuell triggern |
 | `/api/settings` | GET, PATCH | Globale Einstellungen (Admin) |
 | `/api/audit` | GET | Audit-Log (Admin) |
@@ -144,7 +193,9 @@ Alle anderen Konfigurationen (LLM-URL, Connector-Zugangsdaten, SearXNG, RAG) wer
 | `graylog` | Basic Auth | Graylog (Log-Aggregation) |
 | `wazuh` | JWT (eigene Auth) | Wazuh SIEM |
 | `jira` | Bearer PAT | Jira Tickets + Kanban-Sync |
+| `jira_sd` | Bearer PAT | Jira ServiceDesk Tickets + Kanban-Sync |
 | `o365` | OAuth2 client_credentials | O365 Microsoft Graph (Mail) |
+| `teams` | OAuth2 client_credentials | Microsoft Teams / Graph Feed |
 | `prometheus` | Optional Basic/Bearer | Metriken |
 | `netbox` | Bearer Token | IP-Inventar, VMs |
 | `id_generator` | Basic Auth (READ-ONLY) | Standort-Stammdaten (ippen.media) |

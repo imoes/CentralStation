@@ -20,7 +20,7 @@ interface TestResult { success: boolean; message: string; detail: string | null;
 const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = [
   {
     title: 'LLM Konfiguration',
-    keys: ['llm.base_url', 'llm.model', 'llm.api_key', 'llm.timeout_seconds'],
+    keys: ['llm.base_url', 'llm.model', 'llm.api_mode', 'llm.api_key', 'llm.timeout_seconds'],
     testGroup: 'llm',
   },
   {
@@ -41,6 +41,7 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
 
 const BOOLEAN_KEYS = new Set(['searxng.enabled', 'agent.auto_jira']);
 const SELECT_KEYS: Record<string, string[]> = {
+  'llm.api_mode': ['chat_completions', 'responses'],
   'agent.jira_severity_threshold': ['critical', 'high', 'medium'],
 };
 const SECRET_MASK = '••••••••';
@@ -258,6 +259,7 @@ export class AiSettingsComponent implements OnInit {
     const labels: Record<string, string> = {
       'llm.base_url':                   'LLM Basis-URL',
       'llm.model':                       'LLM Modell',
+      'llm.api_mode':                    'LLM API Modus',
       'llm.api_key':                     'API Key',
       'llm.timeout_seconds':             'Timeout (Sekunden)',
       'llm.vision_base_url':             'Vision LLM URL',
