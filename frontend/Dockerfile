@@ -13,7 +13,7 @@ RUN npm config set proxy "${HTTP_PROXY}" && \
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 COPY . .
 RUN npm run build -- --configuration=production
 
