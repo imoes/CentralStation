@@ -1,15 +1,238 @@
-import { Component } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
+import { MatCardModule } from '@angular/material/card';
+import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
+import { MatChipsModule } from '@angular/material/chips';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatExpansionModule } from '@angular/material/expansion';
+import { MatDividerModule } from '@angular/material/divider';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { Subject, takeUntil } from 'rxjs';
+import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
+import { environment } from '../../../environments/environment';
+
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: '#d32f2f', high: '#f57c00', medium: '#1976d2', low: '#388e3c', info: '#607d8b', none: '#9e9e9e',
+};
 
 @Component({
-  selector: 'cs-psychology',
+  selector: 'cs-ai-insights',
   standalone: true,
-  imports: [MatIconModule],
+  imports: [
+    CommonModule,
+    MatCardModule, MatButtonModule, MatIconModule,
+    MatChipsModule, MatProgressSpinnerModule,
+    MatExpansionModule, MatDividerModule, MatSnackBarModule,
+  ],
   template: `
-    <div style="padding:24px">
-      <h2><mat-icon>psychology</mat-icon> AiInsights</h2>
-      <p>Wird in Phase 2+ implementiert.</p>
+    <div class="page-container">
+      <div class="page-header">
+        <h2>KI-Analyse Insights</h2>
+        <button mat-raised-button color="primary" [disabled]="triggering()" (click)="trigger()">
+          @if (triggering()) { <mat-spinner diameter="18"></mat-spinner> }
+          @else { <mat-icon>play_arrow</mat-icon> }
+          Agent jetzt ausführen
+        </button>
+      </div>
+
+      @if (loading()) {
+        <div class="spinner-center"><mat-spinner diameter="40"></mat-spinner></div>
+      } @else {
+        @for (analysis of analyses(); track analysis.id) {
+          <mat-card class="analysis-card">
+            <mat-card-header>
+              <div class="analysis-header">
+                <div class="analysis-meta">
+                  <span class="severity-badge"
+                        [style.background-color]="sevColor(analysis.severity_summary) + '22'"
+                        [style.color]="sevColor(analysis.severity_summary)">
+                    {{ analysis.severity_summary || 'none' }}
+                  </span>
+                  <span class="run-time">{{ analysis.run_at | date:'dd.MM.yyyy HH:mm' }}</span>
+                  <mat-chip class="agent-chip">{{ analysis.agent_type }}</mat-chip>
+                </div>
+                <div class="analysis-counts">
+                  <span>{{ analysis.findings_count }} Befunde</span>
+                  <span>{{ analysis.recommendations_count }} Empfehlungen</span>
+                  @if (analysis.jira_tickets_created?.length) {
+                    <span class="jira-count">{{ analysis.jira_tickets_created.length }} Jira-Tickets</span>
+                  }
+                </div>
+              </div>
+            </mat-card-header>
+            <mat-card-content>
+              <mat-accordion>
+                @if (analysis.findings?.length) {
+                  <mat-expansion-panel>
+                    <mat-expansion-panel-header>
+                      <mat-panel-title>Befunde ({{ analysis.findings.length }})</mat-panel-title>
+                    </mat-expansion-panel-header>
+                    @for (finding of analysis.findings; track $index) {
+                      <div class="finding-item">
+                        <span class="finding-sev" [style.color]="sevColor(finding.severity)">
+                          [{{ finding.severity }}]
+                        </span>
+                        <span class="finding-title">{{ finding.title }}</span>
+                        @if (finding.location) {
+                          <mat-chip class="location-chip">{{ finding.location }}</mat-chip>
+                        }
+                        @if (finding.description) {
+                          <div class="finding-desc">{{ finding.description }}</div>
+                        }
+                      </div>
+                    }
+                  </mat-expansion-panel>
+                }
+
+                @if (analysis.recommendations?.length) {
+                  <mat-expansion-panel>
+                    <mat-expansion-panel-header>
+                      <mat-panel-title>Empfehlungen ({{ analysis.recommendations.length }})</mat-panel-title>
+                    </mat-expansion-panel-header>
+                    @for (rec of analysis.recommendations; track $index) {
+                      <div class="rec-item">
+                        <div class="rec-header">
+                          <span class="rec-prio" [style.color]="sevColor(rec.priority)">
+                            {{ rec.priority }}
+                          </span>
+                          <span class="rec-action">{{ rec.action }}</span>
+                          @if (rec.jira_title) {
+                            <mat-icon class="jira-icon" title="Als Jira-Ticket">link</mat-icon>
+                          }
+                        </div>
+                        <div class="rec-rationale">{{ rec.rationale }}</div>
+                        @if (rec.references?.length) {
+                          <div class="rec-refs">
+                            @for (ref of rec.references; track ref) {
+                              <a [href]="ref" target="_blank" class="ref-link">{{ ref }}</a>
+                            }
+                          </div>
+                        }
+                      </div>
+                    }
+                  </mat-expansion-panel>
+                }
+
+                @if (analysis.jira_tickets_created?.length) {
+                  <mat-expansion-panel>
+                    <mat-expansion-panel-header>
+                      <mat-panel-title>Erstellte Jira-Tickets</mat-panel-title>
+                    </mat-expansion-panel-header>
+                    <div class="jira-list">
+                      @for (ticket of analysis.jira_tickets_created; track ticket) {
+                        <mat-chip>{{ ticket }}</mat-chip>
+                      }
+                    </div>
+                  </mat-expansion-panel>
+                }
+
+                @if (analysis.rag_queries_used?.length) {
+                  <mat-expansion-panel>
+                    <mat-expansion-panel-header>
+                      <mat-panel-title>RAG / Websuche Kontext</mat-panel-title>
+                    </mat-expansion-panel-header>
+                    @for (ctx of analysis.rag_queries_used; track $index) {
+                      <div class="rag-item">
+                        <mat-chip class="rag-source-chip">{{ ctx.source }}</mat-chip>
+                        <span class="rag-query">{{ ctx.query }}</span>
+                        <span class="rag-results">({{ ctx.results?.length ?? 0 }} Ergebnisse)</span>
+                      </div>
+                    }
+                  </mat-expansion-panel>
+                }
+              </mat-accordion>
+            </mat-card-content>
+          </mat-card>
+        }
+        @if (analyses().length === 0) {
+          <div class="empty-state">
+            Noch keine KI-Analysen vorhanden. Starten Sie den Agenten mit "Agent jetzt ausführen".
+          </div>
+        }
+      }
     </div>
-  `
+  `,
+  styles: [`
+    .page-container { padding: 24px; max-width: 1000px; }
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .page-header h2 { margin: 0; }
+    .analysis-card { margin-bottom: 16px; }
+    .analysis-header { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+    .analysis-meta { display: flex; align-items: center; gap: 10px; }
+    .analysis-counts { display: flex; gap: 16px; font-size: 12px; color: var(--mat-sys-on-surface-variant); }
+    .jira-count { color: #0052cc; font-weight: 600; }
+    .severity-badge { padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
+    .run-time { font-size: 12px; color: var(--mat-sys-on-surface-variant); }
+    .agent-chip { font-size: 10px; min-height: 18px; }
+    .finding-item { padding: 8px 0; border-bottom: 1px solid var(--mat-sys-outline-variant); }
+    .finding-sev { font-weight: 600; font-size: 12px; margin-right: 6px; text-transform: uppercase; }
+    .finding-title { font-size: 13px; font-weight: 500; }
+    .location-chip { font-size: 10px; min-height: 16px; margin-left: 6px; }
+    .finding-desc { font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-top: 4px; }
+    .rec-item { padding: 10px 0; border-bottom: 1px solid var(--mat-sys-outline-variant); }
+    .rec-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .rec-prio { font-weight: 700; font-size: 11px; text-transform: uppercase; min-width: 50px; }
+    .rec-action { font-size: 13px; font-weight: 500; flex: 1; }
+    .jira-icon { font-size: 14px; width: 14px; height: 14px; color: #0052cc; }
+    .rec-rationale { font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-left: 58px; }
+    .rec-refs { margin-left: 58px; margin-top: 4px; }
+    .ref-link { font-size: 11px; color: var(--mat-sys-primary); display: block; }
+    .jira-list { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 0; }
+    .rag-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; }
+    .rag-source-chip { font-size: 10px; min-height: 18px; }
+    .rag-query { flex: 1; font-style: italic; }
+    .rag-results { color: var(--mat-sys-on-surface-variant); }
+    .empty-state { text-align: center; padding: 40px; color: var(--mat-sys-on-surface-variant); }
+    .spinner-center { display: flex; justify-content: center; padding: 40px; }
+    mat-spinner { display: inline-block; }
+  `],
 })
-export class AiInsightsComponent {}
+export class AiInsightsComponent implements OnInit, OnDestroy {
+  analyses = signal<any[]>([]);
+  loading = signal(true);
+  triggering = signal(false);
+  private destroy$ = new Subject<void>();
+
+  constructor(
+    private http: HttpClient,
+    private ws: WebsocketService,
+    private snack: MatSnackBar,
+  ) {}
+
+  ngOnInit() {
+    this.load();
+    this.ws.messages().pipe(takeUntil(this.destroy$)).subscribe((msg: WsMessage) => {
+      if (msg.type === 'ai_insight') this.load();
+    });
+  }
+
+  ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); }
+
+  load() {
+    this.loading.set(true);
+    this.http.get<any[]>(`${environment.apiUrl}/ai/analyses`).subscribe({
+      next: data => { this.analyses.set(data); this.loading.set(false); },
+      error: () => this.loading.set(false),
+    });
+  }
+
+  trigger() {
+    this.triggering.set(true);
+    this.http.post(`${environment.apiUrl}/ai/trigger/sysadmin`, {}).subscribe({
+      next: () => {
+        this.triggering.set(false);
+        this.snack.open('KI-Agent gestartet — Ergebnisse erscheinen in Kürze', 'OK', { duration: 5000 });
+      },
+      error: () => {
+        this.triggering.set(false);
+        this.snack.open('Fehler beim Starten des Agenten', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  sevColor(sev: string): string {
+    return (SEVERITY_COLORS as Record<string, string>)[sev] ?? '#9e9e9e';
+  }
+}
