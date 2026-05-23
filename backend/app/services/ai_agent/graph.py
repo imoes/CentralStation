@@ -92,6 +92,39 @@ async def collect_data(state: dict, db: Any) -> dict:
         except Exception as e:
             log.warning("collect_data: O365 failed: %s", e)
 
+    # Apply CheckMK filters (location / ve / criticality) if configured
+    from app.services.settings import get_agent_config
+    config = await get_agent_config(db)
+
+    # Collect active filter sets (user override already applied in run_sysadmin_workflow)
+    loc_filter  = {v.lower() for v in (config.checkmk_locations          or [])}
+    ve_filter   = {v.lower() for v in (state.get("_checkmk_ve")          or [])}
+    crit_filter = {v.lower() for v in (state.get("_checkmk_criticality") or [])}
+    os_filter   = {v.lower() for v in (state.get("_checkmk_os")          or [])}
+
+    if loc_filter or ve_filter or crit_filter or os_filter:
+        filtered = []
+        for a in raw_alerts:
+            if a.get("source") != "checkmk":
+                filtered.append(a)
+                continue
+            meta = a.get("metadata") or {}
+            loc  = meta.get("location",    "").lower()
+            ve   = meta.get("ve",          "").lower()
+            crit = meta.get("criticality", "").lower()
+            os_v = meta.get("os",          "").lower()
+
+            if loc_filter  and not any(f in loc  for f in loc_filter):
+                continue
+            if ve_filter   and not any(f in ve   for f in ve_filter):
+                continue
+            if crit_filter and not any(f in crit for f in crit_filter):
+                continue
+            if os_filter   and not any(f in os_v for f in os_filter):
+                continue
+            filtered.append(a)
+        raw_alerts = filtered
+
     return {**state, "raw_alerts": raw_alerts}
 
 
@@ -144,34 +177,12 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
     if not alerts:
         return {**state, "rag_context": []}
 
-    # Build events summary for LLM decision
-    events_summary = "\n".join(
-        f"- [{a.get('severity','?')}] {a.get('source','?')}: {a.get('title') or a.get('message','')[:100]}"
-        for a in alerts[:20]
-    )
-
     rag_context: list[dict] = []
 
-    # Step 1: LLM decides if RAG lookup is needed
-    try:
-        decision_prompt = RAG_DECISION_PROMPT.format(events_summary=events_summary)
-        decision_raw = await generate_text(
-            llm_config,
-            [{"role": "user", "content": decision_prompt}],
-            reasoning_effort="low",
-        )
-        decision = json.loads(decision_raw)
-    except Exception as e:
-        log.warning("rag_lookup: LLM decision failed: %s", e)
-        return {**state, "rag_context": []}
-
-    if not decision.get("needs_rag"):
-        return {**state, "rag_context": []}
-
-    queries = decision.get("queries", [])
-    use_deepsearch = decision.get("deepsearch", False)
-
-    # Step 2: Query it-aikb RAG system
+    # ── Step 0: Automatic server KB lookup ────────────────────────────────
+    # For every affected host, fetch its Confluence inventory page from it-aikb.
+    # These pages contain CheckMK custom checks, runbooks, and service details.
+    # Done unconditionally — fast OpenSearch lookup, no LLM call.
     from sqlalchemy import select
     from app.core.security import decrypt_credentials
     from app.models.connector import ConnectorConfig
@@ -182,11 +193,64 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
             ConnectorConfig.enabled.is_(True),
         )
     )
-    aikb_conn = result.scalars().first()
-    if aikb_conn:
-        creds = decrypt_credentials(aikb_conn.encrypted_credentials)
+    aikb_row = result.scalars().first()
+    aikb_svc = None
+    if aikb_row:
+        creds = decrypt_credentials(aikb_row.encrypted_credentials)
         from app.services.connectors.it_aikb import ITAikbConnector
-        aikb_svc = ITAikbConnector(base_url=aikb_conn.base_url, credentials=creds)
+        aikb_svc = ITAikbConnector(base_url=aikb_row.base_url, credentials=creds)
+
+    if aikb_svc:
+        # Extract unique short hostnames (strip domain, e.g. "docker0218.ippen.media" → "docker0218")
+        unique_hosts: set[str] = set()
+        for a in alerts:
+            raw = (a.get("host") or a.get("agent") or "").strip()
+            if raw:
+                short = raw.split(".")[0].lower()
+                if short:
+                    unique_hosts.add(short)
+
+        for host in list(unique_hosts)[:10]:   # cap to avoid excessive calls
+            try:
+                hits = await aikb_svc.search_opensearch(host, top_k=3)
+                if hits:
+                    rag_context.append({
+                        "source": "server-kb",
+                        "query": host,
+                        "results": hits,
+                    })
+                    log.debug("rag_lookup: KB hit for host '%s' (%d chunks)", host, len(hits))
+            except Exception as e:
+                log.debug("rag_lookup: KB lookup for '%s' failed: %s", host, e)
+
+    # Build events summary for LLM decision
+    events_summary = "\n".join(
+        f"- [{a.get('severity','?')}] {a.get('source','?')}: {a.get('title') or a.get('message','')[:100]}"
+        for a in alerts[:20]
+    )
+
+    # ── Step 1: LLM decides if additional RAG lookup is needed ────────────
+    try:
+        decision_prompt = RAG_DECISION_PROMPT.format(events_summary=events_summary)
+        decision_raw = await generate_text(
+            llm_config,
+            [{"role": "user", "content": decision_prompt}],
+            reasoning_effort="low",
+        )
+        decision = json.loads(decision_raw)
+    except Exception as e:
+        log.warning("rag_lookup: LLM decision failed: %s", e)
+        # Server KB context was already collected — don't discard it
+        return {**state, "rag_context": rag_context}
+
+    queries = decision.get("queries", [])
+    use_deepsearch = decision.get("deepsearch", False)
+
+    if not decision.get("needs_rag") or not queries:
+        return {**state, "rag_context": rag_context}
+
+    # ── Step 2: LLM-driven it-aikb search ─────────────────────────────────
+    if aikb_svc:
         for query in queries:
             try:
                 if use_deepsearch:
@@ -246,25 +310,49 @@ async def analyze(state: dict, llm_config: Any) -> dict:
         return {**state, "analysis": result.model_dump()}
 
     # Build context string
+    def _alert_location(a: dict) -> str:
+        loc = a.get("location_name") or (a.get("metadata") or {}).get("location", "")
+        city = a.get("location_city", "")
+        if loc and city and city.lower() not in loc.lower():
+            return f"{loc} ({city})"
+        return loc or city
+
     alerts_text = "\n".join(
         f"[{a.get('severity','?').upper()}] [{a.get('source','?')}] "
         f"{a.get('host') or a.get('agent') or ''}: "
         f"{a.get('title') or a.get('message','')[:200]}"
-        f"{' (' + a.get('location_name','') + ')' if a.get('location_name') else ''}"
+        + (f" | Standort: {_alert_location(a)}" if _alert_location(a) else "")
+        + (f" | Ordner: {(a.get('metadata') or {}).get('location','')}" if (a.get('metadata') or {}).get('location') else "")
         for a in alerts[:40]
     )
 
+    # Separate server KB context from other RAG context so the LLM knows what it's reading
+    kb_text = ""
     rag_text = ""
     for ctx in state.get("rag_context", []):
         results = ctx.get("results", [])[:3]
-        if results:
+        if not results:
+            continue
+        if ctx["source"] == "server-kb":
+            kb_text += f"\n\nServer-Inventar für Host '{ctx['query']}' (Confluence KB):\n"
+            for r in results:
+                title = r.get("title") or ""
+                content = r.get("content") or r.get("text") or ""
+                url = r.get("source_url") or r.get("url") or ""
+                url_part = f" (URL: {url})" if url else ""
+                kb_text += f"- {title}{url_part}: {content[:400]}\n"
+        else:
             rag_text += f"\n\nKontext aus {ctx['source']} für '{ctx['query']}':\n"
             for r in results:
                 title = r.get("title") or r.get("source_id") or ""
                 content = r.get("content") or r.get("text") or ""
-                rag_text += f"- {title}: {content[:200]}\n"
+                url = r.get("source_url") or r.get("url") or ""
+                url_part = f" (URL: {url})" if url else ""
+                rag_text += f"- {title}{url_part}: {content[:200]}\n"
 
     user_content = f"IT-Ereignisse der letzten Stunde:\n{alerts_text}"
+    if kb_text:
+        user_content += f"\n\nServer-Inventar aus Confluence (CheckMK-Checks, Runbooks):{kb_text}"
     if rag_text:
         user_content += f"\n\nWissensdatenbank-Kontext:{rag_text}"
 
@@ -421,8 +509,18 @@ def build_sysadmin_graph():
     return graph.compile()
 
 
-async def run_sysadmin_workflow(db: Any) -> dict:
-    """Run the full sysadmin agent workflow and return the final state."""
+async def run_sysadmin_workflow(
+    db: Any,
+    user_checkmk_locations:   list[str] | None = None,
+    user_checkmk_ve:          list[str] | None = None,
+    user_checkmk_criticality: list[str] | None = None,
+    user_checkmk_os:          list[str] | None = None,
+) -> dict:
+    """Run the full sysadmin agent workflow.
+
+    user_checkmk_* lists come from the triggering user's preferences and
+    override the global agent.checkmk_locations setting.
+    """
     from app.services.settings import get_agent_config, get_llm_config, get_searxng_config
 
     llm_config = await get_llm_config(db)
@@ -433,6 +531,10 @@ async def run_sysadmin_workflow(db: Any) -> dict:
         log.warning("run_sysadmin_workflow: LLM not configured, skipping")
         return {}
 
+    # User preference overrides global location setting
+    if user_checkmk_locations is not None:
+        agent_config.checkmk_locations = user_checkmk_locations or None
+
     state: dict = {
         "raw_alerts": [],
         "enriched_alerts": [],
@@ -441,6 +543,10 @@ async def run_sysadmin_workflow(db: Any) -> dict:
         "jira_project": "IMIT",
         "auto_jira": agent_config.auto_jira,
         "jira_threshold": agent_config.jira_severity_threshold,
+        # pass user ve/criticality/os filters via state (read in collect_data)
+        "_checkmk_ve":          user_checkmk_ve          or [],
+        "_checkmk_criticality": user_checkmk_criticality or [],
+        "_checkmk_os":          user_checkmk_os          or [],
     }
 
     state = await collect_data(state, db)

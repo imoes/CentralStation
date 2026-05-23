@@ -7,8 +7,9 @@ Analysiere die gegebenen IT-Ereignisse (Alerts, Logs, Warnungen) und erstelle:
 Berücksichtige dabei:
 - Korrelationen zwischen mehreren Alarmen (gleicher Host, ähnliche Zeitpunkte)
 - Standortinformationen (Mediengruppe, Stadtstandort)
-- Kontext aus dem Wissenssystem (RAG)
-- Bekannte Fehlerbilder und Runbooks
+- Server-Inventar aus Confluence (sofern vorhanden): CheckMK Custom Checks, Runbooks, Servicebeschreibungen
+- Kontext aus dem Wissenssystem (RAG) und Websuche
+- Bekannte Fehlerbilder; verweise auf konkrete Runbook-URLs wenn im Kontext vorhanden
 
 Antworte AUSSCHLIESSLICH im folgenden JSON-Format ohne zusätzlichen Text:
 {
@@ -33,7 +34,13 @@ Antworte AUSSCHLIESSLICH im folgenden JSON-Format ohne zusätzlichen Text:
       "references": ["..."]
     }
   ]
-}"""
+}
+
+WICHTIG für das Feld "references":
+- Trage dort NUR URLs ein, die im Wissensdatenbank-Kontext explizit mit "(URL: ...)" angegeben wurden.
+- Erfinde KEINE URLs und halluziniere KEINE Links.
+- Wenn keine echte URL aus dem Kontext verfügbar ist, setze "references": [].
+- Interne Dokument-IDs (ohne http/https) gehören NICHT in references."""
 
 RAG_DECISION_PROMPT = """Du bekommst folgende IT-Ereignisse:
 {events_summary}
