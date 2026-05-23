@@ -33,6 +33,7 @@ _INDEX_MAPPING = {
             "location_city": {"type": "keyword"},
             "external_url":  {"type": "keyword"},
             "external_id":   {"type": "keyword"},
+            "ai_insight":    {"type": "text"},
             # owner of personal items (o365, teams) — empty = shared/all-roles
             "user_id":       {"type": "keyword"},
         }
@@ -49,8 +50,10 @@ def _index(source: str) -> str:
 
 
 async def ensure_indices() -> None:
-    """Create indices if they don't exist. Called at startup."""
+    """Create indices if they don't exist; push mapping updates to existing ones."""
     os_client = get_opensearch()
+    # Fields to add to existing indices (safe: OpenSearch ignores already-mapped fields)
+    _mapping_update = {"properties": {"ai_insight": {"type": "text"}}}
     for source in ALL_SOURCES:
         idx = _index(source)
         try:
@@ -58,8 +61,61 @@ async def ensure_indices() -> None:
             if not exists:
                 await os_client.indices.create(index=idx, body=_INDEX_MAPPING)
                 log.info("Created OpenSearch index: %s", idx)
+            else:
+                await os_client.indices.put_mapping(index=idx, body=_mapping_update)
         except Exception as e:
-            log.warning("Could not create index %s: %s", idx, e)
+            log.warning("Could not create/update index %s: %s", idx, e)
+
+
+async def backfill_from_db(days: int = 7) -> int:
+    """Index all recent PostgreSQL alerts that are not yet in OpenSearch.
+
+    Called once at app startup to populate the feed for existing deployments.
+    Returns the number of documents indexed.
+    """
+    from datetime import timedelta
+    from sqlalchemy import select
+    from app.core.database import AsyncSessionLocal
+    from app.models.alert import Alert
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Alert)
+                .where(Alert.created_at >= cutoff)
+                .order_by(Alert.created_at.desc())
+                .limit(5000)
+            )
+            alerts = result.scalars().all()
+
+        if not alerts:
+            return 0
+
+        docs = [
+            {
+                "id": str(a.id),
+                "type": "alert",
+                "source": a.source,
+                "severity": a.severity,
+                "title": a.title,
+                "body": a.body,
+                "metadata": a.metadata_,
+                "created_at": a.created_at.isoformat(),
+                "status": a.status,
+                "location_name": a.location_name,
+                "location_city": a.location_city,
+                "external_url": None,
+                "external_id": a.external_id,
+            }
+            for a in alerts
+        ]
+        await index_items(docs)
+        log.info("Feed backfill: indexed %d alerts from last %d days", len(docs), days)
+        return len(docs)
+    except Exception as e:
+        log.warning("Feed backfill failed (non-fatal): %s", e)
+        return 0
 
 
 async def index_item(item: dict) -> None:
@@ -138,13 +194,13 @@ async def search(
     if host:
         must.append({"match": {"title": {"query": host, "fuzziness": "AUTO"}}})
     if os_filter:
-        filter_.append({"term": {"metadata.os": os_filter}})
+        filter_.append({"term": {"metadata.os.keyword": os_filter}})
     if location:
-        filter_.append({"term": {"metadata.location": location}})
+        filter_.append({"term": {"metadata.location.keyword": location}})
     if criticality:
-        filter_.append({"term": {"metadata.criticality": criticality}})
+        filter_.append({"term": {"metadata.criticality.keyword": criticality}})
     if ve:
-        filter_.append({"term": {"metadata.ve": ve}})
+        filter_.append({"term": {"metadata.ve.keyword": ve}})
 
     # CheckMK min-age: exclude items newer than cutoff
     if checkmk_cutoff:
@@ -205,10 +261,10 @@ async def get_filter_values(source: str = "checkmk") -> dict:
     body = {
         "size": 0,
         "aggs": {
-            "os":          {"terms": {"field": "metadata.os",          "size": 50}},
-            "location":    {"terms": {"field": "metadata.location",    "size": 100}},
-            "criticality": {"terms": {"field": "metadata.criticality", "size": 20}},
-            "ve":          {"terms": {"field": "metadata.ve",          "size": 20}},
+            "os":          {"terms": {"field": "metadata.os.keyword",          "size": 50}},
+            "location":    {"terms": {"field": "metadata.location.keyword",    "size": 100}},
+            "criticality": {"terms": {"field": "metadata.criticality.keyword", "size": 20}},
+            "ve":          {"terms": {"field": "metadata.ve.keyword",          "size": 20}},
         },
     }
     try:

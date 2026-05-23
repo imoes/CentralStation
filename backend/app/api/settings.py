@@ -1,6 +1,9 @@
+import logging
 from typing import Annotated
 
 import httpx
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -83,6 +86,14 @@ async def update_setting(
         new_value={"key": key, "value": "<secret>" if row.is_secret else data.value},
     ))
     await db.commit()
+
+    # Reschedule jobs if an agent interval changed
+    if key in ("agent.interval_minutes", "agent.aggregation_interval_minutes"):
+        try:
+            from app.services.ai_agent.scheduler import reschedule_jobs
+            await reschedule_jobs()
+        except Exception as exc:
+            logger.warning("reschedule_jobs failed (non-fatal): %s", exc)
 
     # Return updated row (re-query after commit)
     result = await db.execute(select(GlobalSetting).where(GlobalSetting.key == key))

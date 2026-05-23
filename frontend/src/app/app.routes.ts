@@ -44,6 +44,11 @@ export const routes: Routes = [
         loadComponent: () => import('./features/settings/connectors/connectors.component').then(m => m.ConnectorsComponent),
       },
       {
+        path: 'my',
+        canActivate: [authGuard],
+        loadComponent: () => import('./features/settings/my-settings/my-settings.component').then(m => m.MySettingsComponent),
+      },
+      {
         path: 'users',
         canActivate: [authGuard, roleGuard('admin')],
         loadComponent: () => import('./features/settings/users/users.component').then(m => m.UsersComponent),

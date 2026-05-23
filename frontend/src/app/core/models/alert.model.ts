@@ -9,6 +9,7 @@ export interface Alert {
   body: string | null;
   external_id: string | null;
   status: AlertStatus;
+  metadata_: Record<string, string | number | null> | null;
   location_name: string | null;
   location_city: string | null;
   acknowledged_by: string | null;

@@ -25,6 +25,11 @@ class UserPreference(Base):
     feed_checkmk_min_age_minutes: Mapped[int | None] = mapped_column(Integer, default=5)
     feed_sources_enabled: Mapped[list | None] = mapped_column(JSON)
     feed_teams_channels: Mapped[list | None] = mapped_column(JSON)
+    # KI-Agent: per-user CheckMK filters (lists of strings)
+    checkmk_locations:   Mapped[list | None] = mapped_column(JSON)
+    checkmk_ve:          Mapped[list | None] = mapped_column(JSON)
+    checkmk_criticality: Mapped[list | None] = mapped_column(JSON)
+    checkmk_os:          Mapped[list | None] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

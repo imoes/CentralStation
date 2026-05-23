@@ -1,7 +1,8 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, signal, Inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
+import { TextFieldModule } from '@angular/cdk/text-field';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -10,7 +11,9 @@ import { MatInputModule } from '@angular/material/input';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatDividerModule } from '@angular/material/divider';
-import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import {
+  MatDialog, MatDialogModule, MatDialogRef, MAT_DIALOG_DATA,
+} from '@angular/material/dialog';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
@@ -64,6 +67,66 @@ const STATUS_COLOR: Record<string, string> = {
   Pending: '#e65100',
   Ausstehend: '#e65100',
 };
+
+// ── JQL Edit Dialog ────────────────────────────────────────────────────────────
+
+@Component({
+  selector: 'cs-jql-query-dialog',
+  standalone: true,
+  imports: [
+    CommonModule, FormsModule, TextFieldModule,
+    MatDialogModule, MatButtonModule, MatFormFieldModule,
+    MatInputModule, MatIconModule,
+  ],
+  template: `
+    <h2 mat-dialog-title>{{ data.title }}</h2>
+    <mat-dialog-content>
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Name</mat-label>
+        <input matInput [(ngModel)]="name" placeholder="Meine offenen Tickets" autofocus>
+      </mat-form-field>
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>JQL-Abfrage</mat-label>
+        <textarea matInput [(ngModel)]="jql"
+                  cdkTextareaAutosize cdkAutosizeMinRows="4" cdkAutosizeMaxRows="10"
+                  placeholder="assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
+                  spellcheck="false"></textarea>
+        <mat-hint>Tipp: <code>statusCategory != Done</code> filtert alle erledigten Status heraus.</mat-hint>
+      </mat-form-field>
+    </mat-dialog-content>
+    <mat-dialog-actions align="end">
+      <button mat-button (click)="dialogRef.close()">Abbrechen</button>
+      <button mat-flat-button color="primary" (click)="save()" [disabled]="!name.trim() || !jql.trim()">
+        <mat-icon>save</mat-icon> Speichern
+      </button>
+    </mat-dialog-actions>
+  `,
+  styles: [`
+    mat-dialog-content { display: flex; flex-direction: column; gap: 16px; padding-top: 8px; min-width: 520px; }
+    .full-width { width: 100%; }
+    code { font-family: monospace; background: var(--mat-sys-surface-variant); padding: 1px 4px; border-radius: 3px; }
+  `],
+})
+export class JqlQueryDialogComponent {
+  name: string;
+  jql: string;
+
+  constructor(
+    public dialogRef: MatDialogRef<JqlQueryDialogComponent>,
+    @Inject(MAT_DIALOG_DATA) public data: { title: string; name: string; jql: string },
+  ) {
+    this.name = data.name;
+    this.jql = data.jql;
+  }
+
+  save() {
+    if (this.name.trim() && this.jql.trim()) {
+      this.dialogRef.close({ name: this.name.trim(), jql: this.jql.trim() });
+    }
+  }
+}
+
+// ── Main Component ──────────────────────────────────────────────────────────────
 
 @Component({
   selector: 'cs-my-tickets',
@@ -155,26 +218,21 @@ const STATUS_COLOR: Record<string, string> = {
           </div>
 
           <div class="query-list">
-            @for (q of queries(); track q.id; let i = $index) {
+            @for (q of queries(); track q.id) {
               <div class="query-item" [class.disabled]="!q.enabled">
                 <mat-icon class="drag-icon">drag_indicator</mat-icon>
                 <div class="query-info">
-                  @if (editingQueryId() === q.id) {
-                    <input class="edit-name" [(ngModel)]="q.name">
-                    <input class="edit-jql" [(ngModel)]="q.jql">
-                    <div class="edit-actions">
-                      <button mat-stroked-button (click)="saveQuery(q)">Speichern</button>
-                      <button mat-button (click)="cancelEdit()">Abbrechen</button>
-                    </div>
-                  } @else {
-                    <span class="q-name">{{ q.name }}</span>
-                    <span class="q-jql">{{ q.jql }}</span>
-                  }
+                  <span class="q-name">{{ q.name }}</span>
+                  <span class="q-jql">{{ q.jql }}</span>
                 </div>
                 <div class="query-actions">
                   <mat-slide-toggle [checked]="q.enabled" (change)="toggleQuery(q, $event.checked)"></mat-slide-toggle>
-                  <button mat-icon-button (click)="editQuery(q)"><mat-icon>edit</mat-icon></button>
-                  <button mat-icon-button color="warn" (click)="deleteQuery(q)"><mat-icon>delete</mat-icon></button>
+                  <button mat-icon-button matTooltip="Bearbeiten" (click)="editQuery(q)">
+                    <mat-icon>edit</mat-icon>
+                  </button>
+                  <button mat-icon-button color="warn" matTooltip="Löschen" (click)="deleteQuery(q)">
+                    <mat-icon>delete</mat-icon>
+                  </button>
                 </div>
               </div>
             }
@@ -236,15 +294,12 @@ const STATUS_COLOR: Record<string, string> = {
     .panel-header { display: flex; align-items: center; justify-content: space-between; }
     .panel-header h3 { margin: 0; }
     .query-list { display: flex; flex-direction: column; gap: 6px; }
-    .query-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px; border: 1px solid var(--mat-sys-outline-variant); border-radius: 8px; }
+    .query-item { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--mat-sys-outline-variant); border-radius: 8px; }
     .query-item.disabled { opacity: 0.5; }
-    .drag-icon { color: var(--mat-sys-on-surface-variant); cursor: grab; flex-shrink: 0; margin-top: 2px; }
-    .query-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+    .drag-icon { color: var(--mat-sys-on-surface-variant); cursor: grab; flex-shrink: 0; }
+    .query-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .q-name { font-weight: 500; font-size: 13px; }
     .q-jql { font-family: monospace; font-size: 11px; color: var(--mat-sys-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .edit-name { border: 1px solid var(--mat-sys-outline); border-radius: 4px; padding: 2px 6px; font-weight: 500; font-size: 13px; width: 100%; margin-bottom: 4px; }
-    .edit-jql { border: 1px solid var(--mat-sys-outline); border-radius: 4px; padding: 2px 6px; font-family: monospace; font-size: 11px; width: 100%; }
-    .edit-actions { display: flex; gap: 4px; margin-top: 6px; }
     .query-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
     .panel-actions { display: flex; gap: 8px; }
     .ai-input-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--mat-sys-surface-variant); border-radius: 8px; }
@@ -256,7 +311,6 @@ export class MyTicketsComponent implements OnInit {
   queries = signal<JqlQuery[]>([]);
   loadingTickets = signal(true);
   showQueryManager = signal(false);
-  editingQueryId = signal<string | null>(null);
   showAiInput = signal(false);
   aiGenerating = signal(false);
   aiDesc = '';
@@ -298,18 +352,44 @@ export class MyTicketsComponent implements OnInit {
   closeQueryManager() { this.showQueryManager.set(false); this.loadTickets(); }
 
   addQuery() {
-    const q: JqlQuery = { id: crypto.randomUUID(), name: 'Neuer Filter', jql: 'assignee = currentUser() ORDER BY updated DESC', position: this.queries().length, enabled: true, show_in_widget: true };
-    this.http.post<any>(`${environment.apiUrl}/preferences/jira-queries`, { name: q.name, jql: q.jql }).subscribe({
-      next: res => { this.queries.update(qs => [...qs, { ...q, id: res.id }]); this.editingQueryId.set(res.id); },
+    const ref = this.dialog.open(JqlQueryDialogComponent, {
+      width: '580px',
+      data: {
+        title: 'Filter hinzufügen',
+        name: 'Neuer Filter',
+        jql: 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC',
+      },
+    });
+    ref.afterClosed().subscribe((result: { name: string; jql: string } | undefined) => {
+      if (!result) return;
+      this.http.post<{ id: string; name: string; jql: string }>(
+        `${environment.apiUrl}/preferences/jira-queries`,
+        { name: result.name, jql: result.jql },
+      ).subscribe({
+        next: res => {
+          this.queries.update(qs => [...qs, {
+            id: res.id, name: result.name, jql: result.jql,
+            position: qs.length, enabled: true, show_in_widget: true,
+          }]);
+          this.snackBar.open('Filter gespeichert', '', { duration: 2000 });
+        },
+      });
     });
   }
 
-  editQuery(q: JqlQuery) { this.editingQueryId.set(q.id); }
-  cancelEdit() { this.editingQueryId.set(null); }
-
-  saveQuery(q: JqlQuery) {
-    this.http.patch(`${environment.apiUrl}/preferences/jira-queries/${q.id}`, { name: q.name, jql: q.jql }).subscribe({
-      next: () => { this.editingQueryId.set(null); this.snackBar.open('Filter gespeichert', '', { duration: 2000 }); },
+  editQuery(q: JqlQuery) {
+    const ref = this.dialog.open(JqlQueryDialogComponent, {
+      width: '580px',
+      data: { title: 'Filter bearbeiten', name: q.name, jql: q.jql },
+    });
+    ref.afterClosed().subscribe((result: { name: string; jql: string } | undefined) => {
+      if (!result) return;
+      this.http.patch(`${environment.apiUrl}/preferences/jira-queries/${q.id}`, result).subscribe({
+        next: () => {
+          this.queries.update(qs => qs.map(x => x.id === q.id ? { ...x, ...result } : x));
+          this.snackBar.open('Filter gespeichert', '', { duration: 2000 });
+        },
+      });
     });
   }
 
@@ -320,19 +400,32 @@ export class MyTicketsComponent implements OnInit {
   }
 
   deleteQuery(q: JqlQuery) {
+    if (!confirm(`Filter "${q.name}" löschen?`)) return;
     this.http.delete(`${environment.apiUrl}/preferences/jira-queries/${q.id}`).subscribe({
-      next: () => { this.queries.update(qs => qs.filter(x => x.id !== q.id)); this.snackBar.open('Filter gelöscht', '', { duration: 2000 }); },
+      next: () => {
+        this.queries.update(qs => qs.filter(x => x.id !== q.id));
+        this.snackBar.open('Filter gelöscht', '', { duration: 2000 });
+      },
     });
   }
 
   generateAiQuery() {
     if (!this.aiDesc.trim()) return;
     this.aiGenerating.set(true);
-    this.http.post<any>(`${environment.apiUrl}/preferences/jira-queries/generate`, { description: this.aiDesc }).subscribe({
+    this.http.post<{ name: string; jql: string }>(
+      `${environment.apiUrl}/preferences/jira-queries/generate`,
+      { description: this.aiDesc },
+    ).subscribe({
       next: result => {
-        this.http.post<any>(`${environment.apiUrl}/preferences/jira-queries`, { name: result.name, jql: result.jql }).subscribe({
+        this.http.post<{ id: string }>(
+          `${environment.apiUrl}/preferences/jira-queries`,
+          { name: result.name, jql: result.jql },
+        ).subscribe({
           next: res => {
-            this.queries.update(qs => [...qs, { id: res.id, name: result.name, jql: result.jql, position: qs.length, enabled: true, show_in_widget: true }]);
+            this.queries.update(qs => [...qs, {
+              id: res.id, name: result.name, jql: result.jql,
+              position: qs.length, enabled: true, show_in_widget: true,
+            }]);
             this.snackBar.open(`KI-Filter erstellt: "${result.name}"`, '', { duration: 3000 });
             this.aiDesc = '';
             this.showAiInput.set(false);

@@ -70,7 +70,7 @@ const PRIORITY_COLORS: Record<string, string> = {
                 (cdkDropListDropped)="onDrop($event)"
                 class="column-drop-zone">
                 @for (card of getColumn(col.id); track card.id) {
-                  <div cdkDrag class="kanban-card" [class.ai-card]="card.ai_generated"
+                  <div cdkDrag [cdkDragData]="card" class="kanban-card" [class.ai-card]="card.ai_generated"
                        (click)="openEdit(card)">
                     <div class="card-priority-bar"
                          [style.background-color]="priorityColor(card.priority)">
@@ -184,27 +184,19 @@ export class KanbanComponent implements OnInit, OnDestroy {
 
   onDrop(event: CdkDragDrop<KanbanCard[]>) {
     const card: KanbanCard = event.item.data;
+    if (!card) return;
     const newStatus = event.container.id as KanbanStatus;
     const newPosition = event.currentIndex;
 
-    if (event.previousContainer === event.container) {
-      this.svc.move(card.id, { status: newStatus, position: newPosition }).subscribe({
-        error: (err) => {
-          this.snack.open(err?.error?.detail ?? 'Jira-Sync beim Verschieben fehlgeschlagen', 'OK', { duration: 4000 });
-          this.load();
-        },
-      });
-    } else {
-      this.svc.move(card.id, { status: newStatus, position: newPosition }).subscribe({
-        next: updated => {
-          this.cards.update(list => list.map(c => c.id === updated.id ? updated : c));
-        },
-        error: (err) => {
-          this.snack.open(err?.error?.detail ?? 'Jira-Sync beim Verschieben fehlgeschlagen', 'OK', { duration: 4000 });
-          this.load();
-        },
-      });
-    }
+    this.svc.move(card.id, { status: newStatus, position: newPosition }).subscribe({
+      next: updated => {
+        this.cards.update(list => list.map(c => c.id === updated.id ? updated : c));
+      },
+      error: (err) => {
+        this.snack.open(err?.error?.detail ?? 'Jira-Sync beim Verschieben fehlgeschlagen', 'OK', { duration: 4000 });
+        this.load();
+      },
+    });
   }
 
   priorityColor(priority: string): string {
@@ -212,13 +204,15 @@ export class KanbanComponent implements OnInit, OnDestroy {
   }
 
   openCreate() {
-    const ref = this.dialog.open(KanbanCardDialogComponent, { width: '500px' });
+    const ref = this.dialog.open(KanbanCardDialogComponent, {
+      width: '680px', maxWidth: '95vw',
+    });
     ref.afterClosed().subscribe(result => { if (result) this.load(); });
   }
 
   openEdit(card: KanbanCard) {
     const ref = this.dialog.open(KanbanCardDialogComponent, {
-      width: '500px',
+      width: '720px', maxWidth: '95vw',
       data: { card },
     });
     ref.afterClosed().subscribe(result => { if (result) this.load(); });

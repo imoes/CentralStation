@@ -45,8 +45,14 @@ class SearXNGConfig:
 @dataclass
 class AgentConfig:
     interval_minutes: int = 10
+    aggregation_interval_minutes: int = 2
     auto_jira: bool = True
     jira_severity_threshold: str = "critical"
+    checkmk_locations: list = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.checkmk_locations is None:
+            self.checkmk_locations = []
 
 
 async def get_all_settings(db: AsyncSession) -> dict[str, str | None]:
@@ -124,8 +130,12 @@ async def get_searxng_config(db: AsyncSession) -> SearXNGConfig:
 
 async def get_agent_config(db: AsyncSession) -> AgentConfig:
     s = await get_all_settings(db)
+    loc_str = s.get("agent.checkmk_locations") or ""
+    locations = [l.strip() for l in loc_str.split(",") if l.strip()]
     return AgentConfig(
         interval_minutes=int(s.get("agent.interval_minutes") or 10),
+        aggregation_interval_minutes=int(s.get("agent.aggregation_interval_minutes") or 2),
         auto_jira=s.get("agent.auto_jira", "true") == "true",
         jira_severity_threshold=s.get("agent.jira_severity_threshold") or "critical",
+        checkmk_locations=locations,
     )

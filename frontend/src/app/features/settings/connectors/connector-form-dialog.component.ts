@@ -12,7 +12,7 @@ import { ConnectorService } from '../../../core/services/connector.service';
 import { Connector, ConnectorType } from '../../../core/models/connector.model';
 
 interface CredField { key: string; label: string; type: 'text' | 'password' }
-const PERSONAL_CONNECTOR_TYPES: ConnectorType[] = ['checkmk', 'graylog', 'wazuh', 'jira', 'jira_sd', 'o365', 'teams'];
+const PERSONAL_CONNECTOR_TYPES: ConnectorType[] = ['jira', 'jira_sd', 'o365', 'teams'];
 
 const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'checkmk',      label: 'CheckMK' },
@@ -29,9 +29,19 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
 ];
 
 const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
-  checkmk:      [{ key: 'username', label: 'Benutzername', type: 'text' }, { key: 'password', label: 'Passwort', type: 'password' }],
+  checkmk:      [
+    { key: 'username', label: 'Benutzername', type: 'text' },
+    { key: 'password', label: 'Passwort', type: 'password' },
+    { key: 'site', label: 'Site-Name (optional, z.B. im)', type: 'text' },
+  ],
   graylog:      [{ key: 'username', label: 'Benutzername', type: 'text' }, { key: 'password', label: 'Passwort', type: 'password' }],
-  wazuh:        [{ key: 'username', label: 'Benutzername', type: 'text' }, { key: 'password', label: 'Passwort', type: 'password' }],
+  wazuh:        [
+    { key: 'username',         label: 'Manager Benutzername',             type: 'text' },
+    { key: 'password',         label: 'Manager Passwort',                 type: 'password' },
+    { key: 'indexer_url',      label: 'Indexer URL (z.B. http://wazuh-indexer-1.ippen.media:9200)', type: 'text' },
+    { key: 'indexer_username', label: 'Indexer Benutzername (Standard: admin)', type: 'text' },
+    { key: 'indexer_password', label: 'Indexer Passwort',                 type: 'password' },
+  ],
   jira:         [
     { key: 'token', label: 'Personal Access Token', type: 'password' },
     { key: 'project', label: 'Standardprojekt (optional)', type: 'text' },
@@ -143,15 +153,16 @@ export class ConnectorFormDialogComponent implements OnInit {
 
   ngOnInit() {
     const c = this.data?.connector;
+    const defaultType: ConnectorType = this.data?.personal ? 'jira' : 'checkmk';
     this.form = this.fb.group({
-      type:     [c?.type ?? 'checkmk', Validators.required],
+      type:     [c?.type ?? defaultType, Validators.required],
       name:     [c?.name ?? '', Validators.required],
       base_url: [c?.base_url ?? ''],
       enabled:  [c?.enabled ?? true],
     });
 
     this.form.get('type')!.valueChanges.subscribe(type => this.updateCredFields(type as ConnectorType));
-    this.updateCredFields((c?.type ?? 'checkmk') as ConnectorType);
+    this.updateCredFields((c?.type ?? defaultType) as ConnectorType);
   }
 
   updateCredFields(type: ConnectorType) {
