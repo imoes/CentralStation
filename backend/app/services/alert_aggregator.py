@@ -1,12 +1,17 @@
 """Alert aggregation service.
 
 Polls all enabled connectors (CheckMK, Graylog, Wazuh) and stores new alerts
-in the alerts table. Deduplicates via external_id.
+in the alerts table.
+
+Dedup strategy (per source):
+  - CheckMK:  status-based — re-use existing open alert for same host:service
+  - Graylog:  cooldown-based — suppress if same dedup_key seen within COOLDOWN window
+  - Wazuh:    cooldown-based — suppress if same agent:rule_id seen within COOLDOWN window
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decrypt_credentials
@@ -16,6 +21,7 @@ from app.models.connector import ConnectorConfig
 log = logging.getLogger(__name__)
 
 SEVERITY_ORDER = ["info", "low", "medium", "high", "critical"]
+_DEDUP_COOLDOWN_FALLBACK = 10  # minutes, used when settings are unavailable
 
 
 async def collect_checkmk(connector: ConnectorConfig) -> list[dict]:
@@ -58,16 +64,29 @@ async def collect_graylog(connector: ConnectorConfig) -> list[dict]:
         )
         severity_map = {0: "critical", 1: "critical", 2: "critical", 3: "critical",
                         4: "high", 5: "medium", 6: "low", 7: "info"}
-        return [
-            {
+        seen_dedup: set[str] = set()
+        results = []
+        for m in msgs:
+            dedup_key = m.get("dedup_key", "")
+            if dedup_key and dedup_key in seen_dedup:
+                continue
+            if dedup_key:
+                seen_dedup.add(dedup_key)
+            results.append({
                 "source": "graylog",
                 "severity": severity_map.get(m.get("level", 6), "medium"),
                 "title": m["message"][:200],
                 "body": m["message"],
-                "external_id": f"glog:{m['id']}",
-            }
-            for m in msgs
-        ]
+                # Use dedup_key as external_id so repeated messages don't re-insert
+                "external_id": f"glog:{dedup_key or m['id']}",
+                "metadata": {
+                    "host": m.get("source", ""),
+                    "container_name": m.get("container_name", ""),
+                    "vendor": m.get("vendor", ""),
+                    "facility": m.get("facility", ""),
+                },
+            })
+        return results
     except Exception as e:
         log.warning("Graylog collection failed: %s", e)
         return []
@@ -86,6 +105,7 @@ async def collect_wazuh(connector: ConnectorConfig) -> list[dict]:
                 "title": i["title"],
                 "body": i.get("body", ""),
                 "external_id": f"wazuh:{i['external_id']}",
+                "metadata": i.get("metadata", {}),
             }
             for i in items
         ]
@@ -111,7 +131,20 @@ async def run_aggregation(db: AsyncSession) -> int:
     )
     connectors = result.scalars().all()
 
+    # Cooldown window — synchronized with the agent interval from settings.
+    # Graylog + Wazuh suppress re-inserts of the same dedup_key within this window.
+    # CheckMK uses status-based dedup (open alert = no re-insert).
+    try:
+        from app.services.settings import get_agent_config
+        agent_cfg = await get_agent_config(db)
+        cooldown_minutes = agent_cfg.interval_minutes
+    except Exception:
+        cooldown_minutes = _DEDUP_COOLDOWN_FALLBACK
+    cooldown_cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
+    _COOLDOWN_SOURCES = {"graylog", "wazuh"}
+
     new_count = 0
+    new_alerts: list[Alert] = []
     for connector in connectors:
         collector = COLLECTORS.get(connector.type)
         if not collector:
@@ -120,9 +153,27 @@ async def run_aggregation(db: AsyncSession) -> int:
         for item in items:
             ext_id = item.get("external_id")
             if ext_id:
-                existing = await db.execute(
-                    select(Alert).where(Alert.external_id == ext_id, Alert.status != "resolved")
-                )
+                source = item.get("source", "")
+                if source in _COOLDOWN_SOURCES:
+                    # Skip if the same dedup_key was seen within the cooldown window
+                    existing = await db.execute(
+                        select(Alert).where(
+                            and_(
+                                Alert.external_id == ext_id,
+                                Alert.created_at >= cooldown_cutoff,
+                            )
+                        )
+                    )
+                else:
+                    # CheckMK: skip while the same problem is still open
+                    existing = await db.execute(
+                        select(Alert).where(
+                            and_(
+                                Alert.external_id == ext_id,
+                                Alert.status != "resolved",
+                            )
+                        )
+                    )
                 if existing.scalar_one_or_none():
                     continue
 
@@ -136,37 +187,54 @@ async def run_aggregation(db: AsyncSession) -> int:
                 metadata_=item.get("metadata"),
             )
             db.add(alert)
+            new_alerts.append(alert)
             new_count += 1
 
     if new_count > 0:
+        # flush to get auto-generated IDs and timestamps before commit
+        await db.flush()
+        docs = [
+            {
+                "id": str(a.id),
+                "type": "alert",
+                "source": a.source,
+                "severity": a.severity,
+                "title": a.title,
+                "body": a.body,
+                "metadata": a.metadata_,
+                "created_at": a.created_at.isoformat(),
+                "status": a.status,
+                "location_name": a.location_name,
+                "location_city": a.location_city,
+                "external_url": None,
+                "external_id": a.external_id,
+            }
+            for a in new_alerts
+        ]
         await db.commit()
         log.info("Aggregated %d new alerts", new_count)
 
         # Index new alerts in OpenSearch (best-effort)
         try:
             from app.services.feed_index import index_items
-            docs = [
-                {
-                    "id": str(a.id),
-                    "type": "alert",
-                    "source": a.source,
-                    "severity": a.severity,
-                    "title": a.title,
-                    "body": a.body,
-                    "metadata": a.metadata_,
-                    "created_at": a.created_at.isoformat(),
-                    "status": a.status,
-                    "location_name": a.location_name,
-                    "location_city": a.location_city,
-                    "external_url": None,
-                    "external_id": a.external_id,
-                }
-                for a in db.new
-                if hasattr(a, "source")
-            ]
-            if docs:
-                await index_items(docs)
+            await index_items(docs)
         except Exception as exc:
             log.warning("OpenSearch indexing failed (non-fatal): %s", exc)
+
+        # Enrich new alerts with AI insight in the background (best-effort)
+        try:
+            import asyncio
+            from app.core.database import AsyncSessionLocal
+            from app.services.settings import get_llm_config
+
+            async def _do_enrich(docs_to_enrich: list[dict]) -> None:
+                from app.services.feed_enricher import enrich_batch
+                async with AsyncSessionLocal() as s:
+                    llm_cfg = await get_llm_config(s)
+                asyncio.create_task(enrich_batch(docs_to_enrich, llm_cfg))
+
+            asyncio.create_task(_do_enrich(docs))
+        except Exception as exc:
+            log.debug("Could not schedule feed enrichment: %s", exc)
 
     return new_count
