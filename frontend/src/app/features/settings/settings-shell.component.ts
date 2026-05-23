@@ -15,6 +15,9 @@ import { AuthService } from '../../core/auth/auth.service';
         <a mat-tab-link routerLink="connectors" routerLinkActive #connectors="routerLinkActive" [active]="connectors.isActive">
           <mat-icon>cable</mat-icon>&nbsp;{{ isAdmin() ? 'Connectors' : 'Meine Konnektoren' }}
         </a>
+        <a mat-tab-link routerLink="my" routerLinkActive #my="routerLinkActive" [active]="my.isActive">
+          <mat-icon>manage_accounts</mat-icon>&nbsp;Meine Einstellungen
+        </a>
         @if (isAdmin()) {
           <a mat-tab-link routerLink="users" routerLinkActive #users="routerLinkActive" [active]="users.isActive">
             <mat-icon>group</mat-icon>&nbsp;Benutzer

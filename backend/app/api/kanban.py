@@ -2,6 +2,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,29 +11,42 @@ from app.core.database import get_db
 from app.models.kanban import KanbanCard
 from app.schemas.kanban import KanbanCardCreate, KanbanCardMove, KanbanCardResponse, KanbanCardUpdate
 
+
+class CommentCreate(BaseModel):
+    body: str
+
 router = APIRouter(prefix="/kanban", tags=["kanban"])
 
 VALID_STATUSES = {"backlog", "todo", "in_progress", "review", "done"}
+
+# Name candidates tried first; statusCategory key used as fallback (pass 2)
 JIRA_STATUS_CANDIDATES = {
-    "backlog": ["Backlog", "Open", "Selected for Development"],
-    "todo": ["To Do", "Open", "Ready"],
-    "in_progress": ["In Progress", "Doing", "Implementing", "In Bearbeitung"],
-    "review": ["Review", "In Review", "Testing", "QA"],
-    "done": ["Done", "Resolved", "Closed", "Erledigt"],
+    "backlog":     ["Backlog", "Open", "Neu", "Selected for Development", "Zu erledigen"],
+    "todo":        ["To Do", "Zu erledigen", "Open", "Ready", "Neu"],
+    "in_progress": ["In Progress", "Wird Ausgeführt", "In Arbeit", "In Umsetzung", "Doing", "Implementing", "In Bearbeitung"],
+    "review":      ["Review", "In Review", "Wird überprüft", "Testing", "QA"],
+    "done":        ["Fertig", "Done", "Resolved", "Closed", "Erledigt", "Abgeschlossen", "Vorgang lösen", "Vorgang schließen"],
+}
+JIRA_STATUS_CATEGORIES = {
+    "backlog":     "new",
+    "todo":        "new",
+    "in_progress": "indeterminate",
+    "review":      "indeterminate",
+    "done":        "done",
 }
 
 
 def _map_jira_status(status_name: str | None) -> str:
     value = (status_name or "").lower()
-    if value in {"open", "new", "backlog", "selected for development"}:
+    if value in {"open", "new", "neu", "backlog", "selected for development", "zu erledigen"}:
         return "backlog"
-    if value in {"to do", "todo", "ready"}:
+    if value in {"to do", "todo", "ready", "zu erledigen"}:
         return "todo"
-    if value in {"in progress", "implementing", "bearbeitung", "doing"}:
+    if value in {"in progress", "in arbeit", "in umsetzung", "wird ausgeführt", "implementing", "in bearbeitung", "doing"}:
         return "in_progress"
-    if value in {"review", "in review", "qa", "testing"}:
+    if value in {"review", "in review", "wird überprüft", "qa", "testing"}:
         return "review"
-    if value in {"done", "closed", "resolved", "erledigt"}:
+    if value in {"fertig", "done", "closed", "resolved", "erledigt", "abgeschlossen"}:
         return "done"
     return "todo"
 
@@ -78,10 +92,17 @@ async def _import_jira_cards(db: AsyncSession, current_user: CurrentUser) -> Non
     for connector in connectors:
         creds = decrypt_credentials(connector.encrypted_credentials)
         jira = JiraConnector(base_url=connector.base_url, credentials=creds)
-        issues = await jira.search_issues(
+        # Fetch open issues for import + recently updated (last 30d) to catch Jira→done transitions
+        open_issues = await jira.search_issues(
             'assignee = currentUser() AND statusCategory != Done ORDER BY priority DESC, updated DESC',
             fields=["summary", "status", "priority", "assignee", "description"],
         )
+        recent_done = await jira.search_issues(
+            'assignee = currentUser() AND statusCategory = Done AND updated >= -30d ORDER BY updated DESC',
+            fields=["summary", "status", "priority", "assignee", "description"],
+        )
+        issues = open_issues + [i for i in recent_done if i.get("key") not in {x.get("key") for x in open_issues}]
+
         for issue in issues:
             key = issue.get("key")
             if not key or key in seen_keys:
@@ -107,7 +128,8 @@ async def _import_jira_cards(db: AsyncSession, current_user: CurrentUser) -> Non
                 card.priority = priority
                 if not card.assigned_to:
                     card.assigned_to = current_user.id
-            else:
+            elif status != "done":
+                # Only create new cards for non-done issues; done tickets sync only to existing cards
                 pos_result = await db.execute(
                     select(func.coalesce(func.max(KanbanCard.position), -1)).where(KanbanCard.status == status)
                 )
@@ -132,6 +154,21 @@ async def _get_jira_connector_for_user(db: AsyncSession, current_user: CurrentUs
     if connector:
         return connector
     return await _get_preferred_connector(db, "jira_sd", current_user.id)
+
+
+async def _get_all_jira_connectors(db: AsyncSession, user_id) -> list:
+    """Return all enabled jira + jira_sd connectors for the user (personal first)."""
+    from app.models.connector import ConnectorConfig
+    result = await db.execute(
+        select(ConnectorConfig)
+        .where(
+            ConnectorConfig.type.in_(["jira", "jira_sd"]),
+            ConnectorConfig.enabled.is_(True),
+            ((ConnectorConfig.owner_user_id == user_id) | ConnectorConfig.owner_user_id.is_(None)),
+        )
+        .order_by(ConnectorConfig.owner_user_id.is_(None), ConnectorConfig.updated_at.desc())
+    )
+    return result.scalars().all()
 
 
 async def _sync_issue_fields(card: KanbanCard, current_user: CurrentUser, db: AsyncSession) -> None:
@@ -174,6 +211,7 @@ async def _sync_issue_status(card: KanbanCard, current_user: CurrentUser, db: As
         matched = await jira.transition_issue_by_candidates(
             card.jira_key,
             JIRA_STATUS_CANDIDATES.get(card.status, []),
+            target_category=JIRA_STATUS_CATEGORIES.get(card.status),
         )
     except Exception as exc:
         raise HTTPException(424, f"Jira-Status konnte nicht synchronisiert werden: {exc}") from exc
@@ -347,3 +385,77 @@ async def jira_sync(
     card.jira_key = issue.get("key")
     await db.commit()
     return {"jira_key": card.jira_key}
+
+
+@router.get("/{card_id}/jira-detail", dependencies=[RequireAnyStaff])
+async def get_card_jira_detail(
+    card_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """Return full Jira issue detail (description + comments) for a kanban card."""
+    result = await db.execute(select(KanbanCard).where(KanbanCard.id == card_id))
+    card = result.scalar_one_or_none()
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if not card.jira_key:
+        return {"has_jira": False}
+
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
+    connectors = await _get_all_jira_connectors(db, current_user.id)
+    if not connectors:
+        return {"has_jira": True, "error": "Kein Jira-Connector verfügbar"}
+
+    last_error: str = ""
+    for connector in connectors:
+        creds = decrypt_credentials(connector.encrypted_credentials)
+        jira = JiraConnector(base_url=connector.base_url, credentials=creds)
+        jira_base = connector.base_url.rstrip("/")
+        try:
+            detail = await jira.get_issue_detail(card.jira_key)
+            detail["has_jira"] = True
+            detail["jira_browse_url"] = f"{jira_base}/browse/{card.jira_key}"
+            return detail
+        except Exception as e:
+            last_error = str(e)
+
+    first_base = connectors[0].base_url.rstrip("/")
+    return {"has_jira": True, "error": last_error, "key": card.jira_key,
+            "jira_browse_url": f"{first_base}/browse/{card.jira_key}"}
+
+
+@router.post("/{card_id}/jira-comment", dependencies=[RequireAnyStaff])
+async def add_card_jira_comment(
+    card_id: uuid.UUID,
+    body: CommentCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """Add a comment to the Jira ticket linked to this card."""
+    result = await db.execute(select(KanbanCard).where(KanbanCard.id == card_id))
+    card = result.scalar_one_or_none()
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if not card.jira_key:
+        raise HTTPException(400, "Diese Karte hat kein verknüpftes Jira-Ticket")
+
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
+    connectors = await _get_all_jira_connectors(db, current_user.id)
+    if not connectors:
+        raise HTTPException(424, "Kein Jira-Connector verfügbar")
+
+    last_exc: Exception | None = None
+    for connector in connectors:
+        creds = decrypt_credentials(connector.encrypted_credentials)
+        jira = JiraConnector(base_url=connector.base_url, credentials=creds)
+        try:
+            comment = await jira.add_comment(card.jira_key, body.body)
+            return comment
+        except Exception as e:
+            last_exc = e
+
+    raise HTTPException(424, f"Kommentar konnte nicht hinzugefügt werden: {last_exc}") from last_exc

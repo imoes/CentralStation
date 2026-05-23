@@ -15,4 +15,6 @@ class BaseConnector(ABC):
         pass
 
     def _client(self, **kwargs) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=10.0, verify=False, **kwargs)
+        timeout = kwargs.pop("timeout", 10.0)
+        verify = kwargs.pop("verify", False)
+        return httpx.AsyncClient(timeout=timeout, verify=verify, **kwargs)

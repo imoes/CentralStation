@@ -35,7 +35,13 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
   },
   {
     title: 'Agent Einstellungen',
-    keys: ['agent.interval_minutes', 'agent.auto_jira', 'agent.jira_severity_threshold'],
+    keys: [
+      'agent.interval_minutes',
+      'agent.aggregation_interval_minutes',
+      'agent.auto_jira',
+      'agent.jira_severity_threshold',
+      'agent.checkmk_locations',
+    ],
   },
 ];
 
@@ -268,9 +274,11 @@ export class AiSettingsComponent implements OnInit {
       'searxng.base_url':                'SearXNG URL',
       'searxng.enabled':                 'SearXNG aktiviert',
       'searxng.results_count':           'Anzahl Suchergebnisse',
-      'agent.interval_minutes':          'Intervall (Minuten)',
-      'agent.auto_jira':                 'Automatisch Jira-Tickets erstellen',
-      'agent.jira_severity_threshold':   'Mindest-Severity für Jira',
+      'agent.interval_minutes':               'KI-Agent Intervall (Minuten)',
+      'agent.aggregation_interval_minutes':   'Alert-Abruf Intervall (Minuten)',
+      'agent.auto_jira':                      'Automatisch Jira-Tickets erstellen',
+      'agent.jira_severity_threshold':        'Mindest-Severity für Jira',
+      'agent.checkmk_locations':              'CheckMK Standort-Filter (Komma-getrennt, z.B. München,Kassel)',
     };
     return labels[key] ?? key;
   }

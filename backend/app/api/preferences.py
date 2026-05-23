@@ -18,7 +18,7 @@ router = APIRouter(prefix="/preferences", tags=["preferences"])
 DEFAULT_JQL_QUERIES = [
     {
         "name": "Meine offenen Tickets",
-        "jql": "assignee = currentUser() AND status != Done ORDER BY updated DESC",
+        "jql": "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
         "position": 0,
     },
     {
@@ -28,7 +28,7 @@ DEFAULT_JQL_QUERIES = [
     },
     {
         "name": "Hohe Priorität",
-        "jql": "assignee = currentUser() AND priority in (Highest, High) AND status != Done ORDER BY priority ASC, updated DESC",
+        "jql": "assignee = currentUser() AND priority in (Highest, High) AND statusCategory != Done ORDER BY priority ASC, updated DESC",
         "position": 2,
     },
 ]
@@ -46,6 +46,10 @@ class PreferenceUpdate(BaseModel):
     feed_checkmk_min_age_minutes: int | None = None
     feed_sources_enabled: list | None = None
     feed_teams_channels: list | None = None
+    checkmk_locations:   list | None = None
+    checkmk_ve:          list | None = None
+    checkmk_criticality: list | None = None
+    checkmk_os:          list | None = None
 
 
 class JQLQueryCreate(BaseModel):
@@ -101,6 +105,10 @@ async def get_preferences(user: CurrentUser, db: Annotated[AsyncSession, Depends
         "feed_checkmk_min_age_minutes": prefs.feed_checkmk_min_age_minutes or 5,
         "feed_sources_enabled": prefs.feed_sources_enabled or ["checkmk", "graylog", "wazuh"],
         "feed_teams_channels": prefs.feed_teams_channels or [],
+        "checkmk_locations":   prefs.checkmk_locations   or [],
+        "checkmk_ve":          prefs.checkmk_ve          or [],
+        "checkmk_criticality": prefs.checkmk_criticality or [],
+        "checkmk_os":          prefs.checkmk_os          or [],
     }
 
 

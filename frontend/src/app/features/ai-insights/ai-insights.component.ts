@@ -106,7 +106,15 @@ const SEVERITY_COLORS: Record<string, string> = {
                         @if (rec.references?.length) {
                           <div class="rec-refs">
                             @for (ref of rec.references; track ref) {
-                              <a [href]="ref" target="_blank" class="ref-link">{{ ref }}</a>
+                              @if (isUrl(ref)) {
+                                <a [href]="ref" target="_blank" rel="noopener" class="ref-link">
+                                  <mat-icon class="ref-icon">open_in_new</mat-icon>{{ refLabel(ref) }}
+                                </a>
+                              } @else {
+                                <span class="ref-text">
+                                  <mat-icon class="ref-icon">menu_book</mat-icon>{{ ref }}
+                                </span>
+                              }
                             }
                           </div>
                         }
@@ -177,8 +185,11 @@ const SEVERITY_COLORS: Record<string, string> = {
     .rec-action { font-size: 13px; font-weight: 500; flex: 1; }
     .jira-icon { font-size: 14px; width: 14px; height: 14px; color: #0052cc; }
     .rec-rationale { font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-left: 58px; }
-    .rec-refs { margin-left: 58px; margin-top: 4px; }
-    .ref-link { font-size: 11px; color: var(--mat-sys-primary); display: block; }
+    .rec-refs { margin-left: 58px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+    .ref-link { font-size: 11px; color: var(--mat-sys-primary); display: flex; align-items: center; gap: 3px; text-decoration: none; }
+    .ref-link:hover { text-decoration: underline; }
+    .ref-text { font-size: 11px; color: var(--mat-sys-on-surface-variant); display: flex; align-items: center; gap: 3px; }
+    .ref-icon { font-size: 12px; width: 12px; height: 12px; flex-shrink: 0; }
     .jira-list { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 0; }
     .rag-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; }
     .rag-source-chip { font-size: 10px; min-height: 18px; }
@@ -234,5 +245,18 @@ export class AiInsightsComponent implements OnInit, OnDestroy {
 
   sevColor(sev: string): string {
     return (SEVERITY_COLORS as Record<string, string>)[sev] ?? '#9e9e9e';
+  }
+
+  isUrl(ref: string): boolean {
+    return ref.startsWith('http://') || ref.startsWith('https://');
+  }
+
+  refLabel(url: string): string {
+    try {
+      const u = new URL(url);
+      return u.hostname + (u.pathname !== '/' ? u.pathname : '');
+    } catch {
+      return url;
+    }
   }
 }

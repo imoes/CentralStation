@@ -20,10 +20,12 @@ async def lifespan(app: FastAPI):
     from app.services.ai_agent.scheduler import start_scheduler, stop_scheduler
     from app.services.feed_index import ensure_indices
 
-    start_scheduler()
-    # Ensure OpenSearch feed indices exist (non-fatal if OS not yet ready)
+    await start_scheduler()
+    # Ensure OpenSearch feed indices exist, then backfill existing DB alerts
     try:
         await ensure_indices()
+        from app.services.feed_index import backfill_from_db
+        await backfill_from_db(days=7)
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning("OpenSearch index setup deferred: %s", exc)

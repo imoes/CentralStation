@@ -20,7 +20,7 @@ VALID_TYPES = {
     "checkmk", "graylog", "wazuh", "jira", "jira_sd",
     "o365", "teams", "prometheus", "netbox", "id_generator", "it_aikb",
 }  # keep in sync with get_connector() factory
-USER_MANAGED_TYPES = {"checkmk", "graylog", "wazuh", "o365", "teams", "jira", "jira_sd"}
+USER_MANAGED_TYPES = {"o365", "teams", "jira", "jira_sd"}
 
 
 def _is_admin(user) -> bool:
@@ -141,8 +141,12 @@ async def test_my_connector(
 
 @router.get("/", response_model=list[ConnectorResponse], dependencies=[RequireAdmin])
 async def list_connectors(db: Annotated[AsyncSession, Depends(get_db)]):
+    # Only global connectors (owner_user_id IS NULL). Personal per-user connectors
+    # live under /connectors/my and are never shown in the admin global list.
     result = await db.execute(
-        select(ConnectorConfig).order_by(ConnectorConfig.type, ConnectorConfig.name)
+        select(ConnectorConfig)
+        .where(ConnectorConfig.owner_user_id.is_(None))
+        .order_by(ConnectorConfig.type, ConnectorConfig.name)
     )
     return result.scalars().all()
 

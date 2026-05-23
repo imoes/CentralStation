@@ -12,14 +12,20 @@ import httpx
 from app.schemas.connector import ConnectorTestResult
 from app.services.connectors.base import BaseConnector
 
-# Dedup normalization patterns (ref: llm-graylog-analyse)
+# Dedup normalization patterns (ref: llm-graylog-analyse/_DEDUP_PATTERNS)
+# Order matters: more-specific patterns first.
 _DEDUP_PATTERNS = [
-    (re.compile(r'\d{1,3}(?:\.\d{1,3}){3}:\d+'), '<IP:PORT>'),
+    (re.compile(r'\d{1,3}(?:\.\d{1,3}){3}:\d+'), '<IP:PORT>'),     # IP:port before plain IP
     (re.compile(r'\d{1,3}(?:\.\d{1,3}){3}'), '<IP>'),
     (re.compile(r'@[0-9a-fA-F]{6,}'), '@<ID>'),
     (re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'), '<UUID>'),
+    (re.compile(r'\b[0-9a-f]{6,}\b'), '<HEX>'),                     # standalone hex IDs
     (re.compile(r'\b\d{5,}\b'), '<ID>'),
     (re.compile(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[,\.]\d+'), '<TS>'),
+    # Java: FQCN → simple class name  (com.example.Foo → Foo)
+    (re.compile(r'\b(?:java|javax|com|org|net|io)\.[\w.]+\.(\w+)'), r'\1'),
+    # Java: strip exception/error class labels (noise in log messages)
+    (re.compile(r'\b\w+(?:Exception|Error)\b:?\s*'), ''),
 ]
 
 SWITCH_PATTERN = re.compile(r'\b(nsa\d+|nss\d+|nsc\d+)\b', re.IGNORECASE)
@@ -71,7 +77,7 @@ class GraylogConnector(BaseConnector):
         try:
             async with self._client() as client:
                 r = await client.get(
-                    f"{self.base_url}/api/system/info",
+                    f"{self.base_url}/api/system",
                     headers=self._headers(),
                 )
                 r.raise_for_status()
@@ -87,27 +93,43 @@ class GraylogConnector(BaseConnector):
         time_range_seconds: int = 3600,
         limit: int = 100,
     ) -> list[dict]:
-        params = {
-            "query": query,
-            "range": time_range_seconds,
-            "limit": limit,
-            "sort": "timestamp",
-            "order": "desc",
+        payload = {
+            "queries": [{
+                "id": "q1",
+                "timerange": {"type": "relative", "range": time_range_seconds},
+                "query": {"type": "elasticsearch", "query_string": query},
+                "search_types": [{
+                    "id": "st1",
+                    "type": "messages",
+                    "limit": limit,
+                    "offset": 0,
+                    "sort": [{"field": "timestamp", "order": "DESC"}],
+                    "streams": [],
+                }],
+            }]
         }
         async with self._client(timeout=30.0) as client:
-            r = await client.get(
-                f"{self.base_url}/api/search/universal/relative",
+            r = await client.post(
+                f"{self.base_url}/api/views/search/sync",
                 headers=self._headers(),
-                params=params,
+                json=payload,
             )
             r.raise_for_status()
 
         messages = []
-        for msg in r.json().get("messages", []):
+        result = (
+            r.json()
+            .get("results", {})
+            .get("q1", {})
+            .get("search_types", {})
+            .get("st1", {})
+        )
+        for msg in result.get("messages", []):
             m = msg.get("message", {})
             messages.append({
                 "id": m.get("_id", ""),
                 "source": m.get("source", ""),
+                "container_name": m.get("container_name") or m.get("container_tag") or "",
                 "message": m.get("message", ""),
                 "timestamp": m.get("timestamp", ""),
                 "level": m.get("level", 6),

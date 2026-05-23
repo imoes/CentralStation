@@ -2,7 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import {
-  KanbanCard, KanbanCardCreate, KanbanCardMove, KanbanCardUpdate,
+  JiraComment, JiraDetail, KanbanCard, KanbanCardCreate, KanbanCardMove, KanbanCardUpdate,
 } from '../models/kanban.model';
 
 @Injectable({ providedIn: 'root' })
@@ -33,5 +33,13 @@ export class KanbanService {
 
   syncJira(id: string) {
     return this.http.post<{ jira_key: string }>(`${this.api}/${id}/jira-sync`, {});
+  }
+
+  getJiraDetail(id: string) {
+    return this.http.get<JiraDetail>(`${this.api}/${id}/jira-detail`);
+  }
+
+  addJiraComment(id: string, body: string) {
+    return this.http.post<JiraComment>(`${this.api}/${id}/jira-comment`, { body });
   }
 }

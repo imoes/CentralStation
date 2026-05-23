@@ -40,3 +40,26 @@ export interface KanbanCardMove {
   status: KanbanStatus;
   position: number;
 }
+
+export interface JiraComment {
+  id: string;
+  author: string;
+  body: string;
+  created: string;
+  updated?: string;
+}
+
+export interface JiraDetail {
+  has_jira: boolean;
+  error?: string;
+  key?: string;
+  jira_browse_url?: string;
+  summary?: string;
+  description?: string;
+  status?: string;
+  priority?: string;
+  assignee?: string;
+  created?: string;
+  updated?: string;
+  comments?: JiraComment[];
+}
