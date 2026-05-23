@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatCardModule } from '@angular/material/card';
@@ -35,11 +35,14 @@ const SEVERITY_COLORS: Record<string, string> = {
   template: `
     <div class="page-container">
       <div class="page-header">
-        <h2>Alerts</h2>
+        <div>
+          <h2>Alerts</h2>
+          <p class="page-subtitle">Persistenter Alert-Speicher — Incident-Tracking mit Status-Verwaltung</p>
+        </div>
         <div class="header-actions">
           <mat-form-field appearance="outline" class="filter-field">
             <mat-label>Quelle</mat-label>
-            <mat-select [(ngModel)]="filterSource" (selectionChange)="load()">
+            <mat-select [(ngModel)]="filterSource" (selectionChange)="onSourceChange()">
               <mat-option value="">Alle</mat-option>
               <mat-option value="checkmk">CheckMK</mat-option>
               <mat-option value="graylog">Graylog</mat-option>
@@ -65,6 +68,54 @@ const SEVERITY_COLORS: Record<string, string> = {
               <mat-option value="acknowledged">Bestätigt</mat-option>
             </mat-select>
           </mat-form-field>
+
+          @if (filterSource === 'checkmk') {
+            @if (availableCriticalities().length) {
+              <mat-form-field appearance="outline" class="filter-field">
+                <mat-label>Criticality</mat-label>
+                <mat-select [ngModel]="filterCriticality()" (ngModelChange)="filterCriticality.set($event)">
+                  <mat-option value="">Alle</mat-option>
+                  @for (v of availableCriticalities(); track v) {
+                    <mat-option [value]="v">{{ v }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+            }
+            @if (availableVes().length) {
+              <mat-form-field appearance="outline" class="filter-field">
+                <mat-label>Umgebung (VE)</mat-label>
+                <mat-select [ngModel]="filterVe()" (ngModelChange)="filterVe.set($event)">
+                  <mat-option value="">Alle</mat-option>
+                  @for (v of availableVes(); track v) {
+                    <mat-option [value]="v">{{ v }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+            }
+            @if (availableLocations().length) {
+              <mat-form-field appearance="outline" class="filter-field">
+                <mat-label>Location</mat-label>
+                <mat-select [ngModel]="filterLocation()" (ngModelChange)="filterLocation.set($event)">
+                  <mat-option value="">Alle</mat-option>
+                  @for (v of availableLocations(); track v) {
+                    <mat-option [value]="v">{{ v }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+            }
+            @if (availableSites().length) {
+              <mat-form-field appearance="outline" class="filter-field">
+                <mat-label>Site</mat-label>
+                <mat-select [ngModel]="filterSite()" (ngModelChange)="filterSite.set($event)">
+                  <mat-option value="">Alle</mat-option>
+                  @for (v of availableSites(); track v) {
+                    <mat-option [value]="v">{{ v }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+            }
+          }
+
           <button mat-stroked-button (click)="runAggregation()" [disabled]="aggregating()">
             @if (aggregating()) { <mat-spinner diameter="16"></mat-spinner> }
             @else { <mat-icon>sync</mat-icon> }
@@ -77,7 +128,7 @@ const SEVERITY_COLORS: Record<string, string> = {
         <div class="spinner-center"><mat-spinner diameter="40"></mat-spinner></div>
       } @else {
         <div class="alert-list">
-          @for (alert of alerts(); track alert.id) {
+          @for (alert of filteredAlerts(); track alert.id) {
             <div class="alert-row" [class.alert-new]="alert.status === 'new'">
               <div class="severity-bar" [style.background-color]="severityColor(alert.severity)"></div>
               <div class="alert-content">
@@ -88,6 +139,11 @@ const SEVERITY_COLORS: Record<string, string> = {
                     <mat-chip class="chip-severity" [style.background-color]="severityColor(alert.severity) + '33'">
                       {{ alert.severity }}
                     </mat-chip>
+                    @if (alertHost(alert); as host) {
+                      <mat-chip class="chip-host" matTooltip="Host / Server">
+                        <mat-icon>dns</mat-icon>{{ host }}
+                      </mat-chip>
+                    }
                     @if (alert.location_name) {
                       <mat-chip class="chip-location">{{ alert.location_name }}</mat-chip>
                     }
@@ -111,7 +167,7 @@ const SEVERITY_COLORS: Record<string, string> = {
               </div>
             </div>
           }
-          @if (alerts().length === 0) {
+          @if (filteredAlerts().length === 0) {
             <div class="empty-state">Keine Alerts gefunden.</div>
           }
         </div>
@@ -122,6 +178,7 @@ const SEVERITY_COLORS: Record<string, string> = {
     .page-container { padding: 24px; max-width: 1200px; }
     .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
     .page-header h2 { margin: 0; }
+    .page-subtitle { font-size: 13px; color: var(--mat-sys-on-surface-variant); margin: 2px 0 0; }
     .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .filter-field { width: 140px; }
     .alert-list { display: flex; flex-direction: column; gap: 4px; }
@@ -133,6 +190,8 @@ const SEVERITY_COLORS: Record<string, string> = {
     .alert-title { font-size: 14px; font-weight: 500; flex: 1; }
     .alert-chips { display: flex; gap: 4px; }
     mat-chip { font-size: 10px; min-height: 18px; }
+    .chip-host { background: var(--mat-sys-surface-variant); font-family: monospace; }
+    .chip-host mat-icon { font-size: 12px; width: 12px; height: 12px; margin-right: 3px; }
     .alert-body { font-size: 12px; color: var(--mat-sys-on-surface-variant); font-family: monospace; white-space: pre-wrap; word-break: break-all; }
     .alert-meta { font-size: 11px; color: var(--mat-sys-on-surface-variant); margin-top: 4px; }
     .alert-actions { display: flex; align-items: center; padding: 0 8px; }
@@ -150,6 +209,39 @@ export class AlertsComponent implements OnInit, OnDestroy {
   filterSeverity = '';
   filterStatus = 'new';
 
+  // CheckMK-specific metadata filters (client-side, applied on loaded alerts)
+  filterCriticality = signal('');
+  filterVe = signal('');
+  filterLocation = signal('');
+  filterSite = signal('');
+
+  filteredAlerts = computed(() => {
+    let list = this.alerts();
+    const crit = this.filterCriticality();
+    const ve = this.filterVe();
+    const loc = this.filterLocation();
+    const site = this.filterSite();
+    if (crit) list = list.filter(a => (a.metadata_?.['criticality'] ?? '') === crit);
+    if (ve)   list = list.filter(a => (a.metadata_?.['ve'] ?? '') === ve);
+    if (loc)  list = list.filter(a => (a.metadata_?.['location'] ?? '') === loc);
+    if (site) list = list.filter(a => (a.metadata_?.['site'] ?? '') === site);
+    return list;
+  });
+
+  availableCriticalities = computed(() =>
+    [...new Set(this.alerts().map(a => a.metadata_?.['criticality'] as string).filter(Boolean))].sort()
+  );
+  availableVes = computed(() =>
+    [...new Set(this.alerts().map(a => a.metadata_?.['ve'] as string).filter(Boolean))].sort()
+  );
+  availableLocations = computed(() =>
+    [...new Set(this.alerts().map(a => a.metadata_?.['location'] as string).filter(Boolean))].sort()
+  );
+  availableSites = computed(() =>
+    [...new Set(this.alerts().map(a => a.metadata_?.['site'] as string).filter(Boolean))].sort()
+  );
+
+  private readonly STORAGE_KEY = 'cs_alerts_filters';
   private destroy$ = new Subject<void>();
 
   constructor(
@@ -159,6 +251,7 @@ export class AlertsComponent implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit() {
+    this.restoreFilters();
     this.load();
     this.ws.messages().pipe(takeUntil(this.destroy$)).subscribe((msg: WsMessage) => {
       if (msg.type === 'new_alert' || msg.type === 'alert_acknowledged') {
@@ -167,9 +260,40 @@ export class AlertsComponent implements OnInit, OnDestroy {
     });
   }
 
+  private saveFilters() {
+    localStorage.setItem(this.STORAGE_KEY, JSON.stringify({
+      source: this.filterSource,
+      severity: this.filterSeverity,
+      status: this.filterStatus,
+    }));
+  }
+
+  private restoreFilters() {
+    try {
+      const raw = localStorage.getItem(this.STORAGE_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (saved.source   !== undefined) this.filterSource   = saved.source;
+        if (saved.severity !== undefined) this.filterSeverity = saved.severity;
+        if (saved.status   !== undefined) this.filterStatus   = saved.status;
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
   ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); }
 
+  onSourceChange() {
+    if (this.filterSource !== 'checkmk') {
+      this.filterCriticality.set('');
+      this.filterVe.set('');
+      this.filterLocation.set('');
+      this.filterSite.set('');
+    }
+    this.load();
+  }
+
   load() {
+    this.saveFilters();
     this.loading.set(true);
     this.svc.list({
       source: this.filterSource || undefined,
@@ -206,5 +330,11 @@ export class AlertsComponent implements OnInit, OnDestroy {
 
   severityColor(sev: string): string {
     return SEVERITY_COLORS[sev] ?? '#607d8b';
+  }
+
+  alertHost(alert: Alert): string {
+    const m = alert.metadata_;
+    if (!m) return '';
+    return (m['container_name'] as string) || (m['host'] as string) || '';
   }
 }

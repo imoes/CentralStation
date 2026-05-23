@@ -25,6 +25,7 @@ interface FeedItem {
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
   title: string;
   body: string | null;
+  ai_insight: string | null;
   metadata: Record<string, any> | null;
   created_at: string;
   status: 'new' | 'acknowledged';
@@ -35,7 +36,6 @@ interface FeedItem {
 
 interface FeedPrefs {
   checkmk_min_age_minutes: number;
-  sources_enabled: string[];
   teams_channels: string[];
 }
 
@@ -176,19 +176,6 @@ const SEVERITY_COLOR: Record<string, string> = {
                 <span class="slider-value">{{ editPrefs.checkmk_min_age_minutes }} min</span>
               </div>
             </div>
-            <div class="settings-field">
-              <label>Aktivierte Quellen</label>
-              <div class="source-toggles">
-                @for (src of allSources; track src.id) {
-                  <mat-slide-toggle
-                    [(ngModel)]="sourceEnabled[src.id]"
-                    [style.--mdc-switch-selected-track-color]="src.color"
-                    [style.--mdc-switch-selected-handle-color]="src.color">
-                    {{ src.label }}
-                  </mat-slide-toggle>
-                }
-              </div>
-            </div>
           </div>
           <div class="settings-actions">
             <button mat-stroked-button (click)="showSettings.set(false)">Abbrechen</button>
@@ -259,6 +246,14 @@ const SEVERITY_COLOR: Record<string, string> = {
                   {{ expanded.has(item.id) ? 'Weniger anzeigen' : 'Mehr anzeigen' }}
                 </button>
               }
+            }
+
+            <!-- AI Insight -->
+            @if (item.ai_insight) {
+              <div class="ai-insight">
+                <mat-icon class="ai-insight-icon">psychology</mat-icon>
+                <span>{{ item.ai_insight }}</span>
+              </div>
             }
 
             <!-- Sender (email / teams) -->
@@ -410,6 +405,20 @@ const SEVERITY_COLOR: Record<string, string> = {
       mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
     }
     .expand-btn { margin: 0 8px 4px; font-size: 12px; }
+    .ai-insight {
+      margin: 0 16px 10px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent);
+      border-left: 3px solid var(--mat-sys-primary);
+      font-size: 12px; line-height: 1.5;
+      color: var(--mat-sys-on-surface-variant);
+      display: flex; gap: 8px; align-items: flex-start;
+    }
+    .ai-insight-icon {
+      font-size: 16px; height: 16px; width: 16px;
+      color: var(--mat-sys-primary); flex-shrink: 0; margin-top: 1px;
+    }
     .mail-from {
       padding: 0 16px 8px;
       font-size: 12px; color: var(--mat-sys-on-surface-variant);
@@ -465,8 +474,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     os: [], location: [], criticality: [], ve: [],
   };
 
-  editPrefs: FeedPrefs = { checkmk_min_age_minutes: 5, sources_enabled: ['checkmk','graylog','wazuh'], teams_channels: [] };
-  sourceEnabled: Record<string, boolean> = {};
+  editPrefs: FeedPrefs = { checkmk_min_age_minutes: 5, teams_channels: [] };
   private offset = 0;
   private readonly pageSize = 50;
   private hasMore = false;
@@ -482,7 +490,6 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnInit() {
     this.loadPrefs();
-    this.load(true);
     this.refreshTimer = setInterval(() => this.load(true), 30_000);
   }
 
@@ -504,16 +511,20 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   loadPrefs() {
+    const allIds = this.allSources.map(s => s.id);
     this.http.get<any>(`${environment.apiUrl}/preferences`).subscribe({
       next: (p) => {
         this.editPrefs = {
           checkmk_min_age_minutes: p.feed_checkmk_min_age_minutes ?? 5,
-          sources_enabled: p.feed_sources_enabled ?? ['checkmk','graylog','wazuh'],
           teams_channels: p.feed_teams_channels ?? [],
         };
-        this.allSources.forEach(s => {
-          this.sourceEnabled[s.id] = this.editPrefs.sources_enabled.includes(s.id);
-        });
+        const enabled: string[] = p.feed_sources_enabled ?? [];
+        this.activeFilter.set(enabled.length > 0 ? enabled : allIds);
+        this.load(true);
+      },
+      error: () => {
+        this.activeFilter.set(allIds);
+        this.load(true);
       },
     });
   }
@@ -560,6 +571,8 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       this.loadingMore.set(true);
     }
     const params: Record<string, any> = { limit: this.pageSize, offset: this.offset };
+    const activeSources = this.activeFilter();
+    params['sources'] = (activeSources.length > 0 ? activeSources : this.allSources.map(s => s.id)).join(',');
     if (this.severityFilter)    params['severity']    = this.severityFilter;
     if (this.hostFilter)        params['host']        = this.hostFilter;
     if (this.osFilter)          params['os']          = this.osFilter;
@@ -583,11 +596,8 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   savePrefs() {
-    const enabled = this.allSources.filter(s => this.sourceEnabled[s.id]).map(s => s.id);
-    this.editPrefs.sources_enabled = enabled;
     this.http.patch(`${environment.apiUrl}/preferences`, {
       feed_checkmk_min_age_minutes: this.editPrefs.checkmk_min_age_minutes,
-      feed_sources_enabled: enabled,
       feed_teams_channels: this.editPrefs.teams_channels,
     }).subscribe({
       next: () => {
@@ -603,6 +613,10 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.activeFilter.update(prev =>
       prev.includes(src) ? prev.filter(s => s !== src) : [...prev, src]
     );
+    this.http.patch(`${environment.apiUrl}/preferences`, {
+      feed_sources_enabled: this.activeFilter(),
+    }).subscribe();
+    this.load(true);
   }
 
   toggleExpand(id: string) {
