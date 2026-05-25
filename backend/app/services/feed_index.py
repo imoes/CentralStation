@@ -451,6 +451,7 @@ async def search_by_query(
     size: int = 50,
     from_: int = 0,
     user_id: str | None = None,
+    host_scope: list[str] | None = None,
 ) -> list[dict]:
     """Execute an OpenSearch Lucene query string against an index pattern."""
     os_client = get_opensearch()
@@ -474,6 +475,20 @@ async def search_by_query(
             }
         })
 
+    if host_scope:
+        hosts = [h for h in host_scope if h]
+        if hosts:
+            filter_clauses.append({
+                "bool": {
+                    "should": [
+                        {"terms": {"metadata.host.keyword": hosts}},
+                        {"terms": {"metadata.agent.keyword": hosts}},
+                        {"terms": {"metadata.host_candidates.keyword": hosts}},
+                    ],
+                    "minimum_should_match": 1,
+                }
+            })
+
     if filter_clauses:
         body_query: dict = {"bool": {"must": [query], "filter": filter_clauses}}
     else:
@@ -490,6 +505,57 @@ async def search_by_query(
         return [hit["_source"] for hit in resp["hits"]["hits"]]
     except Exception as e:
         log.warning("OpenSearch search_by_query failed (%s): %s", index_pattern, e)
+        return []
+
+
+async def get_user_checkmk_host_scope(db, user_id: str) -> list[str]:
+    """Return CheckMK hosts selected by the user's CheckMK filters.
+
+    Empty result means no CheckMK preselection is active. When filters are set,
+    Graylog/Wazuh Lucene searches are scoped to these monitored host names.
+    """
+    from sqlalchemy import select
+    from app.models.workflow import UserPreference
+
+    try:
+        result = await db.execute(select(UserPreference).where(UserPreference.user_id == user_id))
+        prefs = result.scalar_one_or_none()
+    except Exception as e:
+        log.warning("Could not load user CheckMK scope: %s", e)
+        return []
+
+    if not prefs:
+        return []
+
+    os_filter = _to_list(prefs.checkmk_os)
+    location = _to_list(prefs.checkmk_locations)
+    ve = _to_list(prefs.checkmk_ve)
+    criticality = _to_list(prefs.checkmk_criticality)
+    if not any([os_filter, location, ve, criticality]):
+        return []
+
+    os_client = get_opensearch()
+    try:
+        resp = await os_client.search(
+            index=_index("checkmk"),
+            body={
+                "query": {"match_all": {}},
+                "_source": ["source", "metadata"],
+                "sort": [{"created_at": {"order": "desc"}}],
+                "size": 5000,
+            },
+            ignore_unavailable=True,
+        )
+        raw = [hit["_source"] for hit in resp["hits"]["hits"]]
+        filtered = _apply_metadata_filters(raw, os_filter, location, ve, criticality)
+        hosts: list[str] = []
+        for item in filtered:
+            host = ((item.get("metadata") or {}).get("host") or "").strip()
+            if host and host not in hosts:
+                hosts.append(host)
+        return hosts
+    except Exception as e:
+        log.warning("Could not build CheckMK host scope: %s", e)
         return []
 
 

@@ -175,6 +175,7 @@ async def get_feed(
             index_pattern=index_pattern,
             query_string=query_string,
             user_id=str(user.id),
+            host_scope=await feed_index.get_user_checkmk_host_scope(db, str(user.id)),
             from_=offset,
             size=limit,
         )

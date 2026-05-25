@@ -2,7 +2,7 @@ import { Component, OnInit, OnDestroy, AfterViewInit, ElementRef, ViewChild, sig
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -39,6 +39,16 @@ interface FeedItem {
 interface FeedPrefs {
   checkmk_min_age_minutes: number;
   teams_channels: string[];
+}
+
+interface FeedSearch {
+  id: string;
+  name: string;
+  index_pattern: string;
+  query_string: string;
+  enabled: boolean;
+  is_system: boolean;
+  position: number;
 }
 
 const SOURCE_META: Record<string, { label: string; icon: string; color: string }> = {
@@ -93,6 +103,9 @@ const SEVERITY_COLOR: Record<string, string> = {
           </button>
           <button mat-icon-button (click)="showSettings.set(!showSettings())" matTooltip="Feed-Einstellungen">
             <mat-icon>tune</mat-icon>
+          </button>
+          <button mat-icon-button (click)="toggleSearchManager()" matTooltip="OpenSearch-Suchen" [class.active-icon]="showSearchManager()">
+            <mat-icon>manage_search</mat-icon>
           </button>
           <button mat-icon-button (click)="load(true)" matTooltip="Aktualisieren" [disabled]="loading()">
             <mat-icon>refresh</mat-icon>
@@ -191,6 +204,85 @@ const SEVERITY_COLOR: Record<string, string> = {
           <div class="settings-actions">
             <button mat-stroked-button (click)="showSettings.set(false)">Abbrechen</button>
             <button mat-flat-button color="primary" (click)="savePrefs()">Speichern</button>
+          </div>
+        </mat-card>
+      }
+
+      @if (showSearchManager()) {
+        <mat-card class="settings-card search-manager-card">
+          <div class="search-manager-header">
+            <div>
+              <h3>OpenSearch-Suchen</h3>
+              <p>
+                Lucene Query-Strings gegen <code>cs-feed-graylog</code>, <code>cs-feed-wazuh</code>,
+                <code>cs-feed-checkmk</code> oder <code>cs-feed-*</code>.
+                Deine CheckMK-Filter wählen die berücksichtigten Systeme vor und begrenzen auch Graylog/Wazuh-Treffer auf diese Hosts.
+              </p>
+            </div>
+          </div>
+
+          <div class="ai-search-box">
+            <mat-form-field appearance="outline">
+              <mat-label>Suche per KI-Prompt erzeugen</mat-label>
+              <textarea matInput rows="2" [(ngModel)]="aiSearchPrompt"
+                placeholder="z.B. alle Wazuh Security Alerts von docker Hosts mit Level 7+"></textarea>
+            </mat-form-field>
+            <button mat-flat-button color="primary" (click)="generateSearchWithAi()" [disabled]="generatingSearch() || !aiSearchPrompt.trim()">
+              @if (generatingSearch()) { <mat-spinner diameter="16"></mat-spinner> }
+              @else { <mat-icon>auto_awesome</mat-icon> }
+              Generieren
+            </button>
+          </div>
+
+          <div class="search-editor">
+            <mat-form-field appearance="outline">
+              <mat-label>Name</mat-label>
+              <input matInput [(ngModel)]="searchDraft.name">
+            </mat-form-field>
+            <mat-form-field appearance="outline">
+              <mat-label>Index</mat-label>
+              <mat-select [(ngModel)]="searchDraft.index_pattern">
+                <mat-option value="cs-feed-*">Alle Quellen</mat-option>
+                <mat-option value="cs-feed-graylog">Graylog</mat-option>
+                <mat-option value="cs-feed-wazuh">Wazuh</mat-option>
+                <mat-option value="cs-feed-checkmk">CheckMK</mat-option>
+              </mat-select>
+            </mat-form-field>
+            <mat-form-field appearance="outline" class="query-field">
+              <mat-label>Lucene Query</mat-label>
+              <textarea matInput rows="3" [(ngModel)]="searchDraft.query_string"></textarea>
+            </mat-form-field>
+            <div class="search-editor-actions">
+              <button mat-stroked-button (click)="resetSearchDraft()">Zurücksetzen</button>
+              <button mat-flat-button color="primary" (click)="saveSearchDraft()" [disabled]="!searchDraft.name.trim()">
+                <mat-icon>save</mat-icon>
+                Speichern
+              </button>
+            </div>
+          </div>
+
+          <div class="saved-searches">
+            @for (search of personalSearches(); track search.id) {
+              <div class="saved-search-row">
+                <div class="saved-search-main">
+                  <span class="saved-search-name">{{ search.name }}</span>
+                  <span class="saved-search-query">{{ search.index_pattern }} · {{ search.query_string || '*' }}</span>
+                </div>
+                <div class="saved-search-actions">
+                  <button mat-icon-button matTooltip="Anwenden" (click)="applySavedSearch(search)">
+                    <mat-icon>play_arrow</mat-icon>
+                  </button>
+                  <button mat-icon-button matTooltip="Bearbeiten" (click)="editSavedSearch(search)">
+                    <mat-icon>edit</mat-icon>
+                  </button>
+                  <button mat-icon-button color="warn" matTooltip="Löschen" (click)="deleteSavedSearch(search)">
+                    <mat-icon>delete</mat-icon>
+                  </button>
+                </div>
+              </div>
+            } @empty {
+              <div class="no-searches">Noch keine persönlichen OpenSearch-Suchen gespeichert.</div>
+            }
           </div>
         </mat-card>
       }
@@ -363,6 +455,33 @@ const SEVERITY_COLOR: Record<string, string> = {
     .slider-value { font-size: 14px; font-weight: 600; min-width: 40px; }
     .source-toggles { display: flex; flex-direction: column; gap: 8px; }
     .settings-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; }
+    code { background: var(--mat-sys-surface-variant); padding: 1px 4px; border-radius: 4px; }
+    .search-manager-card { display: flex; flex-direction: column; gap: 14px; }
+    .search-manager-header h3 { margin: 0 0 4px; }
+    .search-manager-header p { margin: 0; color: var(--mat-sys-on-surface-variant); font-size: 12px; line-height: 1.5; }
+    .ai-search-box { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
+    .ai-search-box mat-form-field { width: 100%; }
+    .ai-search-box mat-spinner { display: inline-block; margin-right: 4px; }
+    .search-editor {
+      display: grid;
+      grid-template-columns: 1fr 180px;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: 12px;
+    }
+    .query-field { grid-column: 1 / -1; }
+    .search-editor-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
+    .saved-searches { display: flex; flex-direction: column; gap: 8px; }
+    .saved-search-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 9px 11px; border-radius: 10px; background: var(--mat-sys-surface-variant);
+    }
+    .saved-search-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .saved-search-name { font-weight: 700; font-size: 13px; }
+    .saved-search-query { font-family: monospace; font-size: 11px; color: var(--mat-sys-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .saved-search-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+    .no-searches { color: var(--mat-sys-on-surface-variant); font-size: 13px; padding: 10px; text-align: center; }
 
     /* Feed cards */
     .feed-column { display: flex; flex-direction: column; gap: 12px; }
@@ -494,6 +613,9 @@ const SEVERITY_COLOR: Record<string, string> = {
     .empty-state mat-icon { font-size: 48px; height: 48px; width: 48px; opacity: 0.4; }
     .empty-state p { font-size: 16px; font-weight: 500; margin: 0; }
     .empty-state span { font-size: 13px; }
+    @media (max-width: 760px) {
+      .ai-search-box, .search-editor { grid-template-columns: 1fr; }
+    }
   `],
 })
 export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
@@ -510,9 +632,19 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   loadingMore = signal(false);
   showSettings = signal(false);
   showFilters = signal(false);
+  showSearchManager = signal(false);
   activeFilter = signal<string[]>([]);
   autoEnrich = signal<boolean>(true);
   enrichingIds = signal<Set<string>>(new Set());
+  feedSearches = signal<FeedSearch[]>([]);
+  generatingSearch = signal(false);
+  aiSearchPrompt = '';
+  searchDraft: { id?: string; name: string; index_pattern: string; query_string: string; enabled: boolean } = {
+    name: '',
+    index_pattern: 'cs-feed-graylog',
+    query_string: '',
+    enabled: true,
+  };
   expanded = new Set<string>();
 
   hostFilter = '';
@@ -547,6 +679,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     private http: HttpClient,
     private snackBar: MatSnackBar,
     private route: ActivatedRoute,
+    private router: Router,
   ) {}
 
   ngOnInit() {
@@ -555,6 +688,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.applyRouteParams();
     this.loadPrefs();
     this.loadAutoEnrichSetting();
+    this.loadSearches();
     this.refreshTimer = setInterval(() => this.load(true), 30_000);
   }
 
@@ -623,6 +757,113 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (next && this.filterValues.os.length === 0) {
       this.loadFilterValues();
     }
+  }
+
+  toggleSearchManager() {
+    this.showSearchManager.update(v => !v);
+    if (this.showSearchManager()) this.loadSearches();
+  }
+
+  personalSearches(): FeedSearch[] {
+    return this.feedSearches().filter(s => !s.is_system);
+  }
+
+  loadSearches() {
+    this.http.get<FeedSearch[]>(`${environment.apiUrl}/feed-searches/`).subscribe({
+      next: searches => this.feedSearches.set(searches),
+    });
+  }
+
+  resetSearchDraft() {
+    this.searchDraft = {
+      name: '',
+      index_pattern: 'cs-feed-graylog',
+      query_string: '',
+      enabled: true,
+    };
+    this.aiSearchPrompt = '';
+  }
+
+  generateSearchWithAi() {
+    const prompt = this.aiSearchPrompt.trim();
+    if (!prompt) return;
+    this.generatingSearch.set(true);
+    this.http.post<{ reply: string; index_pattern: string; query_string: string }>(
+      `${environment.apiUrl}/ai/search-assistant`,
+      {
+        message: prompt,
+        context: 'generate an OpenSearch Lucene query for a user-configurable feed search; prefer cs-feed-graylog or cs-feed-wazuh when mentioned',
+      },
+    ).subscribe({
+      next: result => {
+        this.searchDraft = {
+          ...this.searchDraft,
+          name: this.searchDraft.name || prompt.slice(0, 80),
+          index_pattern: result.index_pattern || 'cs-feed-*',
+          query_string: result.query_string || '',
+        };
+        this.generatingSearch.set(false);
+        this.snackBar.open(result.reply || 'Query generiert', '', { duration: 2500 });
+      },
+      error: err => {
+        this.generatingSearch.set(false);
+        this.snackBar.open(err?.error?.detail ?? 'KI konnte keine Query erzeugen', 'OK', { duration: 3500 });
+      },
+    });
+  }
+
+  saveSearchDraft() {
+    const payload = {
+      name: this.searchDraft.name.trim(),
+      index_pattern: this.searchDraft.index_pattern,
+      query_string: this.searchDraft.query_string,
+      enabled: this.searchDraft.enabled,
+    };
+    const request = this.searchDraft.id
+      ? this.http.patch<FeedSearch>(`${environment.apiUrl}/feed-searches/${this.searchDraft.id}`, payload)
+      : this.http.post<FeedSearch>(`${environment.apiUrl}/feed-searches/`, payload);
+    request.subscribe({
+      next: saved => {
+        this.feedSearches.update(searches => {
+          const idx = searches.findIndex(s => s.id === saved.id);
+          if (idx < 0) return [...searches, saved];
+          const next = [...searches];
+          next[idx] = saved;
+          return next;
+        });
+        this.resetSearchDraft();
+        this.snackBar.open('OpenSearch-Suche gespeichert', '', { duration: 2500 });
+      },
+      error: err => this.snackBar.open(err?.error?.detail ?? 'Suche konnte nicht gespeichert werden', 'OK', { duration: 3500 }),
+    });
+  }
+
+  editSavedSearch(search: FeedSearch) {
+    this.searchDraft = {
+      id: search.id,
+      name: search.name,
+      index_pattern: search.index_pattern,
+      query_string: search.query_string,
+      enabled: search.enabled,
+    };
+  }
+
+  deleteSavedSearch(search: FeedSearch) {
+    this.http.delete(`${environment.apiUrl}/feed-searches/${search.id}`).subscribe({
+      next: () => {
+        this.feedSearches.update(searches => searches.filter(s => s.id !== search.id));
+        this.snackBar.open('Suche gelöscht', '', { duration: 2000 });
+      },
+      error: err => this.snackBar.open(err?.error?.detail ?? 'Suche konnte nicht gelöscht werden', 'OK', { duration: 3500 }),
+    });
+  }
+
+  applySavedSearch(search: FeedSearch) {
+    this.routeSearchId = search.id;
+    this.routeQuery = '';
+    this.routeIndex = '';
+    this.router.navigate(['/feed'], { queryParams: { search_id: search.id } });
+    this.load(true);
   }
 
   loadFilterValues() {

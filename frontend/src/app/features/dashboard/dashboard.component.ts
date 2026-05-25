@@ -7,6 +7,7 @@ import {
   signal,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { forkJoin } from 'rxjs';
@@ -15,6 +16,9 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatSelectModule } from '@angular/material/select';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { environment } from '../../../environments/environment';
@@ -23,6 +27,7 @@ import { DashboardWidgetComponent } from './dashboard-widget.component';
 import {
   DashboardWidget,
   DashboardWidgetCreate,
+  Dashboard,
   WidgetData,
 } from './dashboard-widget.model';
 
@@ -31,10 +36,14 @@ import {
   standalone: true,
   imports: [
     CommonModule,
+    FormsModule,
     MatButtonModule,
     MatCardModule,
     MatDialogModule,
+    MatFormFieldModule,
     MatIconModule,
+    MatInputModule,
+    MatSelectModule,
     MatProgressSpinnerModule,
     MatSnackBarModule,
     DashboardWidgetComponent,
@@ -50,6 +59,14 @@ import {
           </p>
         </div>
         <div class="hero-actions">
+          <mat-form-field appearance="outline" class="dashboard-select">
+            <mat-label>Dashboard</mat-label>
+            <mat-select [ngModel]="selectedDashboardId()" (ngModelChange)="selectDashboard($event)">
+              @for (dashboard of dashboards(); track dashboard.id) {
+                <mat-option [value]="dashboard.id">{{ dashboard.name }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
           @if (configMode()) {
             <button mat-flat-button color="primary" (click)="addWidget()">
               <mat-icon>add</mat-icon>
@@ -70,6 +87,28 @@ import {
         <mat-card class="loading-card">
           <mat-spinner diameter="32"></mat-spinner>
           <span>Lade Dashboard...</span>
+        </mat-card>
+      }
+
+      @if (configMode()) {
+        <mat-card class="ai-builder">
+          <div>
+            <h3>Dashboard per KI-Prompt erstellen oder erweitern</h3>
+            <p>Beschreibe ein neues Dashboard oder ein einzelnes Widget, z.B. "Wazuh und Graylog Fehler fuer Docker Hosts".</p>
+          </div>
+          <mat-form-field appearance="outline">
+            <mat-label>Prompt</mat-label>
+            <textarea matInput rows="2" [(ngModel)]="dashboardPrompt"></textarea>
+          </mat-form-field>
+          <button mat-flat-button color="primary" (click)="createWidgetFromPrompt()" [disabled]="creatingFromPrompt() || !dashboardPrompt.trim()">
+            @if (creatingFromPrompt()) { <mat-spinner diameter="18"></mat-spinner> }
+            @else { <mat-icon>auto_awesome</mat-icon> }
+            Widget erstellen
+          </button>
+          <button mat-stroked-button color="primary" (click)="createDashboardFromPrompt()" [disabled]="creatingFromPrompt() || !dashboardPrompt.trim()">
+            <mat-icon>dashboard_customize</mat-icon>
+            Neues Dashboard
+          </button>
         </mat-card>
       }
 
@@ -131,6 +170,7 @@ import {
       font-size: 14px;
     }
     .hero-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    .dashboard-select { width: 240px; }
     .loading-card {
       display: flex;
       align-items: center;
@@ -139,6 +179,20 @@ import {
       margin-bottom: 16px;
       color: var(--mat-sys-on-surface-variant);
     }
+    .ai-builder {
+      display: grid;
+      grid-template-columns: minmax(220px, 320px) 1fr auto auto;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+      border: 1px solid color-mix(in srgb, var(--mat-sys-primary) 24%, transparent);
+      background: color-mix(in srgb, var(--mat-sys-primary) 7%, var(--mat-sys-surface));
+    }
+    .ai-builder h3 { margin: 0 0 4px; font-size: 15px; }
+    .ai-builder p { margin: 0; color: var(--mat-sys-on-surface-variant); font-size: 12px; line-height: 1.4; }
+    .ai-builder mat-form-field { width: 100%; }
+    .ai-builder mat-spinner { display: inline-block; margin-right: 6px; }
     .grid-stack { min-height: 520px; }
     .grid-stack.config-mode {
       background-image:
@@ -154,6 +208,7 @@ import {
       .dashboard-shell { padding: 16px; }
       .hero { align-items: flex-start; flex-direction: column; }
       .hero-actions { justify-content: flex-start; }
+      .ai-builder { grid-template-columns: 1fr; }
     }
   `],
 })
@@ -161,9 +216,13 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   @ViewChild('grid') private gridEl!: ElementRef<HTMLElement>;
 
   widgets = signal<DashboardWidget[]>([]);
+  dashboards = signal<Dashboard[]>([]);
+  selectedDashboardId = signal<string>('');
   widgetData = signal<Record<string, WidgetData>>({});
   configMode = signal(false);
   loading = signal(true);
+  creatingFromPrompt = signal(false);
+  dashboardPrompt = '';
   private grid?: GridStack;
 
   constructor(
@@ -174,16 +233,39 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   ) {}
 
   ngAfterViewInit() {
-    this.loadWidgets();
+    this.loadDashboards();
   }
 
   ngOnDestroy() {
     this.grid?.destroy(false);
   }
 
+  loadDashboards() {
+    this.http.get<Dashboard[]>(`${environment.apiUrl}/dashboard-widgets/dashboards`).subscribe({
+      next: dashboards => {
+        this.dashboards.set(dashboards);
+        const selected = this.selectedDashboardId() || dashboards.find(d => d.is_default)?.id || dashboards[0]?.id || '';
+        this.selectedDashboardId.set(selected);
+        this.loadWidgets();
+      },
+      error: () => {
+        this.loading.set(false);
+        this.snackBar.open('Dashboards konnten nicht geladen werden', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  selectDashboard(dashboardId: string) {
+    this.selectedDashboardId.set(dashboardId);
+    this.widgetData.set({});
+    this.loadWidgets();
+  }
+
   loadWidgets() {
     this.loading.set(true);
-    this.http.get<DashboardWidget[]>(`${environment.apiUrl}/dashboard-widgets/`).subscribe({
+    const params: Record<string, string> = {};
+    if (this.selectedDashboardId()) params['dashboard_id'] = this.selectedDashboardId();
+    this.http.get<DashboardWidget[]>(`${environment.apiUrl}/dashboard-widgets/`, { params }).subscribe({
       next: widgets => {
         this.widgets.set(widgets);
         this.loading.set(false);
@@ -269,7 +351,10 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     );
     ref.afterClosed().subscribe(payload => {
       if (!payload) return;
-      this.http.post<DashboardWidget>(`${environment.apiUrl}/dashboard-widgets/`, payload).subscribe({
+      this.http.post<DashboardWidget>(`${environment.apiUrl}/dashboard-widgets/`, {
+        ...payload,
+        dashboard_id: this.selectedDashboardId(),
+      }).subscribe({
         next: widget => {
           this.widgets.update(ws => [...ws, widget]);
           this.rebuildGrid();
@@ -277,6 +362,77 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
         },
         error: () => this.snackBar.open('Widget konnte nicht angelegt werden', 'OK', { duration: 4000 }),
       });
+    });
+  }
+
+  createWidgetFromPrompt() {
+    const prompt = this.dashboardPrompt.trim();
+    if (!prompt) return;
+    this.creatingFromPrompt.set(true);
+    this.http.post<{ actions: Array<{ type: string; id: string }>; reply?: string }>(
+      `${environment.apiUrl}/ai/search-assistant`,
+      {
+        message: prompt,
+        context: 'user is configuring the dashboard; create one useful dashboard widget',
+        create_widget: true,
+        dashboard_id: this.selectedDashboardId(),
+        name: 'KI: ' + prompt.slice(0, 48),
+        widget_type: 'list',
+      },
+    ).subscribe({
+      next: res => {
+        this.creatingFromPrompt.set(false);
+        this.dashboardPrompt = '';
+        this.snackBar.open(res.reply || 'Widget erstellt', '', { duration: 2500 });
+        this.loadWidgets();
+      },
+      error: err => {
+        this.creatingFromPrompt.set(false);
+        this.snackBar.open(err?.error?.detail ?? 'KI konnte kein Widget erstellen', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  createDashboardFromPrompt() {
+    const prompt = this.dashboardPrompt.trim();
+    if (!prompt) return;
+    this.creatingFromPrompt.set(true);
+    this.http.post<Dashboard>(`${environment.apiUrl}/dashboard-widgets/dashboards`, {
+      name: 'KI: ' + prompt.slice(0, 64),
+      description: prompt,
+      is_default: false,
+    }).subscribe({
+      next: dashboard => {
+        this.http.post<{ actions: Array<{ type: string; id: string }>; reply?: string }>(
+          `${environment.apiUrl}/ai/search-assistant`,
+          {
+            message: prompt,
+            context: 'create an initial list widget for a new dashboard from this prompt',
+            create_widget: true,
+            dashboard_id: dashboard.id,
+            name: dashboard.name,
+            widget_type: 'list',
+          },
+        ).subscribe({
+          next: res => {
+            this.creatingFromPrompt.set(false);
+            this.dashboardPrompt = '';
+            this.dashboards.update(ds => [...ds, dashboard]);
+            this.selectedDashboardId.set(dashboard.id);
+            this.snackBar.open(res.reply || 'Dashboard erstellt', '', { duration: 2500 });
+            this.loadWidgets();
+          },
+          error: err => {
+            this.creatingFromPrompt.set(false);
+            this.snackBar.open(err?.error?.detail ?? 'Dashboard wurde erstellt, aber kein KI-Widget angelegt', 'OK', { duration: 4000 });
+            this.loadDashboards();
+          },
+        });
+      },
+      error: err => {
+        this.creatingFromPrompt.set(false);
+        this.snackBar.open(err?.error?.detail ?? 'Dashboard konnte nicht erstellt werden', 'OK', { duration: 4000 });
+      },
     });
   }
 

@@ -48,7 +48,7 @@ interface FeedSearch {
         <input matInput [(ngModel)]="title">
       </mat-form-field>
 
-      @if (widgetType !== 'timeseries' && widgetType !== 'grafana_panel') {
+      @if (widgetType !== 'timeseries' && widgetType !== 'grafana_panel' && widgetType !== 'ai_summary') {
         <mat-form-field appearance="outline">
           <mat-label>Gespeicherte Suche optional</mat-label>
           <mat-select [(ngModel)]="selectedSearchId" (ngModelChange)="applySearch()">
@@ -130,7 +130,7 @@ interface FeedSearch {
   `,
   styles: [`
     .dialog-body { min-width: 520px; display: flex; flex-direction: column; gap: 12px; padding-top: 6px; }
-    .type-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+    .type-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
     .type-tile {
       border: 1px solid var(--mat-sys-outline-variant);
       border-radius: 12px;
@@ -155,6 +155,8 @@ export class AddWidgetDialogComponent implements OnInit {
     { value: 'stat', label: 'Stat', icon: 'counter_1' },
     { value: 'list', label: 'Liste', icon: 'view_list' },
     { value: 'donut', label: 'Donut', icon: 'donut_large' },
+    { value: 'ai_summary', label: 'KI-Lage', icon: 'psychology' },
+    { value: 'top_hosts', label: 'Top Hosts', icon: 'dns' },
     { value: 'timeseries', label: 'Zeitreihe', icon: 'show_chart' },
     { value: 'grafana_panel', label: 'Grafana', icon: 'dashboard' },
   ] as const;
@@ -190,6 +192,8 @@ export class AddWidgetDialogComponent implements OnInit {
       stat: 'Alert Count',
       list: 'Neueste Alerts',
       donut: 'Severity-Verteilung',
+      ai_summary: 'KI-Lagebericht',
+      top_hosts: 'Top Problem-Hosts',
       timeseries: 'CPU-Auslastung',
       grafana_panel: 'Grafana Panel',
     };
@@ -223,6 +227,10 @@ export class AddWidgetDialogComponent implements OnInit {
       this.ref.close({ ...base, config: { index_pattern: this.indexPattern, query_string: this.queryString, limit: Number(this.limit) || 8 } });
     } else if (this.widgetType === 'donut') {
       this.ref.close({ ...base, gs_w: 5, gs_h: 4, config: { index_pattern: this.indexPattern, query_string: this.queryString } });
+    } else if (this.widgetType === 'ai_summary') {
+      this.ref.close({ ...base, gs_w: 4, gs_h: 2, config: { agent_type: 'sysadmin' } });
+    } else if (this.widgetType === 'top_hosts') {
+      this.ref.close({ ...base, gs_w: 4, gs_h: 3, config: { index_pattern: this.indexPattern, query_string: this.queryString || 'NOT status:resolved', limit: Number(this.limit) || 8 } });
     } else if (this.widgetType === 'timeseries') {
       this.ref.close({ ...base, gs_w: 5, gs_h: 4, config: { promql: this.promql, step: this.step, hours: Number(this.hours) || 4, unit: this.unit } });
     } else {
