@@ -41,3 +41,4 @@ opensearch-py==2.7.1
 
 # Utils
 python-dotenv==1.0.1
+python-dateutil>=2.9

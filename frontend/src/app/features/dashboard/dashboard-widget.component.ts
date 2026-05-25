@@ -258,10 +258,47 @@ export class DashboardWidgetComponent {
 
   readonly timeseriesOptions = computed(() => {
     const d = this.data() as TimeseriesData | undefined;
+    const unit = d?.unit ?? '';
+
+    // Multi-host: series_list → one line per host
+    if (d?.series_list && d.series_list.length > 0) {
+      // Use timestamps from the first non-empty series as x-axis
+      const first = d.series_list.find(s => s.series.length > 0);
+      const xLabels = (first?.series ?? []).map(p =>
+        new Date(p.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      );
+      const palette = ['#60a5fa', '#34d399', '#f97316', '#a78bfa', '#fb7185', '#facc15'];
+      return {
+        tooltip: { trigger: 'axis' },
+        legend: { bottom: 0, textStyle: { color: '#94a3b8', fontSize: 10 } },
+        grid: { left: 50, right: 14, top: 16, bottom: 40 },
+        xAxis: {
+          type: 'category',
+          data: xLabels,
+          axisLabel: { color: '#94a3b8', fontSize: 10 },
+        },
+        yAxis: {
+          type: 'value',
+          axisLabel: { formatter: `{value}${unit}`, color: '#94a3b8', fontSize: 10 },
+          splitLine: { lineStyle: { color: '#334155' } },
+        },
+        series: d.series_list.map((s, i) => ({
+          name: s.label,
+          type: 'line',
+          smooth: true,
+          showSymbol: false,
+          lineStyle: { width: 2, color: palette[i % palette.length] },
+          itemStyle: { color: palette[i % palette.length] },
+          data: s.series.map(p => p.value),
+        })),
+      };
+    }
+
+    // Single host
     const series = Array.isArray(d?.series) ? d.series : [];
     return {
       tooltip: { trigger: 'axis' },
-      grid: { left: 42, right: 14, top: 16, bottom: 28 },
+      grid: { left: 50, right: 14, top: 16, bottom: 28 },
       xAxis: {
         type: 'category',
         data: series.map(p =>
@@ -271,7 +308,7 @@ export class DashboardWidgetComponent {
       },
       yAxis: {
         type: 'value',
-        axisLabel: { formatter: `{value}${d?.unit ?? ''}`, color: '#94a3b8', fontSize: 10 },
+        axisLabel: { formatter: `{value}${unit}`, color: '#94a3b8', fontSize: 10 },
         splitLine: { lineStyle: { color: '#334155' } },
       },
       series: [{

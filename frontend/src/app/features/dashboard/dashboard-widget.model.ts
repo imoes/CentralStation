@@ -58,7 +58,8 @@ export interface TopHostsData {
 }
 
 export interface TimeseriesData {
-  series: Array<{ time: string; value: number }>;
+  series?: Array<{ time: string; value: number }>;
+  series_list?: Array<{ label: string; series: Array<{ time: string; value: number }>; error?: string }>;
   unit?: string;
   error?: string;
 }

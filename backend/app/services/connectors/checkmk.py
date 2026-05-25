@@ -278,85 +278,123 @@ class CheckMKConnector(BaseConnector):
             })
         return results
 
+    def _basic_auth_headers(self) -> dict:
+        """Basic Auth headers for endpoints that don't accept Bearer (e.g. metrics API)."""
+        import base64
+        user = self.credentials.get("username", "")
+        password = self.credentials.get("password", "")
+        encoded = base64.b64encode(f"{user}:{password}".encode()).decode()
+        return {"Authorization": f"Basic {encoded}", "Accept": "application/json", "Content-Type": "application/json"}
+
     async def get_graph_data(
         self,
         host_name: str,
         service_description: str,
         graph_index: int = 0,
         hours: int = 4,
+        metric_id: str = "",
     ) -> dict:
-        """Fetch RRD time series data from CheckMK graph recipe API.
+        """Fetch RRD time series from CheckMK metrics API.
 
         Returns {"series": [{"time": iso, "value": float}], "title": str, "unit": str}
-        or {"error": str} on failure.
+        or {"series": [], "error": str} on failure.
 
-        CheckMK endpoint: POST /domain-types/graph_recipe/actions/get/invoke
+        Endpoint: POST /domain-types/metric/actions/get/invoke
+        Note: 'site' field must NOT be sent — omitting it makes the API resolve the site
+        automatically. Basic Auth required (Bearer is rejected by this endpoint).
         """
         end = datetime.now(timezone.utc)
         start = end - timedelta(hours=hours)
+        fmt = lambda dt: dt.strftime("%Y-%m-%d %H:%M:%S")
 
-        body = {
-            "specification": ["template", {
-                "host_name": host_name,
-                "service_description": service_description,
-                "graph_index": graph_index,
-            }],
-            "data_range": {
-                "time_range": {
-                    "start": start.isoformat(),
-                    "end": end.isoformat(),
-                }
-            },
-            "consolidation_function": "average",
-            "resolution": max(60, int(hours * 3600 / 300)),  # ~300 points max
+        # CheckMK metric endpoint uses graph_index as an implicit ordering;
+        # we fetch all metrics and pick by index (default: first = index 0).
+        body: dict = {
+            "time_range": {"start": fmt(start), "end": fmt(end)},
+            "reduce": "max",
+            "host_name": host_name,
+            "service_description": service_description,
+            "type": "single_metric",
         }
+        if metric_id:
+            body["metric_id"] = metric_id
+
+        # Derive api_base from first candidate (omit /domain-types/... path)
+        candidates = self._api_base_candidates()
+        if not candidates:
+            return {"series": [], "error": "CheckMK base_url is empty"}
+        api_base = candidates[0]
 
         try:
-            resp = await self._request(
-                "POST",
-                "/domain-types/graph_recipe/actions/get/invoke",
-                json=body,
-                headers={**self._headers(), "Content-Type": "application/json"},
-            )
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            return {"series": [], "error": f"CheckMK HTTP {e.response.status_code}: {e.response.text[:200]}"}
+            async with self._client() as client:
+                resp = await client.post(
+                    f"{api_base}/domain-types/metric/actions/get/invoke",
+                    headers=self._basic_auth_headers(),
+                    json=body,
+                )
         except Exception as e:
             return {"series": [], "error": str(e)}
 
+        if resp.status_code != 200:
+            # On failure without metric_id, try fetching the nth metric by listing metrics
+            if not metric_id:
+                return await self._get_graph_data_by_index(host_name, service_description, graph_index, hours, api_base)
+            return {"series": [], "error": f"CheckMK HTTP {resp.status_code}: {resp.text[:200]}"}
+
         data = resp.json()
-        graph = data.get("value", data)
+        step = int(data.get("step", 60))
+        tr = data.get("time_range", {})
+        # Parse start timestamp from ISO string returned by API
+        from dateutil.parser import parse as parse_dt
+        try:
+            ts_start = parse_dt(tr["start"]).timestamp()
+        except Exception:
+            ts_start = start.timestamp()
 
-        # Extract unit title
-        unit_raw = graph.get("unit", {})
-        unit = unit_raw.get("title", "") if isinstance(unit_raw, dict) else str(unit_raw or "")
+        metrics: list = data.get("metrics", [])
+        if not metrics:
+            return {"series": [], "error": "No metrics returned"}
 
-        title = graph.get("title", f"{service_description} #{graph_index}")
+        # Pick by index (graph_index selects which curve)
+        curve = metrics[min(graph_index, len(metrics) - 1)]
+        title = curve.get("title", service_description)
+        data_points: list = curve.get("data_points", [])
 
-        # curves → first curve with rrddata
-        curves: list = graph.get("curves", [])
-        if not curves:
-            return {"series": [], "title": title, "unit": unit, "error": "No graph curves returned"}
+        series = [
+            {
+                "time": datetime.fromtimestamp(ts_start + i * step, tz=timezone.utc).isoformat(),
+                "value": round(float(v), 4),
+            }
+            for i, v in enumerate(data_points)
+            if v is not None
+        ]
+        return {"series": series, "title": title, "unit": ""}
 
-        # rrddata format: list of [start_ts, end_ts, step, [v, v, ...]]
-        # OR list of floats directly (older format)
-        first_curve = curves[0]
-        rrddata = first_curve.get("rrddata", [])
-
-        series: list[dict] = []
-        for segment in rrddata:
-            if isinstance(segment, (list, tuple)) and len(segment) == 4:
-                seg_start, _seg_end, step, values = segment
-                for i, v in enumerate(values):
-                    if v is None:
-                        continue
-                    ts = seg_start + i * step
-                    series.append({
-                        "time": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
-                        "value": round(float(v), 4),
-                    })
-
-        return {"series": series, "title": title, "unit": unit}
+    async def _get_graph_data_by_index(
+        self, host_name: str, service_description: str, graph_index: int, hours: int, api_base: str
+    ) -> dict:
+        """Fetch graph data by listing available metric IDs and picking by index."""
+        # Get available metric IDs from service query
+        try:
+            r = await self._request(
+                "POST",
+                "/domain-types/service/collections/all",
+                json={"query": {"op": "and", "expr": [
+                    {"op": "=", "left": "host_name", "right": host_name},
+                    {"op": "=", "left": "description", "right": service_description},
+                ]}, "columns": ["metrics"]},
+            )
+            r.raise_for_status()
+            items = r.json().get("value", [])
+            if not items:
+                return {"series": [], "error": f"Service not found: {host_name}/{service_description}"}
+            metric_ids: list[str] = items[0].get("extensions", {}).get("metrics", [])
+            if not metric_ids:
+                return {"series": [], "error": "No metrics available for this service"}
+            metric_id = metric_ids[min(graph_index, len(metric_ids) - 1)]
+            return await self.get_graph_data(host_name, service_description, graph_index, hours, metric_id=metric_id)
+        except Exception as e:
+            return {"series": [], "error": str(e)}
 
     async def list_services(self, host_name: str) -> list[dict]:
         """Return all services for a host (name + state), used to populate metric picker."""
