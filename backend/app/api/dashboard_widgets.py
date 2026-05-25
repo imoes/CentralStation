@@ -514,43 +514,74 @@ async def get_widget_data(
         return {"hosts": hosts}
 
     elif w.widget_type == "timeseries":
-        # Prometheus-backed timeseries: delegate to PrometheusConnector
         from app.services.connectors import get_connector
         from app.core.security import decrypt_credentials
         from app.models.connector import ConnectorConfig as ConnectorModel
         from sqlalchemy import select as sa_select
 
-        prom_result = await db.execute(
-            sa_select(ConnectorModel)
-            .where(ConnectorModel.type == "prometheus")
-            .where(ConnectorModel.enabled == True)  # noqa: E712
-            .limit(1)
-        )
-        prom_conn = prom_result.scalar_one_or_none()
-        if not prom_conn:
-            return {"series": [], "unit": "", "error": "No Prometheus connector configured"}
+        data_source = cfg.get("data_source", "prometheus")
 
-        credentials = decrypt_credentials(prom_conn.encrypted_credentials)
-        connector = get_connector("prometheus", prom_conn.base_url, credentials)
-        promql = cfg.get("promql", "")
-        if not promql:
-            return {"series": [], "unit": ""}
-        hours = int(cfg.get("hours", 4))
-        step = cfg.get("step", "1m")
-        end = datetime.now(timezone.utc)
-        start = end - timedelta(hours=hours)
-        try:
-            result = await connector.query_range(promql, start.isoformat(), end.isoformat(), step)
-            data_results = result.get("data", {}).get("result", [])
-            if not data_results:
-                return {"series": [], "unit": cfg.get("unit", "")}
-            series = [
-                {"time": datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat(), "value": float(v)}
-                for ts, v in data_results[0].get("values", [])
-            ]
-            return {"series": series, "unit": cfg.get("unit", "")}
-        except Exception as e:
-            return {"series": [], "unit": "", "error": str(e)}
+        if data_source == "checkmk":
+            cmk_result = await db.execute(
+                sa_select(ConnectorModel)
+                .where(ConnectorModel.type == "checkmk")
+                .where(ConnectorModel.enabled == True)  # noqa: E712
+                .limit(1)
+            )
+            cmk_conn = cmk_result.scalar_one_or_none()
+            if not cmk_conn:
+                return {"series": [], "unit": "", "error": "No CheckMK connector configured"}
+
+            credentials = decrypt_credentials(cmk_conn.encrypted_credentials)
+            connector = get_connector("checkmk", cmk_conn.base_url, credentials)
+            host = cfg.get("host", "")
+            service = cfg.get("service", "")
+            if not host or not service:
+                return {"series": [], "unit": "", "error": "host and service required for CheckMK timeseries"}
+
+            result = await connector.get_graph_data(
+                host_name=host,
+                service_description=service,
+                graph_index=int(cfg.get("graph_index", 0)),
+                hours=int(cfg.get("hours", 4)),
+            )
+            if cfg.get("unit"):
+                result["unit"] = cfg["unit"]
+            return result
+
+        else:
+            # Prometheus-backed timeseries
+            prom_result = await db.execute(
+                sa_select(ConnectorModel)
+                .where(ConnectorModel.type == "prometheus")
+                .where(ConnectorModel.enabled == True)  # noqa: E712
+                .limit(1)
+            )
+            prom_conn = prom_result.scalar_one_or_none()
+            if not prom_conn:
+                return {"series": [], "unit": "", "error": "No Prometheus connector configured"}
+
+            credentials = decrypt_credentials(prom_conn.encrypted_credentials)
+            connector = get_connector("prometheus", prom_conn.base_url, credentials)
+            promql = cfg.get("promql", "")
+            if not promql:
+                return {"series": [], "unit": ""}
+            hours = int(cfg.get("hours", 4))
+            step = cfg.get("step", "1m")
+            end = datetime.now(timezone.utc)
+            start = end - timedelta(hours=hours)
+            try:
+                result = await connector.query_range(promql, start.isoformat(), end.isoformat(), step)
+                data_results = result.get("data", {}).get("result", [])
+                if not data_results:
+                    return {"series": [], "unit": cfg.get("unit", "")}
+                series = [
+                    {"time": datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat(), "value": float(v)}
+                    for ts, v in data_results[0].get("values", [])
+                ]
+                return {"series": series, "unit": cfg.get("unit", "")}
+            except Exception as e:
+                return {"series": [], "unit": "", "error": str(e)}
 
     elif w.widget_type == "grafana_panel":
         # Grafana panel is rendered client-side as iframe; backend returns URL only
