@@ -104,7 +104,7 @@ const SEVERITY_COLOR: Record<string, string> = {
           <button mat-icon-button (click)="showSettings.set(!showSettings())" matTooltip="Feed-Einstellungen">
             <mat-icon>tune</mat-icon>
           </button>
-          <button mat-icon-button (click)="toggleSearchManager()" matTooltip="OpenSearch-Suchen" [class.active-icon]="showSearchManager()">
+          <button mat-icon-button (click)="toggleSearchManager()" matTooltip="OpenSearch-Suchen" [class.active-icon]="showSearchManager() || !!activeSearch()">
             <mat-icon>manage_search</mat-icon>
           </button>
           <button mat-icon-button (click)="load(true)" matTooltip="Aktualisieren" [disabled]="loading()">
@@ -208,6 +208,21 @@ const SEVERITY_COLOR: Record<string, string> = {
         </mat-card>
       }
 
+      <!-- ── Active search indicator ──────────────────────────────────── -->
+      @if (activeSearch()) {
+        <div class="active-search-bar">
+          <mat-icon>manage_search</mat-icon>
+          <span class="active-search-name">{{ activeSearch()!.name }}</span>
+          <code class="active-search-index">{{ activeSearch()!.index_pattern }}</code>
+          @if (activeSearch()!.query_string) {
+            <code class="active-search-query">{{ activeSearch()!.query_string }}</code>
+          }
+          <button mat-icon-button class="clear-search-btn" (click)="clearSearch()" matTooltip="Suche zurücksetzen">
+            <mat-icon>close</mat-icon>
+          </button>
+        </div>
+      }
+
       @if (showSearchManager()) {
         <mat-card class="settings-card search-manager-card">
           <div class="search-manager-header">
@@ -216,10 +231,30 @@ const SEVERITY_COLOR: Record<string, string> = {
               <p>
                 Lucene Query-Strings gegen <code>cs-feed-graylog</code>, <code>cs-feed-wazuh</code>,
                 <code>cs-feed-checkmk</code> oder <code>cs-feed-*</code>.
-                Deine CheckMK-Filter wählen die berücksichtigten Systeme vor und begrenzen auch Graylog/Wazuh-Treffer auf diese Hosts.
+                Deine CheckMK-Filter wählen die berücksichtigten Systeme vor.
               </p>
             </div>
           </div>
+
+          <!-- System searches -->
+          @if (systemSearches().length > 0) {
+            <div class="system-searches-section">
+              <div class="section-label">Vorgefertigte System-Suchen</div>
+              <div class="system-search-grid">
+                @for (s of systemSearches(); track s.id) {
+                  <button type="button" class="system-search-tile"
+                          [class.active]="activeSearch()?.id === s.id"
+                          (click)="applySavedSearch(s)">
+                    <div class="system-search-name">{{ s.name }}</div>
+                    <div class="system-search-meta">
+                      <code>{{ s.index_pattern }}</code>
+                      @if (s.query_string) { <span>· {{ s.query_string }}</span> }
+                    </div>
+                  </button>
+                }
+              </div>
+            </div>
+          }
 
           <div class="ai-search-box">
             <mat-form-field appearance="outline">
@@ -456,6 +491,34 @@ const SEVERITY_COLOR: Record<string, string> = {
     .source-toggles { display: flex; flex-direction: column; gap: 8px; }
     .settings-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; }
     code { background: var(--mat-sys-surface-variant); padding: 1px 4px; border-radius: 4px; }
+    .active-search-bar {
+      display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+      background: color-mix(in srgb, var(--mat-sys-primary) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--mat-sys-primary) 30%, transparent);
+      border-radius: 12px; font-size: 13px; flex-wrap: wrap;
+    }
+    .active-search-bar mat-icon { color: var(--mat-sys-primary); font-size: 18px; height: 18px; width: 18px; flex-shrink: 0; }
+    .active-search-name { font-weight: 700; color: var(--mat-sys-primary); }
+    .active-search-index { background: var(--mat-sys-surface-variant); padding: 1px 6px; border-radius: 4px; font-size: 11px; }
+    .active-search-query { background: var(--mat-sys-surface-variant); padding: 1px 6px; border-radius: 4px; font-size: 11px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .clear-search-btn { margin-left: auto; }
+    .system-searches-section { display: flex; flex-direction: column; gap: 8px; }
+    .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--mat-sys-on-surface-variant); }
+    .system-search-grid { display: flex; flex-direction: column; gap: 6px; }
+    .system-search-tile {
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 10px 12px; border-radius: 10px; text-align: left;
+      border: 1px solid var(--mat-sys-outline-variant);
+      background: var(--mat-sys-surface); cursor: pointer;
+      transition: background 0.15s;
+    }
+    .system-search-tile:hover { background: var(--mat-sys-surface-variant); }
+    .system-search-tile.active {
+      border-color: var(--mat-sys-primary);
+      background: color-mix(in srgb, var(--mat-sys-primary) 10%, transparent);
+    }
+    .system-search-name { font-size: 13px; font-weight: 700; }
+    .system-search-meta { font-size: 11px; color: var(--mat-sys-on-surface-variant); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .search-manager-card { display: flex; flex-direction: column; gap: 14px; }
     .search-manager-header h3 { margin: 0 0 4px; }
     .search-manager-header p { margin: 0; color: var(--mat-sys-on-surface-variant); font-size: 12px; line-height: 1.5; }
@@ -637,6 +700,8 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   autoEnrich = signal<boolean>(true);
   enrichingIds = signal<Set<string>>(new Set());
   feedSearches = signal<FeedSearch[]>([]);
+  activeSearch = signal<FeedSearch | null>(null);
+  systemSearches = computed(() => this.feedSearches().filter(s => s.is_system));
   generatingSearch = signal(false);
   aiSearchPrompt = '';
   searchDraft: { id?: string; name: string; index_pattern: string; query_string: string; enabled: boolean } = {
@@ -761,7 +826,6 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
 
   toggleSearchManager() {
     this.showSearchManager.update(v => !v);
-    if (this.showSearchManager()) this.loadSearches();
   }
 
   personalSearches(): FeedSearch[] {
@@ -770,8 +834,23 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
 
   loadSearches() {
     this.http.get<FeedSearch[]>(`${environment.apiUrl}/feed-searches/`).subscribe({
-      next: searches => this.feedSearches.set(searches),
+      next: searches => {
+        this.feedSearches.set(searches);
+        if (this.routeSearchId) {
+          const found = searches.find(s => s.id === this.routeSearchId);
+          if (found) this.activeSearch.set(found);
+        }
+      },
     });
+  }
+
+  clearSearch() {
+    this.activeSearch.set(null);
+    this.routeSearchId = '';
+    this.routeQuery = '';
+    this.routeIndex = '';
+    this.router.navigate(['/feed'], { queryParams: {} });
+    this.load(true);
   }
 
   resetSearchDraft() {
@@ -859,6 +938,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   applySavedSearch(search: FeedSearch) {
+    this.activeSearch.set(search);
     this.routeSearchId = search.id;
     this.routeQuery = '';
     this.routeIndex = '';
