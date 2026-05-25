@@ -180,7 +180,7 @@ import { JiraComment, JiraDetail, KanbanCard, KanbanPriority, KanbanStatus } fro
       <button mat-button (click)="ref.close()">Abbrechen</button>
       <button mat-flat-button color="primary" [disabled]="form.invalid || saving()" (click)="save()">
         @if (saving()) { <mat-spinner diameter="18"></mat-spinner> }
-        @else { <mat-icon>save</mat-icon> Speichern }
+        @else { <ng-container><mat-icon>save</mat-icon> Speichern</ng-container> }
       </button>
     </div>
   `,

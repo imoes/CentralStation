@@ -53,13 +53,23 @@ def upgrade() -> None:
           (:id4, NULL, 'cs-feed-wazuh',
            'Wazuh Security Alerts (Level 7+)',
            'metadata.rule_level:>=7',
-           true, true, 3)
+           true, true, 3),
+          (:id5, NULL, 'cs-feed-checkmk', 'Alle CheckMK-Alerts', '', true, true, 10),
+          (:id6, NULL, 'cs-feed-graylog', 'Alle Graylog-Logs', '', true, true, 11),
+          (:id7, NULL, 'cs-feed-wazuh', 'Alle Wazuh-Alerts', '', true, true, 12),
+          (:id8, NULL, 'cs-feed-*', 'Alle Quellen', '', true, true, 13),
+          (:id9, NULL, 'cs-feed-*', 'Kritische und Hohe Alerts', 'severity:(critical OR high)', true, true, 14)
         """),
         {
             "id1": str(uuid.uuid4()),
             "id2": str(uuid.uuid4()),
             "id3": str(uuid.uuid4()),
             "id4": str(uuid.uuid4()),
+            "id5": str(uuid.uuid4()),
+            "id6": str(uuid.uuid4()),
+            "id7": str(uuid.uuid4()),
+            "id8": str(uuid.uuid4()),
+            "id9": str(uuid.uuid4()),
         },
     )
 

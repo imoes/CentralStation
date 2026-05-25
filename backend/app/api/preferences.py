@@ -50,6 +50,7 @@ class PreferenceUpdate(BaseModel):
     checkmk_ve:                 list | None = None
     checkmk_criticality:        list | None = None
     checkmk_os:                 list | None = None
+    checkmk_hostgroups:         list | None = None
     feed_disabled_search_ids:   list | None = None
 
 
@@ -110,11 +111,12 @@ async def get_preferences(user: CurrentUser, db: Annotated[AsyncSession, Depends
         "feed_checkmk_min_age_minutes": prefs.feed_checkmk_min_age_minutes or 5,
         "feed_sources_enabled": prefs.feed_sources_enabled or ["checkmk", "graylog", "wazuh"],
         "feed_teams_channels": prefs.feed_teams_channels or [],
-        "checkmk_locations":   prefs.checkmk_locations   or [],
-        "checkmk_ve":          prefs.checkmk_ve          or [],
-        "checkmk_criticality": prefs.checkmk_criticality or [],
-        "checkmk_os":               prefs.checkmk_os               or [],
-        "feed_disabled_search_ids": prefs.feed_disabled_search_ids  or [],
+        "checkmk_locations":        prefs.checkmk_locations   or [],
+        "checkmk_ve":               prefs.checkmk_ve          or [],
+        "checkmk_criticality":      prefs.checkmk_criticality or [],
+        "checkmk_os":               prefs.checkmk_os          or [],
+        "checkmk_hostgroups":       prefs.checkmk_hostgroups  or [],
+        "feed_disabled_search_ids": prefs.feed_disabled_search_ids or [],
     }
 
 

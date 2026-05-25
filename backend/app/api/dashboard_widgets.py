@@ -260,6 +260,30 @@ async def delete_dashboard(
     await db.commit()
 
 
+@router.post("/dashboards/{dashboard_id}/reset-defaults", status_code=200)
+async def reset_dashboard_defaults(
+    dashboard_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Delete all widgets for this dashboard and recreate the default set."""
+    dashboard = await _get_dashboard_or_404(dashboard_id, current_user.id, db)
+    existing = await db.execute(
+        select(DashboardWidget).where(
+            DashboardWidget.dashboard_id == dashboard.id,
+            DashboardWidget.user_id == current_user.id,
+        )
+    )
+    for w in existing.scalars().all():
+        await db.delete(w)
+    await db.flush()
+    widgets = await _create_defaults(current_user.id, dashboard.id, db)
+    await db.commit()
+    for w in widgets:
+        await db.refresh(w)
+    return [_to_dict(w) for w in widgets]
+
+
 @router.get("/")
 async def list_widgets(
     current_user: CurrentUser,
@@ -418,10 +442,23 @@ async def get_widget_data(
     elif w.widget_type == "donut":
         os_client = feed_index.get_opensearch()
         query = {"query_string": {"query": query_string or "*"}} if query_string else {"match_all": {}}
-        filters = [_host_scope_filter()] if _host_scope_filter() else []
+        filters = [{
+            "bool": {
+                "should": [
+                    {"terms": {"source": ["checkmk", "graylog", "wazuh"]}},
+                    {"bool": {"must": [
+                        {"terms": {"source": ["o365", "teams"]}},
+                        {"term": {"user_id": user_id_str}},
+                    ]}},
+                ],
+                "minimum_should_match": 1,
+            }
+        }]
+        if _host_scope_filter():
+            filters.append(_host_scope_filter())
         body = {
             "size": 0,
-            "query": {"bool": {"must": [query], "filter": filters}} if filters else query,
+            "query": {"bool": {"must": [query], "filter": filters}},
             "aggs": {"by_severity": {"terms": {"field": "severity", "size": 10}}},
         }
         try:

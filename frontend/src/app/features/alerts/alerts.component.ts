@@ -215,7 +215,7 @@ export class AlertsComponent implements OnInit, OnDestroy {
   aggregating = signal(false);
   filterSource = '';
   filterSeverity = '';
-  filterStatus = 'new';
+  filterStatus = '';
 
   // CheckMK-specific metadata filters (client-side, multi-select, pre-populated from user prefs)
   filterCriticality = signal<string[]>([]);
@@ -223,20 +223,36 @@ export class AlertsComponent implements OnInit, OnDestroy {
   filterLocation    = signal<string[]>([]);
   filterSite        = signal<string[]>([]);
   filterOs          = signal<string[]>([]);
+  filterHostgroup   = signal<string[]>([]);
 
   filteredAlerts = computed(() => {
     let list = this.alerts();
-    const crit = this.filterCriticality();
-    const ve   = this.filterVe();
-    const loc  = this.filterLocation();
-    const site = this.filterSite();
-    const os   = this.filterOs();
-    const meta = (a: Alert, k: string) => String(a.metadata_?.[k] ?? '');
-    if (crit.length) list = list.filter(a => crit.includes(meta(a, 'criticality')));
-    if (ve.length)   list = list.filter(a => ve.includes(meta(a, 've')));
-    if (loc.length)  list = list.filter(a => loc.includes(meta(a, 'location')));
-    if (site.length) list = list.filter(a => site.includes(meta(a, 'site')));
-    if (os.length)   list = list.filter(a => os.includes(meta(a, 'os')));
+    const crit      = this.filterCriticality();
+    const ve        = this.filterVe();
+    const loc       = this.filterLocation();
+    const site      = this.filterSite();
+    const os        = this.filterOs();
+    const hostgroup = this.filterHostgroup();
+    // Metadata filters only apply to checkmk alerts; non-checkmk alerts always pass through
+    const isCheckmk = (a: Alert) => a.source === 'checkmk';
+    const metaOk = (a: Alert, k: string, vals: string[]) => {
+      if (!vals.length || !isCheckmk(a)) return true;
+      const v = a.metadata_?.[k];
+      return !v || vals.includes(String(v));
+    };
+    const hostgroupOk = (a: Alert) => {
+      if (!hostgroup.length || !isCheckmk(a)) return true;
+      const hgs: string[] = (a.metadata_?.['hostgroups'] as unknown as string[]) || [];
+      return !hgs.length || hgs.some(h => hostgroup.includes(h));
+    };
+    list = list.filter(a =>
+      metaOk(a, 'criticality', crit) &&
+      metaOk(a, 've', ve) &&
+      metaOk(a, 'location', loc) &&
+      metaOk(a, 'site', site) &&
+      metaOk(a, 'os', os) &&
+      hostgroupOk(a)
+    );
     return list;
   });
 
@@ -275,6 +291,7 @@ export class AlertsComponent implements OnInit, OnDestroy {
         if (prefs?.checkmk_locations?.length)   this.filterLocation.set(prefs.checkmk_locations);
         if (prefs?.checkmk_ve?.length)          this.filterVe.set(prefs.checkmk_ve);
         if (prefs?.checkmk_os?.length)          this.filterOs.set(prefs.checkmk_os);
+        if (prefs?.checkmk_hostgroups?.length)  this.filterHostgroup.set(prefs.checkmk_hostgroups);
       },
     });
     this.load();

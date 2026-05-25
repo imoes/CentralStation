@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { Component, computed, inject, input, output } from '@angular/core';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
@@ -32,13 +32,13 @@ import {
     NgxEchartsDirective,
   ],
   template: `
-    <mat-card class="widget-card" [class.edit-mode]="editMode">
+    <mat-card class="widget-card" [class.edit-mode]="editMode()">
       <div class="widget-header">
         <div>
-          <div class="widget-title">{{ widget.title }}</div>
-          <div class="widget-subtitle">{{ widget.widget_type }}</div>
+          <div class="widget-title">{{ widget().title }}</div>
+          <div class="widget-subtitle">{{ widget().widget_type }}</div>
         </div>
-        @if (editMode) {
+        @if (editMode()) {
           <button mat-icon-button (click)="removeWidget($event)" aria-label="Widget löschen">
             <mat-icon>close</mat-icon>
           </button>
@@ -46,10 +46,10 @@ import {
       </div>
 
       <div class="widget-body">
-        @if (!data && widget.widget_type !== 'grafana_panel') {
+        @if (!data() && widget().widget_type !== 'grafana_panel') {
           <div class="loading"><mat-spinner diameter="26"></mat-spinner></div>
         } @else {
-          @switch (widget.widget_type) {
+          @switch (widget().widget_type) {
             @case ('stat') {
               <div class="stat-value">{{ statCount() ?? '...' }}</div>
             }
@@ -145,7 +145,7 @@ import {
       letter-spacing: .08em;
       margin-top: 2px;
     }
-    .widget-body { flex: 1; min-height: 0; padding: 0 14px 14px; }
+    .widget-body { flex: 1; min-height: 0; padding: 0 14px 14px; overflow: hidden; }
     .loading, .empty {
       height: 100%;
       display: flex;
@@ -165,19 +165,19 @@ import {
       color: var(--mat-sys-primary);
       line-height: 1;
     }
-    .item-list { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; }
+    .item-list { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; height: 100%; }
     .list-item { display: flex; align-items: flex-start; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--mat-sys-outline-variant); }
     .list-item:last-child { border-bottom: 0; }
     .sev-dot { width: 9px; height: 9px; border-radius: 999px; margin-top: 5px; flex-shrink: 0; }
     .list-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
     .list-title { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .list-meta { font-size: 10px; color: var(--mat-sys-on-surface-variant); }
-    .chart { height: 100%; min-height: 120px; width: 100%; }
+    .chart { height: 100%; min-height: 140px; width: 100%; display: block; }
     .grafana-frame { width: 100%; height: 100%; border: 0; border-radius: 10px; background: #111827; }
     .ai-summary { height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 7px; }
     .ai-summary p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--mat-sys-on-surface-variant); }
     .finding { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; }
-    .host-list { display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+    .host-list { display: flex; flex-direction: column; gap: 8px; overflow: auto; height: 100%; }
     .host-row {
       display: flex; align-items: center; gap: 8px;
       padding: 7px 9px; border-radius: 10px;
@@ -190,84 +190,116 @@ import {
   `],
 })
 export class DashboardWidgetComponent {
-  @Input({ required: true }) widget!: DashboardWidget;
-  @Input() data: WidgetData | undefined;
-  @Input() editMode = false;
-  @Output() remove = new EventEmitter<void>();
+  readonly widget = input.required<DashboardWidget>();
+  readonly data   = input<WidgetData>();
+  readonly editMode = input<boolean>(false);
+  readonly remove = output<void>();
 
-  constructor(private sanitizer: DomSanitizer) {}
+  private sanitizer = inject(DomSanitizer);
 
-  statCount(): number | null {
-    const d = this.data as StatData | undefined;
+  // ── derived state (computed = stable reference until deps change) ──────────
+
+  readonly statCount = computed(() => {
+    const d = this.data() as StatData | undefined;
     return typeof d?.count === 'number' ? d.count : null;
-  }
+  });
 
-  listItems(): FeedItem[] {
-    const d = this.data as ListData | undefined;
-    return Array.isArray(d?.items) ? d.items : [];
-  }
+  readonly listItems = computed(() => {
+    const d = this.data() as ListData | undefined;
+    return Array.isArray(d?.items) ? d.items : [] as FeedItem[];
+  });
 
-  donutBuckets(): Array<{ key: string; count: number }> {
-    const d = this.data as DonutData | undefined;
-    return Array.isArray(d?.buckets) ? d.buckets : [];
-  }
+  private readonly donutBuckets = computed(() => {
+    const d = this.data() as DonutData | undefined;
+    return Array.isArray(d?.buckets) ? d.buckets : [] as Array<{ key: string; count: number }>;
+  });
 
-  donutOptions() {
+  readonly donutOptions = computed(() => {
     const buckets = this.donutBuckets();
     return {
-      tooltip: { trigger: 'item' },
-      legend: { bottom: 0, textStyle: { color: '#64748b' } },
+      tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+      legend: {
+        bottom: 4,
+        textStyle: { color: '#94a3b8', fontSize: 11 },
+        itemWidth: 12,
+        itemHeight: 12,
+      },
       series: [{
         type: 'pie',
-        radius: ['48%', '72%'],
-        center: ['50%', '45%'],
+        radius: ['42%', '68%'],
+        center: ['50%', '44%'],
+        label: { show: false },
+        emphasis: { label: { show: true, fontSize: 13, fontWeight: 'bold' } },
         data: buckets.map(b => ({
           name: b.key,
           value: b.count,
-          itemStyle: { color: this.severityColor(b.key) },
+          itemStyle: { color: SEVERITY_COLORS[b.key] ?? '#64748b' },
         })),
       }],
     };
-  }
+  });
 
-  aiSummary(): string {
-    const d = this.data as AiSummaryData | undefined;
+  readonly aiSummary = computed(() => {
+    const d = this.data() as AiSummaryData | undefined;
     return d?.summary ?? '';
-  }
+  });
 
-  aiFindings(): Array<{ title: string; severity?: string; description?: string }> {
-    const d = this.data as AiSummaryData | undefined;
-    return Array.isArray(d?.findings) ? d.findings : [];
-  }
+  readonly aiFindings = computed(() => {
+    const d = this.data() as AiSummaryData | undefined;
+    return Array.isArray(d?.findings) ? d.findings : [] as Array<{ title: string; severity?: string }>;
+  });
 
-  topHosts(): Array<{ host: string; count: number; items: FeedItem[]; external_url?: string | null }> {
-    const d = this.data as TopHostsData | undefined;
-    return Array.isArray(d?.hosts) ? d.hosts : [];
-  }
+  readonly topHosts = computed(() => {
+    const d = this.data() as TopHostsData | undefined;
+    return Array.isArray(d?.hosts)
+      ? d.hosts
+      : [] as Array<{ host: string; count: number; items: FeedItem[]; external_url?: string | null }>;
+  });
 
-  timeseriesOptions() {
-    const d = this.data as TimeseriesData | undefined;
+  readonly timeseriesOptions = computed(() => {
+    const d = this.data() as TimeseriesData | undefined;
     const series = Array.isArray(d?.series) ? d.series : [];
     return {
       tooltip: { trigger: 'axis' },
-      grid: { left: 38, right: 14, top: 16, bottom: 28 },
-      xAxis: { type: 'category', data: series.map(p => new Date(p.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) },
-      yAxis: { type: 'value', axisLabel: { formatter: `{value}${d?.unit ?? ''}` } },
-      series: [{ type: 'line', smooth: true, showSymbol: false, areaStyle: {}, data: series.map(p => p.value) }],
+      grid: { left: 42, right: 14, top: 16, bottom: 28 },
+      xAxis: {
+        type: 'category',
+        data: series.map(p =>
+          new Date(p.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        ),
+        axisLabel: { color: '#94a3b8', fontSize: 10 },
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { formatter: `{value}${d?.unit ?? ''}`, color: '#94a3b8', fontSize: 10 },
+        splitLine: { lineStyle: { color: '#334155' } },
+      },
+      series: [{
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        areaStyle: { opacity: 0.18 },
+        lineStyle: { width: 2 },
+        data: series.map(p => p.value),
+      }],
     };
-  }
+  });
 
-  timeseriesError(): string {
-    const d = this.data as TimeseriesData | undefined;
+  readonly timeseriesError = computed(() => {
+    const d = this.data() as TimeseriesData | undefined;
     return d?.error ?? '';
-  }
+  });
 
-  grafanaUrl(): SafeResourceUrl | null {
-    const cfgUrl = this.widget.config['panel_url'];
-    const dataUrl = (this.data as GrafanaPanelData | undefined)?.panel_url;
-    const url = typeof dataUrl === 'string' && dataUrl ? dataUrl : typeof cfgUrl === 'string' ? cfgUrl : '';
+  readonly grafanaUrl = computed((): SafeResourceUrl | null => {
+    const cfgUrl  = this.widget().config['panel_url'];
+    const dataUrl = (this.data() as GrafanaPanelData | undefined)?.panel_url;
+    const url = typeof dataUrl === 'string' && dataUrl
+      ? dataUrl
+      : typeof cfgUrl === 'string'
+      ? cfgUrl
+      : '';
     return url ? this.sanitizer.bypassSecurityTrustResourceUrl(url) : null;
-  }
+  });
 
   severityColor(severity: string): string {
     return SEVERITY_COLORS[severity] ?? '#64748b';
