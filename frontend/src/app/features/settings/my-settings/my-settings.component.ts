@@ -191,6 +191,7 @@ export class MySettingsComponent implements OnInit {
       checkmk_locations:   this.selLocations.length   ? this.selLocations   : null,
       checkmk_ve:          this.selVe.length          ? this.selVe          : null,
       checkmk_criticality: this.selCriticality.length ? this.selCriticality : null,
+      checkmk_os:          this.selOs.length          ? this.selOs          : null,
     }).subscribe({
       next: () => {
         this.saving.set(false);

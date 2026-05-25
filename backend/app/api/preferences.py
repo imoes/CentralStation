@@ -46,10 +46,11 @@ class PreferenceUpdate(BaseModel):
     feed_checkmk_min_age_minutes: int | None = None
     feed_sources_enabled: list | None = None
     feed_teams_channels: list | None = None
-    checkmk_locations:   list | None = None
-    checkmk_ve:          list | None = None
-    checkmk_criticality: list | None = None
-    checkmk_os:          list | None = None
+    checkmk_locations:          list | None = None
+    checkmk_ve:                 list | None = None
+    checkmk_criticality:        list | None = None
+    checkmk_os:                 list | None = None
+    feed_disabled_search_ids:   list | None = None
 
 
 class JQLQueryCreate(BaseModel):
@@ -108,7 +109,8 @@ async def get_preferences(user: CurrentUser, db: Annotated[AsyncSession, Depends
         "checkmk_locations":   prefs.checkmk_locations   or [],
         "checkmk_ve":          prefs.checkmk_ve          or [],
         "checkmk_criticality": prefs.checkmk_criticality or [],
-        "checkmk_os":          prefs.checkmk_os          or [],
+        "checkmk_os":               prefs.checkmk_os               or [],
+        "feed_disabled_search_ids": prefs.feed_disabled_search_ids  or [],
     }
 
 

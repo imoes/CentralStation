@@ -29,102 +29,101 @@ log = logging.getLogger(__name__)
 # Node 1: collect_data
 # ─────────────────────────────────────────────────
 async def collect_data(state: dict, db: Any) -> dict:
-    from sqlalchemy import select
-    from app.core.security import decrypt_credentials
-    from app.models.connector import ConnectorConfig
+    """Read persisted alerts from DB instead of calling connectors directly.
+
+    This ensures the AI analyses only open, deduplicated, persistent problems:
+    - status='new' (not acknowledged or resolved)
+    - at least min_age_minutes old (transient events already gone)
+    - created within look_back_hours (not ancient history)
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import and_, select
+    from app.models.alert import Alert
+
+    now = datetime.now(timezone.utc)
+    look_back_hours = state.get("look_back_hours", 4)
+    min_age_minutes = state.get("min_age_minutes", 10)
+    since      = now - timedelta(hours=look_back_hours)
+    max_age_ts = now - timedelta(minutes=min_age_minutes)
 
     result = await db.execute(
-        select(ConnectorConfig).where(
-            ConnectorConfig.type.in_(["checkmk", "graylog", "wazuh"]),
-            ConnectorConfig.enabled.is_(True),
+        select(Alert)
+        .where(
+            and_(
+                Alert.status == "new",
+                Alert.created_at >= since,
+                Alert.created_at <= max_age_ts,
+            )
         )
+        .order_by(Alert.created_at.desc())
+        .limit(100)
     )
-    connectors = result.scalars().all()
+    db_alerts = result.scalars().all()
 
     raw_alerts: list[dict] = []
-    for connector in connectors:
-        creds = decrypt_credentials(connector.encrypted_credentials)
-        try:
-            if connector.type == "checkmk":
-                from app.services.connectors.checkmk import CheckMKConnector
-                svc = CheckMKConnector(base_url=connector.base_url, credentials=creds)
-                items = await svc.get_problems(time_range_minutes=60)
-                raw_alerts.extend(items)
-            elif connector.type == "graylog":
-                from app.services.connectors.graylog import GraylogConnector
-                svc = GraylogConnector(base_url=connector.base_url, credentials=creds)
-                msgs = await svc.search_messages(
-                    'level:<=4 AND NOT source:(nsa* OR nss* OR nsc*)',
-                    time_range_seconds=3600, limit=50,
-                )
-                raw_alerts.extend([{**m, "source": "graylog"} for m in msgs])
-            elif connector.type == "wazuh":
-                from app.services.connectors.wazuh import WazuhConnector
-                svc = WazuhConnector(base_url=connector.base_url, credentials=creds)
-                items = await svc.get_alerts(limit=50, min_level=7)
-                raw_alerts.extend(items)
-        except Exception as e:
-            log.warning("collect_data: connector %s failed: %s", connector.type, e)
+    for a in db_alerts:
+        meta = a.metadata_ or {}
+        raw_alerts.append({
+            "source":        a.source,
+            "severity":      a.severity,
+            "title":         a.title,
+            "body":          a.body or "",
+            "host":          meta.get("host") or meta.get("agent") or meta.get("container_name") or "",
+            "agent":         meta.get("agent") or "",
+            "metadata":      meta,
+            "location_name": a.location_name or "",
+            "location_city": a.location_city or "",
+        })
 
-    # Also collect unread O365 mails
-    result2 = await db.execute(
-        select(ConnectorConfig).where(
-            ConnectorConfig.type == "o365",
-            ConnectorConfig.enabled.is_(True),
-        )
-    )
-    o365_conn = result2.scalars().first()
-    if o365_conn:
-        try:
-            creds = decrypt_credentials(o365_conn.encrypted_credentials)
-            from app.services.connectors.o365 import O365Connector
-            svc = O365Connector(base_url=o365_conn.base_url, credentials=creds)
-            mailbox = creds.get("mailbox", "")
-            if mailbox:
-                mails = await svc.get_unread_mails(mailbox, top=10)
-                for mail in mails:
-                    raw_alerts.append({
-                        "source": "o365",
-                        "severity": "medium" if mail.get("importance") != "high" else "high",
-                        "title": mail.get("subject", ""),
-                        "body": mail.get("preview", ""),
-                    })
-        except Exception as e:
-            log.warning("collect_data: O365 failed: %s", e)
-
-    # Apply CheckMK filters (location / ve / criticality) if configured
+    # Load global agent settings as fallback for filters not provided via state
     from app.services.settings import get_agent_config
-    config = await get_agent_config(db)
+    cfg = await get_agent_config(db)
 
-    # Collect active filter sets (user override already applied in run_sysadmin_workflow)
-    loc_filter  = {v.lower() for v in (config.checkmk_locations          or [])}
+    # User preference (passed via state) overrides global location setting.
+    # VE/criticality/OS only come from user preferences — no global default for those.
+    loc_filter  = {v.lower() for v in (state.get("_checkmk_locations")   or cfg.checkmk_locations or [])}
     ve_filter   = {v.lower() for v in (state.get("_checkmk_ve")          or [])}
     crit_filter = {v.lower() for v in (state.get("_checkmk_criticality") or [])}
     os_filter   = {v.lower() for v in (state.get("_checkmk_os")          or [])}
 
-    if loc_filter or ve_filter or crit_filter or os_filter:
-        filtered = []
-        for a in raw_alerts:
-            if a.get("source") != "checkmk":
-                filtered.append(a)
-                continue
-            meta = a.get("metadata") or {}
-            loc  = meta.get("location",    "").lower()
-            ve   = meta.get("ve",          "").lower()
-            crit = meta.get("criticality", "").lower()
-            os_v = meta.get("os",          "").lower()
+    import re
+    _SWITCH_RE = re.compile(r'^ns[asc]\d', re.IGNORECASE)
 
-            if loc_filter  and not any(f in loc  for f in loc_filter):
-                continue
-            if ve_filter   and not any(f in ve   for f in ve_filter):
-                continue
-            if crit_filter and not any(f in crit for f in crit_filter):
-                continue
-            if os_filter   and not any(f in os_v for f in os_filter):
-                continue
+    filtered = []
+    for a in raw_alerts:
+        source = a["source"]
+        host = a.get("host") or a.get("agent") or ""
+
+        # Exclude Graylog switch messages (nsa*/nss*/nsc* hosts) — these belong to the
+        # Network-Technician agent, not the SysAdmin analysis.
+        if source == "graylog" and _SWITCH_RE.match(host):
+            continue
+
+        if source != "checkmk":
             filtered.append(a)
-        raw_alerts = filtered
+            continue
 
+        # Apply CheckMK-specific filters
+        meta = a["metadata"]
+        loc  = meta.get("location",    "").lower()
+        ve   = meta.get("ve",          "").lower()
+        crit = meta.get("criticality", "").lower()
+        os_v = meta.get("os",          "").lower()
+        if loc_filter  and not any(f in loc  for f in loc_filter):
+            continue
+        if ve_filter   and not any(f in ve   for f in ve_filter):
+            continue
+        if crit_filter and not any(f in crit for f in crit_filter):
+            continue
+        if os_filter   and not any(f in os_v for f in os_filter):
+            continue
+        filtered.append(a)
+    raw_alerts = filtered
+
+    log.info(
+        "collect_data: %d open alerts (look_back=%dh, min_age=%dmin)",
+        len(raw_alerts), look_back_hours, min_age_minutes,
+    )
     return {**state, "raw_alerts": raw_alerts}
 
 
@@ -515,11 +514,16 @@ async def run_sysadmin_workflow(
     user_checkmk_ve:          list[str] | None = None,
     user_checkmk_criticality: list[str] | None = None,
     user_checkmk_os:          list[str] | None = None,
+    min_age_minutes: int = 10,
+    look_back_hours: int = 4,
 ) -> dict:
     """Run the full sysadmin agent workflow.
 
-    user_checkmk_* lists come from the triggering user's preferences and
-    override the global agent.checkmk_locations setting.
+    Reads persisted alerts from the DB (not raw connector data).
+    Only includes open alerts that are at least min_age_minutes old —
+    filtering out transient events that already resolved themselves.
+
+    user_checkmk_* lists come from the triggering user's preferences.
     """
     from app.services.settings import get_agent_config, get_llm_config, get_searxng_config
 
@@ -531,10 +535,6 @@ async def run_sysadmin_workflow(
         log.warning("run_sysadmin_workflow: LLM not configured, skipping")
         return {}
 
-    # User preference overrides global location setting
-    if user_checkmk_locations is not None:
-        agent_config.checkmk_locations = user_checkmk_locations or None
-
     state: dict = {
         "raw_alerts": [],
         "enriched_alerts": [],
@@ -543,7 +543,10 @@ async def run_sysadmin_workflow(
         "jira_project": "IMIT",
         "auto_jira": agent_config.auto_jira,
         "jira_threshold": agent_config.jira_severity_threshold,
-        # pass user ve/criticality/os filters via state (read in collect_data)
+        "min_age_minutes": min_age_minutes,
+        "look_back_hours": look_back_hours,
+        # CheckMK user filters passed into collect_data
+        "_checkmk_locations":   user_checkmk_locations   or [],
         "_checkmk_ve":          user_checkmk_ve          or [],
         "_checkmk_criticality": user_checkmk_criticality or [],
         "_checkmk_os":          user_checkmk_os          or [],

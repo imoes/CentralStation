@@ -11,7 +11,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { ConnectorService } from '../../../core/services/connector.service';
 import { Connector, ConnectorType } from '../../../core/models/connector.model';
 
-interface CredField { key: string; label: string; type: 'text' | 'password' }
+interface CredField { key: string; label: string; type: 'text' | 'password' | 'textarea'; hint?: string }
 const PERSONAL_CONNECTOR_TYPES: ConnectorType[] = ['jira', 'jira_sd', 'o365', 'teams'];
 
 const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
@@ -36,11 +36,15 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
   ],
   graylog:      [{ key: 'username', label: 'Benutzername', type: 'text' }, { key: 'password', label: 'Passwort', type: 'password' }],
   wazuh:        [
-    { key: 'username',         label: 'Manager Benutzername',             type: 'text' },
-    { key: 'password',         label: 'Manager Passwort',                 type: 'password' },
-    { key: 'indexer_url',      label: 'Indexer URL (z.B. http://wazuh-indexer-1.ippen.media:9200)', type: 'text' },
-    { key: 'indexer_username', label: 'Indexer Benutzername (Standard: admin)', type: 'text' },
-    { key: 'indexer_password', label: 'Indexer Passwort',                 type: 'password' },
+    { key: 'username',           label: 'Manager Benutzername',             type: 'text' },
+    { key: 'password',           label: 'Manager Passwort',                 type: 'password' },
+    { key: 'indexer_url',        label: 'Indexer URL (z.B. http://wazuh-indexer-1.ippen.media:9200)', type: 'text' },
+    { key: 'indexer_username',   label: 'Indexer Benutzername (Standard: admin)', type: 'text' },
+    { key: 'indexer_password',   label: 'Indexer Passwort',                 type: 'password' },
+    { key: 'excluded_rule_ids',  label: 'Ausgeschlossene Rule-IDs (eine pro Zeile)', type: 'textarea',
+      hint: 'Standard: 503 504 533 591 5402 5501 5502 5715 — leer lassen für Defaults' },
+    { key: 'excluded_fim_paths', label: 'Ausgeschlossene FIM-Pfade (einer pro Zeile)', type: 'textarea',
+      hint: 'Standard: /etc/cmk-update-agent.state /etc/patchmon/config.yml' },
   ],
   jira:         [
     { key: 'token', label: 'Personal Access Token', type: 'password' },
@@ -109,9 +113,18 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
         @for (field of credFields(); track field.key) {
           <mat-form-field appearance="outline" class="full-width">
             <mat-label>{{ field.label }}</mat-label>
-            <input matInput [type]="field.type"
-                   [formControlName]="'cred_' + field.key"
-                   [placeholder]="isEdit ? '(unverändert lassen = leer)' : ''">
+            @if (field.type === 'textarea') {
+              <textarea matInput rows="3"
+                        [formControlName]="'cred_' + field.key"
+                        [placeholder]="field.hint ?? ''"></textarea>
+            } @else {
+              <input matInput [type]="field.type"
+                     [formControlName]="'cred_' + field.key"
+                     [placeholder]="isEdit ? '(unverändert lassen = leer)' : ''">
+            }
+            @if (field.hint && field.type !== 'textarea') {
+              <mat-hint>{{ field.hint }}</mat-hint>
+            }
           </mat-form-field>
         }
 
@@ -185,10 +198,16 @@ export class ConnectorFormDialogComponent implements OnInit {
     this.saving.set(true);
 
     const v = this.form.value;
-    const credentials: Record<string, string> = {};
+    const credentials: Record<string, string | string[]> = {};
     for (const field of this.credFields()) {
       const val = v[`cred_${field.key}`];
-      if (val) credentials[field.key] = val;
+      if (!val) continue;
+      if (field.type === 'textarea') {
+        const lines = (val as string).split('\n').map((s: string) => s.trim()).filter(Boolean);
+        if (lines.length > 0) credentials[field.key] = lines;
+      } else {
+        credentials[field.key] = val;
+      }
     }
 
     if (this.isEdit && this.data?.connector) {

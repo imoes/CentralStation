@@ -39,3 +39,20 @@
 }
 
 mat-sidenav-content { background: var(--mat-sys-surface); }
+
+.feed-badge {
+  background: #d32f2f;
+  color: white;
+  border-radius: 10px;
+  min-width: 20px;
+  height: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  margin-left: 8px;
+  vertical-align: middle;
+  line-height: 1;
+}

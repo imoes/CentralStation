@@ -5,6 +5,7 @@ Retention: configurable per source via DELETE by query (daily scheduler job).
 """
 from __future__ import annotations
 
+import itertools
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -105,7 +106,7 @@ async def backfill_from_db(days: int = 7) -> int:
                 "status": a.status,
                 "location_name": a.location_name,
                 "location_city": a.location_city,
-                "external_url": None,
+                "external_url": (a.metadata_ or {}).get("external_url"),
                 "external_id": a.external_id,
             }
             for a in alerts
@@ -160,15 +161,92 @@ async def index_items(items: list[dict]) -> None:
         log.warning("OpenSearch bulk index failed: %s", e)
 
 
+def _terms_filter(field: str, value: list[str] | str | None) -> dict | None:
+    """Build a terms/term OpenSearch filter from a string or list."""
+    if not value:
+        return None
+    vals = [v for v in (value if isinstance(value, list) else [value]) if v]
+    if not vals:
+        return None
+    if len(vals) == 1:
+        return {"term": {field: vals[0]}}
+    return {"terms": {field: vals}}
+
+
+def _to_list(value: list[str] | str | None) -> list[str] | None:
+    """Normalise filter value to a list, or None if empty."""
+    if not value:
+        return None
+    vals = [v for v in (value if isinstance(value, list) else [value]) if v]
+    return vals or None
+
+
+def _apply_metadata_filters(
+    items: list[dict],
+    os_filter: list[str] | None,
+    location: list[str] | None,
+    ve: list[str] | None,
+    criticality: list[str] | None,
+    hostgroup: list[str] | None = None,
+) -> list[dict]:
+    """Post-process: filter items by metadata fields after OpenSearch query.
+
+    Applies the CheckMK filter criteria to ALL sources as a single source of truth.
+    Items without the metadata field are always included (unknown = not excluded).
+    """
+    if not any([os_filter, location, ve, criticality, hostgroup]):
+        return items
+
+    result = []
+    for item in items:
+        meta = item.get("metadata") or {}
+        # os/location/ve/criticality/hostgroup are CheckMK concepts.
+        # For non-CheckMK sources (Graylog, Wazuh) these fields either don't exist
+        # or carry a different meaning (e.g. Wazuh "location" = log path, not a site).
+        # Apply these filters only to CheckMK items; other sources always pass.
+        is_checkmk = item.get("source") == "checkmk"
+
+        if is_checkmk:
+            if os_filter:
+                v = meta.get("os", "")
+                if v and v not in os_filter:
+                    continue
+
+            if location:
+                v = meta.get("location", "")
+                if v and v not in location:
+                    continue
+
+            if ve:
+                v = meta.get("ve", "")
+                if v and v not in ve:
+                    continue
+
+            if criticality:
+                v = meta.get("criticality", "")
+                if v and v not in criticality:
+                    continue
+
+            if hostgroup:
+                hgs = meta.get("hostgroups") or []
+                if hgs and not any(hg in hostgroup for hg in hgs):
+                    continue
+
+        result.append(item)
+    return result
+
+
 async def search(
     sources: list[str] | None = None,
     severity: str | None = None,
     host: str | None = None,
-    os_filter: str | None = None,
-    location: str | None = None,
-    criticality: str | None = None,
-    ve: str | None = None,
+    os_filter: list[str] | str | None = None,
+    location: list[str] | str | None = None,
+    criticality: list[str] | str | None = None,
+    ve: list[str] | str | None = None,
+    hostgroup: list[str] | str | None = None,
     status: str | None = None,
+    exclude_resolved: bool = False,
     user_id: str | None = None,
     checkmk_cutoff: datetime | None = None,
     from_: int = 0,
@@ -185,22 +263,17 @@ async def search(
 
     must: list[dict] = []
     filter_: list[dict] = []
+    must_not: list[dict] = []
 
     if severity:
         filter_.append({"term": {"severity": severity}})
     if status:
         filter_.append({"term": {"status": status}})
+    if exclude_resolved:
+        must_not.append({"term": {"status": "resolved"}})
 
     if host:
         must.append({"match": {"title": {"query": host, "fuzziness": "AUTO"}}})
-    if os_filter:
-        filter_.append({"term": {"metadata.os.keyword": os_filter}})
-    if location:
-        filter_.append({"term": {"metadata.location.keyword": location}})
-    if criticality:
-        filter_.append({"term": {"metadata.criticality.keyword": criticality}})
-    if ve:
-        filter_.append({"term": {"metadata.ve.keyword": ve}})
 
     # CheckMK min-age: exclude items newer than cutoff
     if checkmk_cutoff:
@@ -237,22 +310,42 @@ async def search(
         query["bool"]["must"] = must
     if filter_:
         query["bool"]["filter"] = filter_
-    if not must and not filter_:
+    if must_not:
+        query["bool"]["must_not"] = must_not
+    if not must and not filter_ and not must_not:
         query = {"match_all": {}}
+
+    # Fetch more from OpenSearch when metadata filters are active so post-processing
+    # can discard non-matching items and still return up to `size` results.
+    needs_post_filter = any([os_filter, location, ve, criticality, hostgroup])
+    fetch_size = min(size * 4, 200) if needs_post_filter else size
 
     body = {
         "query": query,
         "sort": [{"created_at": {"order": "desc"}}],
         "from": from_,
-        "size": size,
+        "size": fetch_size,
     }
 
     try:
         resp = await os_client.search(index=",".join(indices), body=body, ignore_unavailable=True)
-        return [hit["_source"] for hit in resp["hits"]["hits"]]
+        raw = [hit["_source"] for hit in resp["hits"]["hits"]]
     except Exception as e:
         log.warning("OpenSearch search failed: %s", e)
         return []
+
+    if needs_post_filter:
+        raw = _apply_metadata_filters(
+            raw,
+            _to_list(os_filter),
+            _to_list(location),
+            _to_list(ve),
+            _to_list(criticality),
+            _to_list(hostgroup),
+        )
+        return raw[:size]
+
+    return raw
 
 
 async def get_filter_values(source: str = "checkmk") -> dict:
@@ -265,6 +358,7 @@ async def get_filter_values(source: str = "checkmk") -> dict:
             "location":    {"terms": {"field": "metadata.location.keyword",    "size": 100}},
             "criticality": {"terms": {"field": "metadata.criticality.keyword", "size": 20}},
             "ve":          {"terms": {"field": "metadata.ve.keyword",          "size": 20}},
+            "hostgroups":  {"terms": {"field": "metadata.hostgroups.keyword",  "size": 100}},
         },
     }
     try:
@@ -285,10 +379,11 @@ async def get_filter_values(source: str = "checkmk") -> dict:
             "location":    _buckets("location"),
             "criticality": _buckets("criticality"),
             "ve":          _buckets("ve"),
+            "hostgroups":  _buckets("hostgroups"),
         }
     except Exception as e:
         log.warning("OpenSearch aggregation failed: %s", e)
-        return {"os": [], "location": [], "criticality": [], "ve": []}
+        return {"os": [], "location": [], "criticality": [], "ve": [], "hostgroups": []}
 
 
 async def delete_old_items(source: str, retention_days: int) -> int:
@@ -316,6 +411,146 @@ async def delete_old_items(source: str, retention_days: int) -> int:
     except Exception as e:
         log.warning("OpenSearch delete_old failed for %s: %s", source, e)
         return 0
+
+
+async def get_hosts_metadata(hostnames: list[str]) -> dict[str, dict]:
+    """Fetch the latest CheckMK metadata for a list of hostnames from OpenSearch.
+
+    Returns {hostname: metadata_dict} for hosts found in cs-feed-checkmk.
+    Used as a persistent fallback when the in-memory host cache is cold (after restart).
+    """
+    if not hostnames:
+        return {}
+    os_client = get_opensearch()
+    try:
+        resp = await os_client.search(
+            index=_index("checkmk"),
+            body={
+                "query": {"terms": {"metadata.host.keyword": hostnames}},
+                "sort": [{"created_at": {"order": "desc"}}],
+                "size": min(len(hostnames) * 5, 500),
+                "_source": ["metadata"],
+            },
+            ignore_unavailable=True,
+        )
+        result: dict[str, dict] = {}
+        for hit in resp["hits"]["hits"]:
+            meta = hit["_source"].get("metadata") or {}
+            host = meta.get("host", "")
+            if host and host not in result:  # first hit = most recent
+                result[host] = meta
+        return result
+    except Exception as e:
+        log.warning("OpenSearch host metadata lookup failed: %s", e)
+        return {}
+
+
+async def search_by_query(
+    index_pattern: str,
+    query_string: str,
+    size: int = 50,
+    from_: int = 0,
+    user_id: str | None = None,
+) -> list[dict]:
+    """Execute an OpenSearch Lucene query string against an index pattern."""
+    os_client = get_opensearch()
+    if query_string:
+        query: dict = {"query_string": {"query": query_string, "default_operator": "AND"}}
+    else:
+        query = {"match_all": {}}
+
+    filter_clauses: list[dict] = []
+    if user_id:
+        filter_clauses.append({
+            "bool": {
+                "should": [
+                    {"terms": {"source": ["checkmk", "graylog", "wazuh"]}},
+                    {"bool": {"must": [
+                        {"terms": {"source": ["o365", "teams"]}},
+                        {"term": {"user_id": user_id}},
+                    ]}},
+                ],
+                "minimum_should_match": 1,
+            }
+        })
+
+    if filter_clauses:
+        body_query: dict = {"bool": {"must": [query], "filter": filter_clauses}}
+    else:
+        body_query = query
+
+    body = {
+        "query": body_query,
+        "sort": [{"created_at": {"order": "desc"}}],
+        "from": from_,
+        "size": size,
+    }
+    try:
+        resp = await os_client.search(index=index_pattern, body=body, ignore_unavailable=True)
+        return [hit["_source"] for hit in resp["hits"]["hits"]]
+    except Exception as e:
+        log.warning("OpenSearch search_by_query failed (%s): %s", index_pattern, e)
+        return []
+
+
+async def count_since(
+    index_patterns: list[str],
+    since: datetime,
+    user_id: str | None = None,
+) -> int:
+    """Count feed items newer than `since`, excluding resolved ones."""
+    os_client = get_opensearch()
+    filter_: list[dict] = [
+        {"range": {"created_at": {"gt": since.isoformat()}}},
+    ]
+    must_not: list[dict] = [{"term": {"status": "resolved"}}]
+
+    if user_id:
+        filter_.append({
+            "bool": {
+                "should": [
+                    {"terms": {"source": ["checkmk", "graylog", "wazuh"]}},
+                    {"bool": {"must": [
+                        {"terms": {"source": ["o365", "teams"]}},
+                        {"term": {"user_id": user_id}},
+                    ]}},
+                ],
+                "minimum_should_match": 1,
+            }
+        })
+
+    body = {
+        "query": {"bool": {"filter": filter_, "must_not": must_not}},
+        "size": 0,
+        "track_total_hits": True,
+    }
+    indices = ",".join(index_patterns)
+    try:
+        resp = await os_client.search(index=indices, body=body, ignore_unavailable=True)
+        total = resp.get("hits", {}).get("total", {})
+        return total.get("value", 0) if isinstance(total, dict) else int(total)
+    except Exception as e:
+        log.warning("OpenSearch count_since failed: %s", e)
+        return 0
+
+
+async def get_by_id(doc_id: str) -> dict | None:
+    """Fetch a single feed item by its document ID, searching all cs-feed-* indices."""
+    os_client = get_opensearch()
+    indices = ",".join([_index(s) for s in ALL_SOURCES])
+    try:
+        resp = await os_client.search(
+            index=indices,
+            body={"query": {"term": {"id": doc_id}}, "size": 1},
+            ignore_unavailable=True,
+        )
+        hits = resp["hits"]["hits"]
+        if hits:
+            return hits[0]["_source"]
+        return None
+    except Exception as e:
+        log.warning("OpenSearch get_by_id failed for %s: %s", doc_id, e)
+        return None
 
 
 async def update_status(doc_id: str, source: str, status: str) -> None:

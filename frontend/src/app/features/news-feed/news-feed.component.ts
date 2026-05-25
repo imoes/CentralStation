@@ -1,7 +1,8 @@
-import { Component, OnInit, OnDestroy, AfterViewInit, ElementRef, ViewChild, signal, computed } from '@angular/core';
+import { Component, OnInit, OnDestroy, AfterViewInit, ElementRef, ViewChild, signal, computed, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
+import { ActivatedRoute } from '@angular/router';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -17,6 +18,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { environment } from '../../../environments/environment';
+import { App } from '../../app';
 
 interface FeedItem {
   id: string;
@@ -72,12 +74,12 @@ const SEVERITY_COLOR: Record<string, string> = {
       <div class="feed-topbar">
         <h2>News Feed</h2>
         <div class="topbar-right">
-          <mat-chip-listbox multiple aria-label="Quellen">
+          <mat-chip-listbox multiple aria-label="Quellen"
+            [value]="activeFilter()"
+            (change)="onSourceChipChange($event.value)">
             @for (src of allSources; track src.id) {
               <mat-chip-option
                 [value]="src.id"
-                [selected]="activeFilter().includes(src.id)"
-                (selectionChange)="toggleFilter(src.id)"
                 [style.--mdc-chip-selected-container-color]="src.color + '33'"
                 [style.--mdc-chip-selected-label-text-color]="src.color"
                 [style.border]="activeFilter().includes(src.id) ? '1px solid ' + src.color : '1px solid transparent'">
@@ -154,6 +156,15 @@ const SEVERITY_COLOR: Record<string, string> = {
                 }
               </mat-select>
             </mat-form-field>
+            <mat-form-field appearance="outline" class="filter-field">
+              <mat-label>Hostgruppe (CheckMK)</mat-label>
+              <mat-select [(ngModel)]="hostgroupFilter" (ngModelChange)="onFilterChange()">
+                <mat-option value="">Alle</mat-option>
+                @for (v of filterValues.hostgroups; track v) {
+                  <mat-option [value]="v">{{ v }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
           </div>
           @if (hasActiveFilter()) {
             <div style="padding: 0 4px 8px">
@@ -187,11 +198,17 @@ const SEVERITY_COLOR: Record<string, string> = {
       <!-- ── Feed ────────────────────────────────────────────────────────── -->
       <div class="feed-column">
 
-        @if (loading() && items().length === 0) {
-          <div class="spinner-center"><mat-spinner diameter="48"></mat-spinner></div>
+        @if (loading()) {
+          <div class="refresh-indicator">
+            <mat-spinner diameter="24"></mat-spinner>
+            <span>Aktualisiere…</span>
+          </div>
         }
 
-        @for (item of visibleItems(); track item.id) {
+        @for (item of visibleItems(); track item.id; let idx = $index) {
+          @if (isFirstSeen(item, idx)) {
+            <div class="last-seen-divider"><span>Zuletzt gesehen ↑</span></div>
+          }
           <mat-card class="feed-card" [class.card-acknowledged]="item.status === 'acknowledged'">
 
             <!-- Card header: avatar + meta -->
@@ -253,6 +270,18 @@ const SEVERITY_COLOR: Record<string, string> = {
               <div class="ai-insight">
                 <mat-icon class="ai-insight-icon">psychology</mat-icon>
                 <span>{{ item.ai_insight }}</span>
+              </div>
+            } @else if (!autoEnrich() && item.type === 'alert') {
+              <div class="ai-demand-row">
+                <button mat-stroked-button class="ki-btn" (click)="requestEnrich(item)"
+                        [disabled]="isEnriching(item.id)">
+                  @if (isEnriching(item.id)) {
+                    <mat-spinner diameter="14" class="ki-spinner"></mat-spinner>
+                  } @else {
+                    <mat-icon>psychology</mat-icon>
+                  }
+                  KI Analyse
+                </button>
               </div>
             }
 
@@ -337,7 +366,11 @@ const SEVERITY_COLOR: Record<string, string> = {
 
     /* Feed cards */
     .feed-column { display: flex; flex-direction: column; gap: 12px; }
-    .spinner-center { display: flex; justify-content: center; padding: 60px; }
+    .refresh-indicator {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 4px; font-size: 13px;
+      color: var(--mat-sys-on-surface-variant);
+    }
 
     .feed-card {
       border-radius: 12px !important;
@@ -419,6 +452,11 @@ const SEVERITY_COLOR: Record<string, string> = {
       font-size: 16px; height: 16px; width: 16px;
       color: var(--mat-sys-primary); flex-shrink: 0; margin-top: 1px;
     }
+    .ai-demand-row { padding: 4px 16px 8px; }
+    .ki-btn { font-size: 12px; height: 30px; line-height: 30px; color: var(--mat-sys-primary); border-color: var(--mat-sys-primary); }
+    .ki-btn mat-icon { font-size: 15px; height: 15px; width: 15px; margin-right: 4px; vertical-align: middle; }
+    .ki-spinner { display: inline-block; margin-right: 4px; vertical-align: middle; }
+
     .mail-from {
       padding: 0 16px 8px;
       font-size: 12px; color: var(--mat-sys-on-surface-variant);
@@ -435,6 +473,15 @@ const SEVERITY_COLOR: Record<string, string> = {
     .action-btn mat-icon { font-size: 16px; height: 16px; width: 16px; margin-right: 4px; }
     .spacer { flex: 1; }
     .item-type-hint { font-size: 11px; color: var(--mat-sys-outline); padding-right: 8px; }
+
+    /* Last-seen divider */
+    .last-seen-divider {
+      display: flex; align-items: center; gap: 8px; padding: 4px 16px;
+      color: var(--mat-sys-on-surface-variant); font-size: 12px; font-weight: 500;
+    }
+    .last-seen-divider::before, .last-seen-divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--mat-sys-outline-variant);
+    }
 
     /* Infinite scroll */
     .scroll-sentinel { height: 1px; }
@@ -454,13 +501,18 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
 
   @ViewChild('scrollSentinel') private sentinelRef!: ElementRef<HTMLElement>;
   private observer?: IntersectionObserver;
+  private app = inject(App);
+  private badgeCleared = false;
 
   items = signal<FeedItem[]>([]);
+  lastSeenAt = signal<Date>(new Date(0));
   loading = signal(false);
   loadingMore = signal(false);
   showSettings = signal(false);
   showFilters = signal(false);
   activeFilter = signal<string[]>([]);
+  autoEnrich = signal<boolean>(true);
+  enrichingIds = signal<Set<string>>(new Set());
   expanded = new Set<string>();
 
   hostFilter = '';
@@ -469,9 +521,10 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   locationFilter = '';
   criticalityFilter = '';
   veFilter = '';
+  hostgroupFilter = '';
 
-  filterValues: { os: string[]; location: string[]; criticality: string[]; ve: string[] } = {
-    os: [], location: [], criticality: [], ve: [],
+  filterValues: { os: string[]; location: string[]; criticality: string[]; ve: string[]; hostgroups: string[] } = {
+    os: [], location: [], criticality: [], ve: [], hostgroups: [],
   };
 
   editPrefs: FeedPrefs = { checkmk_min_age_minutes: 5, teams_channels: [] };
@@ -479,6 +532,10 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   private readonly pageSize = 50;
   private hasMore = false;
   private refreshTimer?: ReturnType<typeof setInterval>;
+  private routeSearchId = '';
+  private routeQuery = '';
+  private routeIndex = '';
+  private routeSourceSet = false;
 
   visibleItems = computed(() => {
     const f = this.activeFilter();
@@ -486,10 +543,18 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     return this.items().filter(i => f.includes(i.source));
   });
 
-  constructor(private http: HttpClient, private snackBar: MatSnackBar) {}
+  constructor(
+    private http: HttpClient,
+    private snackBar: MatSnackBar,
+    private route: ActivatedRoute,
+  ) {}
 
   ngOnInit() {
+    const stored = localStorage.getItem('feed_last_seen');
+    if (stored) this.lastSeenAt.set(new Date(stored));
+    this.applyRouteParams();
     this.loadPrefs();
+    this.loadAutoEnrichSetting();
     this.refreshTimer = setInterval(() => this.load(true), 30_000);
   }
 
@@ -519,19 +584,37 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
           teams_channels: p.feed_teams_channels ?? [],
         };
         const enabled: string[] = p.feed_sources_enabled ?? [];
-        this.activeFilter.set(enabled.length > 0 ? enabled : allIds);
+        if (!this.routeSourceSet) {
+          this.activeFilter.set(enabled.length > 0 ? enabled : allIds);
+        }
         this.load(true);
       },
       error: () => {
-        this.activeFilter.set(allIds);
+        if (!this.routeSourceSet) {
+          this.activeFilter.set(allIds);
+        }
         this.load(true);
       },
     });
   }
 
+  applyRouteParams() {
+    const params = this.route.snapshot.queryParamMap;
+    const source = params.get('source');
+    this.routeSearchId = params.get('search_id') || '';
+    this.routeQuery = params.get('q') || '';
+    this.routeIndex = params.get('index') || '';
+    if (source) {
+      this.routeSourceSet = true;
+      this.activeFilter.set(source.split(',').filter(Boolean));
+    }
+    const severity = params.get('severity');
+    if (severity) this.severityFilter = severity;
+  }
+
   hasActiveFilter(): boolean {
     return !!(this.hostFilter || this.severityFilter || this.osFilter ||
-              this.locationFilter || this.criticalityFilter || this.veFilter);
+              this.locationFilter || this.criticalityFilter || this.veFilter || this.hostgroupFilter);
   }
 
   toggleFilters() {
@@ -559,13 +642,13 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.locationFilter = '';
     this.criticalityFilter = '';
     this.veFilter = '';
+    this.hostgroupFilter = '';
     this.load(true);
   }
 
   load(reset = false) {
     if (reset) {
       this.offset = 0;
-      this.items.set([]);
       this.loading.set(true);
     } else {
       this.loadingMore.set(true);
@@ -579,14 +662,30 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (this.locationFilter)    params['location']    = this.locationFilter;
     if (this.criticalityFilter) params['criticality'] = this.criticalityFilter;
     if (this.veFilter)          params['ve']          = this.veFilter;
+    if (this.hostgroupFilter)   params['hostgroup']   = this.hostgroupFilter;
+    if (this.routeSearchId)     params['search_id']   = this.routeSearchId;
+    if (this.routeQuery)        params['q']           = this.routeQuery;
+    if (this.routeIndex)        params['index']       = this.routeIndex;
     this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params }).subscribe({
       next: (data) => {
-        this.items.update(prev => reset ? data : [...prev, ...data]);
+        if (reset) {
+          this.items.set(data);
+          if (!this.badgeCleared) {
+            this.badgeCleared = true;
+            setTimeout(() => this.app.clearFeedBadge(), 3000);
+          }
+        } else {
+          this.items.update(prev => [...prev, ...data]);
+        }
         this.hasMore = data.length === this.pageSize;
         this.loading.set(false);
         this.loadingMore.set(false);
       },
-      error: () => { this.loading.set(false); this.loadingMore.set(false); },
+      error: () => {
+        this.hasMore = false;
+        this.loading.set(false);
+        this.loadingMore.set(false);
+      },
     });
   }
 
@@ -609,12 +708,53 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     });
   }
 
-  toggleFilter(src: string) {
-    this.activeFilter.update(prev =>
-      prev.includes(src) ? prev.filter(s => s !== src) : [...prev, src]
-    );
+  loadAutoEnrichSetting() {
+    this.http.get<{ settings: Array<{ key: string; value: string }> }>(`${environment.apiUrl}/settings/`).subscribe({
+      next: (res) => {
+        const s = res.settings.find(x => x.key === 'agent.auto_enrich');
+        this.autoEnrich.set(s ? s.value !== 'false' : true);
+      },
+    });
+  }
+
+  requestEnrich(item: FeedItem) {
+    const ids = new Set(this.enrichingIds());
+    ids.add(item.id);
+    this.enrichingIds.set(ids);
+
+    this.http.post<{ ai_insight: string }>(`${environment.apiUrl}/feed/${item.id}/enrich`, {}).subscribe({
+      next: (res) => {
+        this.items.update(prev => prev.map(i =>
+          i.id === item.id ? { ...i, ai_insight: res.ai_insight } : i
+        ));
+        const next = new Set(this.enrichingIds());
+        next.delete(item.id);
+        this.enrichingIds.set(next);
+      },
+      error: (err) => {
+        const next = new Set(this.enrichingIds());
+        next.delete(item.id);
+        this.enrichingIds.set(next);
+        this.snackBar.open(err?.error?.detail ?? 'KI-Anreicherung fehlgeschlagen', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  isEnriching(id: string): boolean { return this.enrichingIds().has(id); }
+
+  isFirstSeen(item: FeedItem, index: number): boolean {
+    const ls = this.lastSeenAt();
+    if (new Date(item.created_at) > ls) return false;
+    const visible = this.visibleItems();
+    const prev = visible[index - 1];
+    return !prev || new Date(prev.created_at) > ls;
+  }
+
+  onSourceChipChange(selected: string[] | null) {
+    const next = selected ?? this.allSources.map(s => s.id);
+    this.activeFilter.set(next);
     this.http.patch(`${environment.apiUrl}/preferences`, {
-      feed_sources_enabled: this.activeFilter(),
+      feed_sources_enabled: next,
     }).subscribe();
     this.load(true);
   }

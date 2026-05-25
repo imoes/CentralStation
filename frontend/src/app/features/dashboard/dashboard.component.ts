@@ -1,427 +1,313 @@
-import { Component, OnInit, OnDestroy, signal, computed } from '@angular/core';
+import {
+  AfterViewInit,
+  Component,
+  ElementRef,
+  OnDestroy,
+  ViewChild,
+  signal,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { RouterModule } from '@angular/router';
-import { MatCardModule } from '@angular/material/card';
+import { Router } from '@angular/router';
+import { forkJoin } from 'rxjs';
+import { GridItemHTMLElement, GridStack } from 'gridstack';
 import { MatButtonModule } from '@angular/material/button';
+import { MatCardModule } from '@angular/material/card';
+import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { MatTooltipModule } from '@angular/material/tooltip';
-import { NgxEchartsDirective, provideEchartsCore } from 'ngx-echarts';
-import * as echarts from 'echarts/core';
-import { BarChart } from 'echarts/charts';
-import { TitleComponent, TooltipComponent, GridComponent } from 'echarts/components';
-import { CanvasRenderer } from 'echarts/renderers';
-import { Subject, takeUntil, interval } from 'rxjs';
-import { AlertService } from '../../core/services/alert.service';
-import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
-import { AlertSummary } from '../../core/models/alert.model';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { environment } from '../../../environments/environment';
-
-echarts.use([BarChart, TitleComponent, TooltipComponent, GridComponent, CanvasRenderer]);
-
-const SEV_COLOR: Record<string, string> = {
-  critical: '#d32f2f',
-  high:     '#f57c00',
-  medium:   '#1976d2',
-  low:      '#388e3c',
-  info:     '#607d8b',
-};
-
-interface AiAnalysis {
-  id: string;
-  run_at: string;
-  severity_summary: string;
-  findings: Array<{ title: string; severity: string; description?: string }>;
-  recommendations: Array<{ title: string; priority?: string; description?: string }>;
-  findings_count: number;
-  recommendations_count: number;
-}
-
-interface FeedItem {
-  id: string;
-  source: string;
-  severity: string;
-  title: string;
-  host?: string;
-  created_at: string;
-  ai_insight?: string;
-  metadata_?: Record<string, unknown>;
-}
+import { AddWidgetDialogComponent } from './add-widget-dialog.component';
+import { DashboardWidgetComponent } from './dashboard-widget.component';
+import {
+  DashboardWidget,
+  DashboardWidgetCreate,
+  WidgetData,
+} from './dashboard-widget.model';
 
 @Component({
   selector: 'cs-dashboard',
   standalone: true,
   imports: [
-    CommonModule, RouterModule,
-    MatCardModule, MatButtonModule, MatIconModule, MatProgressSpinnerModule, MatTooltipModule,
-    NgxEchartsDirective,
+    CommonModule,
+    MatButtonModule,
+    MatCardModule,
+    MatDialogModule,
+    MatIconModule,
+    MatProgressSpinnerModule,
+    MatSnackBarModule,
+    DashboardWidgetComponent,
   ],
-  providers: [provideEchartsCore({ echarts })],
   template: `
-    <div class="dashboard">
-
-      <!-- ── Zeile 1: Health-Ampel ──────────────────────────────────────── -->
-      <div class="ampel-row">
-
-        <mat-card class="ampel-card" [class.ampel-alert]="getSummaryCount('critical') > 0">
-          <div class="ampel-icon-wrap"><mat-icon class="ampel-icon crit-icon">crisis_alert</mat-icon></div>
-          <div class="ampel-count crit-color">{{ getSummaryCount('critical') }}</div>
-          <div class="ampel-label">KRITISCH</div>
-        </mat-card>
-
-        <mat-card class="ampel-card">
-          <div class="ampel-icon-wrap"><mat-icon class="ampel-icon high-icon">warning</mat-icon></div>
-          <div class="ampel-count high-color">{{ getSummaryCount('high') }}</div>
-          <div class="ampel-label">HOCH</div>
-        </mat-card>
-
-        <mat-card class="ampel-card">
-          <div class="ampel-icon-wrap"><mat-icon class="ampel-icon med-icon">info</mat-icon></div>
-          <div class="ampel-count med-color">{{ getSummaryCount('medium') }}</div>
-          <div class="ampel-label">MITTEL</div>
-        </mat-card>
-
-        <mat-card class="ampel-card">
-          <div class="ampel-icon-wrap"><mat-icon class="ampel-icon ok-icon">check_circle</mat-icon></div>
-          <div class="ampel-count ok-color">{{ totalAlerts() }}</div>
-          <div class="ampel-label">GESAMT</div>
-        </mat-card>
-
-        <!-- KI-Lagebericht summary card -->
-        <mat-card class="ampel-card ki-lage-mini">
-          <div class="ki-lage-top">
-            <mat-icon class="ki-brain-icon">psychology</mat-icon>
-            <span class="ki-lage-title">KI-Lagebericht</span>
-            @if (latestAnalysis()) {
-              <span class="ki-age">{{ analysisAge() }}</span>
-            }
-          </div>
-          @if (loadingAnalysis()) {
-            <mat-spinner diameter="20"></mat-spinner>
-          } @else if (latestAnalysis()) {
-            <div class="ki-summary-text">{{ latestAnalysis()!.severity_summary }}</div>
-          } @else {
-            <div class="ki-no-data">Noch keine Analyse vorhanden</div>
-          }
-          <div class="ki-lage-actions">
-            <button mat-button color="primary" [routerLink]="['/ai-insights']" class="ki-detail-btn">
-              Vollständige Analyse
-              <mat-icon iconPositionEnd>arrow_forward</mat-icon>
-            </button>
-            <button mat-icon-button (click)="triggerAgent()" [disabled]="triggeringAgent()"
-                    matTooltip="KI-Agent jetzt auslösen">
-              @if (triggeringAgent()) { <mat-spinner diameter="18"></mat-spinner> }
-              @else { <mat-icon>play_circle</mat-icon> }
-            </button>
-          </div>
-        </mat-card>
-
-      </div>
-
-      <!-- ── Zeile 2: Alert-Feed + KI-Detail + Top-Hosts ─────────────────── -->
-      <div class="main-row">
-
-        <!-- Alert Feed -->
-        <mat-card class="feed-card">
-          <mat-card-header>
-            <mat-card-title>
-              <mat-icon style="vertical-align:middle;margin-right:6px">rss_feed</mat-icon>
-              Aktive Alerts
-            </mat-card-title>
-            <mat-card-subtitle>Letzte 15 Meldungen — alle Quellen</mat-card-subtitle>
-          </mat-card-header>
-          <mat-card-content>
-            @if (loadingFeed()) {
-              <div class="spinner-center"><mat-spinner diameter="30"></mat-spinner></div>
-            } @else if (feedItems().length === 0) {
-              <div class="empty-state">
-                <mat-icon>check_circle_outline</mat-icon>
-                <span>Keine aktiven Alerts — alles grün!</span>
-              </div>
-            } @else {
-              <div class="feed-list">
-                @for (item of feedItems(); track item.id) {
-                  <div class="feed-item">
-                    <span class="sev-dot" [style.background-color]="sevColor(item.severity)"></span>
-                    <div class="feed-item-body">
-                      <div class="feed-item-top">
-                        <span class="source-chip">{{ item.source }}</span>
-                        @if (itemHost(item)) {
-                          <span class="host-chip">{{ itemHost(item) }}</span>
-                        }
-                        <span class="feed-time">{{ item.created_at | date:'dd.MM HH:mm' }}</span>
-                      </div>
-                      <div class="feed-title">{{ item.title }}</div>
-                      @if (item.ai_insight) {
-                        <div class="feed-insight">
-                          <mat-icon class="insight-icon">psychology</mat-icon>
-                          <span>{{ item.ai_insight }}</span>
-                        </div>
-                      }
-                    </div>
-                  </div>
-                }
-              </div>
-            }
-          </mat-card-content>
-        </mat-card>
-
-        <!-- Right column -->
-        <div class="right-col">
-
-          <!-- KI-Detail Card -->
-          @if (latestAnalysis()) {
-            <mat-card class="ki-detail-card">
-              <mat-card-header>
-                <mat-card-title>
-                  <mat-icon style="vertical-align:middle;margin-right:6px">psychology</mat-icon>
-                  KI-Analyse — Findings
-                </mat-card-title>
-              </mat-card-header>
-              <mat-card-content>
-                @for (f of latestAnalysis()!.findings.slice(0,5); track f.title) {
-                  <div class="finding-item">
-                    <span class="sev-dot" [style.background-color]="sevColor(f.severity)"></span>
-                    <div>
-                      <div class="finding-title">{{ f.title }}</div>
-                      @if (f.description) {
-                        <div class="finding-desc">{{ f.description }}</div>
-                      }
-                    </div>
-                  </div>
-                }
-                @if (latestAnalysis()!.recommendations.length > 0) {
-                  <div class="rec-header">
-                    <mat-icon style="font-size:14px;vertical-align:middle">lightbulb</mat-icon>
-                    Empfehlungen
-                  </div>
-                  @for (r of latestAnalysis()!.recommendations.slice(0,3); track r.title) {
-                    <div class="rec-item">{{ r.title }}</div>
-                  }
-                }
-              </mat-card-content>
-            </mat-card>
-          }
-
-          <!-- Top Problem Hosts Chart -->
-          <mat-card class="hosts-card">
-            <mat-card-header>
-              <mat-card-title>
-                <mat-icon style="vertical-align:middle;margin-right:6px">dns</mat-icon>
-                Top Problem-Hosts
-              </mat-card-title>
-            </mat-card-header>
-            <mat-card-content>
-              @if (topHostsData().length > 0) {
-                <div echarts [options]="hostsChartOptions()" class="hosts-chart"></div>
-              } @else {
-                <div class="empty-state small">
-                  <mat-icon>check_circle_outline</mat-icon>
-                  <span>Keine Problem-Hosts</span>
-                </div>
-              }
-            </mat-card-content>
-          </mat-card>
-
+    <div class="dashboard-shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">CentralStation</p>
+          <h1>Operations Cockpit</h1>
+          <p class="subtitle">
+            Gespeicherte Suchen, Live-Listen und Metriken als frei arrangierbare Widgets.
+          </p>
         </div>
-      </div>
+        <div class="hero-actions">
+          @if (configMode()) {
+            <button mat-flat-button color="primary" (click)="addWidget()">
+              <mat-icon>add</mat-icon>
+              Widget hinzufügen
+            </button>
+          }
+          <button mat-stroked-button [color]="configMode() ? 'warn' : 'primary'" (click)="toggleConfigMode()">
+            <mat-icon>{{ configMode() ? 'done' : 'dashboard_customize' }}</mat-icon>
+            {{ configMode() ? 'Layout speichern' : 'Dashboard anpassen' }}
+          </button>
+          <button mat-icon-button (click)="refreshAll()" [disabled]="loading()" title="Aktualisieren">
+            <mat-icon>refresh</mat-icon>
+          </button>
+        </div>
+      </section>
 
+      @if (loading()) {
+        <mat-card class="loading-card">
+          <mat-spinner diameter="32"></mat-spinner>
+          <span>Lade Dashboard...</span>
+        </mat-card>
+      }
+
+      <div #grid class="grid-stack" [class.config-mode]="configMode()">
+        @for (widget of widgets(); track widget.id) {
+          <div class="grid-stack-item"
+               [attr.gs-id]="widget.id"
+               [attr.gs-x]="widget.gs_x"
+               [attr.gs-y]="widget.gs_y"
+               [attr.gs-w]="widget.gs_w"
+               [attr.gs-h]="widget.gs_h">
+            <div class="grid-stack-item-content">
+              <cs-dashboard-widget
+                [widget]="widget"
+                [data]="widgetData()[widget.id]"
+                [editMode]="configMode()"
+                (click)="openWidget(widget)"
+                (remove)="deleteWidget(widget.id)" />
+            </div>
+          </div>
+        }
+      </div>
     </div>
   `,
   styles: [`
-    .dashboard { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
-
-    /* ── Ampel row ── */
-    .ampel-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: stretch; }
-    .ampel-card {
-      flex: 1; min-width: 110px; padding: 12px 16px; text-align: center;
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-      transition: box-shadow .2s;
+    .dashboard-shell {
+      min-height: 100%;
+      padding: 24px;
+      background:
+        radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--mat-sys-primary) 15%, transparent), transparent 26rem),
+        linear-gradient(145deg, color-mix(in srgb, var(--mat-sys-surface-container) 70%, #eef7f2), var(--mat-sys-surface));
     }
-    .ampel-card.ampel-alert { box-shadow: 0 0 0 2px #d32f2f40; }
-    .ampel-icon-wrap { line-height: 1; }
-    .ampel-icon { font-size: 22px; width: 22px; height: 22px; }
-    .ampel-count { font-size: 28px; font-weight: 700; line-height: 1.1; }
-    .ampel-label { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--mat-sys-on-surface-variant); }
-    .crit-icon, .crit-color { color: #d32f2f; }
-    .high-icon, .high-color { color: #f57c00; }
-    .med-icon,  .med-color  { color: #1976d2; }
-    .ok-icon,   .ok-color   { color: #388e3c; }
-
-    /* KI-Lage mini card */
-    .ki-lage-mini {
-      flex: 3; min-width: 260px; padding: 12px 16px;
-      display: flex; flex-direction: column; gap: 6px;
+    .hero {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 18px;
     }
-    .ki-lage-top { display: flex; align-items: center; gap: 6px; }
-    .ki-brain-icon { color: var(--mat-sys-primary); font-size: 18px; width: 18px; height: 18px; }
-    .ki-lage-title { font-weight: 600; font-size: 13px; }
-    .ki-age { font-size: 11px; color: var(--mat-sys-on-surface-variant); margin-left: auto; }
-    .ki-summary-text { font-size: 12px; color: var(--mat-sys-on-surface-variant); line-height: 1.4; }
-    .ki-no-data { font-size: 12px; color: var(--mat-sys-on-surface-variant); font-style: italic; }
-    .ki-lage-actions { display: flex; align-items: center; margin-top: 2px; }
-    .ki-detail-btn { font-size: 11px; padding: 0 4px; height: 28px; }
+    .eyebrow {
+      margin: 0 0 4px;
+      color: var(--mat-sys-primary);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 5vw, 52px);
+      line-height: .98;
+      letter-spacing: -.06em;
+      font-weight: 900;
+    }
+    .subtitle {
+      margin: 10px 0 0;
+      max-width: 680px;
+      color: var(--mat-sys-on-surface-variant);
+      font-size: 14px;
+    }
+    .hero-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    .loading-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+      color: var(--mat-sys-on-surface-variant);
+    }
+    .grid-stack { min-height: 520px; }
+    .grid-stack.config-mode {
+      background-image:
+        linear-gradient(var(--mat-sys-outline-variant) 1px, transparent 1px),
+        linear-gradient(90deg, var(--mat-sys-outline-variant) 1px, transparent 1px);
+      background-size: 80px 80px;
+      border-radius: 18px;
+      padding-bottom: 12px;
+    }
+    .grid-stack-item-content { inset: 4px !important; overflow: visible !important; }
 
-    /* ── Main row ── */
-    .main-row { display: flex; gap: 16px; align-items: flex-start; }
-    .feed-card { flex: 3; min-width: 0; }
-    .right-col { flex: 2; min-width: 280px; display: flex; flex-direction: column; gap: 16px; }
-
-    /* Feed list */
-    .feed-list { display: flex; flex-direction: column; gap: 0; }
-    .feed-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--mat-sys-outline-variant); }
-    .feed-item:last-child { border-bottom: none; }
-    .sev-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
-    .feed-item-body { flex: 1; min-width: 0; }
-    .feed-item-top { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; flex-wrap: wrap; }
-    .source-chip { font-size: 10px; background: var(--mat-sys-surface-variant); padding: 1px 6px; border-radius: 8px; flex-shrink: 0; }
-    .host-chip { font-size: 10px; background: #1976d210; color: #1976d2; padding: 1px 6px; border-radius: 8px; font-family: monospace; flex-shrink: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .feed-time { font-size: 10px; color: var(--mat-sys-on-surface-variant); margin-left: auto; white-space: nowrap; }
-    .feed-title { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .feed-insight { display: flex; align-items: flex-start; gap: 4px; margin-top: 3px; font-size: 11px; color: var(--mat-sys-on-surface-variant); background: var(--mat-sys-primary-container, #e8f0fe); border-radius: 4px; padding: 4px 6px; line-height: 1.4; }
-    .insight-icon { font-size: 13px; width: 13px; height: 13px; flex-shrink: 0; margin-top: 1px; color: var(--mat-sys-primary); }
-
-    /* KI detail card */
-    .ki-detail-card mat-card-content { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; }
-    .finding-item { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; }
-    .finding-title { font-weight: 500; }
-    .finding-desc { color: var(--mat-sys-on-surface-variant); font-size: 11px; }
-    .rec-header { font-size: 11px; font-weight: 600; color: var(--mat-sys-on-surface-variant); text-transform: uppercase; letter-spacing: .5px; margin-top: 6px; display: flex; align-items: center; gap: 3px; }
-    .rec-item { font-size: 12px; padding: 3px 0 3px 16px; border-left: 2px solid var(--mat-sys-primary); }
-
-    /* Hosts chart */
-    .hosts-chart { height: 180px; }
-
-    /* Misc */
-    .spinner-center { display: flex; justify-content: center; padding: 24px; }
-    mat-spinner { display: inline-block; }
-    .empty-state { display: flex; align-items: center; gap: 8px; padding: 24px; color: var(--mat-sys-on-surface-variant); justify-content: center; }
-    .empty-state.small { padding: 16px; font-size: 12px; }
-    .empty-state mat-icon { opacity: .5; }
+    @media (max-width: 820px) {
+      .dashboard-shell { padding: 16px; }
+      .hero { align-items: flex-start; flex-direction: column; }
+      .hero-actions { justify-content: flex-start; }
+    }
   `],
 })
-export class DashboardComponent implements OnInit, OnDestroy {
-  summary         = signal<AlertSummary>({});
-  feedItems       = signal<FeedItem[]>([]);
-  latestAnalysis  = signal<AiAnalysis | null>(null);
-  loadingFeed     = signal(true);
-  loadingAnalysis = signal(true);
-  triggeringAgent = signal(false);
+export class DashboardComponent implements AfterViewInit, OnDestroy {
+  @ViewChild('grid') private gridEl!: ElementRef<HTMLElement>;
 
-  private destroy$ = new Subject<void>();
-
-  topHostsData = computed<Array<{host: string; count: number}>>(() => {
-    const counts = new Map<string, number>();
-    for (const item of this.feedItems()) {
-      const h = this.itemHost(item);
-      if (h) counts.set(h, (counts.get(h) ?? 0) + 1);
-    }
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
-      .map(([host, count]) => ({ host, count }));
-  });
-
-  hostsChartOptions = computed<any>(() => {
-    const data = this.topHostsData();
-    if (!data.length) return {};
-    return {
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-      grid: { left: '2%', right: '4%', bottom: '3%', containLabel: true },
-      xAxis: { type: 'value', axisLabel: { fontSize: 10 } },
-      yAxis: {
-        type: 'category',
-        data: data.map(d => d.host).reverse(),
-        axisLabel: { fontSize: 10, width: 120, overflow: 'truncate' },
-      },
-      series: [{
-        type: 'bar',
-        data: data.map(d => d.count).reverse(),
-        itemStyle: { color: '#f57c00' },
-        label: { show: true, position: 'right', fontSize: 10 },
-      }],
-    };
-  });
-
-  totalAlerts = computed<number>(() => {
-    const s = this.summary() as Record<string, number>;
-    return Object.values(s).reduce((a, b) => a + b, 0);
-  });
-
-  analysisAge = computed<string>(() => {
-    const a = this.latestAnalysis();
-    if (!a) return '';
-    const diff = Date.now() - new Date(a.run_at).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 60) return `vor ${mins} Min.`;
-    return `vor ${Math.floor(mins / 60)} Std.`;
-  });
+  widgets = signal<DashboardWidget[]>([]);
+  widgetData = signal<Record<string, WidgetData>>({});
+  configMode = signal(false);
+  loading = signal(true);
+  private grid?: GridStack;
 
   constructor(
-    private alertSvc: AlertService,
-    private ws: WebsocketService,
     private http: HttpClient,
+    private router: Router,
+    private dialog: MatDialog,
+    private snackBar: MatSnackBar,
   ) {}
 
-  ngOnInit() {
-    this.loadAll();
-    interval(60_000).pipe(takeUntil(this.destroy$)).subscribe(() => this.loadAll());
-    this.ws.messages().pipe(takeUntil(this.destroy$)).subscribe((msg: WsMessage) => {
-      if (msg.type === 'new_alert' || msg.type === 'ai_analysis') this.loadAll();
+  ngAfterViewInit() {
+    this.loadWidgets();
+  }
+
+  ngOnDestroy() {
+    this.grid?.destroy(false);
+  }
+
+  loadWidgets() {
+    this.loading.set(true);
+    this.http.get<DashboardWidget[]>(`${environment.apiUrl}/dashboard-widgets/`).subscribe({
+      next: widgets => {
+        this.widgets.set(widgets);
+        this.loading.set(false);
+        this.rebuildGrid();
+        widgets.forEach(w => this.loadWidgetData(w.id));
+      },
+      error: () => {
+        this.loading.set(false);
+        this.snackBar.open('Dashboard konnte nicht geladen werden', 'OK', { duration: 4000 });
+      },
     });
   }
 
-  ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); }
-
-  loadAll() {
-    this.loadSummary();
-    this.loadFeed();
-    this.loadAnalysis();
-  }
-
-  loadSummary() {
-    this.alertSvc.summary().subscribe({ next: s => this.summary.set(s) });
-  }
-
-  loadFeed() {
-    this.loadingFeed.set(true);
-    this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params: { limit: '15' } }).subscribe({
-      next:  items => { this.feedItems.set(items); this.loadingFeed.set(false); },
-      error: ()    => this.loadingFeed.set(false),
+  rebuildGrid() {
+    setTimeout(() => {
+      this.grid?.destroy(false);
+      this.grid = GridStack.init({
+        cellHeight: 80,
+        minRow: 4,
+        margin: 8,
+        float: false,
+        disableDrag: !this.configMode(),
+        disableResize: !this.configMode(),
+      }, this.gridEl.nativeElement);
     });
   }
 
-  loadAnalysis() {
-    this.loadingAnalysis.set(true);
-    this.http.get<AiAnalysis[]>(`${environment.apiUrl}/ai/analyses`, {
-      params: { agent_type: 'sysadmin', limit: '1' },
-    }).subscribe({
-      next:  list => { this.latestAnalysis.set(list[0] ?? null); this.loadingAnalysis.set(false); },
-      error: ()   => this.loadingAnalysis.set(false),
+  refreshAll() {
+    this.widgets().forEach(w => this.loadWidgetData(w.id));
+  }
+
+  toggleConfigMode() {
+    const next = !this.configMode();
+    this.configMode.set(next);
+    if (next) {
+      this.grid?.enable();
+    } else {
+      this.grid?.disable();
+      this.saveLayout();
+    }
+  }
+
+  saveLayout() {
+    const items = this.grid?.getGridItems() ?? [];
+    const updates = items
+      .map(el => this.layoutPatch(el))
+      .filter((patch): patch is { id: string; body: Record<string, number> } => !!patch)
+      .map(patch => this.http.patch(`${environment.apiUrl}/dashboard-widgets/${patch.id}`, patch.body));
+
+    if (!updates.length) return;
+    forkJoin(updates).subscribe({
+      next: () => this.snackBar.open('Dashboard-Layout gespeichert', '', { duration: 2000 }),
+      error: () => this.snackBar.open('Layout konnte nicht gespeichert werden', 'OK', { duration: 4000 }),
     });
   }
 
-  triggerAgent() {
-    this.triggeringAgent.set(true);
-    this.http.post(`${environment.apiUrl}/ai/trigger/sysadmin`, {}).subscribe({
-      next:  () => { this.triggeringAgent.set(false); setTimeout(() => this.loadAnalysis(), 3000); },
-      error: () => this.triggeringAgent.set(false),
+  private layoutPatch(el: GridItemHTMLElement): { id: string; body: Record<string, number> } | null {
+    const id = el.getAttribute('gs-id');
+    const n = el.gridstackNode;
+    if (!id || !n) return null;
+    return {
+      id,
+      body: {
+        gs_x: n.x ?? 0,
+        gs_y: n.y ?? 0,
+        gs_w: n.w ?? 4,
+        gs_h: n.h ?? 3,
+      },
+    };
+  }
+
+  loadWidgetData(widgetId: string) {
+    this.http.get<WidgetData>(`${environment.apiUrl}/dashboard-widgets/${widgetId}/data`).subscribe({
+      next: data => this.widgetData.update(m => ({ ...m, [widgetId]: data })),
+      error: () => this.widgetData.update(m => ({ ...m, [widgetId]: { error: 'Daten konnten nicht geladen werden', series: [] } })),
     });
   }
 
-  getSummaryCount(key: string): number {
-    return (this.summary() as Record<string, number>)[key] ?? 0;
+  addWidget() {
+    const ref = this.dialog.open<AddWidgetDialogComponent, unknown, DashboardWidgetCreate>(
+      AddWidgetDialogComponent,
+      { width: '680px' },
+    );
+    ref.afterClosed().subscribe(payload => {
+      if (!payload) return;
+      this.http.post<DashboardWidget>(`${environment.apiUrl}/dashboard-widgets/`, payload).subscribe({
+        next: widget => {
+          this.widgets.update(ws => [...ws, widget]);
+          this.rebuildGrid();
+          this.loadWidgetData(widget.id);
+        },
+        error: () => this.snackBar.open('Widget konnte nicht angelegt werden', 'OK', { duration: 4000 }),
+      });
+    });
   }
 
-  sevColor(sev: string): string {
-    return SEV_COLOR[sev] ?? '#607d8b';
+  deleteWidget(widgetId: string) {
+    this.http.delete(`${environment.apiUrl}/dashboard-widgets/${widgetId}`).subscribe({
+      next: () => {
+        this.widgets.update(ws => ws.filter(w => w.id !== widgetId));
+        this.widgetData.update(data => {
+          const next = { ...data };
+          delete next[widgetId];
+          return next;
+        });
+        this.rebuildGrid();
+      },
+      error: () => this.snackBar.open('Widget konnte nicht gelöscht werden', 'OK', { duration: 4000 }),
+    });
   }
 
-  itemHost(item: FeedItem): string {
-    if (item.host) return item.host;
-    const m = item.metadata_ as Record<string, unknown> | undefined;
-    if (!m) return '';
-    return (m['host'] as string) || (m['container_name'] as string) || '';
+  openWidget(widget: DashboardWidget) {
+    if (this.configMode()) return;
+    if (widget.widget_type === 'grafana_panel') return;
+
+    const cfg = widget.config;
+    this.router.navigate(['/feed'], {
+      queryParams: {
+        source: Array.isArray(cfg['sources']) ? cfg['sources'].join(',') : undefined,
+        severity: typeof cfg['severity'] === 'string' ? cfg['severity'] : undefined,
+        search_id: typeof cfg['search_id'] === 'string' ? cfg['search_id'] : undefined,
+        q: typeof cfg['query_string'] === 'string' ? cfg['query_string'] : undefined,
+        index: typeof cfg['index_pattern'] === 'string' ? cfg['index_pattern'] : undefined,
+      },
+    });
   }
 }

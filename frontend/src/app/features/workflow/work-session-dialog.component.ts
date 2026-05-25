@@ -83,6 +83,56 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
 
       <mat-tab-group animationDuration="200ms" class="session-tabs">
 
+        <!-- ── Tab 0: Jira Ticket Content ── -->
+        <mat-tab label="Ticket">
+          <div class="tab-content">
+            @if (!session()?.jira_key) {
+              <div class="empty-notes">Kein Jira-Ticket verknüpft.</div>
+            } @else if (!jiraDetail()) {
+              <div class="spinner-center"><mat-spinner diameter="32"></mat-spinner></div>
+            } @else {
+              <!-- Meta row -->
+              <div class="jira-meta-row">
+                <span class="jira-meta-field"><strong>Status:</strong> {{ jiraDetail().status }}</span>
+                <span class="jira-meta-field"><strong>Priorität:</strong> {{ jiraDetail().priority }}</span>
+                @if (jiraDetail().assignee) {
+                  <span class="jira-meta-field"><strong>Zugewiesen:</strong> {{ jiraDetail().assignee }}</span>
+                }
+                <span class="jira-meta-field"><strong>Erstellt:</strong> {{ jiraDetail().created | date:'dd.MM.yyyy HH:mm' }}</span>
+              </div>
+
+              <!-- Description -->
+              <div class="jira-section">
+                <div class="jira-section-title">Beschreibung</div>
+                @if (jiraDetail().description) {
+                  <pre class="jira-body-text">{{ jiraDetail().description }}</pre>
+                } @else {
+                  <span class="empty-notes">Keine Beschreibung.</span>
+                }
+              </div>
+
+              <!-- Comments -->
+              @if (jiraDetail().comments?.length) {
+                <div class="jira-section">
+                  <div class="jira-section-title">Kommentare ({{ jiraDetail().comments.length }})</div>
+                  <div class="comment-list">
+                    @for (c of jiraDetail().comments; track c.id) {
+                      <div class="comment-entry">
+                        <div class="comment-meta">
+                          <mat-icon class="note-icon">person</mat-icon>
+                          <span class="note-author">{{ c.author }}</span>
+                          <span class="note-time">{{ c.created | date:'dd.MM.yyyy HH:mm' }}</span>
+                        </div>
+                        <pre class="note-content">{{ c.body }}</pre>
+                      </div>
+                    }
+                  </div>
+                </div>
+              }
+            }
+          </div>
+        </mat-tab>
+
         <!-- ── Tab 1: Overview ── -->
         <mat-tab label="Übersicht">
           <div class="tab-content">
@@ -339,58 +389,6 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
           </div>
         </mat-tab>
 
-        <!-- ── Tab 4: 5-Why Analyse ── -->
-        <mat-tab label="5-Why Analyse">
-          <div class="tab-content">
-            <p class="tab-desc">Die 5-Why-Analyse identifiziert die Kernursache eines Problems durch fünf iterative Warum-Fragen (ITIL Problem Management).</p>
-
-            <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Problembeschreibung / Root Cause Hinweis</mat-label>
-              <textarea matInput [(ngModel)]="form.root_cause" rows="3"></textarea>
-            </mat-form-field>
-
-            <button mat-flat-button color="accent" (click)="run5Why()" [disabled]="aiLoading.fiveWhy()">
-              @if (aiLoading.fiveWhy()) { <mat-spinner diameter="16"></mat-spinner> Analysiere… }
-              @else { <ng-container><mat-icon>psychology</mat-icon> 5-Why Analyse starten</ng-container> }
-            </button>
-
-            @if (fiveWhyData()) {
-              <div class="fivewhy-result">
-                @for (i of [1,2,3,4,5]; track i) {
-                  @let key = 'why_' + i;
-                  @if (fiveWhyData()![key]) {
-                    <div class="why-step">
-                      <div class="why-q"><span class="why-num">Warum {{ i }}</span> {{ fiveWhyData()![key].question }}</div>
-                      <div class="why-a">→ {{ fiveWhyData()![key].answer }}</div>
-                    </div>
-                  }
-                }
-                @if (fiveWhyData()!.root_cause) {
-                  <div class="root-cause-box">
-                    <mat-icon>gps_fixed</mat-icon>
-                    <div>
-                      <strong>Kernursache:</strong> {{ fiveWhyData()!.root_cause }}
-                    </div>
-                  </div>
-                }
-                @if (fiveWhyData()!.corrective_action) {
-                  <div class="corrective-box">
-                    <mat-icon>build</mat-icon>
-                    <div>
-                      <strong>Empfohlene Maßnahme:</strong> {{ fiveWhyData()!.corrective_action }}
-                    </div>
-                  </div>
-                }
-                <div class="fivewhy-actions">
-                  <button mat-stroked-button (click)="adopt5WhyRootCause()">
-                    <mat-icon>check</mat-icon> Kernursache übernehmen
-                  </button>
-                </div>
-              </div>
-            }
-          </div>
-        </mat-tab>
-
       </mat-tab-group>
       }
     </div>
@@ -415,6 +413,16 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
     .sla-label { font-weight: 500; }
     .sla-breach { color: #c62828; font-weight: 700; }
     .form-actions { display: flex; justify-content: flex-end; }
+    /* Jira detail tab */
+    .jira-meta-row { display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; padding: 4px 0; }
+    .jira-meta-field { color: var(--mat-sys-on-surface-variant); }
+    .jira-meta-field strong { color: var(--mat-sys-on-surface); margin-right: 4px; }
+    .jira-section { display: flex; flex-direction: column; gap: 6px; }
+    .jira-section-title { font-weight: 600; font-size: 13px; color: var(--mat-sys-on-surface-variant); text-transform: uppercase; letter-spacing: .5px; }
+    pre.jira-body-text { margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-word; font-family: inherit; line-height: 1.6; background: var(--mat-sys-surface-variant); border-radius: 6px; padding: 10px 12px; }
+    .comment-list { display: flex; flex-direction: column; gap: 8px; }
+    .comment-entry { border-radius: 8px; padding: 8px 12px; background: var(--mat-sys-surface-variant); }
+    .comment-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
     /* Notes */
     .notes-log { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
     .note-entry { border-radius: 8px; padding: 8px 12px; background: var(--mat-sys-surface-variant); }
@@ -439,19 +447,11 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
     .solution-section strong { display: block; margin-bottom: 4px; }
     .rag-item { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 0; }
     .rag-item mat-icon { font-size: 14px; width: 14px; height: 14px; }
-    /* 5-Why */
-    .fivewhy-result { display: flex; flex-direction: column; gap: 10px; }
-    .why-step { padding: 8px 12px; background: var(--mat-sys-surface-variant); border-radius: 6px; }
-    .why-q { font-size: 13px; }
-    .why-num { font-weight: 700; color: var(--mat-sys-primary); margin-right: 6px; }
-    .why-a { font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-top: 2px; padding-left: 12px; }
-    .root-cause-box { display: flex; gap: 8px; align-items: flex-start; padding: 12px; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ef6c00; font-size: 13px; }
-    .corrective-box { display: flex; gap: 8px; align-items: flex-start; padding: 12px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #388e3c; font-size: 13px; }
-    .fivewhy-actions { display: flex; gap: 8px; }
   `],
 })
 export class WorkSessionDialogComponent implements OnInit {
   session = signal<any | null>(null);
+  jiraDetail = signal<any | null>(null);
   loading = signal(true);
 
   form: any = {
@@ -465,13 +465,10 @@ export class WorkSessionDialogComponent implements OnInit {
   generatedComment = signal<string | null>(null);
   generatedResolution = signal<string | null>(null);
   solutionData = signal<any | null>(null);
-  fiveWhyData = signal<any | null>(null);
-
   aiLoading = {
     comment: signal(false),
     resolution: signal(false),
     solution: signal(false),
-    fiveWhy: signal(false),
     categorize: signal(false),
   };
 
@@ -524,6 +521,10 @@ export class WorkSessionDialogComponent implements OnInit {
   private setSession(s: any) {
     this.session.set(s);
     this.sessionId = s.id;
+    if (s.jira_key) {
+      this.http.get<any>(`${environment.apiUrl}/jira-view/issue/${s.jira_key}`)
+        .subscribe({ next: d => this.jiraDetail.set(d), error: () => {} });
+    }
     this.form = {
       title: s.title,
       category: s.category,
@@ -594,24 +595,6 @@ export class WorkSessionDialogComponent implements OnInit {
       next: res => { this.solutionData.set(res); this.aiLoading.solution.set(false); },
       error: () => { this.aiLoading.solution.set(false); this.snackBar.open('Fehler bei Lösungssuche', '', { duration: 3000 }); },
     });
-  }
-
-  run5Why() {
-    this.aiLoading.fiveWhy.set(true);
-    if (this.form.root_cause) {
-      this.http.patch(`${environment.apiUrl}/workflow/${this.sessionId}`, { root_cause: this.form.root_cause }).subscribe();
-    }
-    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/5why`, {}).subscribe({
-      next: res => { this.fiveWhyData.set(res); this.aiLoading.fiveWhy.set(false); },
-      error: () => { this.aiLoading.fiveWhy.set(false); this.snackBar.open('Fehler bei 5-Why-Analyse', '', { duration: 3000 }); },
-    });
-  }
-
-  adopt5WhyRootCause() {
-    if (this.fiveWhyData()?.root_cause) {
-      this.form.root_cause = this.fiveWhyData()!.root_cause;
-      this.saveOverview();
-    }
   }
 
   autoCategorize() {

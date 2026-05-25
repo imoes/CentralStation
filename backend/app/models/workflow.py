@@ -30,10 +30,55 @@ class UserPreference(Base):
     checkmk_ve:          Mapped[list | None] = mapped_column(JSON)
     checkmk_criticality: Mapped[list | None] = mapped_column(JSON)
     checkmk_os:          Mapped[list | None] = mapped_column(JSON)
+    # Feed searches — list of UUIDs the user has explicitly disabled
+    feed_disabled_search_ids: Mapped[list | None] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class FeedSearch(Base):
+    __tablename__ = "feed_searches"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    # NULL = system search (visible to all); set = personal search
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # OpenSearch index pattern, e.g. "cs-feed-graylog", "cs-feed-wazuh", "cs-feed-*"
+    index_pattern: Mapped[str] = mapped_column(String(60), default="cs-feed-*")
+    name: Mapped[str] = mapped_column(String(100))
+    # Lucene/OpenSearch query string, empty = match_all
+    query_string: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class DashboardWidget(Base):
+    __tablename__ = "dashboard_widgets"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    # "stat" | "list" | "donut" | "timeseries"
+    widget_type: Mapped[str] = mapped_column(String(20))
+    title: Mapped[str] = mapped_column(String(100))
+    # GridStack layout
+    gs_x: Mapped[int] = mapped_column(Integer, default=0)
+    gs_y: Mapped[int] = mapped_column(Integer, default=0)
+    gs_w: Mapped[int] = mapped_column(Integer, default=4)
+    gs_h: Mapped[int] = mapped_column(Integer, default=3)
+    # Widget-specific config (data source, filters, promql, etc.)
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
 
