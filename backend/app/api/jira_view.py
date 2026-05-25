@@ -47,6 +47,9 @@ async def my_tickets(
     from app.core.security import decrypt_credentials
     from app.services.connectors.jira import JiraConnector
 
+    from app.api.preferences import _ensure_default_jql_queries
+    await _ensure_default_jql_queries(user.id, db)
+
     result = await db.execute(
         select(UserJiraQuery)
         .where(UserJiraQuery.user_id == user.id, UserJiraQuery.enabled.is_(True))

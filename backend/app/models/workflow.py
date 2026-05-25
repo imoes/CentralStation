@@ -30,6 +30,7 @@ class UserPreference(Base):
     checkmk_ve:          Mapped[list | None] = mapped_column(JSON)
     checkmk_criticality: Mapped[list | None] = mapped_column(JSON)
     checkmk_os:          Mapped[list | None] = mapped_column(JSON)
+    checkmk_hostgroups:  Mapped[list | None] = mapped_column(JSON)
     # Feed searches — list of UUIDs the user has explicitly disabled
     feed_disabled_search_ids: Mapped[list | None] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(

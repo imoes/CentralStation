@@ -7,7 +7,9 @@ import { MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSelectModule } from '@angular/material/select';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { environment } from '../../../environments/environment';
 import { DashboardWidgetCreate } from './dashboard-widget.model';
 
@@ -29,7 +31,9 @@ interface FeedSearch {
     MatFormFieldModule,
     MatIconModule,
     MatInputModule,
+    MatProgressSpinnerModule,
     MatSelectModule,
+    MatTooltipModule,
   ],
   template: `
     <h2 mat-dialog-title>Widget hinzufügen</h2>
@@ -91,9 +95,35 @@ interface FeedSearch {
       }
 
       @if (widgetType === 'timeseries') {
+        <!-- Lucene → PromQL converter -->
+        <div class="converter-row">
+          <mat-form-field appearance="outline" class="converter-field">
+            <mat-label>Beschreibung / Lucene-Suchterme</mat-label>
+            <textarea matInput rows="2" [(ngModel)]="convertPrompt"
+              placeholder='z.B. "CPU-Auslastung docker086" oder "host:docker086 AND metric:cpu"'></textarea>
+            <mat-hint>Natürliche Sprache oder Lucene-Syntax → wird zu PromQL konvertiert</mat-hint>
+          </mat-form-field>
+          <button mat-flat-button color="accent" class="convert-btn"
+                  [disabled]="!convertPrompt.trim() || convertingPromql()"
+                  (click)="convertToPromql()"
+                  matTooltip="Beschreibung in PromQL übersetzen (KI oder Regelwerk)">
+            @if (convertingPromql()) {
+              <mat-spinner diameter="16"></mat-spinner>
+            } @else {
+              <mat-icon>auto_fix_high</mat-icon>
+            }
+            → PromQL
+          </button>
+        </div>
+        @if (promqlExplanation) {
+          <div class="promql-hint">
+            <mat-icon>info</mat-icon> {{ promqlExplanation }}
+          </div>
+        }
         <mat-form-field appearance="outline">
           <mat-label>PromQL</mat-label>
-          <textarea matInput rows="4" [(ngModel)]="promql"></textarea>
+          <textarea matInput rows="4" [(ngModel)]="promql"
+            placeholder='z.B. 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)'></textarea>
         </mat-form-field>
         <div class="inline-fields">
           <mat-form-field appearance="outline">
@@ -148,6 +178,13 @@ interface FeedSearch {
     .type-tile span { font-size: 12px; font-weight: 600; }
     .inline-fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
     mat-form-field { width: 100%; }
+    .converter-row { display: flex; gap: 10px; align-items: flex-start; }
+    .converter-field { flex: 1; }
+    .convert-btn { margin-top: 4px; flex-shrink: 0; height: 42px; }
+    .convert-btn mat-spinner { display: inline-block; margin-right: 4px; }
+    .promql-hint { display: flex; align-items: center; gap: 6px; font-size: 12px;
+      color: var(--mat-sys-on-surface-variant); padding: 2px 0 6px; }
+    .promql-hint mat-icon { font-size: 15px; height: 15px; width: 15px; }
   `],
 })
 export class AddWidgetDialogComponent implements OnInit {
@@ -162,6 +199,7 @@ export class AddWidgetDialogComponent implements OnInit {
   ] as const;
 
   searches = signal<FeedSearch[]>([]);
+  convertingPromql = signal(false);
   widgetType: DashboardWidgetCreate['widget_type'] = 'list';
   title = 'Neueste Alerts';
   selectedSearchId = '';
@@ -169,6 +207,8 @@ export class AddWidgetDialogComponent implements OnInit {
   queryString = '';
   severity = '';
   limit = 8;
+  convertPrompt = '';
+  promqlExplanation = '';
   promql = '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)';
   step = '1m';
   hours = 4;
@@ -210,6 +250,23 @@ export class AddWidgetDialogComponent implements OnInit {
 
   applySeverity() {
     if (this.severity) this.queryString = `severity:${this.severity}`;
+  }
+
+  convertToPromql() {
+    const msg = this.convertPrompt.trim();
+    if (!msg) return;
+    this.convertingPromql.set(true);
+    this.http.post<{ promql: string; explanation: string }>(
+      `${environment.apiUrl}/ai/promql-assistant`,
+      { message: msg },
+    ).subscribe({
+      next: res => {
+        if (res.promql) this.promql = res.promql;
+        this.promqlExplanation = res.explanation || '';
+        this.convertingPromql.set(false);
+      },
+      error: () => this.convertingPromql.set(false),
+    });
   }
 
   canCreate(): boolean {

@@ -2,8 +2,11 @@ import {
   AfterViewInit,
   Component,
   ElementRef,
+  Injector,
   OnDestroy,
   ViewChild,
+  afterNextRender,
+  inject,
   signal,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
@@ -71,6 +74,10 @@ import {
             <button mat-flat-button color="primary" (click)="addWidget()">
               <mat-icon>add</mat-icon>
               Widget hinzufügen
+            </button>
+            <button mat-stroked-button color="warn" (click)="resetDefaults()" title="Alle Widgets löschen und Standard-Layout wiederherstellen">
+              <mat-icon>restore</mat-icon>
+              Defaults
             </button>
           }
           <button mat-stroked-button [color]="configMode() ? 'warn' : 'primary'" (click)="toggleConfigMode()">
@@ -224,6 +231,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   creatingFromPrompt = signal(false);
   dashboardPrompt = '';
   private grid?: GridStack;
+  private injector = inject(Injector);
 
   constructor(
     private http: HttpClient,
@@ -269,8 +277,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
       next: widgets => {
         this.widgets.set(widgets);
         this.loading.set(false);
-        this.rebuildGrid();
-        widgets.forEach(w => this.loadWidgetData(w.id));
+        this.rebuildGrid(true);
       },
       error: () => {
         this.loading.set(false);
@@ -279,8 +286,11 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     });
   }
 
-  rebuildGrid() {
-    setTimeout(() => {
+  rebuildGrid(loadData = false) {
+    // afterNextRender fires after Angular has committed the current DOM update,
+    // guaranteeing all grid-stack-item elements from the @for loop are present
+    // before GridStack measures them and sets pixel heights.
+    afterNextRender(() => {
       this.grid?.destroy(false);
       this.grid = GridStack.init({
         cellHeight: 80,
@@ -290,7 +300,12 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
         disableDrag: !this.configMode(),
         disableResize: !this.configMode(),
       }, this.gridEl.nativeElement);
-    });
+      // Fetch widget data after GridStack has sized all containers so echarts
+      // initialises into elements that already have correct pixel heights.
+      if (loadData) {
+        this.widgets().forEach(w => this.loadWidgetData(w.id));
+      }
+    }, { injector: this.injector });
   }
 
   refreshAll() {
@@ -432,6 +447,26 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
       error: err => {
         this.creatingFromPrompt.set(false);
         this.snackBar.open(err?.error?.detail ?? 'Dashboard konnte nicht erstellt werden', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  resetDefaults() {
+    const dashId = this.selectedDashboardId();
+    if (!dashId) return;
+    this.loading.set(true);
+    this.http.post<DashboardWidget[]>(`${environment.apiUrl}/dashboard-widgets/dashboards/${dashId}/reset-defaults`, {}).subscribe({
+      next: widgets => {
+        this.widgets.set(widgets);
+        this.widgetData.set({});
+        this.loading.set(false);
+        this.rebuildGrid();
+        widgets.forEach(w => this.loadWidgetData(w.id));
+        this.snackBar.open('Standard-Layout wiederhergestellt', 'OK', { duration: 2500 });
+      },
+      error: () => {
+        this.loading.set(false);
+        this.snackBar.open('Fehler beim Zurücksetzen', 'OK', { duration: 3000 });
       },
     });
   }

@@ -209,6 +209,100 @@ async def get_analysis(
     }
 
 
+class PromqlRequest(BaseModel):
+    message: str
+
+
+def _fallback_promql(message: str) -> dict:
+    """Heuristic Lucene-style → PromQL conversion without LLM."""
+    text = message.lower()
+    labels: list[str] = []
+
+    import re
+    # Extract host/instance hints (hostname:docker086 or just docker086)
+    host_match = re.search(r"(?:host(?:name)?|instance)[:\s=]+([a-z0-9._-]+)", text)
+    if not host_match:
+        host_match = re.search(r"\b(docker[0-9]+|srv[0-9]+|web[0-9]+|db[0-9]+)\b", text)
+    if host_match:
+        labels.append(f'instance="{host_match.group(1)}:9100"')
+
+    label_str = "{" + ", ".join(labels) + "}" if labels else ""
+
+    if any(k in text for k in ("cpu", "prozessor", "auslastung")):
+        if labels and host_match:
+            promql = f'100 - (avg(rate(node_cpu_seconds_total{{instance="{host_match.group(1)}:9100",mode="idle"}}[5m])) * 100)'
+        else:
+            promql = '100 - (avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)'
+        explanation = "CPU-Auslastung in Prozent (1 - idle rate)"
+    elif any(k in text for k in ("memory", "speicher", "ram")):
+        promql = f'100 * (1 - node_memory_MemAvailable_bytes{label_str} / node_memory_MemTotal_bytes{label_str})'
+        explanation = "RAM-Auslastung in Prozent"
+    elif any(k in text for k in ("disk", "festplatte", "filesystem", "storage")):
+        promql = f'100 * (1 - node_filesystem_free_bytes{label_str} / node_filesystem_size_bytes{label_str})'
+        explanation = "Dateisystem-Auslastung in Prozent"
+    elif any(k in text for k in ("network", "netzwerk", "traffic", "bytes")):
+        promql = f'rate(node_network_receive_bytes_total{label_str}[5m])'
+        explanation = "Netzwerk-Empfangsrate in Bytes/s"
+    elif any(k in text for k in ("load", "last")):
+        promql = f'node_load1{label_str}'
+        explanation = "System-Load (1-Minuten-Durchschnitt)"
+    else:
+        promql = f'up{label_str}'
+        explanation = "Host-Verfügbarkeit (1 = erreichbar)"
+
+    return {"promql": promql, "explanation": explanation}
+
+
+@router.post("/promql-assistant")
+async def promql_assistant(
+    body: PromqlRequest,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Convert natural language or Lucene-style search terms to PromQL."""
+    from app.services.llm_client import generate_text
+    from app.services.settings import get_llm_config
+
+    llm = await get_llm_config(db)
+    if not llm.is_configured:
+        return _fallback_promql(body.message)
+
+    system = (
+        "Du bist ein Prometheus-Experte. Konvertiere natuerlichsprachliche Beschreibungen "
+        "oder Lucene-aehnliche Suchterme in valide PromQL-Queries.\n\n"
+        "Verfuegbare node_exporter Metriken (Auswahl):\n"
+        "- CPU: node_cpu_seconds_total{mode='idle'|'user'|'system'}\n"
+        "- RAM: node_memory_MemTotal_bytes, node_memory_MemAvailable_bytes\n"
+        "- Disk I/O: node_disk_io_time_seconds_total, node_disk_read_bytes_total\n"
+        "- Netzwerk: node_network_receive_bytes_total, node_network_transmit_bytes_total\n"
+        "- Dateisystem: node_filesystem_size_bytes, node_filesystem_free_bytes\n"
+        "- Load: node_load1, node_load5, node_load15\n"
+        "- Uptime: node_boot_time_seconds\n"
+        "- CheckMK: cmk_service_state{hostname='..'}, cmk_host_state{hostname='..'}\n\n"
+        "Lucene-Syntax-Mapping:\n"
+        "- host:docker086 oder hostname:docker086 -> {instance='docker086:9100'}\n"
+        "- metric:cpu -> node_cpu_seconds_total\n"
+        "- NOT mode:idle -> {mode!='idle'}\n\n"
+        "Antworte ausschliesslich als JSON: {\"promql\": \"<query>\", \"explanation\": \"<kurze Erklaerung>\"}"
+    )
+
+    raw = await generate_text(
+        llm,
+        [{"role": "system", "content": system}, {"role": "user", "content": body.message}],
+        reasoning_effort="none",
+        temperature=0.1,
+        max_output_tokens=300,
+    )
+    try:
+        data = json.loads(raw)
+        return {
+            "promql": str(data.get("promql") or ""),
+            "explanation": str(data.get("explanation") or ""),
+        }
+    except Exception:
+        return _fallback_promql(body.message)
+
+
 @router.post("/trigger/{agent_type}", dependencies=[RequireSysAdmin])
 async def trigger_agent(
     agent_type: str,
