@@ -1,5 +1,16 @@
 """Wazuh REST API connector.
 
+Excluded rule IDs and FIM paths are configurable via the connector credentials
+(Settings → Connectors → Wazuh) and stored encrypted in the database.
+Defaults are applied when not configured:
+
+  excluded_rule_ids (default):
+    503, 504, 533, 591, 5402, 5501, 5502, 5715
+
+  excluded_fim_paths (default):
+    /etc/cmk-update-agent.state, /etc/patchmon/config.yml
+
+
 Wazuh 4.14+: The /alerts endpoint was removed. Alerts are now in the
 Wazuh Indexer (OpenSearch). This connector supports two modes:
 
@@ -34,6 +45,17 @@ def _to_severity(level: int) -> str:
     if level < 13:
         return "high"
     return "critical"
+
+
+def _credential_list(value, defaults: list[str]) -> list[str]:
+    """Return credential value as non-empty string list, otherwise defaults."""
+    if isinstance(value, list):
+        vals = [str(v).strip() for v in value if str(v).strip()]
+    elif isinstance(value, str):
+        vals = [v.strip() for v in value.splitlines() if v.strip()]
+    else:
+        vals = []
+    return vals or defaults
 
 
 class WazuhConnector(BaseConnector):
@@ -169,6 +191,17 @@ class WazuhConnector(BaseConnector):
             datetime.now(timezone.utc) - timedelta(minutes=time_range_minutes)
         ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
+        # Load from connector credentials — configurable via GUI.
+        # Falls back to hardcoded defaults when not set.
+        _EXCLUDED_RULE_IDS = _credential_list(
+            self.credentials.get("excluded_rule_ids"),
+            ["503", "504", "533", "591", "5402", "5501", "5502", "5715"],
+        )
+        _EXCLUDED_FIM_PATHS = _credential_list(
+            self.credentials.get("excluded_fim_paths"),
+            ["/etc/cmk-update-agent.state", "/etc/patchmon/config.yml"],
+        )
+
         query = {
             "size": limit,
             "sort": [{"timestamp": {"order": "desc"}}],
@@ -177,7 +210,11 @@ class WazuhConnector(BaseConnector):
                     "filter": [
                         {"range": {"timestamp": {"gte": since}}},
                         {"range": {"rule.level": {"gte": min_level}}},
-                    ]
+                    ],
+                    "must_not": [
+                        {"terms": {"rule.id": _EXCLUDED_RULE_IDS}},
+                        {"terms": {"data.syscheck.path": _EXCLUDED_FIM_PATHS}},
+                    ],
                 }
             },
             "_source": [
@@ -204,11 +241,11 @@ class WazuhConnector(BaseConnector):
             level = rule.get("level", 0)
             agent_name = agent.get("name", "unknown")
             rule_id = str(rule.get("id", "0"))
-            # Stable dedup key: same rule on same agent = same entry (cooldown in aggregator)
+            desc = rule.get("description", "Wazuh Alert")
             dedup_key = f"{agent_name}:{rule_id}"
             results.append({
                 "severity": _to_severity(level),
-                "title": rule.get("description", "Wazuh Alert"),
+                "title": f"{agent_name} — {desc}",
                 "body": src.get("full_log", ""),
                 "external_id": dedup_key,
                 "metadata": {
@@ -250,10 +287,11 @@ class WazuhConnector(BaseConnector):
             agent = item.get("agent", {})
             agent_name = agent.get("name", "unknown")
             rule_id = str(rule.get("id", "0"))
+            desc = rule.get("description", "Wazuh Alert")
             dedup_key = f"{agent_name}:{rule_id}"
             results.append({
                 "severity": _to_severity(level),
-                "title": rule.get("description", ""),
+                "title": f"{agent_name} — {desc}",
                 "body": item.get("full_log", ""),
                 "external_id": dedup_key,
                 "metadata": {

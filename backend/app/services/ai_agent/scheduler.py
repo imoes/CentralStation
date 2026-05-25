@@ -17,10 +17,39 @@ async def run_alert_aggregation() -> None:
 
 async def run_sysadmin_agent() -> None:
     logger.info("SysAdmin AI Agent: starting run")
+    from sqlalchemy import select
     from app.core.database import AsyncSessionLocal
+    from app.models.user import User
+    from app.models.workflow import UserPreference
     from app.services.ai_agent.graph import run_sysadmin_workflow
+    from app.services.settings import get_agent_config
+
     async with AsyncSessionLocal() as db:
-        await run_sysadmin_workflow(db)
+        config = await get_agent_config(db)
+
+        # Use the first active sysadmin/admin user's CheckMK preferences as the
+        # filter for the scheduled run — avoids duplicate configuration.
+        result = await db.execute(
+            select(UserPreference)
+            .join(User, User.id == UserPreference.user_id)
+            .where(User.role.in_(["admin", "sysadmin"]), User.is_active.is_(True))
+            .order_by(User.created_at)
+            .limit(1)
+        )
+        prefs = result.scalar_one_or_none()
+        locs  = (prefs.checkmk_locations   or []) if prefs else []
+        ve    = (prefs.checkmk_ve          or []) if prefs else []
+        crit  = (prefs.checkmk_criticality or []) if prefs else []
+        os_   = (prefs.checkmk_os          or []) if prefs else []
+
+        await run_sysadmin_workflow(
+            db,
+            min_age_minutes=config.interval_minutes,
+            user_checkmk_locations=locs  or None,
+            user_checkmk_ve=ve            or None,
+            user_checkmk_criticality=crit or None,
+            user_checkmk_os=os_           or None,
+        )
 
 
 async def run_network_agent() -> None:

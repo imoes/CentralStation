@@ -187,14 +187,24 @@ export class KanbanComponent implements OnInit, OnDestroy {
     if (!card) return;
     const newStatus = event.container.id as KanbanStatus;
     const newPosition = event.currentIndex;
+    const oldStatus = card.status;
+
+    // Optimistic update so the card stays in the new column immediately
+    // without snapping back while the API call is in flight.
+    this.cards.update(list =>
+      list.map(c => c.id === card.id ? { ...c, status: newStatus, position: newPosition } : c)
+    );
 
     this.svc.move(card.id, { status: newStatus, position: newPosition }).subscribe({
       next: updated => {
         this.cards.update(list => list.map(c => c.id === updated.id ? updated : c));
       },
       error: (err) => {
+        // Revert on failure
+        this.cards.update(list =>
+          list.map(c => c.id === card.id ? { ...c, status: oldStatus, position: card.position } : c)
+        );
         this.snack.open(err?.error?.detail ?? 'Jira-Sync beim Verschieben fehlgeschlagen', 'OK', { duration: 4000 });
-        this.load();
       },
     });
   }

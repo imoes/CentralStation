@@ -72,8 +72,15 @@ def calculate_priority(impact: str, urgency: str) -> dict:
 COMMENT_SYSTEM = """Du bist ein erfahrener IT-Administrator und schreibst einen professionellen
 Fortschrittskommentar für ein Jira-Ticket auf Deutsch.
 
+WICHTIG: Lies den gesamten bisherigen Ticket-Verlauf (Beschreibung + alle Kommentare) und
+beziehe Dich auf den AKTUELLEN Stand. Wiederhole keine Punkte, die bereits erledigt oder
+beantwortet sind. Berücksichtige besonders den neuesten Kommentar — er spiegelt den
+aktuellen Sachstand wider und darf nicht ignoriert werden.
+
+Falls Wissensdatenbank-Einträge mitgeliefert werden, nutze diese als zusätzlichen Kontext.
+
 Schreibe einen präzisen, sachlichen Kommentar der:
-- den aktuellen Bearbeitungsstand dokumentiert
+- den aktuellen Bearbeitungsstand dokumentiert (basierend auf dem neuesten Kommentar)
 - durchgeführte Schritte beschreibt
 - nächste Schritte nennt (falls bekannt)
 - ggf. auf wen gewartet wird (Pending-Informationen)
@@ -169,8 +176,9 @@ async def generate_comment(
     ticket_description: str,
     work_notes: list[dict],
     comment_type: str = "progress",  # progress | pending | escalation | handoff
+    db: Any = None,
 ) -> str:
-    """Generate an ITIL-compliant ticket comment."""
+    """Generate an ITIL-compliant ticket comment, enriched with it-aikb DeepSearch."""
     notes_text = "\n".join(
         f"[{n.get('timestamp', '')[:16]}] {n.get('author', 'User')}: {n.get('content', '')}"
         for n in (work_notes or [])[-10:]
@@ -181,13 +189,43 @@ async def generate_comment(
         "escalation": "Eskalation — Warum wird eskaliert, an wen, was wurde bereits versucht",
         "handoff":    "Übergabekommentar — Zusammenfassung für die übernehmende Person",
     }
+
+    # it-aikb DeepSearch for relevant infrastructure/runbook context
+    kb_text = ""
+    if db:
+        try:
+            from sqlalchemy import select as sa_select
+            from app.models.connector import ConnectorConfig
+            from app.core.security import decrypt_credentials
+            conn_result = await db.execute(
+                sa_select(ConnectorConfig).where(
+                    ConnectorConfig.type == "it_aikb",
+                    ConnectorConfig.enabled.is_(True),
+                ).limit(1)
+            )
+            conn = conn_result.scalars().first()
+            if conn:
+                creds = decrypt_credentials(conn.encrypted_credentials)
+                from app.services.connectors.it_aikb import ITAikbConnector
+                svc = ITAikbConnector(base_url=conn.base_url, credentials=creds)
+                results = await svc.deepsearch(ticket_title)
+                if results:
+                    snippets = "\n".join(
+                        f"- {r.get('title', '')}: {(r.get('content') or r.get('text', ''))[:300]}"
+                        for r in results[:5]
+                    )
+                    kb_text = f"\nWissensdatenbank-Kontext:\n{snippets}"
+        except Exception as e:
+            log.debug("generate_comment: it-aikb lookup failed: %s", e)
+
     prompt = f"""Ticket: {ticket_title}
-Beschreibung: {ticket_description[:300]}
+Verlauf (Beschreibung + Kommentare, neueste zuletzt):
+{ticket_description}
 Kommentartyp: {type_hints.get(comment_type, comment_type)}
 Arbeitsnotizen:
-{notes_text or '(keine Notizen)'}
+{notes_text or '(keine Notizen)'}{kb_text}
 
-Schreibe jetzt den Kommentar:"""
+Schreibe jetzt den Kommentar basierend auf dem aktuellen Stand (letzter Kommentar im Verlauf):"""
     return await _invoke_llm(llm_config, COMMENT_SYSTEM, prompt)
 
 
@@ -214,7 +252,7 @@ async def generate_resolution(
         "cancelled":           "Storniert / nicht mehr relevant",
     }
     prompt = f"""Ticket: {ticket_title}
-Problembeschreibung: {ticket_description[:300]}
+Problembeschreibung: {ticket_description}
 Ursache (Root Cause): {root_cause or '(nicht angegeben)'}
 Abschlusstyp: {closure_map.get(closure_code, closure_code)}
 Lösungstyp: {'Dauerlösung' if resolution_type == 'permanent_fix' else 'Workaround'}
@@ -231,7 +269,7 @@ async def auto_categorize(
     description: str,
 ) -> dict:
     """Auto-categorize a ticket and suggest impact/urgency."""
-    prompt = f"Ticket Titel: {title}\nBeschreibung: {description[:500]}"
+    prompt = f"Ticket Titel: {title}\nBeschreibung: {description}"
     try:
         raw = await _invoke_llm(llm_config, CATEGORIZE_SYSTEM, prompt)
         if raw.startswith("```"):
@@ -251,7 +289,7 @@ async def suggest_solution(
     use_web: bool = True,
 ) -> dict:
     """Search for solutions using LLM + RAG + optional SearXNG web search."""
-    prompt = f"Problem: {title}\nDetails: {description[:500]}"
+    prompt = f"Problem: {title}\nDetails: {description}"
     try:
         raw = await _invoke_llm(llm_config, SOLUTION_SEARCH_SYSTEM, prompt)
         if raw.startswith("```"):
@@ -370,7 +408,7 @@ async def run_5why_analysis(
     """ITIL Problem Management: 5-Why root cause analysis."""
     notes_text = "\n".join(n.get("content", "") for n in (work_notes or [])[-5:])
     prompt = f"""Problembeschreibung: {title}
-Details: {description[:400]}
+Details: {description}
 Arbeitsnotizen: {notes_text or '(keine)'}
 
 Führe eine 5-Why-Analyse durch:"""

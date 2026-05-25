@@ -1,6 +1,7 @@
 import { Component, OnInit, OnDestroy, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -14,6 +15,7 @@ import { Subject, takeUntil } from 'rxjs';
 import { AlertService } from '../../core/services/alert.service';
 import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
 import { Alert, Severity } from '../../core/models/alert.model';
+import { environment } from '../../../environments/environment';
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#d32f2f',
@@ -73,8 +75,7 @@ const SEVERITY_COLORS: Record<string, string> = {
             @if (availableCriticalities().length) {
               <mat-form-field appearance="outline" class="filter-field">
                 <mat-label>Criticality</mat-label>
-                <mat-select [ngModel]="filterCriticality()" (ngModelChange)="filterCriticality.set($event)">
-                  <mat-option value="">Alle</mat-option>
+                <mat-select multiple [ngModel]="filterCriticality()" (ngModelChange)="filterCriticality.set($event)">
                   @for (v of availableCriticalities(); track v) {
                     <mat-option [value]="v">{{ v }}</mat-option>
                   }
@@ -84,8 +85,7 @@ const SEVERITY_COLORS: Record<string, string> = {
             @if (availableVes().length) {
               <mat-form-field appearance="outline" class="filter-field">
                 <mat-label>Umgebung (VE)</mat-label>
-                <mat-select [ngModel]="filterVe()" (ngModelChange)="filterVe.set($event)">
-                  <mat-option value="">Alle</mat-option>
+                <mat-select multiple [ngModel]="filterVe()" (ngModelChange)="filterVe.set($event)">
                   @for (v of availableVes(); track v) {
                     <mat-option [value]="v">{{ v }}</mat-option>
                   }
@@ -95,8 +95,7 @@ const SEVERITY_COLORS: Record<string, string> = {
             @if (availableLocations().length) {
               <mat-form-field appearance="outline" class="filter-field">
                 <mat-label>Location</mat-label>
-                <mat-select [ngModel]="filterLocation()" (ngModelChange)="filterLocation.set($event)">
-                  <mat-option value="">Alle</mat-option>
+                <mat-select multiple [ngModel]="filterLocation()" (ngModelChange)="filterLocation.set($event)">
                   @for (v of availableLocations(); track v) {
                     <mat-option [value]="v">{{ v }}</mat-option>
                   }
@@ -106,9 +105,18 @@ const SEVERITY_COLORS: Record<string, string> = {
             @if (availableSites().length) {
               <mat-form-field appearance="outline" class="filter-field">
                 <mat-label>Site</mat-label>
-                <mat-select [ngModel]="filterSite()" (ngModelChange)="filterSite.set($event)">
-                  <mat-option value="">Alle</mat-option>
+                <mat-select multiple [ngModel]="filterSite()" (ngModelChange)="filterSite.set($event)">
                   @for (v of availableSites(); track v) {
+                    <mat-option [value]="v">{{ v }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+            }
+            @if (availableOs().length) {
+              <mat-form-field appearance="outline" class="filter-field">
+                <mat-label>Betriebssystem</mat-label>
+                <mat-select multiple [ngModel]="filterOs()" (ngModelChange)="filterOs.set($event)">
+                  @for (v of availableOs(); track v) {
                     <mat-option [value]="v">{{ v }}</mat-option>
                   }
                 </mat-select>
@@ -209,22 +217,26 @@ export class AlertsComponent implements OnInit, OnDestroy {
   filterSeverity = '';
   filterStatus = 'new';
 
-  // CheckMK-specific metadata filters (client-side, applied on loaded alerts)
-  filterCriticality = signal('');
-  filterVe = signal('');
-  filterLocation = signal('');
-  filterSite = signal('');
+  // CheckMK-specific metadata filters (client-side, multi-select, pre-populated from user prefs)
+  filterCriticality = signal<string[]>([]);
+  filterVe          = signal<string[]>([]);
+  filterLocation    = signal<string[]>([]);
+  filterSite        = signal<string[]>([]);
+  filterOs          = signal<string[]>([]);
 
   filteredAlerts = computed(() => {
     let list = this.alerts();
     const crit = this.filterCriticality();
-    const ve = this.filterVe();
-    const loc = this.filterLocation();
+    const ve   = this.filterVe();
+    const loc  = this.filterLocation();
     const site = this.filterSite();
-    if (crit) list = list.filter(a => (a.metadata_?.['criticality'] ?? '') === crit);
-    if (ve)   list = list.filter(a => (a.metadata_?.['ve'] ?? '') === ve);
-    if (loc)  list = list.filter(a => (a.metadata_?.['location'] ?? '') === loc);
-    if (site) list = list.filter(a => (a.metadata_?.['site'] ?? '') === site);
+    const os   = this.filterOs();
+    const meta = (a: Alert, k: string) => String(a.metadata_?.[k] ?? '');
+    if (crit.length) list = list.filter(a => crit.includes(meta(a, 'criticality')));
+    if (ve.length)   list = list.filter(a => ve.includes(meta(a, 've')));
+    if (loc.length)  list = list.filter(a => loc.includes(meta(a, 'location')));
+    if (site.length) list = list.filter(a => site.includes(meta(a, 'site')));
+    if (os.length)   list = list.filter(a => os.includes(meta(a, 'os')));
     return list;
   });
 
@@ -240,6 +252,9 @@ export class AlertsComponent implements OnInit, OnDestroy {
   availableSites = computed(() =>
     [...new Set(this.alerts().map(a => a.metadata_?.['site'] as string).filter(Boolean))].sort()
   );
+  availableOs = computed(() =>
+    [...new Set(this.alerts().map(a => a.metadata_?.['os'] as string).filter(Boolean))].sort()
+  );
 
   private readonly STORAGE_KEY = 'cs_alerts_filters';
   private destroy$ = new Subject<void>();
@@ -248,10 +263,20 @@ export class AlertsComponent implements OnInit, OnDestroy {
     private svc: AlertService,
     private ws: WebsocketService,
     private snack: MatSnackBar,
+    private http: HttpClient,
   ) {}
 
   ngOnInit() {
     this.restoreFilters();
+    // Pre-populate CheckMK meta-filters from user preferences (My Settings)
+    this.http.get<any>(`${environment.apiUrl}/preferences`).subscribe({
+      next: prefs => {
+        if (prefs?.checkmk_criticality?.length) this.filterCriticality.set(prefs.checkmk_criticality);
+        if (prefs?.checkmk_locations?.length)   this.filterLocation.set(prefs.checkmk_locations);
+        if (prefs?.checkmk_ve?.length)          this.filterVe.set(prefs.checkmk_ve);
+        if (prefs?.checkmk_os?.length)          this.filterOs.set(prefs.checkmk_os);
+      },
+    });
     this.load();
     this.ws.messages().pipe(takeUntil(this.destroy$)).subscribe((msg: WsMessage) => {
       if (msg.type === 'new_alert' || msg.type === 'alert_acknowledged') {
@@ -284,10 +309,11 @@ export class AlertsComponent implements OnInit, OnDestroy {
 
   onSourceChange() {
     if (this.filterSource !== 'checkmk') {
-      this.filterCriticality.set('');
-      this.filterVe.set('');
-      this.filterLocation.set('');
-      this.filterSite.set('');
+      this.filterCriticality.set([]);
+      this.filterVe.set([]);
+      this.filterLocation.set([]);
+      this.filterSite.set([]);
+      this.filterOs.set([]);
     }
     this.load();
   }
@@ -335,6 +361,6 @@ export class AlertsComponent implements OnInit, OnDestroy {
   alertHost(alert: Alert): string {
     const m = alert.metadata_;
     if (!m) return '';
-    return (m['container_name'] as string) || (m['host'] as string) || '';
+    return (m['host'] as string) || (m['container_name'] as string) || (m['agent'] as string) || '';
   }
 }

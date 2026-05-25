@@ -18,14 +18,14 @@ export interface ConnectorCreate {
   name: string;
   type: ConnectorType;
   base_url: string | null;
-  credentials: Record<string, string>;
+  credentials: Record<string, string | string[]>;
   enabled: boolean;
 }
 
 export interface ConnectorUpdate {
   name?: string;
   base_url?: string;
-  credentials?: Record<string, string>;
+  credentials?: Record<string, string | string[]>;
   enabled?: boolean;
 }
 

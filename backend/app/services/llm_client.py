@@ -111,6 +111,9 @@ async def generate_text(
             payload["temperature"] = temperature
         if max_output_tokens is not None:
             payload["max_tokens"] = max_output_tokens
+        if getattr(llm_config, "thinking_mode", False):
+            payload["enable_thinking"] = True
+            payload["thinking_budget"] = 512
 
     async with httpx.AsyncClient(timeout=llm_config.timeout_seconds, verify=False) as client:
         response = await client.post(url, headers=headers, json=payload)

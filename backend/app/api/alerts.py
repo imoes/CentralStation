@@ -39,14 +39,46 @@ async def list_alerts(
 async def alert_summary(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
+    hours: int = Query(1, ge=1, le=168),
 ):
+    """Count new alerts within the last `hours` hours (default: 1h = current situation)."""
+    from datetime import datetime, timedelta, timezone
     from sqlalchemy import func
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
     result = await db.execute(
         select(Alert.severity, func.count(Alert.id))
-        .where(Alert.status == "new")
+        .where(Alert.status == "new", Alert.created_at >= since)
         .group_by(Alert.severity)
     )
     return {row[0]: row[1] for row in result.all()}
+
+
+@router.post("/cleanup", dependencies=[RequireSysAdmin])
+async def cleanup_old_alerts(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+    older_than_days: int = Query(7, ge=1, le=365),
+):
+    """Mark alerts older than N days as resolved (default: 7 days)."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import update as sql_update
+    cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+    result = await db.execute(
+        sql_update(Alert)
+        .where(Alert.status == "new", Alert.created_at < cutoff)
+        .values(status="resolved")
+        .returning(Alert.id)
+    )
+    count = len(result.fetchall())
+    db.add(AuditLog(
+        action="alerts_cleanup",
+        resource_type="alert",
+        resource_id=f"older_than_{older_than_days}d",
+        user_id=current_user.id,
+        new_value={"resolved_count": count, "cutoff_days": older_than_days},
+    ))
+    await db.commit()
+    return {"resolved": count, "cutoff_days": older_than_days}
 
 
 @router.post("/aggregate", dependencies=[RequireSysAdmin])

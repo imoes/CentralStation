@@ -125,6 +125,57 @@ class CheckMKConnector(BaseConnector):
         except Exception as e:
             return ConnectorTestResult(success=False, message=str(e))
 
+    async def get_all_hosts(self) -> list[dict]:
+        """Return all monitored hosts with their tag/label metadata.
+
+        Uses the host_config REST endpoint — returns ALL hosts, not only problem hosts.
+        tag_groups can be a list [{id, value:{id}}] or a plain dict, so both are handled.
+        """
+        try:
+            r = await self._request("GET", "/domain-types/host_config/collections/all")
+            r.raise_for_status()
+        except Exception:
+            return []
+
+        results = []
+        for item in r.json().get("value", []):
+            name = item.get("id", "")
+            if not name:
+                continue
+            ext   = item.get("extensions", {}) or {}
+            attrs = ext.get("attributes", {}) or {}
+
+            # tag_groups: list [{id, value:{id}}]  OR  dict {group_id: tag_id}
+            tags_raw = attrs.get("tag_groups", {})
+            tags: dict = {}
+            if isinstance(tags_raw, list):
+                for tg in tags_raw:
+                    gid = tg.get("id", "")
+                    val = tg.get("value", {})
+                    tags[gid] = val.get("id", "") if isinstance(val, dict) else str(val or "")
+            elif isinstance(tags_raw, dict):
+                tags = tags_raw
+
+            labels: dict = attrs.get("labels", {}) or {}
+
+            raw_os = (
+                tags.get("tg-os") or tags.get("operatingsystem") or tags.get("os")
+                or labels.get("cmk/os_family", "") or labels.get("os", "")
+            )
+            hostgroups = [k[3:] for k in labels if k.startswith("hg:")]
+
+            results.append({
+                "hostname": name,
+                "metadata": {
+                    "os":          _OS_LABEL_MAP.get(raw_os, raw_os),
+                    "criticality": tags.get("criticality") or labels.get("criticality", ""),
+                    "ve":          tags.get("tg-ve") or tags.get("ve") or labels.get("ve", ""),
+                    "location":    tags.get("tg-location") or tags.get("location") or labels.get("location", ""),
+                    "hostgroups":  hostgroups,
+                },
+            })
+        return results
+
     async def get_problems(self, time_range_minutes: int = 60) -> list[dict]:
         """Return open WARN/CRIT services, including host tags for filtering."""
         payload = {
@@ -144,6 +195,7 @@ class CheckMKConnector(BaseConnector):
                 "host_name", "description", "state",
                 "plugin_output", "acknowledged", "last_state_change",
                 "host_tags", "host_labels", "host_address", "host_filename",
+                "host_groups",
             ],
         }
         r = await self._request(
@@ -193,6 +245,16 @@ class CheckMKConnector(BaseConnector):
             # Folder path as fallback if tg-location is empty
             folder_location = _extract_folder_location(ext.get("host_filename", ""))
 
+            # Hostgroups: from host_groups column, supplemented by hg: label prefix
+            host_groups_col: list = ext.get("host_groups") or []
+            hg_from_labels = [k[3:] for k in labels if k.startswith("hg:")]
+            seen: set = set()
+            hostgroups: list[str] = []
+            for hg in host_groups_col + hg_from_labels:
+                if hg and hg not in seen:
+                    seen.add(hg)
+                    hostgroups.append(hg)
+
             results.append({
                 "source": "checkmk",
                 "severity": state_map.get(state, "unknown"),
@@ -208,6 +270,7 @@ class CheckMKConnector(BaseConnector):
                     "criticality": criticality,
                     "ve": ve,
                     "location": folder_location or location,
+                    "hostgroups": hostgroups,
                     "host_tags": tags,
                     "host_labels": labels,
                 },

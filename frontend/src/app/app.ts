@@ -1,6 +1,7 @@
-import { Component, computed, OnInit } from '@angular/core';
+import { Component, computed, inject, OnDestroy, OnInit, signal } from '@angular/core';
 import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { CommonModule } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatListModule } from '@angular/material/list';
@@ -9,6 +10,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatBadgeModule } from '@angular/material/badge';
 import { AuthService } from './core/auth/auth.service';
 import { WebsocketService } from './core/services/websocket.service';
+import { environment } from '../environments/environment';
 
 interface NavItem {
   path: string;
@@ -35,10 +37,23 @@ interface NavItem {
           </div>
           <mat-nav-list>
             @for (item of visibleNavItems(); track item.path) {
-              <a mat-list-item [routerLink]="item.path" routerLinkActive="active">
-                <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                <span matListItemTitle>{{ item.label }}</span>
-              </a>
+              @if (item.path === '/feed') {
+                <a mat-list-item [routerLink]="item.path" routerLinkActive="active"
+                   (click)="onFeedClick()">
+                  <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
+                  <span matListItemTitle>
+                    {{ item.label }}
+                    @if (unreadFeedCount() > 0) {
+                      <span class="feed-badge">{{ unreadFeedCount() > 99 ? '99+' : unreadFeedCount() }}</span>
+                    }
+                  </span>
+                </a>
+              } @else {
+                <a mat-list-item [routerLink]="item.path" routerLinkActive="active">
+                  <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
+                  <span matListItemTitle>{{ item.label }}</span>
+                </a>
+              }
             }
           </mat-nav-list>
           <div class="sidenav-footer">
@@ -58,7 +73,7 @@ interface NavItem {
   `,
   styleUrl: './app.scss',
 })
-export class App implements OnInit {
+export class App implements OnInit, OnDestroy {
   private readonly navItems: NavItem[] = [
     { path: '/dashboard',    label: 'Dashboard',        icon: 'dashboard',    roles: ['admin','sysadmin','network_technician','viewer'] },
     { path: '/feed',         label: 'News Feed',        icon: 'feed',         roles: ['admin','sysadmin','network_technician'] },
@@ -69,6 +84,10 @@ export class App implements OnInit {
     { path: '/ai-insights',  label: 'KI-Insights',      icon: 'psychology',   roles: ['admin','sysadmin'] },
     { path: '/settings',     label: 'Einstellungen',    icon: 'settings',     roles: ['admin','sysadmin','network_technician','viewer'] },
   ];
+
+  unreadFeedCount = signal<number>(0);
+  private badgeInterval: ReturnType<typeof setInterval> | null = null;
+  private http = inject(HttpClient);
 
   visibleNavItems = computed(() => {
     const role = this.auth.userRole();
@@ -81,6 +100,32 @@ export class App implements OnInit {
     if (this.auth.isLoggedIn()) {
       this.auth.fetchMe();
       this.ws.connect();
+      this.startBadgePolling();
     }
+  }
+
+  ngOnDestroy() {
+    if (this.badgeInterval) clearInterval(this.badgeInterval);
+  }
+
+  startBadgePolling() {
+    this.fetchUnreadCount();
+    this.badgeInterval = setInterval(() => this.fetchUnreadCount(), 60_000);
+  }
+
+  fetchUnreadCount() {
+    const since = localStorage.getItem('feed_last_seen') ?? new Date(0).toISOString();
+    this.http.get<{ count: number }>(`${environment.apiUrl}/feed/unread-count`, { params: { since } })
+      .subscribe({ next: r => this.unreadFeedCount.set(r.count), error: () => {} });
+  }
+
+  clearFeedBadge() {
+    this.unreadFeedCount.set(0);
+    localStorage.setItem('feed_last_seen', new Date().toISOString());
+  }
+
+  onFeedClick() {
+    // Badge is cleared by the news-feed component after items load (3s delay)
+    // This just provides immediate visual feedback
   }
 }

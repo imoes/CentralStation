@@ -131,6 +131,43 @@ async def _get_llm(db: AsyncSession):
     return llm
 
 
+async def _build_ticket_context(s: WorkSession, db: AsyncSession) -> str:
+    """Build full context string: Jira description + comments + local work notes."""
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
+    parts: list[str] = [f"Ticket: {s.title}"]
+
+    if s.jira_key:
+        try:
+            conn_result = await db.execute(
+                select(ConnectorConfig)
+                .where(ConnectorConfig.type == "jira", ConnectorConfig.enabled.is_(True))
+                .order_by(ConnectorConfig.owner_user_id.is_(None))
+                .limit(1)
+            )
+            conn = conn_result.scalar_one_or_none()
+            if conn:
+                creds = decrypt_credentials(conn.encrypted_credentials)
+                jira = JiraConnector(base_url=conn.base_url, credentials=creds)
+                detail = await jira.get_issue_detail(s.jira_key)
+                if detail.get("description"):
+                    parts.append(f"\nBeschreibung:\n{detail['description']}")
+                for c in (detail.get("comments") or []):
+                    parts.append(f"\nKommentar von {c['author']} ({c['created'][:10]}):\n{c['body']}")
+        except Exception:
+            pass
+
+    if s.root_cause:
+        parts.append(f"\nRoot Cause: {s.root_cause}")
+
+    for note in (s.work_notes or []):
+        parts.append(f"\nArbeitsnotiz ({note.get('author', '')}): {note.get('content', '')}")
+
+    return "\n".join(parts)
+
+
 # ── CRUD ─────────────────────────────────────────────────────────────────────────
 
 @router.get("")
@@ -262,7 +299,8 @@ async def generate_comment(
 
     s = await _get_session(session_id, user.id, db)
     llm = await _get_llm(db)
-    comment = await ai_comment(llm, s.title, s.root_cause or "", s.work_notes or [], body.comment_type)
+    context = await _build_ticket_context(s, db)
+    comment = await ai_comment(llm, s.title, context, s.work_notes or [], body.comment_type, db=db)
 
     notes = list(s.work_notes or [])
     notes.append({
@@ -288,8 +326,9 @@ async def generate_resolution(
     s = await _get_session(session_id, user.id, db)
     llm = await _get_llm(db)
     root_cause = body.root_cause or s.root_cause
+    context = await _build_ticket_context(s, db)
     resolution = await ai_resolution(
-        llm, s.title, s.root_cause or "", s.work_notes or [],
+        llm, s.title, context, s.work_notes or [],
         root_cause, body.resolution_type, body.closure_code,
     )
     s.resolution_summary = resolution
@@ -311,7 +350,8 @@ async def run_5why(
 
     s = await _get_session(session_id, user.id, db)
     llm = await _get_llm(db)
-    analysis = await run_5why_analysis(llm, s.title, s.root_cause or "", s.work_notes or [])
+    context = await _build_ticket_context(s, db)
+    analysis = await run_5why_analysis(llm, s.title, context, s.work_notes or [])
     if "root_cause" in analysis and not s.root_cause:
         s.root_cause = analysis["root_cause"]
         await db.commit()
@@ -329,7 +369,8 @@ async def suggest_solution(
 
     s = await _get_session(session_id, user.id, db)
     llm = await _get_llm(db)
-    solution = await ai_suggest(llm, db, s.title, s.root_cause or "", body.use_rag, body.use_web)
+    context = await _build_ticket_context(s, db)
+    solution = await ai_suggest(llm, db, s.title, context, body.use_rag, body.use_web)
     if solution.get("solution_steps"):
         s.ai_suggested_solution = "\n".join(solution["solution_steps"])
         await db.commit()
@@ -346,7 +387,8 @@ async def auto_categorize(
 
     s = await _get_session(session_id, user.id, db)
     llm = await _get_llm(db)
-    result = await ai_cat(llm, s.title, s.root_cause or "")
+    context = await _build_ticket_context(s, db)
+    result = await ai_cat(llm, s.title, context)
     s.category = result.get("category", s.category)
     s.subcategory = result.get("subcategory", s.subcategory)
     if result.get("impact"):

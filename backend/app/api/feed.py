@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import CurrentUser, get_db
 from app.models.alert import Alert
 from app.models.audit import AuditLog
-from app.models.workflow import UserPreference
+from app.models.workflow import FeedSearch, UserPreference
 
 router = APIRouter(prefix="/feed", tags=["feed"])
 
@@ -150,11 +150,35 @@ async def get_feed(
     location: str | None = Query(None),
     criticality: str | None = Query(None),
     ve: str | None = Query(None),
+    hostgroup: str | None = Query(None, description="Comma-separated hostgroup filter"),
+    search_id: _uuid.UUID | None = Query(None),
+    index: str | None = Query(None, description="OpenSearch index pattern for direct query mode"),
+    q: str | None = Query(None, description="OpenSearch Lucene query string for direct query mode"),
 ):
     """Return unified news feed from OpenSearch, sorted by created_at desc."""
     from app.services import feed_index
 
     prefs = await _get_prefs(user.id, db)
+    if search_id or q is not None:
+        index_pattern = index or "cs-feed-*"
+        query_string = q or ""
+        if search_id:
+            result = await db.execute(select(FeedSearch).where(FeedSearch.id == search_id))
+            saved = result.scalar_one_or_none()
+            if not saved:
+                raise HTTPException(404, "Search not found")
+            if saved.user_id and saved.user_id != user.id:
+                raise HTTPException(403, "Not your search")
+            index_pattern = saved.index_pattern
+            query_string = saved.query_string
+        return await feed_index.search_by_query(
+            index_pattern=index_pattern,
+            query_string=query_string,
+            user_id=str(user.id),
+            from_=offset,
+            size=limit,
+        )
+
     min_age = (prefs.feed_checkmk_min_age_minutes if prefs else None) or 5
     enabled = (prefs.feed_sources_enabled if prefs else None) or ["checkmk", "graylog", "wazuh"]
 
@@ -182,14 +206,27 @@ async def get_feed(
     if "checkmk" in active:
         checkmk_cutoff = datetime.now(timezone.utc) - timedelta(minutes=min_age)
 
+    # Apply user's saved CheckMK preferences as default filters when no explicit
+    # filter param is provided in the request.
+    def _pref_list(val: list | None) -> list[str] | None:
+        return [str(v) for v in val if v] if val else None
+
+    effective_os          = os          or (_pref_list(prefs.checkmk_os)          if prefs else None)
+    effective_location    = location    or (_pref_list(prefs.checkmk_locations)   if prefs else None)
+    effective_ve          = ve          or (_pref_list(prefs.checkmk_ve)          if prefs else None)
+    effective_criticality = criticality or (_pref_list(prefs.checkmk_criticality) if prefs else None)
+    effective_hostgroup   = [v.strip() for v in hostgroup.split(",") if v.strip()] if hostgroup else None
+
     items = await feed_index.search(
         sources=active,
         severity=severity,
         host=host,
-        os_filter=os,
-        location=location,
-        criticality=criticality,
-        ve=ve,
+        os_filter=effective_os,
+        location=effective_location,
+        criticality=effective_criticality,
+        ve=effective_ve,
+        hostgroup=effective_hostgroup,
+        exclude_resolved=True,
         checkmk_cutoff=checkmk_cutoff,
         user_id=str(user.id),
         from_=offset,
@@ -203,6 +240,59 @@ async def get_checkmk_filter_values(user: CurrentUser):
     """Return distinct OS/location/criticality/VE values from OpenSearch aggregations."""
     from app.services.feed_index import get_filter_values
     return await get_filter_values("checkmk")
+
+
+@router.get("/unread-count")
+async def get_unread_count(
+    user: CurrentUser,
+    since: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Count feed items newer than `since` (ISO timestamp) for the current user."""
+    from datetime import datetime, timezone
+    from app.services.feed_index import count_since, ALL_SOURCES, _index
+
+    try:
+        since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+    except ValueError:
+        since_dt = datetime.fromtimestamp(0, tz=timezone.utc)
+
+    count = await count_since(
+        index_patterns=[f"cs-feed-{s}" for s in ALL_SOURCES],
+        since=since_dt,
+        user_id=str(user.id),
+    )
+    return {"count": count}
+
+
+@router.post("/{item_id}/enrich")
+async def enrich_feed_item(
+    item_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """On-demand KI enrichment for a single feed item. Returns ai_insight text."""
+    from app.services import feed_index
+    from app.services.feed_enricher import enrich_single
+    from app.services.settings import get_llm_config
+
+    item = await feed_index.get_by_id(item_id)
+    if not item:
+        raise HTTPException(404, "Feed-Item nicht gefunden")
+
+    # Return cached insight if already enriched
+    if item.get("ai_insight"):
+        return {"ai_insight": item["ai_insight"]}
+
+    llm_config = await get_llm_config(db)
+    if not llm_config.is_configured:
+        raise HTTPException(503, "LLM nicht konfiguriert")
+
+    insight = await enrich_single(item, llm_config)
+    if not insight:
+        raise HTTPException(500, "KI-Anreicherung fehlgeschlagen")
+
+    return {"ai_insight": insight}
 
 
 @router.post("/{alert_id}/acknowledge")

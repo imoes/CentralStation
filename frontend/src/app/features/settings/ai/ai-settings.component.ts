@@ -20,7 +20,7 @@ interface TestResult { success: boolean; message: string; detail: string | null;
 const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = [
   {
     title: 'LLM Konfiguration',
-    keys: ['llm.base_url', 'llm.model', 'llm.api_mode', 'llm.api_key', 'llm.timeout_seconds'],
+    keys: ['llm.base_url', 'llm.model', 'llm.api_mode', 'llm.api_key', 'llm.timeout_seconds', 'llm.thinking_mode'],
     testGroup: 'llm',
   },
   {
@@ -39,13 +39,14 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
       'agent.interval_minutes',
       'agent.aggregation_interval_minutes',
       'agent.auto_jira',
+      'agent.auto_enrich',
       'agent.jira_severity_threshold',
       'agent.checkmk_locations',
     ],
   },
 ];
 
-const BOOLEAN_KEYS = new Set(['searxng.enabled', 'agent.auto_jira']);
+const BOOLEAN_KEYS = new Set(['searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'llm.thinking_mode']);
 const SELECT_KEYS: Record<string, string[]> = {
   'llm.api_mode': ['chat_completions', 'responses'],
   'agent.jira_severity_threshold': ['critical', 'high', 'medium'],
@@ -274,11 +275,16 @@ export class AiSettingsComponent implements OnInit {
       'searxng.base_url':                'SearXNG URL',
       'searxng.enabled':                 'SearXNG aktiviert',
       'searxng.results_count':           'Anzahl Suchergebnisse',
+      'llm.thinking_mode':                    'Thinking Mode (Extended Reasoning)',
       'agent.interval_minutes':               'KI-Agent Intervall (Minuten)',
       'agent.aggregation_interval_minutes':   'Alert-Abruf Intervall (Minuten)',
       'agent.auto_jira':                      'Automatisch Jira-Tickets erstellen',
+      'agent.auto_enrich':                    'KI-Anreicherung automatisch (aus = On Demand)',
       'agent.jira_severity_threshold':        'Mindest-Severity für Jira',
       'agent.checkmk_locations':              'CheckMK Standort-Filter (Komma-getrennt, z.B. München,Kassel)',
+      'agent.checkmk_ve':                     'CheckMK VE-Filter (Komma-getrennt, z.B. VE1,VE2)',
+      'agent.checkmk_criticality':            'CheckMK Criticality-Filter (Komma-getrennt, z.B. critical,prod)',
+      'agent.checkmk_os':                     'CheckMK OS-Filter (Komma-getrennt, z.B. Linux,Windows)',
     };
     return labels[key] ?? key;
   }

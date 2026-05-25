@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import CurrentUser, RequireAdmin
+from app.api.deps import CurrentUser, RequireAdmin, RequireSysAdmin
 from app.core.database import get_db
 from app.models.audit import AuditLog
 from app.models.settings import GlobalSetting
@@ -74,8 +74,6 @@ async def update_setting(
 ):
     result = await db.execute(select(GlobalSetting).where(GlobalSetting.key == key))
     row = result.scalar_one_or_none()
-    if not row:
-        raise HTTPException(404, f"Setting '{key}' not found")
 
     await set_setting(db, key, data.value)
     db.add(AuditLog(
@@ -83,7 +81,7 @@ async def update_setting(
         resource_type="setting",
         resource_id=key,
         user_id=current_user.id,
-        new_value={"key": key, "value": "<secret>" if row.is_secret else data.value},
+        new_value={"key": key, "value": "<secret>" if (row and row.is_secret) else data.value},
     ))
     await db.commit()
 
