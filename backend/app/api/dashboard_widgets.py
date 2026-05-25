@@ -523,6 +523,7 @@ async def get_widget_data(
         data_source = cfg.get("data_source", "prometheus")
 
         if data_source == "checkmk":
+            import asyncio
             cmk_result = await db.execute(
                 sa_select(ConnectorModel)
                 .where(ConnectorModel.type == "checkmk")
@@ -535,20 +536,37 @@ async def get_widget_data(
 
             credentials = decrypt_credentials(cmk_conn.encrypted_credentials)
             connector = get_connector("checkmk", cmk_conn.base_url, credentials)
-            host = cfg.get("host", "")
             service = cfg.get("service", "")
-            if not host or not service:
-                return {"series": [], "unit": "", "error": "host and service required for CheckMK timeseries"}
+            graph_index = int(cfg.get("graph_index", 0))
+            hours = int(cfg.get("hours", 4))
 
-            result = await connector.get_graph_data(
-                host_name=host,
-                service_description=service,
-                graph_index=int(cfg.get("graph_index", 0)),
-                hours=int(cfg.get("hours", 4)),
+            # Multi-host: hosts list → series_list with one line per host
+            hosts: list[str] = cfg.get("hosts") or ([cfg["host"]] if cfg.get("host") else [])
+            if not hosts or not service:
+                return {"series": [], "unit": "", "error": "host/hosts and service required for CheckMK timeseries"}
+
+            if len(hosts) == 1:
+                result = await connector.get_graph_data(hosts[0], service, graph_index, hours)
+                if cfg.get("unit"):
+                    result["unit"] = cfg["unit"]
+                return result
+
+            # Fetch all hosts in parallel
+            results = await asyncio.gather(
+                *[connector.get_graph_data(h, service, graph_index, hours) for h in hosts],
+                return_exceptions=True,
             )
-            if cfg.get("unit"):
-                result["unit"] = cfg["unit"]
-            return result
+            unit = cfg.get("unit", "")
+            series_list = []
+            for host, res in zip(hosts, results):
+                label = host.split(".")[0]  # cue0111 from cue0111.ippen.media
+                if isinstance(res, Exception):
+                    series_list.append({"label": label, "series": [], "error": str(res)})
+                else:
+                    if not unit and res.get("unit"):
+                        unit = res["unit"]
+                    series_list.append({"label": label, "series": res.get("series", [])})
+            return {"series_list": series_list, "unit": unit}
 
         else:
             # Prometheus-backed timeseries
