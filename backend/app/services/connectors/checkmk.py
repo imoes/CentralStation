@@ -6,6 +6,7 @@ API base: supports
   - <base_url>/<site>/check_mk/api/1.0
   - full API URL directly
 """
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import httpx
@@ -276,3 +277,101 @@ class CheckMKConnector(BaseConnector):
                 },
             })
         return results
+
+    async def get_graph_data(
+        self,
+        host_name: str,
+        service_description: str,
+        graph_index: int = 0,
+        hours: int = 4,
+    ) -> dict:
+        """Fetch RRD time series data from CheckMK graph recipe API.
+
+        Returns {"series": [{"time": iso, "value": float}], "title": str, "unit": str}
+        or {"error": str} on failure.
+
+        CheckMK endpoint: POST /domain-types/graph_recipe/actions/get/invoke
+        """
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(hours=hours)
+
+        body = {
+            "specification": ["template", {
+                "host_name": host_name,
+                "service_description": service_description,
+                "graph_index": graph_index,
+            }],
+            "data_range": {
+                "time_range": {
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                }
+            },
+            "consolidation_function": "average",
+            "resolution": max(60, int(hours * 3600 / 300)),  # ~300 points max
+        }
+
+        try:
+            resp = await self._request(
+                "POST",
+                "/domain-types/graph_recipe/actions/get/invoke",
+                json=body,
+                headers={**self._headers(), "Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            return {"series": [], "error": f"CheckMK HTTP {e.response.status_code}: {e.response.text[:200]}"}
+        except Exception as e:
+            return {"series": [], "error": str(e)}
+
+        data = resp.json()
+        graph = data.get("value", data)
+
+        # Extract unit title
+        unit_raw = graph.get("unit", {})
+        unit = unit_raw.get("title", "") if isinstance(unit_raw, dict) else str(unit_raw or "")
+
+        title = graph.get("title", f"{service_description} #{graph_index}")
+
+        # curves → first curve with rrddata
+        curves: list = graph.get("curves", [])
+        if not curves:
+            return {"series": [], "title": title, "unit": unit, "error": "No graph curves returned"}
+
+        # rrddata format: list of [start_ts, end_ts, step, [v, v, ...]]
+        # OR list of floats directly (older format)
+        first_curve = curves[0]
+        rrddata = first_curve.get("rrddata", [])
+
+        series: list[dict] = []
+        for segment in rrddata:
+            if isinstance(segment, (list, tuple)) and len(segment) == 4:
+                seg_start, _seg_end, step, values = segment
+                for i, v in enumerate(values):
+                    if v is None:
+                        continue
+                    ts = seg_start + i * step
+                    series.append({
+                        "time": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
+                        "value": round(float(v), 4),
+                    })
+
+        return {"series": series, "title": title, "unit": unit}
+
+    async def list_services(self, host_name: str) -> list[dict]:
+        """Return all services for a host (name + state), used to populate metric picker."""
+        try:
+            r = await self._request(
+                "GET",
+                "/domain-types/service/collections/all",
+                params={"host_name": host_name, "columns": "description,state,plugin_output"},
+            )
+            r.raise_for_status()
+        except Exception:
+            return []
+        return [
+            {"name": item.get("extensions", {}).get("description", ""),
+             "state": item.get("extensions", {}).get("state", 0)}
+            for item in r.json().get("value", [])
+            if item.get("extensions", {}).get("description")
+        ]

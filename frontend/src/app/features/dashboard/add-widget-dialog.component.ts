@@ -95,55 +95,96 @@ interface FeedSearch {
       }
 
       @if (widgetType === 'timeseries') {
-        <!-- Lucene → PromQL converter -->
-        <div class="converter-row">
-          <mat-form-field appearance="outline" class="converter-field">
-            <mat-label>Beschreibung / Lucene-Suchterme</mat-label>
-            <textarea matInput rows="2" [(ngModel)]="convertPrompt"
-              placeholder='z.B. "CPU-Auslastung docker086" oder "host:docker086 AND metric:cpu"'></textarea>
-            <mat-hint>Natürliche Sprache oder Lucene-Syntax → wird zu PromQL konvertiert</mat-hint>
-          </mat-form-field>
-          <button mat-flat-button color="accent" class="convert-btn"
-                  [disabled]="!convertPrompt.trim() || convertingPromql()"
-                  (click)="convertToPromql()"
-                  matTooltip="Beschreibung in PromQL übersetzen (KI oder Regelwerk)">
-            @if (convertingPromql()) {
-              <mat-spinner diameter="16"></mat-spinner>
-            } @else {
-              <mat-icon>auto_fix_high</mat-icon>
-            }
-            → PromQL
+        <!-- Datenquelle -->
+        <div class="datasource-tabs">
+          <button type="button" class="ds-tab" [class.active]="dataSource === 'checkmk'" (click)="dataSource = 'checkmk'">
+            <mat-icon>monitor_heart</mat-icon> CheckMK
+          </button>
+          <button type="button" class="ds-tab" [class.active]="dataSource === 'prometheus'" (click)="dataSource = 'prometheus'">
+            <mat-icon>show_chart</mat-icon> Prometheus / PromQL
           </button>
         </div>
-        @if (promqlExplanation) {
-          <div class="promql-hint">
-            <mat-icon>info</mat-icon> {{ promqlExplanation }}
+
+        @if (dataSource === 'checkmk') {
+          <mat-form-field appearance="outline">
+            <mat-label>Hostname (exakt wie in CheckMK)</mat-label>
+            <input matInput [(ngModel)]="cmkHost" placeholder="docker086.ippen.media">
+            <mat-icon matSuffix>computer</mat-icon>
+          </mat-form-field>
+          <mat-form-field appearance="outline">
+            <mat-label>Service-Name (exakt wie in CheckMK)</mat-label>
+            <input matInput [(ngModel)]="cmkService" placeholder="CPU utilization">
+            <mat-icon matSuffix>memory</mat-icon>
+            <mat-hint>z.B. "CPU utilization", "Memory", "Filesystem /"</mat-hint>
+          </mat-form-field>
+          <div class="inline-fields">
+            <mat-form-field appearance="outline">
+              <mat-label>Graph-Index</mat-label>
+              <input matInput type="number" min="0" max="10" [(ngModel)]="cmkGraphIndex">
+              <mat-hint>0 = erster Graph des Service</mat-hint>
+            </mat-form-field>
+            <mat-form-field appearance="outline">
+              <mat-label>Stunden</mat-label>
+              <input matInput type="number" min="1" max="168" [(ngModel)]="hours">
+            </mat-form-field>
+            <mat-form-field appearance="outline">
+              <mat-label>Einheit (optional)</mat-label>
+              <input matInput [(ngModel)]="unit" placeholder="aus CheckMK">
+            </mat-form-field>
           </div>
         }
-        <mat-form-field appearance="outline">
-          <mat-label>PromQL</mat-label>
-          <textarea matInput rows="4" [(ngModel)]="promql"
-            placeholder='z.B. 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)'></textarea>
-        </mat-form-field>
-        <div class="inline-fields">
+
+        @if (dataSource === 'prometheus') {
+          <!-- Lucene → PromQL converter -->
+          <div class="converter-row">
+            <mat-form-field appearance="outline" class="converter-field">
+              <mat-label>Beschreibung / Lucene-Suchterme</mat-label>
+              <textarea matInput rows="2" [(ngModel)]="convertPrompt"
+                placeholder='z.B. "CPU-Auslastung docker086" oder "host:docker086 AND metric:cpu"'></textarea>
+              <mat-hint>Natürliche Sprache → wird zu PromQL konvertiert</mat-hint>
+            </mat-form-field>
+            <button mat-flat-button color="accent" class="convert-btn"
+                    [disabled]="!convertPrompt.trim() || convertingPromql()"
+                    (click)="convertToPromql()"
+                    matTooltip="Beschreibung in PromQL übersetzen (KI oder Regelwerk)">
+              @if (convertingPromql()) {
+                <mat-spinner diameter="16"></mat-spinner>
+              } @else {
+                <mat-icon>auto_fix_high</mat-icon>
+              }
+              → PromQL
+            </button>
+          </div>
+          @if (promqlExplanation) {
+            <div class="promql-hint">
+              <mat-icon>info</mat-icon> {{ promqlExplanation }}
+            </div>
+          }
           <mat-form-field appearance="outline">
-            <mat-label>Step</mat-label>
-            <mat-select [(ngModel)]="step">
-              <mat-option value="15s">15s</mat-option>
-              <mat-option value="1m">1m</mat-option>
-              <mat-option value="5m">5m</mat-option>
-              <mat-option value="15m">15m</mat-option>
-            </mat-select>
+            <mat-label>PromQL</mat-label>
+            <textarea matInput rows="4" [(ngModel)]="promql"
+              placeholder='z.B. 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)'></textarea>
           </mat-form-field>
-          <mat-form-field appearance="outline">
-            <mat-label>Stunden</mat-label>
-            <input matInput type="number" min="1" max="168" [(ngModel)]="hours">
-          </mat-form-field>
-          <mat-form-field appearance="outline">
-            <mat-label>Einheit</mat-label>
-            <input matInput [(ngModel)]="unit" placeholder="%">
-          </mat-form-field>
-        </div>
+          <div class="inline-fields">
+            <mat-form-field appearance="outline">
+              <mat-label>Step</mat-label>
+              <mat-select [(ngModel)]="step">
+                <mat-option value="15s">15s</mat-option>
+                <mat-option value="1m">1m</mat-option>
+                <mat-option value="5m">5m</mat-option>
+                <mat-option value="15m">15m</mat-option>
+              </mat-select>
+            </mat-form-field>
+            <mat-form-field appearance="outline">
+              <mat-label>Stunden</mat-label>
+              <input matInput type="number" min="1" max="168" [(ngModel)]="hours">
+            </mat-form-field>
+            <mat-form-field appearance="outline">
+              <mat-label>Einheit</mat-label>
+              <input matInput [(ngModel)]="unit" placeholder="%">
+            </mat-form-field>
+          </div>
+        }
       }
 
       @if (widgetType === 'grafana_panel') {
@@ -185,6 +226,16 @@ interface FeedSearch {
     .promql-hint { display: flex; align-items: center; gap: 6px; font-size: 12px;
       color: var(--mat-sys-on-surface-variant); padding: 2px 0 6px; }
     .promql-hint mat-icon { font-size: 15px; height: 15px; width: 15px; }
+    .datasource-tabs { display: flex; gap: 8px; }
+    .ds-tab {
+      flex: 1; padding: 10px; border-radius: 10px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      font-size: 13px; font-weight: 600;
+      border: 1px solid var(--mat-sys-outline-variant);
+      background: var(--mat-sys-surface); color: var(--mat-sys-on-surface);
+    }
+    .ds-tab.active { border-color: var(--mat-sys-primary); background: color-mix(in srgb, var(--mat-sys-primary) 10%, transparent); color: var(--mat-sys-primary); }
+    .ds-tab mat-icon { font-size: 18px; height: 18px; width: 18px; }
   `],
 })
 export class AddWidgetDialogComponent implements OnInit {
@@ -214,6 +265,10 @@ export class AddWidgetDialogComponent implements OnInit {
   hours = 4;
   unit = '%';
   panelUrl = '';
+  dataSource: 'checkmk' | 'prometheus' = 'checkmk';
+  cmkHost = '';
+  cmkService = 'CPU utilization';
+  cmkGraphIndex = 0;
 
   constructor(
     private http: HttpClient,
@@ -271,7 +326,10 @@ export class AddWidgetDialogComponent implements OnInit {
 
   canCreate(): boolean {
     if (!this.title.trim()) return false;
-    if (this.widgetType === 'timeseries') return !!this.promql.trim();
+    if (this.widgetType === 'timeseries') {
+      if (this.dataSource === 'checkmk') return !!this.cmkHost.trim() && !!this.cmkService.trim();
+      return !!this.promql.trim();
+    }
     if (this.widgetType === 'grafana_panel') return !!this.panelUrl.trim();
     return true;
   }
@@ -289,7 +347,24 @@ export class AddWidgetDialogComponent implements OnInit {
     } else if (this.widgetType === 'top_hosts') {
       this.ref.close({ ...base, gs_w: 4, gs_h: 3, config: { index_pattern: this.indexPattern, query_string: this.queryString || 'NOT status:resolved', limit: Number(this.limit) || 8 } });
     } else if (this.widgetType === 'timeseries') {
-      this.ref.close({ ...base, gs_w: 5, gs_h: 4, config: { promql: this.promql, step: this.step, hours: Number(this.hours) || 4, unit: this.unit } });
+      if (this.dataSource === 'checkmk') {
+        this.ref.close({ ...base, gs_w: 5, gs_h: 4, config: {
+          data_source: 'checkmk',
+          host: this.cmkHost.trim(),
+          service: this.cmkService.trim(),
+          graph_index: Number(this.cmkGraphIndex) || 0,
+          hours: Number(this.hours) || 4,
+          unit: this.unit,
+        }});
+      } else {
+        this.ref.close({ ...base, gs_w: 5, gs_h: 4, config: {
+          data_source: 'prometheus',
+          promql: this.promql,
+          step: this.step,
+          hours: Number(this.hours) || 4,
+          unit: this.unit,
+        }});
+      }
     } else {
       this.ref.close({ ...base, gs_w: 6, gs_h: 4, config: { panel_url: this.panelUrl, refresh_seconds: 30 } });
     }
