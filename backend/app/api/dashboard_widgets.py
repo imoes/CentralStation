@@ -81,6 +81,7 @@ class WidgetCreate(BaseModel):
 
 class WidgetUpdate(BaseModel):
     title: str | None = None
+    widget_type: str | None = None
     gs_x: int | None = None
     gs_y: int | None = None
     gs_w: int | None = None

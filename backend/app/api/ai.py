@@ -303,6 +303,185 @@ async def promql_assistant(
         return _fallback_promql(body.message)
 
 
+class DashboardAssistantRequest(BaseModel):
+    message: str
+    dashboard_id: uuid.UUID | None = None
+    use_thinking: bool = False
+
+
+@router.post("/dashboard-assistant")
+async def dashboard_assistant(
+    body: DashboardAssistantRequest,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Create or extend a dashboard from a natural language description.
+
+    The LLM receives context (hostgroups, hosts with CheckMK alerts, feed query
+    examples) and returns a JSON widget plan which is then executed directly.
+
+    use_thinking=False (default): fast, sufficient for clear requests.
+    use_thinking=True: extended reasoning for ambiguous/complex layouts.
+    """
+    from app.services.llm_client import generate_text
+    from app.services.settings import get_llm_config
+    from app.services import feed_index
+
+    llm = await get_llm_config(db)
+    if not llm.is_configured:
+        raise HTTPException(503, "LLM not configured")
+
+    # ── Gather context from OpenSearch ──────────────────────────────────────
+    # Available hostgroups
+    filter_values = await feed_index.get_filter_values()
+    hostgroups: list[str] = filter_values.get("hostgroups", [])
+
+    # If a hostgroup is mentioned in the prompt, pre-fetch its CheckMK hosts
+    mentioned_hg = next(
+        (hg for hg in hostgroups if hg.lower() in body.message.lower()), None
+    )
+    hg_hosts: list[str] = []
+    if mentioned_hg:
+        items = await feed_index.search_by_query(
+            index_pattern="cs-feed-checkmk",
+            query_string=f"metadata.hostgroups:{mentioned_hg}",
+            size=100,
+            user_id=str(current_user.id),
+        )
+        hg_hosts = sorted({
+            it.get("metadata", {}).get("host", "")
+            for it in items
+            if it.get("metadata", {}).get("host", "")
+        })
+
+    # ── Build LLM prompt ────────────────────────────────────────────────────
+    context_lines = [
+        f"Available hostgroups: {', '.join(hostgroups)}",
+        f"GridStack: 12 columns total, cell-height=80px.",
+        "Widget types: stat(2×2), list(4×3), donut(5×4), top_hosts(4×3), ai_summary(4×2), timeseries(5×4), grafana_panel(6×4)",
+        "Timeseries config for CheckMK: {data_source:'checkmk', host, service, graph_index:0, hours:4}",
+        "Timeseries config for Prometheus: {data_source:'prometheus', promql, step:'1m', hours:4, unit:'%'}",
+        "Feed query for hostgroup filter: 'metadata.hostgroups:<hg>'",
+        "Feed query for severity: 'severity:critical', 'severity:(critical OR high)'",
+        "index_pattern options: cs-feed-checkmk, cs-feed-graylog, cs-feed-wazuh, cs-feed-*",
+    ]
+    if mentioned_hg and hg_hosts:
+        context_lines.append(
+            f"Hosts in hostgroup '{mentioned_hg}' (from CheckMK): {', '.join(hg_hosts)}"
+        )
+
+    system = (
+        "Du bist ein Dashboard-Konfigurations-Assistent fuer CentralStation.\n"
+        "Erstelle ein vollstaendiges Dashboard-Layout basierend auf der Benutzeranfrage.\n\n"
+        "Antworte AUSSCHLIESSLICH als JSON-Objekt (kein Markdown, kein Text davor/danach):\n"
+        '{"dashboard_name":"...","dashboard_description":"...","widgets":[...]}\n\n'
+        "Jedes Widget-Objekt hat DIESE Pflichtfelder:\n"
+        "  widget_type (STRING, PFLICHT), title, gs_x, gs_y, gs_w, gs_h, config (dict)\n\n"
+        "ERLAUBTE widget_type Werte und zugehoerige config-Formate:\n\n"
+        '1. widget_type="stat"  (gs_w=2, gs_h=2) – Zaehler-Kachel\n'
+        '   config: {"index_pattern":"cs-feed-checkmk","query_string":"severity:critical AND metadata.hostgroups:cue-prod"}\n\n'
+        '2. widget_type="list"  (gs_w=4, gs_h=3) – Alert-Liste\n'
+        '   config: {"index_pattern":"cs-feed-checkmk","query_string":"severity:(critical OR high) AND metadata.hostgroups:cue-prod","limit":10}\n\n'
+        '3. widget_type="donut" (gs_w=5, gs_h=4) – Severity-Kreisdiagramm\n'
+        '   config: {"index_pattern":"cs-feed-*","query_string":"metadata.hostgroups:cue-prod"}\n\n'
+        '4. widget_type="top_hosts" (gs_w=4, gs_h=3) – Top problematische Hosts\n'
+        '   config: {"index_pattern":"cs-feed-checkmk","query_string":"metadata.hostgroups:cue-prod AND NOT status:resolved","limit":5}\n\n'
+        '5. widget_type="timeseries" (gs_w=12, gs_h=3) – Zeitreihe aus CheckMK:\n'
+        '   config: {"data_source":"checkmk","host":"cue0111.ippen.media","service":"WSM PreviewBitmapCache Elaptime","graph_index":0,"hours":4}\n'
+        '   ODER aus Prometheus:\n'
+        '   config: {"data_source":"prometheus","promql":"rate(...)","step":"1m","hours":4,"unit":"%"}\n\n'
+        "REGEL: Fuer Stat/List/Donut/Top_Hosts IMMER index_pattern+query_string verwenden (kein data_source!).\n"
+        "REGEL: Fuer Timeseries IMMER data_source verwenden (kein index_pattern!).\n"
+        "REGEL: widget_type MUSS exakt einer der 5 Strings sein: stat, list, donut, top_hosts, timeseries.\n\n"
+        "Layout-Regeln:\n"
+        "- gs_x + gs_w <= 12 (12 Spalten gesamt)\n"
+        "- Zeile 0 (gs_y=0): Stat-Kacheln (gs_w=2, gs_h=2), groessere Widgets daneben\n"
+        "- Mehrere Timeseries: vertikal stapeln (gs_y jeweils +3)\n\n"
+        f"Kontext:\n" + "\n".join(context_lines)
+    )
+
+    reasoning_effort = "low" if body.use_thinking else "none"
+    raw = await generate_text(
+        llm,
+        [{"role": "system", "content": system}, {"role": "user", "content": body.message}],
+        reasoning_effort=reasoning_effort,
+        temperature=0.1,
+        max_output_tokens=3000,
+    )
+
+    # Strip markdown fences if present
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw
+        raw = raw.rsplit("```", 1)[0]
+
+    try:
+        plan = json.loads(raw)
+    except Exception:
+        # Try to extract JSON from response
+        import re
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if m:
+            plan = json.loads(m.group(0))
+        else:
+            raise HTTPException(502, f"LLM returned invalid JSON: {raw[:300]}")
+
+    # ── Create or use existing dashboard ────────────────────────────────────
+    if body.dashboard_id:
+        result = await db.execute(
+            select(Dashboard).where(
+                Dashboard.id == body.dashboard_id,
+                Dashboard.user_id == current_user.id,
+            )
+        )
+        dashboard = result.scalar_one_or_none()
+        if not dashboard:
+            raise HTTPException(404, "Dashboard not found")
+    else:
+        dashboard = Dashboard(
+            id=uuid.uuid4(),
+            user_id=current_user.id,
+            name=plan.get("dashboard_name", "KI-Dashboard"),
+            description=plan.get("dashboard_description", ""),
+            is_default=False,
+            position=99,
+        )
+        db.add(dashboard)
+        await db.flush()
+
+    # ── Create widgets ───────────────────────────────────────────────────────
+    widgets_created = []
+    for w in plan.get("widgets", []):
+        widget = DashboardWidget(
+            id=uuid.uuid4(),
+            user_id=current_user.id,
+            dashboard_id=dashboard.id,
+            widget_type=w.get("widget_type", "list"),
+            title=w.get("title", "Widget"),
+            gs_x=int(w.get("gs_x", 0)),
+            gs_y=int(w.get("gs_y", 0)),
+            gs_w=int(w.get("gs_w", 4)),
+            gs_h=int(w.get("gs_h", 3)),
+            config=w.get("config", {}),
+        )
+        db.add(widget)
+        widgets_created.append({
+            "title": widget.title,
+            "widget_type": widget.widget_type,
+            "config": widget.config,
+        })
+
+    await db.commit()
+
+    return {
+        "dashboard_id": str(dashboard.id),
+        "dashboard_name": dashboard.name,
+        "widgets_created": widgets_created,
+        "thinking_used": body.use_thinking,
+        "reply": f"Dashboard '{dashboard.name}' mit {len(widgets_created)} Widgets erstellt.",
+    }
+
+
 @router.post("/trigger/{agent_type}", dependencies=[RequireSysAdmin])
 async def trigger_agent(
     agent_type: str,
