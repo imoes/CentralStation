@@ -67,6 +67,9 @@ class DashboardWidget(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
+    dashboard_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("dashboards.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     # "stat" | "list" | "donut" | "timeseries"
     widget_type: Mapped[str] = mapped_column(String(20))
     title: Mapped[str] = mapped_column(String(100))
@@ -77,6 +80,22 @@ class DashboardWidget(Base):
     gs_h: Mapped[int] = mapped_column(Integer, default=3)
     # Widget-specific config (data source, filters, promql, etc.)
     config: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class Dashboard(Base):
+    __tablename__ = "dashboards"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(Text)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    position: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

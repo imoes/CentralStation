@@ -79,15 +79,19 @@ async def _get_or_create_prefs(user: User, db: AsyncSession) -> UserPreference:
         prefs = UserPreference(user_id=user.id)
         db.add(prefs)
         await db.flush()
-        result2 = await db.execute(
-            select(UserJiraQuery).where(UserJiraQuery.user_id == user.id)
-        )
-        if not result2.scalars().all():
-            for q in DEFAULT_JQL_QUERIES:
-                db.add(UserJiraQuery(user_id=user.id, **q))
         await db.commit()
         await db.refresh(prefs)
+    await _ensure_default_jql_queries(user.id, db)
     return prefs
+
+
+async def _ensure_default_jql_queries(user_id: uuid.UUID, db: AsyncSession) -> None:
+    result = await db.execute(select(UserJiraQuery).where(UserJiraQuery.user_id == user_id))
+    if result.scalars().first():
+        return
+    for q in DEFAULT_JQL_QUERIES:
+        db.add(UserJiraQuery(user_id=user_id, **q))
+    await db.commit()
 
 
 @router.get("")
@@ -132,6 +136,7 @@ async def update_preferences(
 @router.get("/jira-queries")
 async def list_jql_queries(user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]):
     await _get_or_create_prefs(user, db)
+    await _ensure_default_jql_queries(user.id, db)
     result = await db.execute(
         select(UserJiraQuery)
         .where(UserJiraQuery.user_id == user.id)
@@ -162,7 +167,15 @@ async def create_jql_query(
     db.add(q)
     await db.commit()
     await db.refresh(q)
-    return {"id": str(q.id), "name": q.name, "jql": q.jql}
+    return {
+        "id": str(q.id),
+        "name": q.name,
+        "jql": q.jql,
+        "position": q.position,
+        "enabled": q.enabled,
+        "show_in_widget": q.show_in_widget,
+        "created_at": q.created_at.isoformat(),
+    }
 
 
 @router.post("/jira-queries/generate")

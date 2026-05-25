@@ -1,13 +1,24 @@
 export interface DashboardWidget {
   id: string;
   user_id: string;
-  widget_type: 'stat' | 'list' | 'donut' | 'timeseries' | 'grafana_panel';
+  dashboard_id?: string | null;
+  widget_type: 'stat' | 'list' | 'donut' | 'ai_summary' | 'top_hosts' | 'timeseries' | 'grafana_panel';
   title: string;
   gs_x: number;
   gs_y: number;
   gs_w: number;
   gs_h: number;
   config: Record<string, unknown>;
+}
+
+export interface Dashboard {
+  id: string;
+  user_id: string;
+  name: string;
+  description?: string | null;
+  is_default: boolean;
+  position: number;
+  created_at?: string | null;
 }
 
 export interface FeedItem {
@@ -21,7 +32,7 @@ export interface FeedItem {
   metadata?: Record<string, unknown> | null;
 }
 
-export type WidgetData = StatData | ListData | DonutData | TimeseriesData | GrafanaPanelData;
+export type WidgetData = StatData | ListData | DonutData | AiSummaryData | TopHostsData | TimeseriesData | GrafanaPanelData;
 
 export interface StatData {
   count: number;
@@ -33,6 +44,17 @@ export interface ListData {
 
 export interface DonutData {
   buckets: Array<{ key: string; count: number }>;
+}
+
+export interface AiSummaryData {
+  summary: string;
+  findings: Array<{ title: string; severity?: string; description?: string }>;
+  recommendations: Array<{ title: string; priority?: string; description?: string }>;
+  run_at?: string | null;
+}
+
+export interface TopHostsData {
+  hosts: Array<{ host: string; count: number; items: FeedItem[]; external_url?: string | null }>;
 }
 
 export interface TimeseriesData {
@@ -49,6 +71,7 @@ export interface GrafanaPanelData {
 export interface DashboardWidgetCreate {
   widget_type: DashboardWidget['widget_type'];
   title: string;
+  dashboard_id?: string | null;
   gs_x?: number;
   gs_y?: number;
   gs_w?: number;

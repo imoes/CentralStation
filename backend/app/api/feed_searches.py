@@ -178,5 +178,6 @@ async def preview_search(
         query_string=s.query_string,
         size=min(size, 20),
         user_id=str(current_user.id),
+        host_scope=await feed_index.get_user_checkmk_host_scope(db, str(current_user.id)),
     )
     return {"items": items, "count": len(items)}

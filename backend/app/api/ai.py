@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import CurrentUser, RequireSysAdmin
 from app.core.database import get_db
 from app.models.ai import AiAnalysis
-from app.models.workflow import DashboardWidget, FeedSearch
+from app.models.workflow import Dashboard, DashboardWidget, FeedSearch
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -22,6 +22,7 @@ class SearchAssistantRequest(BaseModel):
     create_widget: bool = False
     name: str | None = None
     widget_type: str | None = None
+    dashboard_id: uuid.UUID | None = None
 
 
 def _fallback_search_assistant(message: str) -> dict:
@@ -149,6 +150,15 @@ async def search_assistant(
         actions.append({"type": "search_created", "id": str(search.id)})
 
     if body.create_widget:
+        if body.dashboard_id:
+            dashboard_result = await db.execute(
+                select(Dashboard).where(
+                    Dashboard.id == body.dashboard_id,
+                    Dashboard.user_id == current_user.id,
+                )
+            )
+            if not dashboard_result.scalar_one_or_none():
+                raise HTTPException(404, "Dashboard not found")
         widget_type = body.widget_type or "list"
         title = body.name or "KI-Widget"
         config = {
@@ -158,6 +168,7 @@ async def search_assistant(
         }
         widget = DashboardWidget(
             user_id=current_user.id,
+            dashboard_id=body.dashboard_id,
             widget_type=widget_type,
             title=title,
             gs_x=0,

@@ -8,6 +8,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { NgxEchartsDirective } from 'ngx-echarts';
 import {
   DashboardWidget,
+  AiSummaryData,
   DonutData,
   FeedItem,
   GrafanaPanelData,
@@ -15,6 +16,7 @@ import {
   SEVERITY_COLORS,
   StatData,
   TimeseriesData,
+  TopHostsData,
   WidgetData,
 } from './dashboard-widget.model';
 
@@ -68,6 +70,34 @@ import {
             }
             @case ('donut') {
               <div echarts [options]="donutOptions()" class="chart"></div>
+            }
+            @case ('ai_summary') {
+              @if (aiSummary()) {
+                <div class="ai-summary">
+                  <p>{{ aiSummary() }}</p>
+                  @for (finding of aiFindings(); track finding.title) {
+                    <div class="finding">
+                      <span class="sev-dot" [style.background]="severityColor(finding.severity ?? 'info')"></span>
+                      <span>{{ finding.title }}</span>
+                    </div>
+                  }
+                </div>
+              } @else {
+                <div class="empty">Noch kein KI-Lagebericht vorhanden</div>
+              }
+            }
+            @case ('top_hosts') {
+              <div class="host-list">
+                @for (host of topHosts(); track host.host) {
+                  <div class="host-row">
+                    <mat-icon>dns</mat-icon>
+                    <span class="host-name">{{ host.host }}</span>
+                    <span class="host-count">{{ host.count }}</span>
+                  </div>
+                } @empty {
+                  <div class="empty">Keine Problem-Hosts</div>
+                }
+              </div>
             }
             @case ('timeseries') {
               @if (timeseriesError()) {
@@ -144,6 +174,19 @@ import {
     .list-meta { font-size: 10px; color: var(--mat-sys-on-surface-variant); }
     .chart { height: 100%; min-height: 120px; width: 100%; }
     .grafana-frame { width: 100%; height: 100%; border: 0; border-radius: 10px; background: #111827; }
+    .ai-summary { height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 7px; }
+    .ai-summary p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--mat-sys-on-surface-variant); }
+    .finding { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; }
+    .host-list { display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+    .host-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 9px; border-radius: 10px;
+      background: var(--mat-sys-surface-variant);
+      font-size: 12px;
+    }
+    .host-row mat-icon { font-size: 16px; height: 16px; width: 16px; color: var(--mat-sys-primary); }
+    .host-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: 700; }
+    .host-count { background: #f57c00; color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 800; }
   `],
 })
 export class DashboardWidgetComponent {
@@ -185,6 +228,21 @@ export class DashboardWidgetComponent {
         })),
       }],
     };
+  }
+
+  aiSummary(): string {
+    const d = this.data as AiSummaryData | undefined;
+    return d?.summary ?? '';
+  }
+
+  aiFindings(): Array<{ title: string; severity?: string; description?: string }> {
+    const d = this.data as AiSummaryData | undefined;
+    return Array.isArray(d?.findings) ? d.findings : [];
+  }
+
+  topHosts(): Array<{ host: string; count: number; items: FeedItem[]; external_url?: string | null }> {
+    const d = this.data as TopHostsData | undefined;
+    return Array.isArray(d?.hosts) ? d.hosts : [];
   }
 
   timeseriesOptions() {
