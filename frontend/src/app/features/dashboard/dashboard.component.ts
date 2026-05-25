@@ -248,11 +248,15 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     this.grid?.destroy(false);
   }
 
+  private readonly STORAGE_KEY = 'cs_selected_dashboard_id';
+
   loadDashboards() {
     this.http.get<Dashboard[]>(`${environment.apiUrl}/dashboard-widgets/dashboards`).subscribe({
       next: dashboards => {
         this.dashboards.set(dashboards);
-        const selected = this.selectedDashboardId() || dashboards.find(d => d.is_default)?.id || dashboards[0]?.id || '';
+        const saved = localStorage.getItem(this.STORAGE_KEY) ?? '';
+        const validSaved = saved && dashboards.some(d => d.id === saved) ? saved : '';
+        const selected = validSaved || dashboards.find(d => d.is_default)?.id || dashboards[0]?.id || '';
         this.selectedDashboardId.set(selected);
         this.loadWidgets();
       },
@@ -265,6 +269,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
 
   selectDashboard(dashboardId: string) {
     this.selectedDashboardId.set(dashboardId);
+    localStorage.setItem(this.STORAGE_KEY, dashboardId);
     this.widgetData.set({});
     this.loadWidgets();
   }
