@@ -27,6 +27,11 @@ frontend/node_modules/
 # Docker
 *.log
 
+# Bind mount data directories (persistent volumes)
+data/postgres/
+data/opensearch/
+data/redis/
+
 # OS
 .DS_Store
 Thumbs.db

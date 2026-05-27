@@ -84,6 +84,10 @@ import { AuthService } from '../../../core/auth/auth.service';
                   <button mat-icon-button color="warn" (click)="deleteConnector(c)" title="Löschen">
                     <mat-icon>delete</mat-icon>
                   </button>
+                } @else if (c.owner_user_id) {
+                  <button mat-icon-button color="warn" (click)="deleteMyConnector(c)" title="Löschen">
+                    <mat-icon>delete</mat-icon>
+                  </button>
                 }
               </td>
             </ng-container>
@@ -195,5 +199,10 @@ export class ConnectorsComponent implements OnInit {
   deleteConnector(connector: Connector) {
     if (!confirm(`Connector "${connector.name}" wirklich löschen?`)) return;
     this.svc.delete(connector.id).subscribe({ next: () => this.load() });
+  }
+
+  deleteMyConnector(connector: Connector) {
+    if (!confirm(`Connector "${connector.name}" wirklich löschen?`)) return;
+    this.svc.deleteMine(connector.type).subscribe({ next: () => this.load() });
   }
 }

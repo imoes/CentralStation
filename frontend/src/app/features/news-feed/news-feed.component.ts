@@ -48,6 +48,7 @@ interface FeedSearch {
   query_string: string;
   enabled: boolean;
   is_system: boolean;
+  is_exclusion: boolean;
   position: number;
 }
 
@@ -78,6 +79,13 @@ const SEVERITY_COLOR: Record<string, string> = {
     MatSlideToggleModule, MatSelectModule, MatFormFieldModule, MatInputModule,
   ],
   template: `
+    @if (showScrollTop()) {
+      <button mat-raised-button color="primary" class="scroll-top-btn" (click)="scrollToTop()">
+        <mat-icon>arrow_upward</mat-icon>
+        Neueste Meldungen
+      </button>
+    }
+
     <div class="feed-page">
 
       <!-- ── Top bar ────────────────────────────────────────────────────── -->
@@ -120,7 +128,13 @@ const SEVERITY_COLOR: Record<string, string> = {
             <mat-form-field appearance="outline" class="filter-field">
               <mat-label>System / Hostname</mat-label>
               <input matInput [(ngModel)]="hostFilter" placeholder="z.B. srv-web01" (ngModelChange)="onFilterChange()">
-              <mat-icon matSuffix>computer</mat-icon>
+              @if (hostFilter) {
+                <button matSuffix mat-icon-button aria-label="Löschen" (click)="hostFilter=''; onFilterChange()">
+                  <mat-icon>close</mat-icon>
+                </button>
+              } @else {
+                <mat-icon matSuffix>computer</mat-icon>
+              }
             </mat-form-field>
             <mat-form-field appearance="outline" class="filter-field">
               <mat-label>Alert-Schwere</mat-label>
@@ -287,6 +301,11 @@ const SEVERITY_COLOR: Record<string, string> = {
               <mat-label>Lucene Query</mat-label>
               <textarea matInput rows="3" [(ngModel)]="searchDraft.query_string"></textarea>
             </mat-form-field>
+            <div class="search-editor-options">
+              <mat-slide-toggle [(ngModel)]="searchDraft.is_exclusion" color="warn">
+                Ausblenden — passende Meldungen aus dem Feed verstecken
+              </mat-slide-toggle>
+            </div>
             <div class="search-editor-actions">
               <button mat-stroked-button (click)="resetSearchDraft()">Zurücksetzen</button>
               <button mat-flat-button color="primary" (click)="saveSearchDraft()" [disabled]="!searchDraft.name.trim()">
@@ -298,15 +317,22 @@ const SEVERITY_COLOR: Record<string, string> = {
 
           <div class="saved-searches">
             @for (search of personalSearches(); track search.id) {
-              <div class="saved-search-row">
+              <div class="saved-search-row" [class.exclusion-search-row]="search.is_exclusion">
                 <div class="saved-search-main">
-                  <span class="saved-search-name">{{ search.name }}</span>
+                  <div class="saved-search-name-row">
+                    <span class="saved-search-name">{{ search.name }}</span>
+                    @if (search.is_exclusion) {
+                      <span class="exclusion-badge"><mat-icon>block</mat-icon>Ausblenden</span>
+                    }
+                  </div>
                   <span class="saved-search-query">{{ search.index_pattern }} · {{ search.query_string || '*' }}</span>
                 </div>
                 <div class="saved-search-actions">
-                  <button mat-icon-button matTooltip="Anwenden" (click)="applySavedSearch(search)">
-                    <mat-icon>play_arrow</mat-icon>
-                  </button>
+                  @if (!search.is_exclusion) {
+                    <button mat-icon-button matTooltip="Anwenden" (click)="applySavedSearch(search)">
+                      <mat-icon>play_arrow</mat-icon>
+                    </button>
+                  }
                   <button mat-icon-button matTooltip="Bearbeiten" (click)="editSavedSearch(search)">
                     <mat-icon>edit</mat-icon>
                   </button>
@@ -336,7 +362,7 @@ const SEVERITY_COLOR: Record<string, string> = {
           @if (isFirstSeen(item, idx)) {
             <div class="last-seen-divider"><span>Zuletzt gesehen ↑</span></div>
           }
-          <mat-card class="feed-card" [class.card-acknowledged]="item.status === 'acknowledged'">
+          <mat-card class="feed-card" [class.card-acknowledged]="item.status === 'acknowledged'" [attr.data-feed-id]="item.id">
 
             <!-- Card header: avatar + meta -->
             <div class="card-top">
@@ -355,6 +381,12 @@ const SEVERITY_COLOR: Record<string, string> = {
                     <span class="location-tag">
                       <mat-icon style="font-size:12px;height:12px;width:12px">location_on</mat-icon>
                       {{ item.location_name }}{{ item.location_city ? ' · ' + item.location_city : '' }}
+                    </span>
+                  }
+                  @if (itemHostLabel(item)) {
+                    <span class="host-tag">
+                      <mat-icon style="font-size:12px;height:12px;width:12px">dns</mat-icon>
+                      {{ itemHostLabel(item) }}
                     </span>
                   }
                 </div>
@@ -398,7 +430,8 @@ const SEVERITY_COLOR: Record<string, string> = {
                 <mat-icon class="ai-insight-icon">psychology</mat-icon>
                 <span>{{ item.ai_insight }}</span>
               </div>
-            } @else if (!autoEnrich() && item.type === 'alert') {
+            }
+            @if (item.type === 'alert') {
               <div class="ai-demand-row">
                 <button mat-stroked-button class="ki-btn" (click)="requestEnrich(item)"
                         [disabled]="isEnriching(item.id)">
@@ -407,7 +440,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                   } @else {
                     <mat-icon>psychology</mat-icon>
                   }
-                  KI Analyse
+                  {{ item.ai_insight ? 'Neu analysieren' : 'KI Analyse' }}
                 </button>
               </div>
             }
@@ -469,6 +502,24 @@ const SEVERITY_COLOR: Record<string, string> = {
     </div>
   `,
   styles: [`
+    .scroll-top-btn {
+      position: fixed;
+      top: 68px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 200;
+      box-shadow: 0 4px 16px rgba(0,0,0,.35) !important;
+      border-radius: 24px !important;
+      padding: 0 20px !important;
+      height: 40px;
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      animation: slideDown .2s ease-out;
+    }
+    .scroll-top-btn mat-icon { font-size: 18px; height: 18px; width: 18px; margin-right: 6px; }
+    @keyframes slideDown { from { opacity: 0; transform: translateX(-50%) translateY(-12px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+
     .feed-page { padding: 24px; max-width: 720px; margin: 0 auto; }
 
     /* Top bar */
@@ -540,11 +591,23 @@ const SEVERITY_COLOR: Record<string, string> = {
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
       padding: 9px 11px; border-radius: 10px; background: var(--mat-sys-surface-variant);
     }
+    .exclusion-search-row {
+      background: color-mix(in srgb, #b71c1c 10%, var(--mat-sys-surface-variant));
+      border-left: 3px solid #ef5350;
+    }
     .saved-search-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .saved-search-name-row { display: flex; align-items: center; gap: 8px; }
     .saved-search-name { font-weight: 700; font-size: 13px; }
+    .exclusion-badge {
+      display: inline-flex; align-items: center; gap: 3px;
+      background: #b71c1c; color: white; border-radius: 4px;
+      padding: 1px 6px; font-size: 10px; font-weight: 600;
+    }
+    .exclusion-badge mat-icon { font-size: 12px; height: 12px; width: 12px; }
     .saved-search-query { font-family: monospace; font-size: 11px; color: var(--mat-sys-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .saved-search-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
     .no-searches { color: var(--mat-sys-on-surface-variant); font-size: 13px; padding: 10px; text-align: center; }
+    .search-editor-options { padding: 0 0 12px; }
 
     /* Feed cards */
     .feed-column { display: flex; flex-direction: column; gap: 12px; }
@@ -561,6 +624,12 @@ const SEVERITY_COLOR: Record<string, string> = {
     }
     .feed-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,.15) !important; }
     .card-acknowledged { opacity: 0.6; }
+    @keyframes feedHighlight {
+      0%   { box-shadow: 0 0 0 3px var(--mat-sys-primary), 0 4px 20px rgba(0,0,0,.15); background: color-mix(in srgb, var(--mat-sys-primary) 18%, var(--mat-sys-surface)); }
+      70%  { box-shadow: 0 0 0 3px var(--mat-sys-primary), 0 4px 20px rgba(0,0,0,.15); background: color-mix(in srgb, var(--mat-sys-primary) 18%, var(--mat-sys-surface)); }
+      100% { box-shadow: none; background: var(--mat-sys-surface); }
+    }
+    .feed-highlight { animation: feedHighlight 2.8s ease-out forwards; }
 
     /* Card top */
     .card-top { display: flex; align-items: flex-start; gap: 12px; padding: 16px 16px 12px; }
@@ -581,6 +650,11 @@ const SEVERITY_COLOR: Record<string, string> = {
     .location-tag {
       font-size: 11px; color: var(--mat-sys-on-surface-variant);
       display: flex; align-items: center; gap: 2px;
+    }
+    .host-tag {
+      font-size: 13px; color: var(--mat-sys-on-surface-variant);
+      display: flex; align-items: center; gap: 2px;
+      font-family: 'Fira Code', monospace;
     }
     .timestamp { font-size: 12px; color: var(--mat-sys-on-surface-variant); }
     .ack-stamp {
@@ -704,11 +778,12 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   systemSearches = computed(() => this.feedSearches().filter(s => s.is_system));
   generatingSearch = signal(false);
   aiSearchPrompt = '';
-  searchDraft: { id?: string; name: string; index_pattern: string; query_string: string; enabled: boolean } = {
+  searchDraft: { id?: string; name: string; index_pattern: string; query_string: string; enabled: boolean; is_exclusion: boolean } = {
     name: '',
     index_pattern: 'cs-feed-graylog',
     query_string: '',
     enabled: true,
+    is_exclusion: false,
   };
   expanded = new Set<string>();
 
@@ -725,6 +800,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   };
 
   editPrefs: FeedPrefs = { checkmk_min_age_minutes: 5, teams_channels: [] };
+  showScrollTop = signal(false);
   private offset = 0;
   private readonly pageSize = 50;
   private hasMore = false;
@@ -733,6 +809,12 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   private routeQuery = '';
   private routeIndex = '';
   private routeSourceSet = false;
+  private highlightId = '';
+  private hasTriedScrollToLastSeen = false;
+  private scrollContainer: HTMLElement | null = null;
+  private scrollListener = () => {
+    this.showScrollTop.set((this.scrollContainer?.scrollTop ?? 0) > 350);
+  };
 
   visibleItems = computed(() => {
     const f = this.activeFilter();
@@ -746,6 +828,21 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     private route: ActivatedRoute,
     private router: Router,
   ) {}
+
+  scrollToTop() {
+    this.scrollContainer?.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  private scrollToLastSeen() {
+    if (this.hasTriedScrollToLastSeen) return;
+    this.hasTriedScrollToLastSeen = true;
+    setTimeout(() => {
+      const divider = document.querySelector('.last-seen-divider');
+      if (divider) {
+        divider.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 300);
+  }
 
   ngOnInit() {
     const stored = localStorage.getItem('feed_last_seen');
@@ -767,11 +864,16 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       { threshold: 0.1 }
     );
     this.observer.observe(this.sentinelRef.nativeElement);
+
+    this.scrollContainer = document.querySelector('mat-sidenav-content');
+    this.scrollContainer?.addEventListener('scroll', this.scrollListener);
   }
 
   ngOnDestroy() {
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     this.observer?.disconnect();
+    this.scrollContainer?.removeEventListener('scroll', this.scrollListener);
+    localStorage.setItem('feed_last_seen', new Date().toISOString());
   }
 
   loadPrefs() {
@@ -803,12 +905,28 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.routeSearchId = params.get('search_id') || '';
     this.routeQuery = params.get('q') || '';
     this.routeIndex = params.get('index') || '';
+    this.highlightId = params.get('highlight') || '';
     if (source) {
       this.routeSourceSet = true;
       this.activeFilter.set(source.split(',').filter(Boolean));
     }
     const severity = params.get('severity');
     if (severity) this.severityFilter = severity;
+    const host = params.get('host');
+    if (host) { this.hostFilter = host; this.showFilters.set(true); }
+  }
+
+  private scrollToHighlight() {
+    const id = this.highlightId;
+    if (!id) return;
+    setTimeout(() => {
+      const el = document.querySelector(`[data-feed-id="${id}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('feed-highlight');
+        setTimeout(() => el.classList.remove('feed-highlight'), 2800);
+      }
+    }, 200);
   }
 
   hasActiveFilter(): boolean {
@@ -859,6 +977,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       index_pattern: 'cs-feed-graylog',
       query_string: '',
       enabled: true,
+      is_exclusion: false,
     };
     this.aiSearchPrompt = '';
   }
@@ -897,6 +1016,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       index_pattern: this.searchDraft.index_pattern,
       query_string: this.searchDraft.query_string,
       enabled: this.searchDraft.enabled,
+      is_exclusion: this.searchDraft.is_exclusion,
     };
     const request = this.searchDraft.id
       ? this.http.patch<FeedSearch>(`${environment.apiUrl}/feed-searches/${this.searchDraft.id}`, payload)
@@ -924,6 +1044,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       index_pattern: search.index_pattern,
       query_string: search.query_string,
       enabled: search.enabled,
+      is_exclusion: search.is_exclusion,
     };
   }
 
@@ -984,9 +1105,10 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (this.criticalityFilter) params['criticality'] = this.criticalityFilter;
     if (this.veFilter)          params['ve']          = this.veFilter;
     if (this.hostgroupFilter)   params['hostgroup']   = this.hostgroupFilter;
-    if (this.routeSearchId)     params['search_id']   = this.routeSearchId;
-    if (this.routeQuery)        params['q']           = this.routeQuery;
-    if (this.routeIndex)        params['index']       = this.routeIndex;
+    if (this.routeSearchId)     params['search_id']    = this.routeSearchId;
+    if (this.routeQuery)        params['q']            = this.routeQuery;
+    if (this.routeIndex)        params['index']        = this.routeIndex;
+    if (this.highlightId)       params['highlight_id'] = this.highlightId;
     this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params }).subscribe({
       next: (data) => {
         if (reset) {
@@ -995,6 +1117,9 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
             this.badgeCleared = true;
             setTimeout(() => this.app.clearFeedBadge(), 3000);
           }
+          this.scrollToHighlight();
+          this.highlightId = '';   // only pin on first load
+          this.scrollToLastSeen();
         } else {
           this.items.update(prev => [...prev, ...data]);
         }
@@ -1065,7 +1190,10 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
 
   isFirstSeen(item: FeedItem, index: number): boolean {
     const ls = this.lastSeenAt();
+    // No divider if never visited before or item is still new
+    if (ls.getTime() === 0) return false;
     if (new Date(item.created_at) > ls) return false;
+    // Only show divider if there is at least one newer item directly above
     const visible = this.visibleItems();
     const prev = visible[index - 1];
     return !prev || new Date(prev.created_at) > ls;
@@ -1124,6 +1252,28 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   sourceLabel(src: string) { return SOURCE_META[src]?.label ?? src; }
   sourceColor(src: string) { return SOURCE_META[src]?.color ?? '#757575'; }
   severityColor(sev: string) { return SEVERITY_COLOR[sev] ?? '#757575'; }
+
+  itemHostLabel(item: FeedItem): string {
+    const m = item.metadata;
+    if (!m) return '';
+    if (item.source === 'graylog') {
+      const container = (m['container_name'] as string) || '';
+      const host = (m['host'] as string) || '';
+      const vendor = (m['vendor'] as string) || '';
+      const showVendor = vendor && vendor !== 'Unknown';
+      let label = '';
+      if (container && host && host !== container) {
+        label = `${host}/${container}`;
+      } else {
+        label = container || host;
+      }
+      return label && showVendor ? `${label} · ${vendor}` : label;
+    }
+    if (item.source === 'wazuh') {
+      return (m['agent'] as string) || (m['host'] as string) || '';
+    }
+    return '';
+  }
   typeLabel(type: string): string {
     const m: Record<string, string> = {
       alert: 'Monitoring Alert',

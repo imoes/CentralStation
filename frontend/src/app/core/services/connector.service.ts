@@ -45,6 +45,10 @@ export class ConnectorService {
     return this.http.post<ConnectorTestResult>(`${this.api}/my/${type}/test`, {});
   }
 
+  deleteMine(type: ConnectorType) {
+    return this.http.delete<void>(`${this.api}/my/${type}`);
+  }
+
   getSettings() {
     return this.http.get<SettingsResponse>(`${this.settingsApi}/`);
   }

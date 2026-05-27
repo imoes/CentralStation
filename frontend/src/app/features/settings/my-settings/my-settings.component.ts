@@ -142,6 +142,45 @@ import { environment } from '../../../../environments/environment';
 
           </mat-card-content>
         </mat-card>
+
+        <mat-card class="settings-card">
+          <mat-card-header>
+            <mat-card-title>Passwort ändern</mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
+            <mat-form-field appearance="outline" class="pw-field">
+              <mat-label>Aktuelles Passwort</mat-label>
+              <input matInput [type]="pwShow ? 'text' : 'password'" [(ngModel)]="pwCurrent" autocomplete="current-password">
+              <button matSuffix mat-icon-button (click)="pwShow = !pwShow" type="button" tabindex="-1">
+                <mat-icon>{{ pwShow ? 'visibility_off' : 'visibility' }}</mat-icon>
+              </button>
+            </mat-form-field>
+            <mat-form-field appearance="outline" class="pw-field">
+              <mat-label>Neues Passwort</mat-label>
+              <input matInput [type]="pwShow ? 'text' : 'password'" [(ngModel)]="pwNew" autocomplete="new-password">
+            </mat-form-field>
+            <mat-form-field appearance="outline" class="pw-field">
+              <mat-label>Neues Passwort bestätigen</mat-label>
+              <input matInput [type]="pwShow ? 'text' : 'password'" [(ngModel)]="pwConfirm" autocomplete="new-password">
+              @if (pwNew && pwConfirm && pwNew !== pwConfirm) {
+                <mat-error>Passwörter stimmen nicht überein</mat-error>
+              }
+            </mat-form-field>
+            @if (pwError) {
+              <p class="pw-error"><mat-icon>error</mat-icon>{{ pwError }}</p>
+            }
+            <div class="pw-actions">
+              <button mat-flat-button color="primary"
+                      [disabled]="pwSaving() || !pwCurrent || !pwNew || pwNew !== pwConfirm || pwNew.length < 8"
+                      (click)="changePassword()">
+                @if (pwSaving()) { <mat-spinner diameter="18"></mat-spinner> }
+                @else { <mat-icon>lock_reset</mat-icon> }
+                Passwort ändern
+              </button>
+              <span class="pw-hint">Mindestens 8 Zeichen</span>
+            </div>
+          </mat-card-content>
+        </mat-card>
       }
     </div>
   `,
@@ -158,11 +197,23 @@ import { environment } from '../../../../environments/environment';
     .filter-label { font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-right: 4px; }
     .no-filter-hint { font-size: 13px; color: var(--mat-sys-on-surface-variant); margin: 4px 0 0; display: flex; align-items: center; gap: 4px; }
     @media (max-width: 820px) { .age-field { width: 100%; } }
+    .pw-field { width: 100%; max-width: 380px; }
+    .pw-actions { display: flex; align-items: center; gap: 16px; padding-top: 4px; }
+    .pw-hint { font-size: 12px; color: var(--mat-sys-on-surface-variant); }
+    .pw-error { display: flex; align-items: center; gap: 6px; color: var(--mat-sys-error); font-size: 13px; margin: 0 0 8px; }
+    .pw-error mat-icon { font-size: 16px; height: 16px; width: 16px; }
   `],
 })
 export class MySettingsComponent implements OnInit {
   loading = signal(true);
   saving  = signal(false);
+
+  pwCurrent = '';
+  pwNew     = '';
+  pwConfirm = '';
+  pwShow    = false;
+  pwSaving  = signal(false);
+  pwError   = '';
 
   minAgeMins:     number   = 5;
   selLocations:   string[] = [];
@@ -203,6 +254,30 @@ export class MySettingsComponent implements OnInit {
         this.loading.set(false);
       },
       error: () => this.loading.set(false),
+    });
+  }
+
+  changePassword() {
+    if (this.pwNew !== this.pwConfirm || this.pwNew.length < 8) return;
+    this.pwSaving.set(true);
+    this.pwError = '';
+    this.http.post(`${environment.apiUrl}/auth/change-password`, {
+      current_password: this.pwCurrent,
+      new_password: this.pwNew,
+    }).subscribe({
+      next: () => {
+        this.pwSaving.set(false);
+        this.pwCurrent = '';
+        this.pwNew     = '';
+        this.pwConfirm = '';
+        this.snack.open('Passwort erfolgreich geändert', 'OK', { duration: 3000 });
+      },
+      error: (err) => {
+        this.pwSaving.set(false);
+        this.pwError = err?.error?.detail === 'Current password wrong'
+          ? 'Aktuelles Passwort falsch'
+          : (err?.error?.detail ?? 'Fehler beim Ändern des Passworts');
+      },
     });
   }
 

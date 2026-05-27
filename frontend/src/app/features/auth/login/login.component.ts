@@ -30,11 +30,11 @@ import { environment } from '../../../../environments/environment';
           <form [formGroup]="form" (ngSubmit)="onSubmit()">
             <mat-form-field appearance="outline" class="full-width">
               <mat-label>E-Mail</mat-label>
-              <input matInput type="email" formControlName="email" autocomplete="email">
+              <input matInput type="email" formControlName="email" autocomplete="email" name="email" id="login-email">
             </mat-form-field>
             <mat-form-field appearance="outline" class="full-width">
               <mat-label>Passwort</mat-label>
-              <input matInput type="password" formControlName="password" autocomplete="current-password">
+              <input matInput type="password" formControlName="password" autocomplete="current-password" name="password" id="login-password">
             </mat-form-field>
             @if (error) {
               <p class="error-msg">{{ error }}</p>

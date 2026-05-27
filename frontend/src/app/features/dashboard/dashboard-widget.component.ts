@@ -39,9 +39,14 @@ import {
           <div class="widget-subtitle">{{ widget().widget_type }}</div>
         </div>
         @if (editMode()) {
-          <button mat-icon-button (click)="removeWidget($event)" aria-label="Widget löschen">
-            <mat-icon>close</mat-icon>
-          </button>
+          <div class="edit-actions">
+            <button mat-icon-button (click)="editWidget($event)" aria-label="Widget konfigurieren">
+              <mat-icon>edit</mat-icon>
+            </button>
+            <button mat-icon-button (click)="removeWidget($event)" aria-label="Widget löschen">
+              <mat-icon>close</mat-icon>
+            </button>
+          </div>
         }
       </div>
 
@@ -56,7 +61,7 @@ import {
             @case ('list') {
               <div class="item-list">
                 @for (item of listItems(); track item.id) {
-                  <div class="list-item">
+                  <div class="list-item clickable" (click)="onItemClick($event, item.id)">
                     <span class="sev-dot" [style.background]="severityColor(item.severity)"></span>
                     <div class="list-copy">
                       <span class="list-title">{{ item.title }}</span>
@@ -76,9 +81,10 @@ import {
                 <div class="ai-summary">
                   <p>{{ aiSummary() }}</p>
                   @for (finding of aiFindings(); track finding.title) {
-                    <div class="finding">
+                    <div class="finding clickable" (click)="onFindingClick($event, finding)">
                       <span class="sev-dot" [style.background]="severityColor(finding.severity ?? 'info')"></span>
                       <span>{{ finding.title }}</span>
+                      <mat-icon class="finding-arrow">arrow_forward</mat-icon>
                     </div>
                   }
                 </div>
@@ -89,10 +95,18 @@ import {
             @case ('top_hosts') {
               <div class="host-list">
                 @for (host of topHosts(); track host.host) {
-                  <div class="host-row">
-                    <mat-icon>dns</mat-icon>
-                    <span class="host-name">{{ host.host }}</span>
-                    <span class="host-count">{{ host.count }}</span>
+                  <div class="host-group">
+                    <div class="host-row">
+                      <mat-icon>dns</mat-icon>
+                      <span class="host-name">{{ host.host }}</span>
+                      <span class="host-count">{{ host.count }}</span>
+                    </div>
+                    @for (item of host.items; track item.id) {
+                      <div class="host-item clickable" (click)="onItemClick($event, item.id)">
+                        <span class="sev-dot" [style.background]="severityColor(item.severity)"></span>
+                        <span class="host-item-title">{{ item.title }}</span>
+                      </div>
+                    }
                   </div>
                 } @empty {
                   <div class="empty">Keine Problem-Hosts</div>
@@ -129,6 +143,7 @@ import {
       cursor: pointer;
     }
     .widget-card.edit-mode { outline: 2px dashed color-mix(in srgb, var(--mat-sys-primary) 55%, transparent); }
+    .edit-actions { display: flex; gap: 0; }
     .widget-header {
       display: flex;
       align-items: center;
@@ -168,6 +183,8 @@ import {
     .item-list { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; height: 100%; }
     .list-item { display: flex; align-items: flex-start; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--mat-sys-outline-variant); }
     .list-item:last-child { border-bottom: 0; }
+    .clickable { cursor: pointer; border-radius: 6px; transition: background 0.15s; }
+    .clickable:hover { background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent); }
     .sev-dot { width: 9px; height: 9px; border-radius: 999px; margin-top: 5px; flex-shrink: 0; }
     .list-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
     .list-title { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -176,24 +193,37 @@ import {
     .grafana-frame { width: 100%; height: 100%; border: 0; border-radius: 10px; background: #111827; }
     .ai-summary { height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 7px; }
     .ai-summary p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--mat-sys-on-surface-variant); }
-    .finding { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; }
-    .host-list { display: flex; flex-direction: column; gap: 8px; overflow: auto; height: 100%; }
+    .finding { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; padding: 3px 4px; border-radius: 4px; cursor: pointer; }
+    .finding:hover { background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent); }
+    .finding-arrow { font-size: 14px; height: 14px; width: 14px; opacity: 0; margin-left: auto; color: var(--mat-sys-primary); }
+    .finding:hover .finding-arrow { opacity: 1; }
+    .host-list { display: flex; flex-direction: column; gap: 6px; overflow: auto; height: 100%; }
+    .host-group { display: flex; flex-direction: column; gap: 2px; }
     .host-row {
       display: flex; align-items: center; gap: 8px;
-      padding: 7px 9px; border-radius: 10px;
+      padding: 6px 9px; border-radius: 8px;
       background: var(--mat-sys-surface-variant);
       font-size: 12px;
     }
     .host-row mat-icon { font-size: 16px; height: 16px; width: 16px; color: var(--mat-sys-primary); }
     .host-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-weight: 700; }
     .host-count { background: #f57c00; color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 800; }
+    .host-item {
+      display: flex; align-items: center; gap: 6px;
+      padding: 3px 9px 3px 28px; font-size: 11px;
+      color: var(--mat-sys-on-surface-variant);
+    }
+    .host-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   `],
 })
 export class DashboardWidgetComponent {
   readonly widget = input.required<DashboardWidget>();
   readonly data   = input<WidgetData>();
   readonly editMode = input<boolean>(false);
-  readonly remove = output<void>();
+  readonly remove      = output<void>();
+  readonly edit        = output<void>();
+  readonly itemClick   = output<string>();
+  readonly findingClick = output<{ source: string; host: string | null; severity: string }>();
 
   private sanitizer = inject(DomSanitizer);
 
@@ -345,5 +375,24 @@ export class DashboardWidgetComponent {
   removeWidget(event: MouseEvent) {
     event.stopPropagation();
     this.remove.emit();
+  }
+
+  editWidget(event: MouseEvent) {
+    event.stopPropagation();
+    this.edit.emit();
+  }
+
+  onItemClick(event: MouseEvent, itemId: string) {
+    event.stopPropagation();
+    this.itemClick.emit(itemId);
+  }
+
+  onFindingClick(event: MouseEvent, finding: { source?: string; severity?: string; host?: string | null }) {
+    event.stopPropagation();
+    this.findingClick.emit({
+      source: finding.source ?? '',
+      host: finding.host ?? null,
+      severity: finding.severity ?? '',
+    });
   }
 }

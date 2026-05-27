@@ -80,6 +80,12 @@ import {
               Defaults
             </button>
           }
+          @if (configMode()) {
+            <button mat-stroked-button (click)="cancelConfigMode()">
+              <mat-icon>close</mat-icon>
+              Abbrechen
+            </button>
+          }
           <button mat-stroked-button [color]="configMode() ? 'warn' : 'primary'" (click)="toggleConfigMode()">
             <mat-icon>{{ configMode() ? 'done' : 'dashboard_customize' }}</mat-icon>
             {{ configMode() ? 'Layout speichern' : 'Dashboard anpassen' }}
@@ -133,7 +139,10 @@ import {
                 [data]="widgetData()[widget.id]"
                 [editMode]="configMode()"
                 (click)="openWidget(widget)"
-                (remove)="deleteWidget(widget.id)" />
+                (remove)="deleteWidget(widget.id)"
+                (edit)="editWidget(widget)"
+                (itemClick)="openFeedItem($event)"
+                (findingClick)="openFeedFinding($event)" />
             </div>
           </div>
         }
@@ -328,6 +337,12 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  cancelConfigMode() {
+    this.configMode.set(false);
+    this.grid?.disable();
+    this.loadWidgets();
+  }
+
   saveLayout() {
     const items = this.grid?.getGridItems() ?? [];
     const updates = items
@@ -361,6 +376,27 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     this.http.get<WidgetData>(`${environment.apiUrl}/dashboard-widgets/${widgetId}/data`).subscribe({
       next: data => this.widgetData.update(m => ({ ...m, [widgetId]: data })),
       error: () => this.widgetData.update(m => ({ ...m, [widgetId]: { error: 'Daten konnten nicht geladen werden', series: [] } })),
+    });
+  }
+
+  editWidget(widget: DashboardWidget) {
+    const ref = this.dialog.open<AddWidgetDialogComponent, unknown, DashboardWidgetCreate>(
+      AddWidgetDialogComponent,
+      { width: '680px', data: { existingWidget: widget } },
+    );
+    ref.afterClosed().subscribe(payload => {
+      if (!payload) return;
+      this.http.patch<DashboardWidget>(`${environment.apiUrl}/dashboard-widgets/${widget.id}`, {
+        title: payload.title,
+        config: payload.config,
+      }).subscribe({
+        next: updated => {
+          this.widgets.update(ws => ws.map(w => w.id === updated.id ? { ...w, ...updated } : w));
+          this.loadWidgetData(updated.id);
+          this.snackBar.open('Widget aktualisiert', '', { duration: 2000 });
+        },
+        error: () => this.snackBar.open('Widget konnte nicht aktualisiert werden', 'OK', { duration: 4000 }),
+      });
     });
   }
 
@@ -489,6 +525,18 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
       },
       error: () => this.snackBar.open('Widget konnte nicht gelöscht werden', 'OK', { duration: 4000 }),
     });
+  }
+
+  openFeedItem(itemId: string) {
+    this.router.navigate(['/feed'], { queryParams: { highlight: itemId } });
+  }
+
+  openFeedFinding(finding: { source: string; host: string | null; severity: string }) {
+    const qp: Record<string, string> = {};
+    if (finding.source) qp['source'] = finding.source;
+    if (finding.severity) qp['severity'] = finding.severity;
+    if (finding.host) qp['host'] = finding.host;
+    this.router.navigate(['/feed'], { queryParams: qp });
   }
 
   openWidget(widget: DashboardWidget) {

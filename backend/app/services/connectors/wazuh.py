@@ -202,6 +202,17 @@ class WazuhConnector(BaseConnector):
             ["/etc/cmk-update-agent.state", "/etc/patchmon/config.yml"],
         )
 
+        # Build must_not clauses: path field varies by Wazuh version
+        # (data.syscheck.path in 4.x, syscheck.path in older versions).
+        # Also match on full_log as a belt-and-suspenders fallback.
+        must_not_clauses: list[dict] = [
+            {"terms": {"rule.id": _EXCLUDED_RULE_IDS}},
+            {"terms": {"data.syscheck.path": _EXCLUDED_FIM_PATHS}},
+            {"terms": {"syscheck.path": _EXCLUDED_FIM_PATHS}},
+        ]
+        for path in _EXCLUDED_FIM_PATHS:
+            must_not_clauses.append({"match_phrase": {"full_log": path}})
+
         query = {
             "size": limit,
             "sort": [{"timestamp": {"order": "desc"}}],
@@ -211,10 +222,7 @@ class WazuhConnector(BaseConnector):
                         {"range": {"timestamp": {"gte": since}}},
                         {"range": {"rule.level": {"gte": min_level}}},
                     ],
-                    "must_not": [
-                        {"terms": {"rule.id": _EXCLUDED_RULE_IDS}},
-                        {"terms": {"data.syscheck.path": _EXCLUDED_FIM_PATHS}},
-                    ],
+                    "must_not": must_not_clauses,
                 }
             },
             "_source": [

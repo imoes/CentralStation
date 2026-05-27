@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: centralstation
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U centralstation"]
       interval: 10s
@@ -19,7 +19,7 @@ services:
     restart: unless-stopped
     command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
-      - redis_data:/data
+      - ./data/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
@@ -39,7 +39,7 @@ services:
         soft: -1
         hard: -1
     volumes:
-      - opensearch_data:/usr/share/opensearch/data
+      - ./data/opensearch:/usr/share/opensearch/data
     healthcheck:
       test: ["CMD-SHELL", "curl -sf -u admin:${OPENSEARCH_PASSWORD} https://localhost:9200/_cluster/health --insecure | grep -qv '\"status\":\"red\"'"]
       interval: 20s
@@ -48,8 +48,8 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
       args:
         HTTP_PROXY: http://proxy.ippen.media:80
         HTTPS_PROXY: http://proxy.ippen.media:80
@@ -70,8 +70,6 @@ services:
         condition: service_healthy
       opensearch:
         condition: service_healthy
-    volumes:
-      - ./backend:/app
     ports:
       - "127.0.0.1:8000:8000"
 
@@ -102,7 +100,3 @@ services:
       - backend
       - frontend
 
-volumes:
-  postgres_data:
-  redis_data:
-  opensearch_data:

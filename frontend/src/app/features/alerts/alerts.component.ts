@@ -160,8 +160,22 @@ const SEVERITY_COLORS: Record<string, string> = {
                 @if (alert.body) {
                   <div class="alert-body">{{ alert.body | slice:0:200 }}{{ alert.body!.length > 200 ? '…' : '' }}</div>
                 }
+                @if (alert.ai_insight) {
+                  <div class="ai-insight">
+                    <mat-icon class="ai-insight-icon">psychology</mat-icon>
+                    <span>{{ alert.ai_insight }}</span>
+                  </div>
+                }
                 <div class="alert-meta">
                   <span class="alert-time">{{ alert.created_at | date:'dd.MM.yyyy HH:mm' }}</span>
+                  <button mat-button class="ki-btn" (click)="requestEnrich(alert)" [disabled]="isEnriching(alert.id)">
+                    @if (isEnriching(alert.id)) {
+                      <mat-spinner diameter="14"></mat-spinner>
+                    } @else {
+                      <mat-icon>psychology</mat-icon>
+                    }
+                    {{ alert.ai_insight ? 'Neu analysieren' : 'KI Analyse' }}
+                  </button>
                 </div>
               </div>
               <div class="alert-actions">
@@ -201,7 +215,16 @@ const SEVERITY_COLORS: Record<string, string> = {
     .chip-host { background: var(--mat-sys-surface-variant); font-family: monospace; }
     .chip-host mat-icon { font-size: 12px; width: 12px; height: 12px; margin-right: 3px; }
     .alert-body { font-size: 12px; color: var(--mat-sys-on-surface-variant); font-family: monospace; white-space: pre-wrap; word-break: break-all; }
-    .alert-meta { font-size: 11px; color: var(--mat-sys-on-surface-variant); margin-top: 4px; }
+    .ai-insight {
+      display: flex; align-items: flex-start; gap: 6px;
+      margin: 6px 0 4px; padding: 6px 8px; border-radius: 6px;
+      background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent);
+      font-size: 12px; line-height: 1.5; color: var(--mat-sys-on-surface);
+    }
+    .ai-insight-icon { font-size: 16px; height: 16px; width: 16px; color: var(--mat-sys-primary); flex-shrink: 0; margin-top: 1px; }
+    .alert-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--mat-sys-on-surface-variant); margin-top: 4px; }
+    .ki-btn { font-size: 11px; height: 26px; line-height: 26px; min-width: 0; padding: 0 8px; color: var(--mat-sys-primary); }
+    .ki-btn mat-icon { font-size: 14px; height: 14px; width: 14px; margin-right: 3px; vertical-align: middle; }
     .alert-actions { display: flex; align-items: center; padding: 0 8px; }
     .ack-icon { color: var(--mat-sys-tertiary); font-size: 20px; width: 20px; height: 20px; }
     .empty-state { text-align: center; padding: 40px; color: var(--mat-sys-on-surface-variant); }
@@ -353,6 +376,24 @@ export class AlertsComponent implements OnInit, OnDestroy {
     this.svc.acknowledge(alert.id).subscribe({
       next: () => this.load(),
       error: () => this.snack.open('Fehler beim Bestätigen', 'OK', { duration: 3000 }),
+    });
+  }
+
+  enrichingIds = signal<Set<string>>(new Set());
+
+  isEnriching(id: string) { return this.enrichingIds().has(id); }
+
+  requestEnrich(alert: Alert) {
+    this.enrichingIds.update(s => new Set([...s, alert.id]));
+    this.http.post<{ ai_insight: string }>(`${environment.apiUrl}/feed/${alert.id}/enrich`, {}).subscribe({
+      next: res => {
+        this.alerts.update(list => list.map(a => a.id === alert.id ? { ...a, ai_insight: res.ai_insight } : a));
+        this.enrichingIds.update(s => { const n = new Set(s); n.delete(alert.id); return n; });
+      },
+      error: () => {
+        this.enrichingIds.update(s => { const n = new Set(s); n.delete(alert.id); return n; });
+        this.snack.open('KI-Analyse fehlgeschlagen', 'OK', { duration: 3000 });
+      },
     });
   }
 

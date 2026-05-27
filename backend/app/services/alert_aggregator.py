@@ -159,6 +159,8 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
                     "vendor": m.get("vendor", ""),
                     "facility": m.get("facility", ""),
                     "hyde_relevant": m.get("hyde_relevant", False),
+                    "level": level,
+                    "http_response_code": http_code,
                 },
             })
         return results

@@ -1,4 +1,4 @@
-import { Component, computed, inject, OnDestroy, OnInit, signal } from '@angular/core';
+import { Component, computed, effect, inject, OnDestroy, OnInit, signal } from '@angular/core';
 import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
@@ -83,6 +83,7 @@ export class App implements OnInit, OnDestroy {
     { path: '/network',      label: 'Netzwerk',         icon: 'router',       roles: ['admin','network_technician'] },
     { path: '/ai-insights',  label: 'KI-Insights',      icon: 'psychology',   roles: ['admin','sysadmin'] },
     { path: '/settings',     label: 'Einstellungen',    icon: 'settings',     roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/help',         label: 'Hilfe',            icon: 'help',         roles: ['admin','sysadmin','network_technician','viewer'] },
   ];
 
   unreadFeedCount = signal<number>(0);
@@ -94,15 +95,23 @@ export class App implements OnInit, OnDestroy {
     return this.navItems.filter(i => role && i.roles.includes(role));
   });
 
-  constructor(public auth: AuthService, private ws: WebsocketService) {}
-
-  ngOnInit() {
-    if (this.auth.isLoggedIn()) {
-      this.auth.fetchMe();
-      this.ws.connect();
-      this.startBadgePolling();
-    }
+  constructor(public auth: AuthService, private ws: WebsocketService) {
+    effect(() => {
+      if (this.auth.isLoggedIn()) {
+        this.auth.fetchMe();
+        this.ws.connect();
+        if (!this.badgeInterval) this.startBadgePolling();
+      } else {
+        if (this.badgeInterval) {
+          clearInterval(this.badgeInterval);
+          this.badgeInterval = null;
+        }
+        this.unreadFeedCount.set(0);
+      }
+    });
   }
+
+  ngOnInit() {}
 
   ngOnDestroy() {
     if (this.badgeInterval) clearInterval(this.badgeInterval);
@@ -121,7 +130,6 @@ export class App implements OnInit, OnDestroy {
 
   clearFeedBadge() {
     this.unreadFeedCount.set(0);
-    localStorage.setItem('feed_last_seen', new Date().toISOString());
   }
 
   onFeedClick() {

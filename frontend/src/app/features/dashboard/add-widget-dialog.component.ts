@@ -1,9 +1,9 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { MatButtonModule } from '@angular/material/button';
-import { MatDialogModule, MatDialogRef } from '@angular/material/dialog';
+import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
@@ -11,7 +11,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { environment } from '../../../environments/environment';
-import { DashboardWidgetCreate } from './dashboard-widget.model';
+import { DashboardWidget, DashboardWidgetCreate } from './dashboard-widget.model';
 
 interface FeedSearch {
   id: string;
@@ -36,7 +36,7 @@ interface FeedSearch {
     MatTooltipModule,
   ],
   template: `
-    <h2 mat-dialog-title>Widget hinzufügen</h2>
+    <h2 mat-dialog-title>{{ isEdit ? 'Widget konfigurieren' : 'Widget hinzufügen' }}</h2>
     <mat-dialog-content class="dialog-body">
       <div class="type-grid">
         @for (type of widgetTypes; track type.value) {
@@ -106,11 +106,26 @@ interface FeedSearch {
         </div>
 
         @if (dataSource === 'checkmk') {
-          <mat-form-field appearance="outline">
-            <mat-label>Hostname (exakt wie in CheckMK)</mat-label>
-            <input matInput [(ngModel)]="cmkHost" placeholder="docker086.ippen.media">
-            <mat-icon matSuffix>computer</mat-icon>
-          </mat-form-field>
+          <div class="host-list-label">
+            Hosts <span class="hint-text">(mehrere Hosts werden als überlagerte Linien dargestellt)</span>
+          </div>
+          @for (host of cmkHosts; track $index; let i = $index) {
+            <div class="host-row">
+              <mat-form-field appearance="outline" class="host-field">
+                <mat-label>Host {{ i + 1 }}</mat-label>
+                <input matInput [(ngModel)]="cmkHosts[i]" placeholder="docker086.ippen.media">
+                <mat-icon matSuffix>computer</mat-icon>
+              </mat-form-field>
+              @if (cmkHosts.length > 1) {
+                <button mat-icon-button color="warn" type="button" (click)="removeHost(i)" matTooltip="Host entfernen">
+                  <mat-icon>remove_circle_outline</mat-icon>
+                </button>
+              }
+            </div>
+          }
+          <button mat-stroked-button type="button" (click)="addHost()" class="add-host-btn">
+            <mat-icon>add</mat-icon> Host hinzufügen
+          </button>
           <mat-form-field appearance="outline">
             <mat-label>Service-Name (exakt wie in CheckMK)</mat-label>
             <input matInput [(ngModel)]="cmkService" placeholder="CPU utilization">
@@ -196,7 +211,7 @@ interface FeedSearch {
     </mat-dialog-content>
     <mat-dialog-actions align="end">
       <button mat-button mat-dialog-close>Abbrechen</button>
-      <button mat-flat-button color="primary" [disabled]="!canCreate()" (click)="create()">Erstellen</button>
+      <button mat-flat-button color="primary" [disabled]="!canCreate()" (click)="create()">{{ isEdit ? 'Speichern' : 'Erstellen' }}</button>
     </mat-dialog-actions>
   `,
   styles: [`
@@ -236,9 +251,18 @@ interface FeedSearch {
     }
     .ds-tab.active { border-color: var(--mat-sys-primary); background: color-mix(in srgb, var(--mat-sys-primary) 10%, transparent); color: var(--mat-sys-primary); }
     .ds-tab mat-icon { font-size: 18px; height: 18px; width: 18px; }
+    .host-list-label { font-size: 13px; font-weight: 600; color: var(--mat-sys-on-surface); margin-bottom: -4px; }
+    .hint-text { font-size: 11px; font-weight: 400; color: var(--mat-sys-on-surface-variant); margin-left: 6px; }
+    .host-row { display: flex; align-items: center; gap: 8px; }
+    .host-field { flex: 1; }
+    .add-host-btn { align-self: flex-start; }
   `],
 })
 export class AddWidgetDialogComponent implements OnInit {
+  private dialogData = inject<{ existingWidget?: DashboardWidget } | null>(MAT_DIALOG_DATA, { optional: true });
+
+  get isEdit(): boolean { return !!this.dialogData?.existingWidget; }
+
   widgetTypes = [
     { value: 'stat', label: 'Stat', icon: 'counter_1' },
     { value: 'list', label: 'Liste', icon: 'view_list' },
@@ -266,9 +290,12 @@ export class AddWidgetDialogComponent implements OnInit {
   unit = '%';
   panelUrl = '';
   dataSource: 'checkmk' | 'prometheus' = 'checkmk';
-  cmkHost = '';
+  cmkHosts: string[] = [''];
   cmkService = 'CPU utilization';
   cmkGraphIndex = 0;
+
+  addHost() { this.cmkHosts = [...this.cmkHosts, '']; }
+  removeHost(i: number) { this.cmkHosts = this.cmkHosts.filter((_, idx) => idx !== i); }
 
   constructor(
     private http: HttpClient,
@@ -277,8 +304,49 @@ export class AddWidgetDialogComponent implements OnInit {
 
   ngOnInit() {
     this.http.get<FeedSearch[]>(`${environment.apiUrl}/feed-searches/`).subscribe({
-      next: searches => this.searches.set(searches),
+      next: searches => {
+        this.searches.set(searches);
+        this._populateFromExisting();
+      },
     });
+  }
+
+  private _populateFromExisting() {
+    const w = this.dialogData?.existingWidget;
+    if (!w) return;
+    this.widgetType = w.widget_type as DashboardWidgetCreate['widget_type'];
+    this.title = w.title;
+    const cfg = w.config as Record<string, unknown>;
+
+    // Common fields
+    this.indexPattern = (cfg['index_pattern'] as string) || 'cs-feed-*';
+    this.queryString  = (cfg['query_string']  as string) || '';
+    this.limit        = Number(cfg['limit']) || 8;
+    this.panelUrl     = (cfg['panel_url']     as string) || '';
+
+    // Timeseries
+    const ds = cfg['data_source'] as string | undefined;
+    if (w.widget_type === 'timeseries') {
+      this.dataSource = ds === 'prometheus' ? 'prometheus' : 'checkmk';
+      if (this.dataSource === 'checkmk') {
+        const hosts = cfg['hosts'] as string[] | undefined;
+        const singleHost = cfg['host'] as string | undefined;
+        this.cmkHosts     = (hosts && hosts.length) ? [...hosts] : (singleHost ? [singleHost] : ['']);
+        this.cmkService   = (cfg['service']     as string) || 'CPU utilization';
+        this.cmkGraphIndex = Number(cfg['graph_index']) || 0;
+        this.hours        = Number(cfg['hours'])       || 4;
+        this.unit         = (cfg['unit'] as string)    || '%';
+      } else {
+        this.promql = (cfg['promql'] as string) || this.promql;
+        this.step   = (cfg['step']   as string) || '1m';
+        this.hours  = Number(cfg['hours']) || 4;
+        this.unit   = (cfg['unit']   as string) || '%';
+      }
+    }
+
+    // Search-ID pre-select for list/stat/donut/top_hosts
+    const sid = cfg['search_id'] as string | undefined;
+    if (sid) this.selectedSearchId = sid;
   }
 
   selectType(type: DashboardWidgetCreate['widget_type']) {
@@ -327,7 +395,7 @@ export class AddWidgetDialogComponent implements OnInit {
   canCreate(): boolean {
     if (!this.title.trim()) return false;
     if (this.widgetType === 'timeseries') {
-      if (this.dataSource === 'checkmk') return !!this.cmkHost.trim() && !!this.cmkService.trim();
+      if (this.dataSource === 'checkmk') return this.cmkHosts.some(h => h.trim()) && !!this.cmkService.trim();
       return !!this.promql.trim();
     }
     if (this.widgetType === 'grafana_panel') return !!this.panelUrl.trim();
@@ -348,9 +416,10 @@ export class AddWidgetDialogComponent implements OnInit {
       this.ref.close({ ...base, gs_w: 4, gs_h: 3, config: { index_pattern: this.indexPattern, query_string: this.queryString || 'NOT status:resolved', limit: Number(this.limit) || 8 } });
     } else if (this.widgetType === 'timeseries') {
       if (this.dataSource === 'checkmk') {
+        const hosts = this.cmkHosts.map(h => h.trim()).filter(Boolean);
         this.ref.close({ ...base, gs_w: 5, gs_h: 4, config: {
           data_source: 'checkmk',
-          host: this.cmkHost.trim(),
+          hosts: hosts,
           service: this.cmkService.trim(),
           graph_index: Number(this.cmkGraphIndex) || 0,
           hours: Number(this.hours) || 4,
