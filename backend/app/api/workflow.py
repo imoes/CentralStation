@@ -59,6 +59,10 @@ class GenerateResolutionRequest(BaseModel):
     closure_code: str = "solved_permanently"
 
 
+class PostCommentRequest(BaseModel):
+    comment: str
+
+
 class SuggestSolutionRequest(BaseModel):
     use_rag: bool = True
     use_web: bool = True
@@ -313,6 +317,46 @@ async def generate_comment(
     s.work_notes = notes
     await db.commit()
     return {"comment": comment, "comment_type": body.comment_type}
+
+
+@router.post("/{session_id}/post-comment")
+async def post_comment_to_jira(
+    session_id: uuid.UUID,
+    body: PostCommentRequest,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Post a comment text directly to the linked Jira ticket."""
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
+    s = await _get_session(session_id, user.id, db)
+    if not s.jira_key:
+        raise HTTPException(status_code=400, detail="Diese Work Session hat kein verknüpftes Jira-Ticket")
+
+    from app.models.connector import ConnectorConfig as CC
+    conn_result = await db.execute(
+        select(CC).where(
+            CC.type.in_(("jira", "jira_sd")),
+            CC.enabled.is_(True),
+            ((CC.owner_user_id == user.id) | CC.owner_user_id.is_(None)),
+        ).order_by(CC.owner_user_id.is_(None), CC.updated_at.desc())
+    )
+    connectors = conn_result.scalars().all()
+    if not connectors:
+        raise HTTPException(status_code=503, detail="Jira nicht konfiguriert")
+
+    last_err: Exception | None = None
+    for conn in connectors:
+        try:
+            creds = decrypt_credentials(conn.encrypted_credentials)
+            jira = JiraConnector(base_url=conn.base_url, credentials=creds)
+            result = await jira.add_comment(s.jira_key, body.comment)
+            return {"success": True, "comment_id": result.get("id"), "jira_key": s.jira_key}
+        except Exception as e:
+            last_err = e
+
+    raise HTTPException(status_code=502, detail=f"Kommentar konnte nicht gepostet werden: {last_err}")
 
 
 @router.post("/{session_id}/generate-resolution")
