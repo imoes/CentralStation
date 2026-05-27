@@ -851,7 +851,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.loadPrefs();
     this.loadAutoEnrichSetting();
     this.loadSearches();
-    this.refreshTimer = setInterval(() => this.load(true), 30_000);
+    this.refreshTimer = setInterval(() => this.load(true, true), 30_000);
   }
 
   ngAfterViewInit() {
@@ -1091,10 +1091,10 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.load(true);
   }
 
-  load(reset = false) {
+  load(reset = false, silent = false) {
     if (reset) {
       this.offset = 0;
-      this.loading.set(true);
+      if (!silent) this.loading.set(true);
     } else {
       this.loadingMore.set(true);
     }
