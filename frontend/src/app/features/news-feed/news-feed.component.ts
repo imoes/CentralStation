@@ -919,14 +919,17 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   private scrollToHighlight() {
     const id = this.highlightId;
     if (!id) return;
-    setTimeout(() => {
+    const attempt = (remaining: number) => {
       const el = document.querySelector(`[data-feed-id="${id}"]`);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         el.classList.add('feed-highlight');
         setTimeout(() => el.classList.remove('feed-highlight'), 2800);
+      } else if (remaining > 0) {
+        setTimeout(() => attempt(remaining - 1), 150);
       }
-    }, 200);
+    };
+    setTimeout(() => attempt(10), 150);
   }
 
   hasActiveFilter(): boolean {
@@ -1117,9 +1120,10 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
             this.badgeCleared = true;
             setTimeout(() => this.app.clearFeedBadge(), 3000);
           }
+          const hadHighlight = !!this.highlightId;
           this.scrollToHighlight();
           this.highlightId = '';   // only pin on first load
-          this.scrollToLastSeen();
+          if (!hadHighlight) this.scrollToLastSeen();
         } else {
           this.items.update(prev => [...prev, ...data]);
         }
