@@ -122,8 +122,11 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
             limit_per_query=50,
         )
 
-        severity_map = {0: "critical", 1: "critical", 2: "critical", 3: "critical",
-                        4: "high", 5: "medium", 6: "low", 7: "info"}
+        # Syslog levels: 0=Emergency, 1=Alert, 2=Critical, 3=Error, 4=Warning, 5=Notice, 6=Info, 7=Debug
+        # Docker GELF driver assigns level 3 (Error) to all container stderr — routine log messages
+        # from PostgreSQL, Nginx etc. also get level 3. Only levels 0+1 are truly "critical".
+        severity_map = {0: "critical", 1: "critical", 2: "high", 3: "high",
+                        4: "medium", 5: "low", 6: "low", 7: "info"}
         results = []
         for m in msgs:
             dedup_key = m.get("dedup_key", "")
