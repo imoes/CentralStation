@@ -299,6 +299,21 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                       </button>
                     </div>
                     <pre class="ai-text">{{ generatedComment() }}</pre>
+                    <div class="ai-result-actions">
+                      <button mat-flat-button color="primary"
+                        (click)="postCommentToJira()"
+                        [disabled]="aiLoading.posting() || !session()?.jira_key"
+                        [matTooltip]="session()?.jira_key ? 'Kommentar in Jira ' + session()?.jira_key + ' posten' : 'Kein Jira-Ticket verknüpft'">
+                        @if (aiLoading.posting()) {
+                          <mat-spinner diameter="16"></mat-spinner> Wird gepostet…
+                        } @else {
+                          <mat-icon>send</mat-icon> Kommentar übernehmen
+                        }
+                      </button>
+                      @if (commentPosted()) {
+                        <span class="post-success"><mat-icon>check_circle</mat-icon> In Jira gepostet</span>
+                      }
+                    </div>
                   </div>
                 }
               </div>
@@ -449,6 +464,9 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
     .ai-result { background: var(--mat-sys-surface-variant); border-radius: 8px; padding: 12px; }
     .ai-result-header { display: flex; align-items: center; justify-content: space-between; font-weight: 500; font-size: 13px; margin-bottom: 6px; }
     pre.ai-text { margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-word; font-family: inherit; line-height: 1.5; }
+    .ai-result-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+    .post-success { display: flex; align-items: center; gap: 4px; color: #2e7d32; font-size: 13px; font-weight: 500; }
+    .post-success mat-icon { font-size: 16px; width: 16px; height: 16px; }
     .solution-section { font-size: 13px; }
     .solution-section strong { display: block; margin-bottom: 4px; }
     .rag-item { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 0; }
@@ -472,11 +490,13 @@ export class WorkSessionDialogComponent implements OnInit {
   generatedComment = signal<string | null>(null);
   generatedResolution = signal<string | null>(null);
   solutionData = signal<any | null>(null);
+  commentPosted = signal(false);
   aiLoading = {
     comment: signal(false),
     resolution: signal(false),
     solution: signal(false),
     categorize: signal(false),
+    posting: signal(false),
   };
 
   readonly categories = CATEGORIES;
@@ -578,6 +598,7 @@ export class WorkSessionDialogComponent implements OnInit {
 
   generateComment() {
     this.aiLoading.comment.set(true);
+    this.commentPosted.set(false);
     this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/generate-comment`, {
       comment_type: this.selectedCommentType(),
       additional_context: this.additionalContext.trim() || null,
@@ -620,6 +641,24 @@ export class WorkSessionDialogComponent implements OnInit {
         this.snackBar.open('Kategorisierung übernommen', '', { duration: 2000 });
       },
       error: () => this.aiLoading.categorize.set(false),
+    });
+  }
+
+  postCommentToJira() {
+    const comment = this.generatedComment();
+    if (!comment) return;
+    this.aiLoading.posting.set(true);
+    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/post-comment`, { comment }).subscribe({
+      next: () => {
+        this.aiLoading.posting.set(false);
+        this.commentPosted.set(true);
+        this.snackBar.open(`Kommentar in ${this.session()?.jira_key} gepostet`, 'OK', { duration: 3000 });
+        this.loadSession(this.sessionId!);
+      },
+      error: (err) => {
+        this.aiLoading.posting.set(false);
+        this.snackBar.open(err?.error?.detail ?? 'Fehler beim Posten', '', { duration: 4000 });
+      },
     });
   }
 
