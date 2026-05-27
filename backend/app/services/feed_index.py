@@ -236,6 +236,34 @@ def _apply_metadata_filters(
     return result
 
 
+async def get_exclusion_must_not_clauses(db: Any) -> list[dict]:
+    """Return OpenSearch must_not clauses for all active exclusion FeedSearches."""
+    try:
+        from sqlalchemy import select
+        from app.models.workflow import FeedSearch
+        result = await db.execute(
+            select(FeedSearch).where(
+                FeedSearch.is_exclusion == True,  # noqa: E712
+                FeedSearch.enabled == True,  # noqa: E712
+                FeedSearch.query_string != "",
+            )
+        )
+        searches = result.scalars().all()
+        clauses = []
+        for s in searches:
+            clauses.append({
+                "query_string": {
+                    "query": s.query_string,
+                    "default_operator": "AND",
+                    "lenient": True,
+                }
+            })
+        return clauses
+    except Exception as e:
+        log.warning("Failed to load exclusion searches: %s", e)
+        return []
+
+
 async def search(
     sources: list[str] | None = None,
     severity: str | None = None,
@@ -251,12 +279,14 @@ async def search(
     checkmk_cutoff: datetime | None = None,
     from_: int = 0,
     size: int = 50,
+    db: Any = None,
 ) -> list[dict]:
     """Search feed items across relevant indices.
 
     user_id: when provided, personal sources (o365/teams) are filtered to
              items owned by this user. Shared sources (checkmk/graylog/wazuh)
              are always returned regardless of user_id.
+    db: when provided, active exclusion FeedSearches are applied as must_not.
     """
     indices = [_index(s) for s in (sources or ALL_SOURCES)]
     os_client = get_opensearch()
@@ -264,6 +294,11 @@ async def search(
     must: list[dict] = []
     filter_: list[dict] = []
     must_not: list[dict] = []
+
+    # Apply active exclusion FeedSearches (hide matching items)
+    if db is not None:
+        exclusion_clauses = await get_exclusion_must_not_clauses(db)
+        must_not.extend(exclusion_clauses)
 
     if severity:
         filter_.append({"term": {"severity": severity}})
@@ -273,7 +308,18 @@ async def search(
         must_not.append({"term": {"status": "resolved"}})
 
     if host:
-        must.append({"match": {"title": {"query": host, "fuzziness": "AUTO"}}})
+        safe = host.lower().replace('"', '').replace("'", "")
+        must.append({
+            "bool": {
+                "should": [
+                    {"wildcard": {"title": {"value": f"*{safe}*", "case_insensitive": True}}},
+                    {"wildcard": {"metadata.host.keyword": {"value": f"*{safe}*", "case_insensitive": True}}},
+                    {"wildcard": {"metadata.agent.keyword": {"value": f"*{safe}*", "case_insensitive": True}}},
+                    {"wildcard": {"metadata.source_host.keyword": {"value": f"*{safe}*", "case_insensitive": True}}},
+                ],
+                "minimum_should_match": 1,
+            }
+        })
 
     # CheckMK min-age: exclude items newer than cutoff
     if checkmk_cutoff:
@@ -445,6 +491,25 @@ async def get_hosts_metadata(hostnames: list[str]) -> dict[str, dict]:
         return {}
 
 
+def _normalise_query_string(q: str) -> str:
+    """Rewrite common AI-generated field names to the actual mapping.
+
+    The AI often emits ``host:`` or ``metadata.host:`` for Wazuh items
+    where the actual field is ``metadata.agent``. We expand those references
+    so queries work across both Graylog (metadata.host) and Wazuh (metadata.agent).
+    """
+    import re
+
+    # Replace bare `host:VALUE` (not already prefixed with `metadata.`) with a
+    # multi-field OR so it matches Graylog and Wazuh documents alike.
+    def _expand_host(m: re.Match) -> str:
+        value = m.group(1)
+        return f"(metadata.host:{value} OR metadata.agent:{value})"
+
+    q = re.sub(r"(?<!\w)host:(\S+)", _expand_host, q)
+    return q
+
+
 async def search_by_query(
     index_pattern: str,
     query_string: str,
@@ -456,7 +521,7 @@ async def search_by_query(
     """Execute an OpenSearch Lucene query string against an index pattern."""
     os_client = get_opensearch()
     if query_string:
-        query: dict = {"query_string": {"query": query_string, "default_operator": "AND"}}
+        query: dict = {"query_string": {"query": _normalise_query_string(query_string), "default_operator": "AND"}}
     else:
         query = {"match_all": {}}
 

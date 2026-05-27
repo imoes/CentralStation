@@ -30,6 +30,7 @@ interface FeedSearch {
   query_string: string;
   enabled: boolean;
   is_system: boolean;
+  is_exclusion: boolean;
   position: number;
 }
 
@@ -115,7 +116,7 @@ const SOURCE_META = [
 
           <div class="search-list">
             @for (search of systemSearches(); track search.id) {
-              <div class="search-row">
+              <div class="search-row" [class.exclusion-row]="search.is_exclusion">
                 <div class="search-main">
                   <mat-form-field appearance="outline">
                     <mat-label>Name</mat-label>
@@ -126,12 +127,15 @@ const SOURCE_META = [
                     <input matInput [(ngModel)]="search.index_pattern">
                   </mat-form-field>
                   <mat-form-field appearance="outline" class="query-field">
-                    <mat-label>Query</mat-label>
+                    <mat-label>Lucene Query</mat-label>
                     <textarea matInput rows="2" [(ngModel)]="search.query_string"></textarea>
                   </mat-form-field>
                 </div>
                 <div class="search-actions">
                   <mat-slide-toggle [(ngModel)]="search.enabled">Aktiv</mat-slide-toggle>
+                  <mat-slide-toggle [(ngModel)]="search.is_exclusion" color="warn">
+                    <span class="exclusion-label">Ausblenden</span>
+                  </mat-slide-toggle>
                   <button mat-stroked-button (click)="previewSearch(search)" [disabled]="previewing() === search.id">
                     @if (previewing() === search.id) { <mat-spinner diameter="16"></mat-spinner> }
                     @else { <mat-icon>visibility</mat-icon> }
@@ -139,6 +143,12 @@ const SOURCE_META = [
                   </button>
                   <button mat-flat-button color="primary" (click)="saveSearch(search)">Speichern</button>
                 </div>
+                @if (search.is_exclusion) {
+                  <div class="exclusion-hint">
+                    <mat-icon>block</mat-icon>
+                    Passende Meldungen werden automatisch aus dem Feed ausgeblendet.
+                  </div>
+                }
                 @if (previewFor(search.id).length > 0) {
                   <div class="preview-box">
                     @for (item of previewFor(search.id); track item.id) {
@@ -162,9 +172,14 @@ const SOURCE_META = [
                 <input matInput [(ngModel)]="newSearch.index_pattern">
               </mat-form-field>
               <mat-form-field appearance="outline" class="query-field">
-                <mat-label>Query</mat-label>
+                <mat-label>Lucene Query</mat-label>
                 <textarea matInput rows="2" [(ngModel)]="newSearch.query_string"></textarea>
               </mat-form-field>
+            </div>
+            <div class="new-search-options">
+              <mat-slide-toggle [(ngModel)]="newSearch.is_exclusion" color="warn">
+                Ausblenden (passende Meldungen aus Feed verstecken)
+              </mat-slide-toggle>
             </div>
             <div class="card-actions">
               <button mat-flat-button color="primary" (click)="createSystemSearch()" [disabled]="!newSearch.name.trim()">
@@ -232,10 +247,19 @@ const SOURCE_META = [
     .search-list { display: flex; flex-direction: column; }
     .search-row { padding: 14px 16px; border-bottom: 1px solid var(--mat-sys-outline-variant); }
     .search-row:last-child { border-bottom: none; }
+    .exclusion-row { background: color-mix(in srgb, #b71c1c 6%, transparent); border-left: 3px solid #b71c1c; }
     .search-main { display: grid; grid-template-columns: 1fr 180px; gap: 10px; }
     .query-field { grid-column: 1 / -1; }
-    .search-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+    .search-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
     .search-actions mat-spinner { display: inline-block; margin-right: 4px; }
+    .exclusion-label { font-size: 12px; }
+    .exclusion-hint {
+      display: flex; align-items: center; gap: 6px;
+      margin-top: 8px; padding: 6px 10px;
+      background: color-mix(in srgb, #b71c1c 12%, transparent);
+      border-radius: 6px; font-size: 12px; color: #ef9a9a;
+    }
+    .exclusion-hint mat-icon { font-size: 16px; height: 16px; width: 16px; color: #ef9a9a; }
     .preview-box {
       margin-top: 10px;
       padding: 10px 12px;
@@ -248,9 +272,10 @@ const SOURCE_META = [
     .new-search { padding: 14px 16px 16px; background: color-mix(in srgb, var(--mat-sys-primary) 5%, transparent); }
     .new-search h4 { margin: 0 0 12px; }
     .new-search-grid { display: grid; grid-template-columns: 1fr 180px; gap: 10px; }
+    .new-search-options { padding: 4px 0 12px; }
     @media (max-width: 760px) {
       .search-main, .new-search-grid { grid-template-columns: 1fr; }
-      .search-actions { justify-content: flex-start; flex-wrap: wrap; }
+      .search-actions { justify-content: flex-start; }
     }
   `],
 })
@@ -271,6 +296,7 @@ export class FeedSettingsComponent implements OnInit {
     index_pattern: 'cs-feed-*',
     query_string: '',
     enabled: true,
+    is_exclusion: false,
   };
 
   constructor(private http: HttpClient, private snackBar: MatSnackBar) {}
@@ -326,6 +352,7 @@ export class FeedSettingsComponent implements OnInit {
       index_pattern: search.index_pattern,
       query_string: search.query_string,
       enabled: search.enabled,
+      is_exclusion: search.is_exclusion,
       position: search.position,
     }).subscribe({
       next: () => this.snackBar.open('Suche gespeichert', '', { duration: 2000 }),
@@ -337,7 +364,7 @@ export class FeedSettingsComponent implements OnInit {
     this.http.post<FeedSearch>(`${environment.apiUrl}/feed-searches/system`, this.newSearch).subscribe({
       next: search => {
         this.searches.update(searches => [...searches, search]);
-        this.newSearch = { name: '', index_pattern: 'cs-feed-*', query_string: '', enabled: true };
+        this.newSearch = { name: '', index_pattern: 'cs-feed-*', query_string: '', enabled: true, is_exclusion: false };
         this.snackBar.open('System-Suche angelegt', '', { duration: 2000 });
       },
       error: (e) => this.snackBar.open(e?.error?.detail ?? 'Suche konnte nicht angelegt werden', '', { duration: 3000 }),

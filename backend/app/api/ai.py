@@ -20,6 +20,8 @@ class SearchAssistantRequest(BaseModel):
     context: str | None = None
     create_search: bool = False
     create_widget: bool = False
+    # When True, the created FeedSearch hides matching items from the main feed
+    is_exclusion: bool = False
     name: str | None = None
     widget_type: str | None = None
     dashboard_id: uuid.UUID | None = None
@@ -70,7 +72,8 @@ async def _llm_search_assistant(body: SearchAssistantRequest, db: AsyncSession) 
         "Du bist ein Konfigurations-Assistent fuer CentralStation. "
         "Erzeuge OpenSearch Lucene Query-Strings fuer die Indices cs-feed-checkmk, "
         "cs-feed-graylog, cs-feed-wazuh oder cs-feed-*. "
-        "Antworte ausschliesslich als JSON mit: reply, index_pattern, query_string. "
+        "Antworte ausschliesslich als JSON mit: reply, index_pattern, query_string, suggested_name. "
+        "suggested_name: kurzer, aussagekraeftiger Name fuer die Suche (max 60 Zeichen, kein 'KI-Suche'). "
         "Nutze keine Graylog-API-Syntax, sondern OpenSearch Query-String-Syntax.\n\n"
         "WICHTIGE FELDNAMEN (es gibt KEIN 'message:'-Feld!):\n"
         "  body:       - Vollstaendiger Alert-Text / Log-Nachricht (NICHT message:!)\n"
@@ -105,6 +108,7 @@ async def _llm_search_assistant(body: SearchAssistantRequest, db: AsyncSession) 
             "reply": str(data.get("reply") or "Query vorbereitet."),
             "index_pattern": str(data.get("index_pattern") or "cs-feed-*"),
             "query_string": str(data.get("query_string") or ""),
+            "suggested_name": str(data.get("suggested_name") or ""),
             "actions": [],
         }
     except Exception:
@@ -153,17 +157,19 @@ async def search_assistant(
     actions: list[dict] = []
 
     if body.create_search:
+        search_name = body.name or result.get("suggested_name") or "Suche"
         search = FeedSearch(
             user_id=current_user.id,
-            name=body.name or "KI-Suche",
+            name=search_name,
             index_pattern=result["index_pattern"],
             query_string=result["query_string"],
             enabled=True,
             is_system=False,
+            is_exclusion=body.is_exclusion,
         )
         db.add(search)
         await db.flush()
-        actions.append({"type": "search_created", "id": str(search.id)})
+        actions.append({"type": "search_created", "id": str(search.id), "name": search_name})
 
     if body.create_widget:
         if body.dashboard_id:

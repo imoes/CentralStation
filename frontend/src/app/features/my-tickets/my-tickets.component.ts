@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { TextFieldModule } from '@angular/cdk/text-field';
+import { CdkDragDrop, DragDropModule, moveItemInArray } from '@angular/cdk/drag-drop';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -132,7 +133,7 @@ export class JqlQueryDialogComponent {
   selector: 'cs-my-tickets',
   standalone: true,
   imports: [
-    CommonModule, FormsModule,
+    CommonModule, FormsModule, DragDropModule,
     MatCardModule, MatButtonModule, MatIconModule,
     MatFormFieldModule, MatInputModule, MatChipsModule,
     MatProgressSpinnerModule, MatDividerModule, MatDialogModule,
@@ -217,10 +218,10 @@ export class JqlQueryDialogComponent {
             <button mat-icon-button (click)="closeQueryManager()"><mat-icon>close</mat-icon></button>
           </div>
 
-          <div class="query-list">
+          <div class="query-list" cdkDropList (cdkDropListDropped)="onDrop($event)">
             @for (q of queries(); track q.id) {
-              <div class="query-item" [class.disabled]="!q.enabled">
-                <mat-icon class="drag-icon">drag_indicator</mat-icon>
+              <div class="query-item" cdkDrag [class.disabled]="!q.enabled">
+                <mat-icon class="drag-icon" cdkDragHandle>drag_indicator</mat-icon>
                 <div class="query-info">
                   <span class="q-name">{{ q.name }}</span>
                   <span class="q-jql">{{ q.jql }}</span>
@@ -297,6 +298,10 @@ export class JqlQueryDialogComponent {
     .query-item { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--mat-sys-outline-variant); border-radius: 8px; }
     .query-item.disabled { opacity: 0.5; }
     .drag-icon { color: var(--mat-sys-on-surface-variant); cursor: grab; flex-shrink: 0; }
+    .cdk-drag-preview { background: var(--mat-sys-surface); border: 1px solid var(--mat-sys-primary); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.3); opacity: .95; display: flex; align-items: center; gap: 8px; padding: 8px; }
+    .cdk-drag-placeholder { opacity: 0.3; background: var(--mat-sys-surface-variant); border-radius: 8px; }
+    .cdk-drag-animating { transition: transform 200ms ease; }
+    .cdk-drop-list-dragging .query-item:not(.cdk-drag-placeholder) { transition: transform 200ms ease; }
     .query-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .q-name { font-weight: 500; font-size: 13px; }
     .q-jql { font-family: monospace; font-size: 11px; color: var(--mat-sys-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -350,6 +355,17 @@ export class MyTicketsComponent implements OnInit {
 
   openQueryManager() { this.showQueryManager.set(true); }
   closeQueryManager() { this.showQueryManager.set(false); this.loadTickets(); }
+
+  onDrop(event: CdkDragDrop<JqlQuery[]>) {
+    if (event.previousIndex === event.currentIndex) return;
+    const qs = [...this.queries()];
+    moveItemInArray(qs, event.previousIndex, event.currentIndex);
+    qs.forEach((q, idx) => { q.position = idx; });
+    this.queries.set(qs);
+    qs.forEach((q, idx) => {
+      this.http.patch(`${environment.apiUrl}/preferences/jira-queries/${q.id}`, { position: idx }).subscribe();
+    });
+  }
 
   addQuery() {
     const ref = this.dialog.open(JqlQueryDialogComponent, {

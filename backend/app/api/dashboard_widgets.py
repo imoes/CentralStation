@@ -486,7 +486,16 @@ async def get_widget_data(
             return {"summary": "", "findings": [], "recommendations": [], "run_at": None}
         return {
             "summary": analysis.severity_summary,
-            "findings": (analysis.findings or [])[:5],
+            "findings": [
+                {
+                    "title":       f.get("title", ""),
+                    "severity":    f.get("severity", "info"),
+                    "description": f.get("description", ""),
+                    "host":        f.get("host") or f.get("affected_service"),
+                    "source":      f.get("source", ""),
+                }
+                for f in (analysis.findings or [])[:5]
+            ],
             "recommendations": (analysis.recommendations or [])[:3],
             "run_at": analysis.run_at.isoformat() if analysis.run_at else None,
         }

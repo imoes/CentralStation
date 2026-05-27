@@ -254,7 +254,13 @@ export class AiInsightsComponent implements OnInit, OnDestroy {
   refLabel(url: string): string {
     try {
       const u = new URL(url);
-      return u.hostname + (u.pathname !== '/' ? u.pathname : '');
+      // Confluence: title in query params
+      const title = u.searchParams.get('title') || u.searchParams.get('pageTitle');
+      if (title) return decodeURIComponent(title.replace(/\+/g, ' '));
+      // Last meaningful path segment — skip view.action and similar
+      const segments = u.pathname.split('/').filter(s => s && !s.includes('.action') && !s.includes('.jsp'));
+      if (segments.length) return decodeURIComponent(segments[segments.length - 1]);
+      return u.hostname;
     } catch {
       return url;
     }

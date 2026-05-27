@@ -21,6 +21,7 @@ class FeedSearchCreate(BaseModel):
     index_pattern: str = "cs-feed-*"
     query_string: str = ""
     enabled: bool = True
+    is_exclusion: bool = False
 
 
 class FeedSearchUpdate(BaseModel):
@@ -28,6 +29,7 @@ class FeedSearchUpdate(BaseModel):
     index_pattern: str | None = None
     query_string: str | None = None
     enabled: bool | None = None
+    is_exclusion: bool | None = None
     position: int | None = None
 
 
@@ -40,6 +42,7 @@ def _to_dict(s: FeedSearch) -> dict:
         "query_string": s.query_string,
         "enabled": s.enabled,
         "is_system": s.is_system,
+        "is_exclusion": s.is_exclusion,
         "position": s.position,
         "created_at": s.created_at.isoformat() if s.created_at else None,
     }
@@ -77,6 +80,7 @@ async def create_search(
         index_pattern=body.index_pattern,
         query_string=body.query_string,
         enabled=body.enabled,
+        is_exclusion=body.is_exclusion,
         is_system=False,
     )
     db.add(s)

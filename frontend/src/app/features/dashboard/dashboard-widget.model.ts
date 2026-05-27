@@ -48,7 +48,7 @@ export interface DonutData {
 
 export interface AiSummaryData {
   summary: string;
-  findings: Array<{ title: string; severity?: string; description?: string }>;
+  findings: Array<{ title: string; severity?: string; description?: string; host?: string | null; source?: string }>;
   recommendations: Array<{ title: string; priority?: string; description?: string }>;
   run_at?: string | null;
 }

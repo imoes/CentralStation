@@ -1,7 +1,8 @@
-"""Microsoft Teams connector via Microsoft Graph API.
+"""Microsoft Teams connector via delegated permissions (Device Code Flow).
 
-Uses the same Azure App (client_credentials) as the O365 connector.
-Credentials: tenant_id, client_id, client_secret
+Uses the same auth mechanism as o365.py (refresh_token grant).
+Credentials: tenant_id, client_id, refresh_token (+ optional client_secret)
+Scopes: ChannelMessage.Read.All Team.ReadBasic.All offline_access
 """
 import httpx
 
@@ -9,22 +10,32 @@ from app.schemas.connector import ConnectorTestResult
 from app.services.connectors.base import BaseConnector
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+TOKEN_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+DEVICE_CODE_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/devicecode"
+
+DELEGATED_SCOPES = "ChannelMessage.Read.All Team.ReadBasic.All offline_access"
 
 
 class TeamsConnector(BaseConnector):
     async def _get_token(self, client: httpx.AsyncClient) -> str:
         tenant_id = self.credentials.get("tenant_id", "")
         client_id = self.credentials.get("client_id", "")
+        refresh_token = self.credentials.get("refresh_token", "")
         client_secret = self.credentials.get("client_secret", "")
-        r = await client.post(
-            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
-            data={
-                "grant_type": "client_credentials",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "scope": "https://graph.microsoft.com/.default",
-            },
-        )
+
+        if not refresh_token:
+            raise ValueError("Teams-Connector nicht autorisiert. Bitte 'Mit Microsoft anmelden' durchführen.")
+
+        data: dict = {
+            "grant_type": "refresh_token",
+            "client_id": client_id,
+            "refresh_token": refresh_token,
+            "scope": DELEGATED_SCOPES,
+        }
+        if client_secret:
+            data["client_secret"] = client_secret
+
+        r = await client.post(TOKEN_URL.format(tenant_id=tenant_id), data=data)
         r.raise_for_status()
         return r.json()["access_token"]
 
@@ -33,11 +44,14 @@ class TeamsConnector(BaseConnector):
             async with httpx.AsyncClient(timeout=15.0) as client:
                 token = await self._get_token(client)
                 r = await client.get(
-                    f"{GRAPH_BASE}/teams",
+                    f"{GRAPH_BASE}/me",
                     headers={"Authorization": f"Bearer {token}"},
                 )
                 r.raise_for_status()
-            return ConnectorTestResult(success=True, message="Teams/Graph reachable")
+                name = r.json().get("displayName", "")
+            return ConnectorTestResult(success=True, message=f"Verbunden als {name}")
+        except ValueError as e:
+            return ConnectorTestResult(success=False, message=str(e))
         except httpx.HTTPStatusError as e:
             return ConnectorTestResult(success=False, message=f"HTTP {e.response.status_code}")
         except Exception as e:
@@ -47,7 +61,7 @@ class TeamsConnector(BaseConnector):
         async with httpx.AsyncClient(timeout=15.0) as client:
             token = await self._get_token(client)
             r = await client.get(
-                f"{GRAPH_BASE}/teams",
+                f"{GRAPH_BASE}/me/joinedTeams",
                 headers={"Authorization": f"Bearer {token}"},
             )
             r.raise_for_status()
@@ -71,10 +85,6 @@ class TeamsConnector(BaseConnector):
         channel_ref: str,
         top: int = 10,
     ) -> list[dict]:
-        """Fetch recent messages from a channel.
-
-        channel_ref format: "{team_id}:{channel_id}"
-        """
         if ":" not in channel_ref:
             return []
         team_id, channel_id = channel_ref.split(":", 1)
@@ -83,11 +93,10 @@ class TeamsConnector(BaseConnector):
             r = await client.get(
                 f"{GRAPH_BASE}/teams/{team_id}/channels/{channel_id}/messages",
                 headers={"Authorization": f"Bearer {token}"},
-                params={"$top": top, "$orderby": "createdDateTime desc"},
+                params={"$top": top},
             )
             r.raise_for_status()
             msgs = r.json().get("value", [])
-            # Attach channel name from URL context
             for m in msgs:
                 m["_channel_id"] = channel_id
                 m["_team_id"] = team_id

@@ -14,6 +14,7 @@ export interface Alert {
   location_city: string | null;
   acknowledged_by: string | null;
   created_at: string;
+  ai_insight: string | null;
 }
 
 export interface AlertSummary {

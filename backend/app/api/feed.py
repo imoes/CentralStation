@@ -154,6 +154,7 @@ async def get_feed(
     search_id: _uuid.UUID | None = Query(None),
     index: str | None = Query(None, description="OpenSearch index pattern for direct query mode"),
     q: str | None = Query(None, description="OpenSearch Lucene query string for direct query mode"),
+    highlight_id: str | None = Query(None, description="Fetch this item by ID and pin it at the top"),
 ):
     """Return unified news feed from OpenSearch, sorted by created_at desc."""
     from app.services import feed_index
@@ -232,7 +233,17 @@ async def get_feed(
         user_id=str(user.id),
         from_=offset,
         size=limit,
+        db=db,
     )
+
+    if highlight_id:
+        # Ensure the highlighted item is in the result set (it may be older than current page)
+        already_present = any(i.get("id") == highlight_id for i in items)
+        if not already_present:
+            pinned = await feed_index.get_by_id(highlight_id)
+            if pinned:
+                items = [pinned] + list(items)
+
     return items
 
 
