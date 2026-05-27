@@ -1,4 +1,4 @@
-import { Component, OnInit, signal, Inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, Inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -39,6 +39,7 @@ interface JiraIssue {
     assignee: { displayName: string } | null;
     updated: string;
     issuetype: { name: string };
+    comment?: { total: number };
   };
 }
 
@@ -129,6 +130,8 @@ export class JqlQueryDialogComponent {
 
 // ── Main Component ──────────────────────────────────────────────────────────────
 
+const SEEN_MAP_KEY = 'ticket_seen_map';
+
 @Component({
   selector: 'cs-my-tickets',
   standalone: true,
@@ -175,6 +178,9 @@ export class JqlQueryDialogComponent {
               <div class="issue-list">
                 @for (issue of group.issues; track issue.key) {
                   <div class="issue-row" (click)="openSession(issue)">
+                    @if (hasUnread(issue)) {
+                      <span class="unread-dot" matTooltip="Neue Aktivität seit dem letzten Besuch"></span>
+                    }
                     <span class="issue-key">{{ issue.key }}</span>
                     <mat-icon class="issue-type-icon" [matTooltip]="issue.fields.issuetype?.name">
                       {{ issueTypeIcon(issue.fields.issuetype?.name) }}
@@ -278,6 +284,7 @@ export class JqlQueryDialogComponent {
     .group-empty { padding: 16px; text-align: center; color: var(--mat-sys-on-surface-variant); font-size: 13px; }
     .issue-list { display: flex; flex-direction: column; }
     .issue-row { display: flex; align-items: center; gap: 8px; padding: 8px 16px; cursor: pointer; border-bottom: 1px solid var(--mat-sys-outline-variant); transition: background .15s; }
+    .unread-dot { width: 8px; height: 8px; border-radius: 50%; background: #d32f2f; flex-shrink: 0; }
     .issue-row:hover { background: var(--mat-sys-surface-variant); }
     .issue-row:last-child { border-bottom: none; }
     .issue-key { font-family: monospace; font-size: 12px; color: var(--mat-sys-primary); min-width: 80px; font-weight: 500; }
@@ -311,7 +318,7 @@ export class JqlQueryDialogComponent {
     .full-width { width: 100%; }
   `],
 })
-export class MyTicketsComponent implements OnInit {
+export class MyTicketsComponent implements OnInit, OnDestroy {
   ticketGroups = signal<TicketGroup[]>([]);
   queries = signal<JqlQuery[]>([]);
   loadingTickets = signal(true);
@@ -321,6 +328,8 @@ export class MyTicketsComponent implements OnInit {
   aiDesc = '';
   hasLlm = signal(false);
 
+  private seenMap: Record<string, string> = {};  // ticketKey → ISO timestamp of last seen
+
   constructor(
     private http: HttpClient,
     private dialog: MatDialog,
@@ -328,15 +337,67 @@ export class MyTicketsComponent implements OnInit {
   ) {}
 
   ngOnInit() {
+    const raw = localStorage.getItem(SEEN_MAP_KEY);
+    this.seenMap = raw ? JSON.parse(raw) : {};
     this.loadTickets();
     this.loadQueries();
     this.checkLlm();
   }
 
+  ngOnDestroy() {
+    this._persistSeenMap();
+  }
+
+  private _persistSeenMap() {
+    localStorage.setItem(SEEN_MAP_KEY, JSON.stringify(this.seenMap));
+  }
+
+  private _computeUnreadCount(): number {
+    let count = 0;
+    for (const group of this.ticketGroups()) {
+      for (const issue of group.issues) {
+        if (this.hasUnread(issue)) count++;
+      }
+    }
+    return count;
+  }
+
+  private _updateBadge() {
+    const count = this._computeUnreadCount();
+    localStorage.setItem('tickets_unread_count', count.toString());
+  }
+
+  hasUnread(issue: JiraIssue): boolean {
+    const seen = this.seenMap[issue.key];
+    if (!seen) return false;  // never opened — no dot on first load
+    return new Date(issue.fields.updated) > new Date(seen);
+  }
+
+  markSeen(issue: JiraIssue) {
+    this.seenMap[issue.key] = new Date().toISOString();
+    this._persistSeenMap();
+    this._updateBadge();
+  }
+
   loadTickets() {
     this.loadingTickets.set(true);
     this.http.get<TicketGroup[]>(`${environment.apiUrl}/jira-view/my-tickets`).subscribe({
-      next: data => { this.ticketGroups.set(data); this.loadingTickets.set(false); },
+      next: data => {
+        // First-time seen tickets: add to seenMap with "now - 1ms" so future updates are tracked
+        // but newly loaded items don't get a dot on first visit
+        const now = new Date().toISOString();
+        for (const group of data) {
+          for (const issue of group.issues) {
+            if (!(issue.key in this.seenMap)) {
+              this.seenMap[issue.key] = now;
+            }
+          }
+        }
+        this._persistSeenMap();
+        this.ticketGroups.set(data);
+        this.loadingTickets.set(false);
+        this._updateBadge();
+      },
       error: () => this.loadingTickets.set(false),
     });
   }
@@ -354,7 +415,7 @@ export class MyTicketsComponent implements OnInit {
   }
 
   openQueryManager() { this.showQueryManager.set(true); }
-  closeQueryManager() { this.showQueryManager.set(false); this.loadTickets(); }
+  closeQueryManager() { this.showQueryManager.set(false); this.loadTickets(); this._updateBadge(); }
 
   onDrop(event: CdkDragDrop<JqlQuery[]>) {
     if (event.previousIndex === event.currentIndex) return;
@@ -454,6 +515,7 @@ export class MyTicketsComponent implements OnInit {
   }
 
   openSession(issue: JiraIssue) {
+    this.markSeen(issue);
     this.dialog.open(WorkSessionDialogComponent, {
       width: '820px',
       maxWidth: '95vw',
