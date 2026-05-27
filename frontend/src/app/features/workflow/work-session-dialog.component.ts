@@ -280,6 +280,12 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                     </button>
                   }
                 </div>
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>Aktuelle Entwicklungen (optional)</mat-label>
+                  <textarea matInput [(ngModel)]="additionalContext" rows="3"
+                    placeholder="z.B. Service heute Nacht neu gestartet, Logs zeigen keine weiteren Fehler. Sprint-Ziel: Migration bis Freitag abschließen."></textarea>
+                  <mat-hint>Beschreiben Sie aktuelle Entwicklungen — die KI nimmt diese in den Kommentar auf.</mat-hint>
+                </mat-form-field>
                 <button mat-flat-button color="accent" (click)="generateComment()" [disabled]="aiLoading.comment()">
                   @if (aiLoading.comment()) { <mat-spinner diameter="16"></mat-spinner> Generiere… }
                   @else { <ng-container><mat-icon>auto_awesome</mat-icon> Kommentar erstellen</ng-container> }
@@ -461,6 +467,7 @@ export class WorkSessionDialogComponent implements OnInit {
   };
 
   newNote = '';
+  additionalContext = '';
   selectedCommentType = signal('progress');
   generatedComment = signal<string | null>(null);
   generatedResolution = signal<string | null>(null);
@@ -571,7 +578,10 @@ export class WorkSessionDialogComponent implements OnInit {
 
   generateComment() {
     this.aiLoading.comment.set(true);
-    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/generate-comment`, { comment_type: this.selectedCommentType() }).subscribe({
+    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/generate-comment`, {
+      comment_type: this.selectedCommentType(),
+      additional_context: this.additionalContext.trim() || null,
+    }).subscribe({
       next: res => { this.generatedComment.set(res.comment); this.aiLoading.comment.set(false); this.loadSession(this.sessionId!); },
       error: () => { this.aiLoading.comment.set(false); this.snackBar.open('Fehler beim Generieren', '', { duration: 3000 }); },
     });

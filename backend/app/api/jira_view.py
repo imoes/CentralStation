@@ -79,7 +79,7 @@ async def my_tickets(
             try:
                 issues = await jira.search_issues(
                     q.jql,
-                    fields=["summary", "status", "priority", "assignee", "created", "updated", "issuetype"],
+                    fields=["summary", "status", "priority", "assignee", "created", "updated", "issuetype", "comment"],
                 )
                 for issue in issues:
                     key = issue.get("key", "")

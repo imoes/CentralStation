@@ -506,7 +506,7 @@ def _normalise_query_string(q: str) -> str:
         value = m.group(1)
         return f"(metadata.host:{value} OR metadata.agent:{value})"
 
-    q = re.sub(r"(?<!\w)host:(\S+)", _expand_host, q)
+    q = re.sub(r"(?<![\w.])host:(\S+)", _expand_host, q)
     return q
 
 

@@ -50,6 +50,7 @@ class WorkNoteAdd(BaseModel):
 
 class GenerateCommentRequest(BaseModel):
     comment_type: str = "progress"  # progress | pending | escalation | handoff
+    additional_context: str | None = None  # recent developments / sprint context
 
 
 class GenerateResolutionRequest(BaseModel):
@@ -300,7 +301,7 @@ async def generate_comment(
     s = await _get_session(session_id, user.id, db)
     llm = await _get_llm(db)
     context = await _build_ticket_context(s, db)
-    comment = await ai_comment(llm, s.title, context, s.work_notes or [], body.comment_type, db=db)
+    comment = await ai_comment(llm, s.title, context, s.work_notes or [], body.comment_type, additional_context=body.additional_context, db=db)
 
     notes = list(s.work_notes or [])
     notes.append({

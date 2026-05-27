@@ -199,7 +199,7 @@ Da OS/Standort/VE/Criticality CheckMK-eigene Konzepte sind, greift der Filter **
 | **Alert-Aggregation** | CheckMK, Graylog, Wazuh — zentrale Timeline, Acknowledge, Severity-Filter, OS/Standort/VE/Hostgruppen-Filter |
 | **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung (ai_insight pro Alert) |
 | **Kanban-Board** | Drag-Drop, bidirektionaler Jira-/ServiceDesk-Sync, automatische Jira-Importe, AI-erstellte Cards |
-| **Meine Tickets** | Per-User Jira-Sicht, JQL-Filter-Verwaltung, KI-JQL-Generator (Freitext → JQL), Live-Ergebnisse |
+| **Meine Tickets** | Per-User Jira-Sicht, JQL-Filter-Verwaltung, KI-JQL-Generator (Freitext → JQL), Live-Ergebnisse; roter Punkt bei neuer Aktivität, Unread-Badge im Nav |
 | **Arbeitsdokumentation** | ITIL Work Sessions: Impact/Urgency/Priorität P1–P4, SLA-Tracking, Arbeitsnotizen |
 | **KI-Kommentare** | Fortschritt, Pending, Eskalation, Übergabe — per KI generiert, direkt in Jira kopierbar |
 | **Abschlussdokumentation** | KI-generierte Lösungsdokumentation mit Root Cause, Maßnahmen, Closure Code |
@@ -325,6 +325,14 @@ Der News Feed zeigt alle Ereignisse aus den aktiven OpenSearch-Indices (`cs-feed
 - Aktualisiert sich automatisch alle 60 Sekunden
 - Ruft `GET /api/feed/unread-count?since=<ISO>` auf
 - Verschwindet nach 3 Sekunden Aufenthalt im Feed
+
+### Meine Tickets — Unread-Indikatoren
+
+- Rote Zahl am „Meine Tickets"-Navigationseintrag zeigt Anzahl Tickets mit neuer Aktivität
+- **Roter Punkt** an einzelnen Ticket-Zeilen erscheint, wenn das Ticket seit dem letzten Öffnen aktualisiert wurde (neuer Kommentar, Statuswechsel, etc.)
+- Punkt und Badge verschwinden automatisch, wenn das Ticket in der WorkSession geöffnet wird
+- Tracking basiert auf `localStorage` (`ticket_seen_map`): kein separater Backend-Endpunkt nötig
+- Beim ersten Besuch der Seite werden alle sichtbaren Tickets als „gesehen" markiert (keine Dots beim Erstbesuch)
 
 ### „Neueste Meldungen"-Button
 
@@ -524,7 +532,7 @@ Work Sessions dokumentieren die Bearbeitung eines Incidents:
 2. **Kategorisierung**: Impact/Urgency → Automatische P1–P4 Priorität + SLA-Frist
 3. **Arbeitsnotizen**: Zeitstemple Einträge, wer was wann gemacht hat
 4. **KI-Aktionen**:
-   - **Kommentar generieren**: Typ wählen (Fortschritt / Pending / Eskalation / Übergabe) → KI formuliert Jira-Kommentar
+   - **Kommentar generieren**: Typ wählen (Fortschritt / Pending / Eskalation / Übergabe) → optionales Freitextfeld „Aktuelle Entwicklungen" → KI formuliert Jira-Kommentar
    - **Lösungsdokumentation**: Root Cause, Maßnahmen, Lessons Learned
    - **5-Why-Analyse**: ITIL Problem Management
    - **Lösungssuche**: RAG + Web-Suche
@@ -598,7 +606,7 @@ Node 4: act
 |----------|----------|---------|---------|
 | `POST /api/ai/search-assistant` | Freitext → Lucene-Query + optional FeedSearch/Widget anlegen | `{"message": "..."}` | `{"reply": "...", "actions": [...]}` |
 | `POST /api/ai/promql-assistant` | Freitext/Lucene → PromQL | `{"message": "..."}` | `{"promql": "...", "explanation": "..."}` |
-| `POST /api/workflow/{id}/generate-comment` | Jira-Kommentar generieren | `{"type": "progress"}` | `{"comment": "..."}` |
+| `POST /api/workflow/{id}/generate-comment` | Jira-Kommentar generieren | `{"comment_type": "progress", "additional_context": "..."}` | `{"comment": "..."}` |
 | `POST /api/workflow/{id}/generate-resolution` | Abschlussdokumentation | — | `{"resolution": "..."}` |
 | `POST /api/workflow/{id}/5why` | 5-Why Root Cause Analyse | — | `{"analysis": "..."}` |
 | `POST /api/workflow/{id}/suggest-solution` | RAG + Web-Lösungssuche | — | `{"steps": [...], "sources": [...]}` |

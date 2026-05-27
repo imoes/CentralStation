@@ -48,6 +48,16 @@ interface NavItem {
                     }
                   </span>
                 </a>
+              } @else if (item.path === '/my-tickets') {
+                <a mat-list-item [routerLink]="item.path" routerLinkActive="active">
+                  <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
+                  <span matListItemTitle>
+                    {{ item.label }}
+                    @if (unreadTicketCount() > 0) {
+                      <span class="feed-badge">{{ unreadTicketCount() > 99 ? '99+' : unreadTicketCount() }}</span>
+                    }
+                  </span>
+                </a>
               } @else {
                 <a mat-list-item [routerLink]="item.path" routerLinkActive="active">
                   <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
@@ -87,6 +97,7 @@ export class App implements OnInit, OnDestroy {
   ];
 
   unreadFeedCount = signal<number>(0);
+  unreadTicketCount = signal<number>(0);
   private badgeInterval: ReturnType<typeof setInterval> | null = null;
   private http = inject(HttpClient);
 
@@ -126,6 +137,8 @@ export class App implements OnInit, OnDestroy {
     const since = localStorage.getItem('feed_last_seen') ?? new Date(0).toISOString();
     this.http.get<{ count: number }>(`${environment.apiUrl}/feed/unread-count`, { params: { since } })
       .subscribe({ next: r => this.unreadFeedCount.set(r.count), error: () => {} });
+    const stored = localStorage.getItem('tickets_unread_count');
+    this.unreadTicketCount.set(stored ? parseInt(stored, 10) : 0);
   }
 
   clearFeedBadge() {

@@ -176,6 +176,7 @@ async def generate_comment(
     ticket_description: str,
     work_notes: list[dict],
     comment_type: str = "progress",  # progress | pending | escalation | handoff
+    additional_context: str | None = None,
     db: Any = None,
 ) -> str:
     """Generate an ITIL-compliant ticket comment, enriched with it-aikb DeepSearch."""
@@ -218,12 +219,13 @@ async def generate_comment(
         except Exception as e:
             log.debug("generate_comment: it-aikb lookup failed: %s", e)
 
+    context_block = f"\nAktuelle Entwicklungen (vom Bearbeiter angegeben):\n{additional_context}" if additional_context and additional_context.strip() else ""
     prompt = f"""Ticket: {ticket_title}
 Verlauf (Beschreibung + Kommentare, neueste zuletzt):
 {ticket_description}
 Kommentartyp: {type_hints.get(comment_type, comment_type)}
 Arbeitsnotizen:
-{notes_text or '(keine Notizen)'}{kb_text}
+{notes_text or '(keine Notizen)'}{kb_text}{context_block}
 
 Schreibe jetzt den Kommentar basierend auf dem aktuellen Stand (letzter Kommentar im Verlauf):"""
     return await _invoke_llm(llm_config, COMMENT_SYSTEM, prompt)
