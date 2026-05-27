@@ -298,7 +298,9 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                         <mat-icon>content_copy</mat-icon>
                       </button>
                     </div>
-                    <pre class="ai-text">{{ generatedComment() }}</pre>
+                    <textarea class="ai-text-edit" rows="8"
+                      [value]="generatedComment()!"
+                      (input)="generatedComment.set($any($event.target).value)"></textarea>
                     <div class="ai-result-actions">
                       <button mat-flat-button color="primary"
                         (click)="postCommentToJira()"
@@ -464,6 +466,8 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
     .ai-result { background: var(--mat-sys-surface-variant); border-radius: 8px; padding: 12px; }
     .ai-result-header { display: flex; align-items: center; justify-content: space-between; font-weight: 500; font-size: 13px; margin-bottom: 6px; }
     pre.ai-text { margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-word; font-family: inherit; line-height: 1.5; }
+    .ai-text-edit { width: 100%; box-sizing: border-box; font-size: 12px; font-family: inherit; line-height: 1.5; padding: 8px 10px; border: 1px solid var(--mat-sys-outline-variant); border-radius: 6px; background: var(--mat-sys-surface); color: var(--mat-sys-on-surface); resize: vertical; outline: none; }
+    .ai-text-edit:focus { border-color: var(--mat-sys-primary); }
     .ai-result-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
     .post-success { display: flex; align-items: center; gap: 4px; color: #2e7d32; font-size: 13px; font-weight: 500; }
     .post-success mat-icon { font-size: 16px; width: 16px; height: 16px; }
