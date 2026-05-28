@@ -191,7 +191,8 @@ async def generate_comment(
         "handoff":    "Übergabekommentar — Zusammenfassung für die übernehmende Person",
     }
 
-    # it-aikb DeepSearch for relevant infrastructure/runbook context
+    # it-aikb DeepSearch for relevant infrastructure/runbook context (hard timeout: 15s)
+    import asyncio
     kb_text = ""
     if db:
         try:
@@ -209,13 +210,15 @@ async def generate_comment(
                 creds = decrypt_credentials(conn.encrypted_credentials)
                 from app.services.connectors.it_aikb import ITAikbConnector
                 svc = ITAikbConnector(base_url=conn.base_url, credentials=creds)
-                results = await svc.deepsearch(ticket_title)
+                results = await asyncio.wait_for(svc.deepsearch(ticket_title), timeout=15.0)
                 if results:
                     snippets = "\n".join(
                         f"- {r.get('title', '')}: {(r.get('content') or r.get('text', ''))[:300]}"
                         for r in results[:5]
                     )
                     kb_text = f"\nWissensdatenbank-Kontext:\n{snippets}"
+        except asyncio.TimeoutError:
+            log.debug("generate_comment: it-aikb lookup timed out after 15s, skipping")
         except Exception as e:
             log.debug("generate_comment: it-aikb lookup failed: %s", e)
 
