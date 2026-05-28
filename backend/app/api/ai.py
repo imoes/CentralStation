@@ -81,7 +81,9 @@ async def _llm_search_assistant(body: SearchAssistantRequest, db: AsyncSession) 
         "  severity:   - critical | high | medium | low | info\n"
         "  source:     - checkmk | wazuh | graylog | o365 | teams\n"
         "  host:       - Hostname\n"
-        "  status:     - new | acknowledged\n"
+        "  status:     - new | acknowledged | resolved\n"
+        "               'nicht gelöst' / 'offen' / 'aktiv' = NOT status:resolved\n"
+        "               NIEMALS status:new verwenden wenn der Nutzer 'nicht gelöst' meint!\n"
         "  metadata.hostgroups: - CheckMK Hostgruppe (z.B. cue-prod)\n"
         "  metadata.host:       - Hostname aus Metadaten\n"
         "  metadata.rule_id:    - Wazuh Rule-ID\n"
@@ -91,6 +93,8 @@ async def _llm_search_assistant(body: SearchAssistantRequest, db: AsyncSession) 
         "  body:\"/etc/patchmon/config.yml\" AND body:modified\n"
         "  severity:critical AND metadata.hostgroups:cue-prod\n"
         "  metadata.rule_level:>=7 AND NOT body:patchmon\n"
+        "  (source:graylog OR source:checkmk) AND NOT status:resolved\n"
+        "  source:wazuh AND severity:high AND NOT status:resolved\n"
     )
     user = f"Kontext: {body.context or '-'}\nAnfrage: {body.message}"
     raw = await generate_text(
