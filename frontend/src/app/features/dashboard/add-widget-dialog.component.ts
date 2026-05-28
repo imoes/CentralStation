@@ -68,6 +68,32 @@ interface FeedSearch {
           <input matInput [(ngModel)]="indexPattern">
         </mat-form-field>
 
+        <!-- KI Query-Assistent -->
+        <div class="converter-row">
+          <mat-form-field appearance="outline" class="converter-field">
+            <mat-label>Query-Beschreibung für KI</mat-label>
+            <textarea matInput rows="2" [(ngModel)]="queryPrompt"
+              placeholder='z.B. "Alle Wazuh-Alerts von docker086" oder "kritische CheckMK-Fehler"'></textarea>
+            <mat-hint>Natürliche Sprache → wird zu OpenSearch-Query konvertiert</mat-hint>
+          </mat-form-field>
+          <button mat-flat-button color="accent" class="convert-btn"
+                  [disabled]="!queryPrompt.trim() || convertingQuery()"
+                  (click)="convertToQuery()"
+                  matTooltip="Beschreibung in OpenSearch-Query übersetzen (KI)">
+            @if (convertingQuery()) {
+              <mat-spinner diameter="16"></mat-spinner>
+            } @else {
+              <mat-icon>auto_fix_high</mat-icon>
+            }
+            → Query
+          </button>
+        </div>
+        @if (queryExplanation) {
+          <div class="promql-hint">
+            <mat-icon>info</mat-icon> {{ queryExplanation }}
+          </div>
+        }
+
         <mat-form-field appearance="outline">
           <mat-label>OpenSearch Query</mat-label>
           <textarea matInput rows="3" [(ngModel)]="queryString" placeholder="Leer = match_all"></textarea>
@@ -275,6 +301,7 @@ export class AddWidgetDialogComponent implements OnInit {
 
   searches = signal<FeedSearch[]>([]);
   convertingPromql = signal(false);
+  convertingQuery = signal(false);
   widgetType: DashboardWidgetCreate['widget_type'] = 'list';
   title = 'Neueste Alerts';
   selectedSearchId = '';
@@ -284,6 +311,8 @@ export class AddWidgetDialogComponent implements OnInit {
   limit = 8;
   convertPrompt = '';
   promqlExplanation = '';
+  queryPrompt = '';
+  queryExplanation = '';
   promql = '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)';
   step = '1m';
   hours = 4;
@@ -389,6 +418,24 @@ export class AddWidgetDialogComponent implements OnInit {
         this.convertingPromql.set(false);
       },
       error: () => this.convertingPromql.set(false),
+    });
+  }
+
+  convertToQuery() {
+    const msg = this.queryPrompt.trim();
+    if (!msg) return;
+    this.convertingQuery.set(true);
+    this.http.post<{ reply: string; index_pattern: string; query_string: string }>(
+      `${environment.apiUrl}/ai/search-assistant`,
+      { message: msg },
+    ).subscribe({
+      next: res => {
+        if (res.query_string !== undefined) this.queryString = res.query_string;
+        if (res.index_pattern) this.indexPattern = res.index_pattern;
+        this.queryExplanation = res.reply || '';
+        this.convertingQuery.set(false);
+      },
+      error: () => this.convertingQuery.set(false),
     });
   }
 
