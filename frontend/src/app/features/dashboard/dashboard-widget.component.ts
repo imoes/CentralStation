@@ -65,7 +65,13 @@ import {
                     <span class="sev-dot" [style.background]="severityColor(item.severity)"></span>
                     <div class="list-copy">
                       <span class="list-title">{{ item.title }}</span>
-                      <span class="list-meta">{{ item.source }} · {{ item.created_at | date:'dd.MM HH:mm' }}</span>
+                      <span class="list-meta">
+                        @if (hostLabel(item)) {
+                          <span class="list-host">{{ hostLabel(item) }}</span>
+                          <span class="meta-sep"> · </span>
+                        }
+                        {{ item.source }} · {{ item.created_at | date:'dd.MM HH:mm' }}
+                      </span>
                     </div>
                   </div>
                 } @empty {
@@ -188,7 +194,9 @@ import {
     .sev-dot { width: 9px; height: 9px; border-radius: 999px; margin-top: 5px; flex-shrink: 0; }
     .list-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
     .list-title { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .list-meta { font-size: 10px; color: var(--mat-sys-on-surface-variant); }
+    .list-meta { font-size: 10px; color: var(--mat-sys-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .list-host { font-family: monospace; color: var(--mat-sys-on-surface); font-weight: 600; }
+    .meta-sep { opacity: 0.5; }
     .chart { height: 100%; min-height: 140px; width: 100%; display: block; }
     .grafana-frame { width: 100%; height: 100%; border: 0; border-radius: 10px; background: #111827; }
     .ai-summary { height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 7px; }
@@ -370,6 +378,11 @@ export class DashboardWidgetComponent {
 
   severityColor(severity: string): string {
     return SEVERITY_COLORS[severity] ?? '#64748b';
+  }
+
+  hostLabel(item: FeedItem): string {
+    const meta = (item.metadata ?? {}) as Record<string, unknown>;
+    return (meta['container_name'] as string) || (meta['host'] as string) || '';
   }
 
   removeWidget(event: MouseEvent) {
