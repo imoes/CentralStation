@@ -328,6 +328,35 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
               </div>
             </mat-expansion-panel>
 
+            <!-- Manual Comment -->
+            <mat-expansion-panel>
+              <mat-expansion-panel-header>
+                <mat-panel-title><mat-icon>edit_note</mat-icon> Kommentar manuell schreiben</mat-panel-title>
+              </mat-expansion-panel-header>
+              <div class="panel-body">
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>Kommentartext</mat-label>
+                  <textarea matInput [(ngModel)]="manualComment" rows="6"
+                    placeholder="Kommentar für das Jira-Ticket eingeben…"></textarea>
+                </mat-form-field>
+                <div class="ai-result-actions">
+                  <button mat-flat-button color="primary"
+                    (click)="postManualComment()"
+                    [disabled]="aiLoading.posting() || !session()?.jira_key || !manualComment.trim()"
+                    [matTooltip]="session()?.jira_key ? 'Kommentar in Jira ' + session()?.jira_key + ' posten' : 'Kein Jira-Ticket verknüpft'">
+                    @if (aiLoading.posting()) {
+                      <mat-spinner diameter="16"></mat-spinner> Wird gepostet…
+                    } @else {
+                      <mat-icon>send</mat-icon> In Jira posten
+                    }
+                  </button>
+                  @if (manualCommentPosted()) {
+                    <span class="post-success"><mat-icon>check_circle</mat-icon> In Jira gepostet</span>
+                  }
+                </div>
+              </div>
+            </mat-expansion-panel>
+
             <!-- Resolution Generator -->
             <mat-expansion-panel>
               <mat-expansion-panel-header>
@@ -500,6 +529,8 @@ export class WorkSessionDialogComponent implements OnInit {
 
   newNote = '';
   additionalContext = '';
+  manualComment = '';
+  manualCommentPosted = signal(false);
   selectedCommentType = signal('progress');
   generatedComment = signal<string | null>(null);
   generatedResolution = signal<string | null>(null);
@@ -601,6 +632,28 @@ export class WorkSessionDialogComponent implements OnInit {
         next: () => this.loadSession(this.sessionId!),
       });
     }
+  }
+
+  postManualComment() {
+    const text = this.manualComment.trim();
+    if (!text || !this.sessionId) return;
+    this.aiLoading.posting.set(true);
+    this.manualCommentPosted.set(false);
+    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/post-comment`, { comment: text })
+      .subscribe({
+        next: res => {
+          this.aiLoading.posting.set(false);
+          this.manualCommentPosted.set(true);
+          this.manualComment = '';
+          const key = res.jira_key ?? this.session()?.jira_key;
+          this.snackBar.open(`Kommentar in ${key} gepostet`, '', { duration: 3000 });
+          this.refreshJiraDetail();
+        },
+        error: () => {
+          this.aiLoading.posting.set(false);
+          this.snackBar.open('Fehler beim Posten', '', { duration: 3000 });
+        },
+      });
   }
 
   refreshJiraDetail() {
