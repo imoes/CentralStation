@@ -443,13 +443,17 @@ export class AddWidgetDialogComponent implements OnInit {
     const msg = this.queryPrompt.trim();
     if (!msg) return;
     this.convertingQuery.set(true);
+    const existing = this.queryString.trim();
+    const context = existing
+      ? `Bestehende Query (bitte erweitern, nicht ersetzen): ${existing}`
+      : undefined;
     this.http.post<{ reply: string; index_pattern: string; query_string: string }>(
       `${environment.apiUrl}/ai/search-assistant`,
-      { message: msg },
+      { message: msg, context },
     ).subscribe({
       next: res => {
         if (res.query_string !== undefined) this.queryString = res.query_string;
-        if (res.index_pattern) this.indexPattern = res.index_pattern;
+        if (res.index_pattern && !existing) this.indexPattern = res.index_pattern;
         this.queryExplanation = res.reply || '';
         this.convertingQuery.set(false);
       },

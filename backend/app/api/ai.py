@@ -94,7 +94,10 @@ async def _llm_search_assistant(body: SearchAssistantRequest, db: AsyncSession) 
         "  severity:critical AND metadata.hostgroups:cue-prod\n"
         "  metadata.rule_level:>=7 AND NOT body:patchmon\n"
         "  (source:graylog OR source:checkmk) AND NOT status:resolved\n"
-        "  source:wazuh AND severity:high AND NOT status:resolved\n"
+        "  source:wazuh AND severity:high AND NOT status:resolved\n\n"
+        "WICHTIG: Wenn der Kontext eine bestehende Query enthaelt (z.B. 'Bestehende Query: ...'), "
+        "dann ERWEITERE diese Query mit AND-Bedingungen. Ersetze sie NICHT komplett. "
+        "Gib in query_string die vollstaendige erweiterte Query zurueck.\n"
     )
     user = f"Kontext: {body.context or '-'}\nAnfrage: {body.message}"
     raw = await generate_text(
