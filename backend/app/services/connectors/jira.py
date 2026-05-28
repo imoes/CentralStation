@@ -224,7 +224,7 @@ class JiraConnector(BaseConnector):
             r.raise_for_status()
 
     async def get_issue_detail(self, issue_key: str) -> dict:
-        """Full issue detail: description (ADF→text) + comment list."""
+        """Full issue detail: description (ADF→text) + all comments."""
         async with self._client(timeout=20.0) as client:
             r = await client.get(
                 self._api(f"/issue/{issue_key}"),
@@ -232,14 +232,28 @@ class JiraConnector(BaseConnector):
                 params={"fields": "summary,description,comment,status,priority,assignee,created,updated,issuetype"},
             )
             r.raise_for_status()
-        data = r.json()
-        fields = data.get("fields") or {}
+            data = r.json()
+            fields = data.get("fields") or {}
+
+            comment_meta = fields.get("comment") or {}
+            inline_comments = comment_meta.get("comments") or []
+            total_comments = comment_meta.get("total", len(inline_comments))
+
+            # Jira only returns the first few comments inline — fetch all if there are more
+            if total_comments > len(inline_comments):
+                rc = await client.get(
+                    self._api(f"/issue/{issue_key}/comment"),
+                    headers=self._headers(),
+                    params={"maxResults": 200, "orderBy": "created"},
+                )
+                if rc.status_code == 200:
+                    inline_comments = rc.json().get("comments") or inline_comments
 
         raw_desc = fields.get("description")
         description = _adf_to_text(raw_desc) if isinstance(raw_desc, dict) else (raw_desc or "")
 
         comments = []
-        for c in reversed((fields.get("comment") or {}).get("comments", [])):
+        for c in reversed(inline_comments):
             raw_body = c.get("body", "")
             body = _adf_to_text(raw_body) if isinstance(raw_body, dict) else raw_body
             comments.append({

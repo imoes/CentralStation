@@ -91,6 +91,13 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
             } @else if (!jiraDetail()) {
               <div class="spinner-center"><mat-spinner diameter="32"></mat-spinner></div>
             } @else {
+              <div class="ticket-toolbar">
+                <button mat-stroked-button (click)="refreshJiraDetail()" [disabled]="jiraRefreshing()">
+                  @if (jiraRefreshing()) { <mat-spinner diameter="14"></mat-spinner> }
+                  @else { <mat-icon>refresh</mat-icon> }
+                  Jira aktualisieren
+                </button>
+              </div>
               <!-- Meta row -->
               <div class="jira-meta-row">
                 <span class="jira-meta-field"><strong>Status:</strong> {{ jiraDetail().status }}</span>
@@ -436,6 +443,8 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
     .sla-label { font-weight: 500; }
     .sla-breach { color: #c62828; font-weight: 700; }
     .form-actions { display: flex; justify-content: flex-end; }
+    .ticket-toolbar { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+    .ticket-toolbar button { font-size: 12px; }
     /* Jira detail tab */
     .jira-meta-row { display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; padding: 4px 0; }
     .jira-meta-field { color: var(--mat-sys-on-surface-variant); }
@@ -481,6 +490,7 @@ export class WorkSessionDialogComponent implements OnInit {
   session = signal<any | null>(null);
   jiraDetail = signal<any | null>(null);
   loading = signal(true);
+  jiraRefreshing = signal(false);
 
   form: any = {
     title: '', category: null, subcategory: '', impact: null, urgency: null,
@@ -591,6 +601,17 @@ export class WorkSessionDialogComponent implements OnInit {
         next: () => this.loadSession(this.sessionId!),
       });
     }
+  }
+
+  refreshJiraDetail() {
+    const key = this.session()?.jira_key;
+    if (!key) return;
+    this.jiraRefreshing.set(true);
+    this.http.get<any>(`${environment.apiUrl}/jira-view/issue/${key}`)
+      .subscribe({
+        next: d => { this.jiraDetail.set(d); this.jiraRefreshing.set(false); },
+        error: () => this.jiraRefreshing.set(false),
+      });
   }
 
   addNote() {
