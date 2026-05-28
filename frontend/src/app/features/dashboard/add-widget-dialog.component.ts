@@ -52,7 +52,7 @@ interface FeedSearch {
         <input matInput [(ngModel)]="title">
       </mat-form-field>
 
-      @if (widgetType !== 'timeseries' && widgetType !== 'grafana_panel' && widgetType !== 'ai_summary') {
+      @if (widgetType !== 'timeseries' && widgetType !== 'grafana_panel' && widgetType !== 'ai_summary' && widgetType !== 'top_hosts') {
         <mat-form-field appearance="outline">
           <mat-label>Gespeicherte Suche optional</mat-label>
           <mat-select [(ngModel)]="selectedSearchId" (ngModelChange)="applySearch()">
@@ -97,6 +97,20 @@ interface FeedSearch {
         <mat-form-field appearance="outline">
           <mat-label>OpenSearch Query</mat-label>
           <textarea matInput rows="3" [(ngModel)]="queryString" placeholder="Leer = match_all"></textarea>
+        </mat-form-field>
+      }
+
+      @if (widgetType === 'bar') {
+        <mat-form-field appearance="outline">
+          <mat-label>Aggregation nach</mat-label>
+          <mat-select [(ngModel)]="aggField">
+            <mat-option value="severity">Severity</mat-option>
+            <mat-option value="source">Quelle (source)</mat-option>
+            <mat-option value="host">Hostname</mat-option>
+            <mat-option value="container">Container-Name</mat-option>
+            <mat-option value="hostgroup">CheckMK Hostgruppe</mat-option>
+          </mat-select>
+          <mat-hint>Jeder Balken = ein Wert dieses Feldes, Klick → Feed-Filter</mat-hint>
         </mat-form-field>
       }
 
@@ -293,6 +307,7 @@ export class AddWidgetDialogComponent implements OnInit {
     { value: 'stat', label: 'Stat', icon: 'counter_1' },
     { value: 'list', label: 'Liste', icon: 'view_list' },
     { value: 'donut', label: 'Donut', icon: 'donut_large' },
+    { value: 'bar', label: 'Balken', icon: 'bar_chart' },
     { value: 'ai_summary', label: 'KI-Lage', icon: 'psychology' },
     { value: 'top_hosts', label: 'Top Hosts', icon: 'dns' },
     { value: 'timeseries', label: 'Zeitreihe', icon: 'show_chart' },
@@ -313,6 +328,7 @@ export class AddWidgetDialogComponent implements OnInit {
   promqlExplanation = '';
   queryPrompt = '';
   queryExplanation = '';
+  aggField = 'severity';
   promql = '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)';
   step = '1m';
   hours = 4;
@@ -352,6 +368,7 @@ export class AddWidgetDialogComponent implements OnInit {
     this.queryString  = (cfg['query_string']  as string) || '';
     this.limit        = Number(cfg['limit']) || 8;
     this.panelUrl     = (cfg['panel_url']     as string) || '';
+    this.aggField     = (cfg['agg_field']     as string) || 'severity';
 
     // Timeseries
     const ds = cfg['data_source'] as string | undefined;
@@ -380,10 +397,11 @@ export class AddWidgetDialogComponent implements OnInit {
 
   selectType(type: DashboardWidgetCreate['widget_type']) {
     this.widgetType = type;
-    const titleByType: Record<DashboardWidgetCreate['widget_type'], string> = {
+    const titleByType: Record<string, string> = {
       stat: 'Alert Count',
       list: 'Neueste Alerts',
       donut: 'Severity-Verteilung',
+      bar: 'Alerts nach Severity',
       ai_summary: 'KI-Lagebericht',
       top_hosts: 'Top Problem-Hosts',
       timeseries: 'CPU-Auslastung',
@@ -457,6 +475,8 @@ export class AddWidgetDialogComponent implements OnInit {
       this.ref.close({ ...base, config: { index_pattern: this.indexPattern, query_string: this.queryString, limit: Number(this.limit) || 8 } });
     } else if (this.widgetType === 'donut') {
       this.ref.close({ ...base, gs_w: 5, gs_h: 4, config: { index_pattern: this.indexPattern, query_string: this.queryString } });
+    } else if (this.widgetType === 'bar') {
+      this.ref.close({ ...base, gs_w: 5, gs_h: 4, config: { index_pattern: this.indexPattern, query_string: this.queryString, agg_field: this.aggField, limit: 10 } });
     } else if (this.widgetType === 'ai_summary') {
       this.ref.close({ ...base, gs_w: 4, gs_h: 2, config: { agent_type: 'sysadmin' } });
     } else if (this.widgetType === 'top_hosts') {

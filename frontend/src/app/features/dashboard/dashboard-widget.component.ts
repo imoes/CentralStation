@@ -9,6 +9,7 @@ import { NgxEchartsDirective } from 'ngx-echarts';
 import {
   DashboardWidget,
   AiSummaryData,
+  BarData,
   DonutData,
   FeedItem,
   GrafanaPanelData,
@@ -81,6 +82,9 @@ import {
             }
             @case ('donut') {
               <div echarts [options]="donutOptions()" class="chart"></div>
+            }
+            @case ('bar') {
+              <div echarts [options]="barOptions()" (chartClick)="onBarClick($event)" class="chart"></div>
             }
             @case ('ai_summary') {
               @if (aiSummary()) {
@@ -232,6 +236,7 @@ export class DashboardWidgetComponent {
   readonly edit        = output<void>();
   readonly itemClick   = output<string>();
   readonly findingClick = output<{ source: string; host: string | null; severity: string }>();
+  readonly barClick    = output<{ field: string; value: string }>();
 
   private sanitizer = inject(DomSanitizer);
 
@@ -360,6 +365,46 @@ export class DashboardWidgetComponent {
     };
   });
 
+  readonly barBuckets = computed(() => {
+    const d = this.data() as BarData | undefined;
+    return Array.isArray(d?.buckets) ? d.buckets : [] as Array<{ key: string; count: number }>;
+  });
+
+  readonly barOptions = computed(() => {
+    const buckets = this.barBuckets();
+    const keys = buckets.map(b => b.key);
+    const counts = buckets.map(b => b.count);
+    return {
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      grid: { left: 14, right: 14, top: 12, bottom: 60, containLabel: true },
+      xAxis: {
+        type: 'category',
+        data: keys,
+        axisLabel: {
+          color: '#94a3b8',
+          fontSize: 10,
+          rotate: keys.some(k => k.length > 10) ? 30 : 0,
+          overflow: 'truncate',
+          width: 90,
+        },
+        axisLine: { lineStyle: { color: '#334155' } },
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { color: '#94a3b8', fontSize: 10 },
+        splitLine: { lineStyle: { color: '#334155' } },
+      },
+      series: [{
+        type: 'bar',
+        data: counts.map((v, i) => ({
+          value: v,
+          itemStyle: { color: SEVERITY_COLORS[keys[i]] ?? '#60a5fa', borderRadius: [4, 4, 0, 0] },
+        })),
+        emphasis: { itemStyle: { opacity: 0.75 } },
+      }],
+    };
+  });
+
   readonly timeseriesError = computed(() => {
     const d = this.data() as TimeseriesData | undefined;
     return d?.error ?? '';
@@ -398,6 +443,12 @@ export class DashboardWidgetComponent {
   onItemClick(event: MouseEvent, itemId: string) {
     event.stopPropagation();
     this.itemClick.emit(itemId);
+  }
+
+  onBarClick(params: { name: string }) {
+    const d = this.data() as BarData | undefined;
+    const field = d?.agg_field ?? 'severity';
+    this.barClick.emit({ field, value: params.name });
   }
 
   onFindingClick(event: MouseEvent, finding: { source?: string; severity?: string; host?: string | null }) {

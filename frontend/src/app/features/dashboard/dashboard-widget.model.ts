@@ -2,7 +2,7 @@ export interface DashboardWidget {
   id: string;
   user_id: string;
   dashboard_id?: string | null;
-  widget_type: 'stat' | 'list' | 'donut' | 'ai_summary' | 'top_hosts' | 'timeseries' | 'grafana_panel';
+  widget_type: 'stat' | 'list' | 'donut' | 'bar' | 'ai_summary' | 'top_hosts' | 'timeseries' | 'grafana_panel';
   title: string;
   gs_x: number;
   gs_y: number;
@@ -32,7 +32,7 @@ export interface FeedItem {
   metadata?: Record<string, unknown> | null;
 }
 
-export type WidgetData = StatData | ListData | DonutData | AiSummaryData | TopHostsData | TimeseriesData | GrafanaPanelData;
+export type WidgetData = StatData | ListData | DonutData | BarData | AiSummaryData | TopHostsData | TimeseriesData | GrafanaPanelData;
 
 export interface StatData {
   count: number;
@@ -44,6 +44,11 @@ export interface ListData {
 
 export interface DonutData {
   buckets: Array<{ key: string; count: number }>;
+}
+
+export interface BarData {
+  buckets: Array<{ key: string; count: number }>;
+  agg_field: string;
 }
 
 export interface AiSummaryData {
@@ -70,7 +75,7 @@ export interface GrafanaPanelData {
 }
 
 export interface DashboardWidgetCreate {
-  widget_type: DashboardWidget['widget_type'];
+  widget_type: DashboardWidget['widget_type'] | 'bar';
   title: string;
   dashboard_id?: string | null;
   gs_x?: number;

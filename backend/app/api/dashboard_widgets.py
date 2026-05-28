@@ -472,6 +472,37 @@ async def get_widget_data(
         except Exception:
             return {"buckets": []}
 
+    elif w.widget_type == "bar":
+        os_client = feed_index.get_opensearch()
+        agg_field = str(cfg.get("agg_field") or "severity")
+        limit = int(cfg.get("limit") or 10)
+        # Map friendly field names to actual keyword fields
+        field_map = {
+            "severity": "severity",
+            "source": "source",
+            "host": "metadata.host.keyword",
+            "metadata.host": "metadata.host.keyword",
+            "container": "metadata.container_name.keyword",
+            "metadata.container_name": "metadata.container_name.keyword",
+            "hostgroup": "metadata.hostgroups.keyword",
+        }
+        os_field = field_map.get(agg_field, f"{agg_field}.keyword")
+        query = {"query_string": {"query": query_string or "*"}} if query_string else {"match_all": {}}
+        body = {
+            "size": 0,
+            "query": {"bool": {"must": [query], "filter": []}},
+            "aggs": {"bars": {"terms": {"field": os_field, "size": limit, "order": {"_count": "desc"}}}},
+        }
+        try:
+            resp = await os_client.search(index=index_pattern, body=body, ignore_unavailable=True)
+            buckets = [
+                {"key": b["key"], "count": b["doc_count"]}
+                for b in resp.get("aggregations", {}).get("bars", {}).get("buckets", [])
+            ]
+            return {"buckets": buckets, "agg_field": agg_field}
+        except Exception:
+            return {"buckets": [], "agg_field": agg_field}
+
     elif w.widget_type == "ai_summary":
         from app.models.ai import AiAnalysis
         agent_type = cfg.get("agent_type") or "sysadmin"
