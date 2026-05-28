@@ -142,7 +142,8 @@ import {
                 (remove)="deleteWidget(widget.id)"
                 (edit)="editWidget(widget)"
                 (itemClick)="openFeedItem($event)"
-                (findingClick)="openFeedFinding($event)" />
+                (findingClick)="openFeedFinding($event)"
+                (barClick)="openFeedBar($event, widget)" />
             </div>
           </div>
         }
@@ -537,6 +538,25 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     if (finding.severity) qp['severity'] = finding.severity;
     if (finding.host) qp['host'] = finding.host;
     this.router.navigate(['/feed'], { queryParams: qp });
+  }
+
+  openFeedBar(event: { field: string; value: string }, widget: DashboardWidget) {
+    const cfg = widget.config;
+    const base = typeof cfg['query_string'] === 'string' && cfg['query_string']
+      ? `(${cfg['query_string']}) AND `
+      : '';
+    const fieldMap: Record<string, string> = {
+      severity: 'severity',
+      source: 'source',
+      'metadata.host': 'host',
+    };
+    const qField = fieldMap[event.field] ?? event.field;
+    this.router.navigate(['/feed'], {
+      queryParams: {
+        q: `${base}${qField}:${event.value}`,
+        index: typeof cfg['index_pattern'] === 'string' ? cfg['index_pattern'] : undefined,
+      },
+    });
   }
 
   openWidget(widget: DashboardWidget) {
