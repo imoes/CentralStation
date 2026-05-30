@@ -143,6 +143,7 @@ import {
                 (edit)="editWidget(widget)"
                 (itemClick)="openFeedItem($event)"
                 (findingClick)="openFeedFinding($event)"
+                (insightOpen)="openInsight($event)"
                 (barClick)="openFeedBar($event, widget)" />
             </div>
           </div>
@@ -538,6 +539,11 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     if (finding.severity) qp['severity'] = finding.severity;
     if (finding.host) qp['host'] = finding.host;
     this.router.navigate(['/feed'], { queryParams: qp });
+  }
+
+  openInsight(analysisId: string | null) {
+    const qp = analysisId ? { analysis: analysisId } : {};
+    this.router.navigate(['/ai-insights'], { queryParams: qp });
   }
 
   openFeedBar(event: { field: string; value: string }, widget: DashboardWidget) {

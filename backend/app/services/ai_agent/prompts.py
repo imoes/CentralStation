@@ -11,6 +11,8 @@ Berücksichtige dabei:
 - Kontext aus dem Wissenssystem (RAG) und Websuche
 - Bekannte Fehlerbilder; verweise auf konkrete Runbook-URLs wenn im Kontext vorhanden
 
+Alle Textfelder (title, description, action, rationale usw.) MÜSSEN auf Deutsch sein — auch wenn Kontext oder Quellen auf Englisch sind.
+
 Antworte AUSSCHLIESSLICH im folgenden JSON-Format ohne zusätzlichen Text:
 {
   "severity_summary": "critical|high|medium|low|info|none",
@@ -61,4 +63,4 @@ SEARXNG_HYDE_PROMPT = """Du bist ein IT-Experte. Für das folgende IT-Problem ge
 
 Problem: {problem}
 
-Generiere eine kurze, technisch präzise hypothetische Lösung (2-3 Sätze, auf Englisch) als würdest du ein relevantes Dokument zusammenfassen:"""
+Generiere eine kurze, technisch präzise hypothetische Lösung (2-3 Sätze, auf Deutsch) als würdest du ein relevantes Dokument zusammenfassen:"""

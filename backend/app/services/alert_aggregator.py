@@ -131,13 +131,17 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
         for m in msgs:
             dedup_key = m.get("dedup_key", "")
             level = m.get("level", 6)
+            msg_text = m.get("message", "")
             # HTTP errors from Docker containers get severity from status code, not syslog level
             http_code = m.get("http_response_code")
             if http_code:
                 level = 4 if int(http_code) >= 500 else 5
                 title = f"HTTP {http_code} — {m.get('container_name') or m.get('source', '')}"
+                body = msg_text
             else:
-                title = m["message"][:200]
+                title = msg_text[:200]
+                # Only set body if message was truncated (there's more content beyond the title)
+                body = msg_text if len(msg_text) > 200 else None
             base = (connector.base_url or "").rstrip("/")
             from urllib.parse import quote
             src_host = m.get("source", "")
@@ -152,7 +156,7 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
                 "source": "graylog",
                 "severity": severity_map.get(level, "medium"),
                 "title": title,
-                "body": m["message"],
+                "body": body,
                 "external_id": f"glog:{dedup_key or m['id']}",
                 "external_url": graylog_url if base else None,
                 "metadata": {
@@ -479,14 +483,17 @@ async def run_aggregation(db: AsyncSession) -> int:
 
             async def _do_enrich(docs_to_enrich: list[dict]) -> None:
                 from app.services.feed_enricher import enrich_batch
+                from app.services.settings import get_searxng_config
                 async with AsyncSessionLocal() as s:
                     agent_cfg = await get_agent_config(s)
                     if not agent_cfg.auto_enrich:
                         return
                     llm_cfg = await get_llm_config(s)
+                    searxng = await get_searxng_config(s)
+                    searxng_url = searxng.base_url if (agent_cfg.workflow_web_search and searxng.is_configured) else ""
                     relevant = await _filter_enrichable_docs(docs_to_enrich, s)
                 if relevant:
-                    asyncio.create_task(enrich_batch(relevant, llm_cfg))
+                    asyncio.create_task(enrich_batch(relevant, llm_cfg, searxng_url=searxng_url))
 
             asyncio.create_task(_do_enrich(docs))
         except Exception as exc:

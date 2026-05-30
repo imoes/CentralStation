@@ -514,8 +514,9 @@ async def get_widget_data(
         )
         analysis = result.scalar_one_or_none()
         if not analysis:
-            return {"summary": "", "findings": [], "recommendations": [], "run_at": None}
+            return {"analysis_id": None, "summary": "", "findings": [], "recommendations": [], "run_at": None}
         return {
+            "analysis_id": str(analysis.id),
             "summary": analysis.severity_summary,
             "findings": [
                 {

@@ -53,7 +53,7 @@ class ITAikbConnector(BaseConnector):
     async def search(self, query: str, space_keys: list[str] | None = None) -> list[dict]:
         """Standard RRF hybrid search with LLM answer — for knowledge questions."""
         payload: dict = {"query": query, "space_keys": space_keys or [], "deepsearch_mode": False}
-        async with self._client(timeout=45.0) as client:
+        async with self._client(timeout=300.0) as client:
             r = await client.post(
                 f"{self.base_url}/search",
                 headers=self._headers(),
@@ -72,7 +72,7 @@ class ITAikbConnector(BaseConnector):
         """Agentic DeepSearch via SSE — waits for the final sources event."""
         results: list[dict] = []
         payload = {"query": query, "deepsearch_mode": True}
-        async with self._client(timeout=120.0) as client:
+        async with self._client(timeout=300.0) as client:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/search/stream",

@@ -28,7 +28,7 @@ DEFAULT_JQL_QUERIES = [
     },
     {
         "name": "Hohe Priorität",
-        "jql": "assignee = currentUser() AND priority in (Highest, High) AND statusCategory != Done ORDER BY priority ASC, updated DESC",
+        "jql": "assignee = currentUser() AND priority in (Kritisch, Hoch) AND statusCategory != Done ORDER BY priority ASC, updated DESC",
         "position": 2,
     },
 ]

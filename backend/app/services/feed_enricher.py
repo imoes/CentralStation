@@ -68,7 +68,27 @@ async def _hyde_rag_lookup(item: dict, llm, aikb_svc) -> str:
         return ""
 
 
-async def _enrich_one(item: dict, llm, aikb_svc=None) -> str | None:
+async def _web_search(query: str, searxng_url: str, results_count: int = 5) -> str:
+    """Run a SearXNG web search and return formatted snippets."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+            r = await client.get(
+                f"{searxng_url}/search",
+                params={"q": query, "format": "json"},
+            )
+            if r.status_code == 200:
+                results = [
+                    f"- {x.get('title')}: {x.get('content', '')[:200]}"
+                    for x in r.json().get("results", [])[:results_count]
+                ]
+                return "\n".join(results)
+    except Exception as e:
+        log.debug("Web search failed: %s", e)
+    return ""
+
+
+async def _enrich_one(item: dict, llm, aikb_svc=None, searxng_url: str = "") -> str | None:
     """Generate and store an AI insight for a single feed item. Returns the insight text."""
     from app.core.opensearch import get_opensearch
     from app.services.feed_index import _index  # type: ignore[attr-defined]
@@ -92,6 +112,12 @@ async def _enrich_one(item: dict, llm, aikb_svc=None) -> str | None:
         rag_snippet = await _hyde_rag_lookup(item, llm, aikb_svc)
         if rag_snippet:
             user_content += f"\n\nRelevante Wissensbasis:\n{rag_snippet}"
+
+    # Web search step
+    if searxng_url:
+        web_snippet = await _web_search(f"{source} {title}", searxng_url)
+        if web_snippet:
+            user_content += f"\n\nWeb-Suchergebnisse:\n{web_snippet}"
 
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -134,7 +160,7 @@ def _build_llm(llm_config, timeout: int = 30):
     return ChatOpenAI(**kwargs)
 
 
-async def enrich_single(item: dict, llm_config) -> str | None:
+async def enrich_single(item: dict, llm_config, searxng_url: str = "") -> str | None:
     """Enrich a single feed item on demand. Returns insight text or None."""
     if not llm_config or not llm_config.is_configured:
         return None
@@ -144,7 +170,7 @@ async def enrich_single(item: dict, llm_config) -> str | None:
         log.warning("Could not initialise LLM for on-demand enrichment: %s", e)
         return None
     aikb_svc = await _load_aikb_svc()
-    return await _enrich_one(item, llm, aikb_svc)
+    return await _enrich_one(item, llm, aikb_svc, searxng_url=searxng_url)
 
 
 async def _load_aikb_svc():
@@ -171,11 +197,12 @@ async def _load_aikb_svc():
     return None
 
 
-async def enrich_batch(items: list[dict], llm_config) -> None:
+async def enrich_batch(items: list[dict], llm_config, searxng_url: str = "") -> None:
     """Enrich a batch of feed items with AI insights (best-effort, non-blocking).
 
     Uses HyDE pattern when it-aikb connector is configured:
     LLM generates search query → it-aikb RAG lookup → context-aware explanation.
+    Optional SearXNG web search adds live context if searxng_url is provided.
     """
     if not llm_config or not llm_config.is_configured:
         return
@@ -190,13 +217,12 @@ async def enrich_batch(items: list[dict], llm_config) -> None:
         log.warning("Could not initialise LLM for feed enrichment: %s", e)
         return
 
-    # Load it-aikb connector for HyDE RAG context lookup
     aikb_svc = await _load_aikb_svc()
 
     sem = asyncio.Semaphore(_MAX_CONCURRENT)
 
     async def _guarded(item: dict) -> None:
         async with sem:
-            await _enrich_one(item, llm, aikb_svc)
+            await _enrich_one(item, llm, aikb_svc, searxng_url=searxng_url)
 
     await asyncio.gather(*[_guarded(i) for i in targets], return_exceptions=True)

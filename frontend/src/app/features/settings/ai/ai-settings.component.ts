@@ -40,13 +40,15 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
       'agent.aggregation_interval_minutes',
       'agent.auto_jira',
       'agent.auto_enrich',
+      'agent.rag_enabled',
+      'workflow.web_search',
       'agent.jira_severity_threshold',
       'agent.checkmk_locations',
     ],
   },
 ];
 
-const BOOLEAN_KEYS = new Set(['searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'llm.thinking_mode']);
+const BOOLEAN_KEYS = new Set(['searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled', 'llm.thinking_mode', 'workflow.web_search']);
 const SELECT_KEYS: Record<string, string[]> = {
   'llm.api_mode': ['chat_completions', 'responses'],
   'agent.jira_severity_threshold': ['critical', 'high', 'medium'],
@@ -280,6 +282,8 @@ export class AiSettingsComponent implements OnInit {
       'agent.aggregation_interval_minutes':   'Alert-Abruf Intervall (Minuten)',
       'agent.auto_jira':                      'Automatisch Jira-Tickets erstellen',
       'agent.auto_enrich':                    'KI-Anreicherung automatisch (aus = On Demand)',
+      'agent.rag_enabled':                    'Wissensdatenbank-Suche (RAG) im KI-Agenten',
+      'workflow.web_search':                  'Websuche bei KI-Analyse (News Feed / Alerts)',
       'agent.jira_severity_threshold':        'Mindest-Severity für Jira',
       'agent.checkmk_locations':              'CheckMK Standort-Filter (Komma-getrennt, z.B. München,Kassel)',
       'agent.checkmk_ve':                     'CheckMK VE-Filter (Komma-getrennt, z.B. VE1,VE2)',

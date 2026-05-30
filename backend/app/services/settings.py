@@ -49,8 +49,10 @@ class AgentConfig:
     aggregation_interval_minutes: int = 2
     auto_jira: bool = True
     auto_enrich: bool = True
+    rag_enabled: bool = True
     jira_severity_threshold: str = "critical"
     checkmk_locations: list = None  # type: ignore[assignment]
+    workflow_web_search: bool = True
 
     def __post_init__(self):
         if self.checkmk_locations is None:
@@ -142,6 +144,8 @@ async def get_agent_config(db: AsyncSession) -> AgentConfig:
         aggregation_interval_minutes=int(s.get("agent.aggregation_interval_minutes") or 2),
         auto_jira=s.get("agent.auto_jira", "true") == "true",
         auto_enrich=s.get("agent.auto_enrich", "true") == "true",
+        rag_enabled=s.get("agent.rag_enabled", "true") == "true",
         jira_severity_threshold=s.get("agent.jira_severity_threshold") or "critical",
         checkmk_locations=_csv_list(s, "agent.checkmk_locations"),
+        workflow_web_search=s.get("workflow.web_search", "true") == "true",
     )

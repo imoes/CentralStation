@@ -84,6 +84,9 @@ class JiraConnector(BaseConnector):
         payload = {"jql": jql, "maxResults": 50, "fields": fields}
         async with self._client(timeout=30.0) as client:
             r = await client.post(self._api("/search"), headers=self._headers(), json=payload)
+            if r.status_code == 400:
+                msgs = r.json().get("errorMessages", []) or list(r.json().get("errors", {}).values())
+                raise ValueError(f"Ungültige JQL-Abfrage: {'; '.join(msgs) if msgs else r.text[:200]}")
             r.raise_for_status()
         return r.json().get("issues", [])
 
