@@ -44,7 +44,7 @@ def _alert_state(critical: int, high: int) -> str:
     return "green"
 
 
-async def build_worklist(db: Any, *, hours: int = 24, size: int = 15) -> dict:
+async def build_worklist(db: Any, *, hours: int = 24, size: int = 15, user_id: str | None = None) -> dict:
     """Build and persist the prioritised worklist. Returns the snapshot dict."""
     from app.core.opensearch import get_opensearch
     from app.services.alert_scorer import score_alert
@@ -56,7 +56,14 @@ async def build_worklist(db: Any, *, hours: int = 24, size: int = 15) -> dict:
     # Apply the SAME exclusion searches the feed uses, so the worklist never
     # surfaces curated noise / blind alarms that the operator already hid.
     from app.services.feed_index import get_exclusion_must_not_clauses
-    must_not = [{"term": {"status": "resolved"}}]
+    # Unhandled only: exclude resolved AND acknowledged alerts.
+    # "acknowledged" = someone noted it but it's not fixed — still a problem,
+    # but already seen. Whether to show them is a separate preference; for now
+    # the worklist focuses on fresh unhandled items only.
+    must_not = [
+        {"term": {"status": "resolved"}},
+        {"term": {"status": "acknowledged"}},
+    ]
     try:
         must_not.extend(await get_exclusion_must_not_clauses(db))
     except Exception as e:
@@ -91,7 +98,27 @@ async def build_worklist(db: Any, *, hours: int = 24, size: int = 15) -> dict:
         log.warning("worklist: aggregation failed: %s", e)
         return await _save_snapshot(db, [], "green", 0)
 
-    # ── 2. Build candidates + recent_counts (recurrence) ──────────────────────
+    # ── 2. Load user scope preferences (same filters the feed applies) ───────────
+    user_prefs = None
+    if user_id:
+        try:
+            from sqlalchemy import select
+            from app.models.workflow import UserPreference
+            import uuid as _uuid
+            r = await db.execute(select(UserPreference).where(UserPreference.user_id == _uuid.UUID(user_id)))
+            user_prefs = r.scalar_one_or_none()
+        except Exception as e:
+            log.debug("worklist: prefs load failed: %s", e)
+
+    def _scope_filter(s: list | None) -> set[str] | None:
+        return {v.lower() for v in s if v} if s else None
+
+    pref_locations   = _scope_filter(user_prefs.checkmk_locations)   if user_prefs else None
+    pref_ve          = _scope_filter(user_prefs.checkmk_ve)          if user_prefs else None
+    pref_criticality = _scope_filter(user_prefs.checkmk_criticality) if user_prefs else None
+    pref_os          = _scope_filter(user_prefs.checkmk_os)          if user_prefs else None
+
+    # ── 3. Build candidates + recent_counts (recurrence) ──────────────────────
     recent_counts: dict[str, int] = {}
     host_sources: dict[str, set] = {}
     candidates: list[dict] = []
@@ -108,6 +135,22 @@ async def build_worklist(db: Any, *, hours: int = 24, size: int = 15) -> dict:
             continue
         meta = doc.get("metadata") or {}
         host = meta.get("host") or meta.get("agent") or meta.get("container_name") or ""
+
+        # Apply user's CheckMK scope: skip checkmk alerts outside the user's
+        # location/ve/criticality if those prefs are set. Non-checkmk sources
+        # always pass (same logic as the feed's _apply_metadata_filters).
+        if doc.get("source") == "checkmk" and any([pref_locations, pref_ve, pref_criticality, pref_os]):
+            loc  = (meta.get("location") or "").lower()
+            ve   = (meta.get("ve") or "").lower()
+            crit = (meta.get("criticality") or "").lower()
+            os_v = (meta.get("os") or "").lower()
+            # A value is only filtered when the field is present AND doesn't match.
+            # Empty field = unknown = always shown (consistent with feed behaviour).
+            if pref_locations   and loc  and not any(f in loc  for f in pref_locations):   continue
+            if pref_ve          and ve   and not any(f in ve   for f in pref_ve):          continue
+            if pref_criticality and crit and not any(f in crit for f in pref_criticality): continue
+            if pref_os          and os_v and not any(f in os_v for f in pref_os):          continue
+
         recent_counts[ext_id] = count
         if host:
             host_sources.setdefault(host, set()).add(doc.get("source", ""))
