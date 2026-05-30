@@ -7,7 +7,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, audit, preferences, jira_view, workflow, feed, feed_searches, dashboard_widgets, help as help_router
+from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, audit, preferences, jira_view, workflow, feed, feed_searches, dashboard_widgets, bridge, help as help_router
 from app.api import settings as settings_router
 from app.core.config import settings
 from app.core.opensearch import close_opensearch
@@ -69,6 +69,7 @@ app.include_router(workflow.router, prefix="/api")
 app.include_router(feed.router, prefix="/api")
 app.include_router(feed_searches.router, prefix="/api")
 app.include_router(dashboard_widgets.router, prefix="/api")
+app.include_router(bridge.router, prefix="/api")
 app.include_router(help_router.router, prefix="/api")
 app.include_router(ws.router)
 

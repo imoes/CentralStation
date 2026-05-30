@@ -86,6 +86,7 @@ interface NavItem {
 export class App implements OnInit, OnDestroy {
   private readonly navItems: NavItem[] = [
     { path: '/dashboard',    label: 'Dashboard',        icon: 'dashboard',    roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/bridge',       label: 'Brücke',           icon: 'rocket_launch',roles: ['admin','sysadmin','network_technician','viewer'] },
     { path: '/feed',         label: 'News Feed',        icon: 'feed',         roles: ['admin','sysadmin','network_technician'] },
     { path: '/alerts',       label: 'Alerts',           icon: 'notifications',roles: ['admin','sysadmin'] },
     { path: '/my-tickets',   label: 'Meine Tickets',    icon: 'assignment',   roles: ['admin','sysadmin'] },
