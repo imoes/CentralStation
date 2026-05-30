@@ -213,10 +213,14 @@ async def get_feed(
     def _pref_list(val: list | None) -> list[str] | None:
         return [str(v) for v in val if v] if val else None
 
-    effective_os          = os          or (_pref_list(prefs.checkmk_os)          if prefs else None)
-    effective_location    = location    or (_pref_list(prefs.checkmk_locations)   if prefs else None)
-    effective_ve          = ve          or (_pref_list(prefs.checkmk_ve)          if prefs else None)
-    effective_criticality = criticality or (_pref_list(prefs.checkmk_criticality) if prefs else None)
+    # When an explicit host filter is given (e.g. from bridge click), skip the
+    # preference-based default filters — the user wants to see THAT host regardless
+    # of their saved location/ve/criticality scope.
+    pref_override = bool(host)
+    effective_os          = os          or (None if pref_override else _pref_list(prefs.checkmk_os)          if prefs else None)
+    effective_location    = location    or (None if pref_override else _pref_list(prefs.checkmk_locations)   if prefs else None)
+    effective_ve          = ve          or (None if pref_override else _pref_list(prefs.checkmk_ve)          if prefs else None)
+    effective_criticality = criticality or (None if pref_override else _pref_list(prefs.checkmk_criticality) if prefs else None)
     effective_hostgroup   = [v.strip() for v in hostgroup.split(",") if v.strip()] if hostgroup else None
 
     items = await feed_index.search(

@@ -340,9 +340,23 @@ async def bridge_status(
     # ── 4. Fleet vitals + forecast warnings (from cs-metrics-checkmk) ────────
     vitals, forecasts = await _compute_metrics(os_client)
 
-    # ── 5. AI-prioritised worklist (cached snapshot, no LLM at request time) ──
-    from app.services.worklist_builder import get_latest_worklist
+    # ── 5. AI-prioritised worklist — build fresh for this user's scope ─────────
+    # We rebuild on each status call only if no recent snapshot exists (< 16 min).
+    # This ensures the worklist always respects the requesting user's CheckMK filters.
+    from app.services.worklist_builder import get_latest_worklist, build_worklist
+    from app.services.settings import get_agent_config as _get_ac
     worklist = await get_latest_worklist(db)
+    rebuild_needed = (
+        worklist is None
+        or not worklist.get("created_at")
+        or (datetime.now(timezone.utc) - datetime.fromisoformat(worklist["created_at"].replace("Z", "+00:00"))) > timedelta(minutes=16)
+    )
+    if rebuild_needed:
+        try:
+            _cfg = await _get_ac(db)
+            worklist = await build_worklist(db, hours=24, size=_cfg.worklist_size, user_id=str(user.id))
+        except Exception as _e:
+            log.debug("bridge: worklist rebuild failed: %s", _e)
 
     return {
         "alert_state": alert_state,
@@ -374,5 +388,5 @@ async def refresh_worklist(
     from app.services.worklist_builder import build_worklist
     from app.services.settings import get_agent_config
     cfg = await get_agent_config(db)
-    snapshot = await build_worklist(db, hours=24, size=cfg.worklist_size)
+    snapshot = await build_worklist(db, hours=24, size=cfg.worklist_size, user_id=str(user.id))
     return {"ok": True, "count": len(snapshot.get("items", []))}
