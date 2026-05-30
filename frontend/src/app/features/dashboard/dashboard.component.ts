@@ -144,6 +144,7 @@ import {
                 (itemClick)="openFeedItem($event)"
                 (findingClick)="openFeedFinding($event)"
                 (insightOpen)="openInsight($event)"
+                (donutClick)="openFeedSeverity($event)"
                 (barClick)="openFeedBar($event, widget)" />
             </div>
           </div>
@@ -539,6 +540,10 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     if (finding.severity) qp['severity'] = finding.severity;
     if (finding.host) qp['host'] = finding.host;
     this.router.navigate(['/feed'], { queryParams: qp });
+  }
+
+  openFeedSeverity(severity: string) {
+    this.router.navigate(['/feed'], { queryParams: { severity: severity.toLowerCase() } });
   }
 
   openInsight(analysisId: string | null) {
