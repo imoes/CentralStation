@@ -237,7 +237,7 @@ export class MySettingsComponent implements OnInit {
   readonly themes: { id: 'classic'|'holo'|'lcars'; label: string; desc: string; swatch: string }[] = [
     { id: 'classic', label: 'Klassisch', desc: 'Hell, aufgeräumt, blauer Schleier', swatch: 'linear-gradient(135deg,#eef4fb,#1565c0)' },
     { id: 'holo',    label: 'Holo-HUD',  desc: 'Dunkelblau, Cyan-Glow',            swatch: 'linear-gradient(135deg,#050d1a,#4fd6ff)' },
-    { id: 'lcars',   label: 'LCARS',     desc: 'Schwarz/Orange, Star Trek',        swatch: 'linear-gradient(135deg,#000,#ff9966)' },
+    { id: 'lcars',   label: 'LCARS',     desc: 'Schwarz/Orange, Star Trek',        swatch: 'linear-gradient(135deg,#000 40%,#e87c3a)' },
   ];
 
   pwCurrent = '';
