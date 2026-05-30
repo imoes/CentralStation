@@ -76,6 +76,8 @@ class AgentConfig:
     flap_threshold: int = 3
     score_learning_enabled: bool = True
     score_delta_decay_days: int = 7
+    worklist_interval_minutes: int = 15
+    worklist_size: int = 15
 
     def __post_init__(self):
         if self.checkmk_locations is None:
@@ -187,4 +189,6 @@ async def get_agent_config(db: AsyncSession) -> AgentConfig:
         flap_threshold=int(s.get("agent.flap_threshold") or 3),
         score_learning_enabled=s.get("agent.score_learning_enabled", "true") == "true",
         score_delta_decay_days=int(s.get("agent.score_delta_decay_days") or 7),
+        worklist_interval_minutes=int(s.get("agent.worklist_interval_minutes") or 15),
+        worklist_size=int(s.get("agent.worklist_size") or 15),
     )

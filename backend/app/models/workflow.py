@@ -112,6 +112,43 @@ class Dashboard(Base):
     )
 
 
+class AiInsightCache(Base):
+    """Cached AI verdict per recurring alert, keyed by its dedup external_id.
+
+    Avoids re-calling the (slow) LLM for alerts that keep firing — the same
+    cmk:host:service gets analysed once and reused until the verdict expires.
+    """
+    __tablename__ = "ai_insight_cache"
+
+    cache_key: Mapped[str] = mapped_column(String(120), primary_key=True)  # external_id
+    severity: Mapped[str | None] = mapped_column(String(12))
+    sample_title: Mapped[str | None] = mapped_column(String(300))
+    verdict: Mapped[str | None] = mapped_column(Text)        # short "why + first action"
+    hit_count: Mapped[int] = mapped_column(Integer, default=1)
+    first_seen: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorklistSnapshot(Base):
+    """Latest AI-prioritised worklist for the bridge. One row replaced each run."""
+    __tablename__ = "worklist_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+    items: Mapped[list] = mapped_column(JSON, default=list)   # ranked worklist entries
+    alert_state: Mapped[str] = mapped_column(String(10), default="green")
+    open_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class AlertScoreAdjustment(Base):
     """Adaptive scoring: learned delta for a specific alert pattern.
 
