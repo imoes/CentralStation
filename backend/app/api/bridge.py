@@ -36,6 +36,134 @@ def _state_from_counts(critical: int, high: int) -> str:
     return "green"
 
 
+# Percentage metrics we forecast toward a breach threshold
+_FORECAST_METRICS = {
+    "fs_used_percent":  {"label": "Disk", "threshold": 100.0, "warn_at": 80.0},
+    "mem_used_percent": {"label": "RAM",  "threshold": 95.0,  "warn_at": 85.0},
+}
+# Metrics shown as current fleet vitals (highest pressure first)
+_VITAL_METRICS = {
+    "fs_used_percent":  {"label": "Disk", "unit": "%"},
+    "mem_used_percent": {"label": "RAM",  "unit": "%"},
+    "load1":            {"label": "CPU",  "unit": ""},
+}
+
+
+def _linreg_eta(points: list[tuple[float, float]], threshold: float) -> float | None:
+    """Given (timestamp_sec, value) points, project linearly to `threshold`.
+    Returns hours-until-threshold (>0) or None if not trending toward it."""
+    n = len(points)
+    if n < 3:
+        return None
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    ss_xx = sum((x - mx) ** 2 for x in xs)
+    if ss_xx == 0:
+        return None
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / ss_xx  # value per second
+    if slope <= 0:
+        return None  # not growing
+    current = ys[-1]
+    if current >= threshold:
+        return 0.0
+    seconds_to = (threshold - current) / slope
+    hours = seconds_to / 3600
+    return hours if hours >= 0 else None
+
+
+async def _compute_metrics(os_client) -> tuple[list, list]:
+    """Compute fleet vitals (current pressure) + forecast warnings (projected breaches)
+    from the cs-metrics-checkmk index. Pure CPU math on stored time series."""
+    vitals: list[dict] = []
+    forecasts: list[dict] = []
+    try:
+        from dateutil.parser import parse as _parse
+        # Pull recent metric points; group by host+metric, keep the series
+        resp = await os_client.search(
+            index="cs-metrics-checkmk",
+            body={
+                "query": {"range": {"timestamp": {"gte": "now-12h"}}},
+                "size": 0,
+                "aggs": {
+                    "by_metric": {
+                        "terms": {"field": "metric", "size": 10},
+                        "aggs": {
+                            "by_host": {
+                                "terms": {"field": "host", "size": 200},
+                                "aggs": {
+                                    "series": {
+                                        "top_hits": {
+                                            "size": 30,
+                                            "sort": [{"timestamp": {"order": "asc"}}],
+                                            "_source": ["value", "timestamp", "unit"],
+                                        }
+                                    }
+                                },
+                            }
+                        },
+                    }
+                },
+            },
+            ignore_unavailable=True,
+        )
+        metric_buckets = resp.get("aggregations", {}).get("by_metric", {}).get("buckets", [])
+
+        for mb in metric_buckets:
+            metric = mb["key"]
+            for hb in mb.get("by_host", {}).get("buckets", []):
+                host = hb["key"]
+                hits = hb.get("series", {}).get("hits", {}).get("hits", [])
+                series = []
+                for h in hits:
+                    src = h["_source"]
+                    try:
+                        ts = _parse(src["timestamp"]).timestamp()
+                        series.append((ts, float(src["value"])))
+                    except Exception:
+                        pass
+                if not series:
+                    continue
+                current = series[-1][1]
+                unit = (hits[-1]["_source"].get("unit") or "")
+
+                # Vitals (current pressure)
+                if metric in _VITAL_METRICS:
+                    vitals.append({
+                        "host": host, "metric": metric,
+                        "label": _VITAL_METRICS[metric]["label"],
+                        "value": round(current, 1),
+                        "unit": _VITAL_METRICS[metric]["unit"] or unit,
+                    })
+
+                # Forecast (projected breach)
+                if metric in _FORECAST_METRICS:
+                    cfg = _FORECAST_METRICS[metric]
+                    eta = _linreg_eta(series, cfg["threshold"])
+                    # only warn if currently elevated AND trending to breach within 48h
+                    if eta is not None and current >= cfg["warn_at"] and eta <= 48:
+                        forecasts.append({
+                            "host": host, "metric": metric,
+                            "label": cfg["label"],
+                            "current": round(current, 1),
+                            "threshold": cfg["threshold"],
+                            "eta_hours": round(eta, 1),
+                        })
+    except Exception as e:
+        log.warning("bridge: metrics computation failed: %s", e)
+
+    # Top vitals per metric (highest first), max 4 per metric
+    top_vitals: list[dict] = []
+    for metric in _VITAL_METRICS:
+        rows = sorted([v for v in vitals if v["metric"] == metric], key=lambda x: -x["value"])[:4]
+        top_vitals.extend(rows)
+
+    # Forecasts: soonest breach first
+    forecasts.sort(key=lambda f: f["eta_hours"])
+    return top_vitals, forecasts[:6]
+
+
 @router.get("/status")
 async def bridge_status(
     user: CurrentUser,
@@ -209,7 +337,10 @@ async def bridge_status(
         key=lambda x: (-_SEV_RANK.get("critical" if x["critical"] else ("high" if x["high"] else "info"), 0), x["name"]),
     )[:8]
 
-    # ── 4. AI-prioritised worklist (cached snapshot, no LLM at request time) ──
+    # ── 4. Fleet vitals + forecast warnings (from cs-metrics-checkmk) ────────
+    vitals, forecasts = await _compute_metrics(os_client)
+
+    # ── 5. AI-prioritised worklist (cached snapshot, no LLM at request time) ──
     from app.services.worklist_builder import get_latest_worklist
     worklist = await get_latest_worklist(db)
 
@@ -225,6 +356,8 @@ async def bridge_status(
         "sectors": sector_list,
         "primary_incident": primary_incident,
         "logs": sensor_log,
+        "vitals": vitals,
+        "forecasts": forecasts,
         "worklist": worklist["items"] if worklist else [],
         "worklist_open_count": worklist["open_count"] if worklist else 0,
         "worklist_updated": worklist["created_at"] if worklist else None,

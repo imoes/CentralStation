@@ -12,12 +12,16 @@ interface WorkItem {
   rank: number; external_id: string; severity: string; source: string; title: string;
   host: string; location: string; verdict: string; count: number; oldest: string; score: number;
 }
+interface Vital { host: string; metric: string; label: string; value: number; unit: string; }
+interface Forecast { host: string; metric: string; label: string; current: number; threshold: number; eta_hours: number; }
 interface BridgeStatus {
   alert_state: 'red' | 'yellow' | 'green';
   counts: { critical: number; high: number; medium: number; total: number };
   sources: SourceStatus[];
   sectors: SectorStatus[];
   logs: LogEntry[];
+  vitals: Vital[];
+  forecasts: Forecast[];
   worklist: WorkItem[];
   worklist_open_count: number;
   worklist_updated: string | null;
@@ -85,6 +89,17 @@ interface BridgeStatus {
             </span>
           </div>
 
+          @if ((status()?.forecasts ?? []).length) {
+            <div class="forecast-strip">
+              <span class="forecast-icon">⚠ PROGNOSE</span>
+              @for (f of status()?.forecasts ?? []; track f.host + f.metric) {
+                <span class="forecast-pill" (click)="openHost(f.host)">
+                  {{ f.label }} <b>{{ f.host.split('.')[0] }}</b> {{ f.current }}% → {{ f.threshold }}% in {{ etaLabel(f.eta_hours) }}
+                </span>
+              }
+            </div>
+          }
+
           <div class="worklist">
             @for (w of status()?.worklist ?? []; track w.external_id) {
               <div class="work-row" [attr.data-sev]="w.severity" (click)="openItem(w)">
@@ -123,19 +138,35 @@ interface BridgeStatus {
           </div>
         </main>
 
-        <!-- ── Right: live logs ───────────────────────────────────────── -->
-        <aside class="panel logs">
-          <div class="panel-label">LOGS · LIVE</div>
-          <div class="log-stream">
-            @for (e of status()?.logs ?? []; track e.created_at + e.title) {
-              <div class="log-line" [attr.data-sev]="e.severity" (click)="openLog(e)">
-                <span class="log-dot"></span>
-                <div class="log-body">
-                  <span class="log-title">{{ e.title }}</span>
-                  <span class="log-meta">{{ sourceLabel(e.source) }}@if (e.host) { · {{ e.host }} } · {{ relTime(e.created_at) }}</span>
+        <!-- ── Right: fleet vitals + live logs ────────────────────────── -->
+        <aside class="rightcol">
+          <div class="panel vitals">
+            <div class="panel-label">FLEET-VITALS</div>
+            @for (v of status()?.vitals ?? []; track v.host + v.metric) {
+              <div class="vital-row" (click)="openHost(v.host)">
+                <span class="vital-label">{{ v.label }}</span>
+                <span class="vital-host">{{ v.host.split('.')[0] }}</span>
+                <div class="vital-bar">
+                  <div class="vital-fill" [attr.data-level]="vitalLevel(v)" [style.width.%]="vitalPct(v)"></div>
                 </div>
+                <span class="vital-val">{{ v.value }}{{ v.unit }}</span>
               </div>
-            } @empty { <div class="muted">Keine Logdaten</div> }
+            } @empty { <div class="muted">Keine Metrikdaten</div> }
+          </div>
+
+          <div class="panel logs">
+            <div class="panel-label">LOGS · LIVE</div>
+            <div class="log-stream">
+              @for (e of status()?.logs ?? []; track e.created_at + e.title) {
+                <div class="log-line" [attr.data-sev]="e.severity" (click)="openLog(e)">
+                  <span class="log-dot"></span>
+                  <div class="log-body">
+                    <span class="log-title">{{ e.title }}</span>
+                    <span class="log-meta">{{ sourceLabel(e.source) }}@if (e.host) { · {{ e.host }} } · {{ relTime(e.created_at) }}</span>
+                  </div>
+                </div>
+              } @empty { <div class="muted">Keine Logdaten</div> }
+            </div>
           </div>
         </aside>
       </div>
@@ -156,8 +187,25 @@ interface BridgeStatus {
     .clock { font-size: 15px; letter-spacing: .12em; font-variant-numeric: tabular-nums; font-weight: 600; }
     .theme-btn, .exit-btn { border: none; cursor: pointer; font-family: inherit; font-weight: 700; letter-spacing: .1em; padding: 5px 12px; border-radius: 4px; font-size: 12px; }
 
-    .bridge-grid { flex: 1; display: grid; gap: 14px; padding: 0 18px 16px; grid-template-columns: 248px 1fr 300px; min-height: 0; }
+    .bridge-grid { flex: 1; display: grid; gap: 14px; padding: 0 18px 16px; grid-template-columns: 248px 1fr 320px; min-height: 0; }
     .rail { display: flex; flex-direction: column; }
+    .rightcol { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+    .rightcol .vitals { flex: 0 0 auto; }
+    .rightcol .logs { flex: 1; min-height: 0; }
+
+    /* Forecast strip */
+    .forecast-strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: 8px; }
+    .forecast-icon { font-size: 12px; font-weight: 800; letter-spacing: .1em; flex-shrink: 0; }
+    .forecast-pill { font-size: 12px; padding: 3px 10px; border-radius: 12px; cursor: pointer; }
+    .forecast-pill b { font-family: 'Fira Code',monospace; }
+
+    /* Vitals */
+    .vital-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+    .vital-label { font-size: 10px; font-weight: 800; width: 32px; flex-shrink: 0; }
+    .vital-host { font-size: 11px; font-family: 'Fira Code',monospace; width: 86px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .vital-bar { flex: 1; height: 8px; border-radius: 4px; overflow: hidden; }
+    .vital-fill { height: 100%; border-radius: 4px; }
+    .vital-val { font-size: 11px; font-weight: 700; width: 46px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
     .panel { display: flex; flex-direction: column; gap: 7px; padding: 14px; border-radius: 10px; overflow: hidden; min-height: 0; }
     .panel-label { font-size: 11px; font-weight: 800; letter-spacing: .22em; opacity: .8; margin-bottom: 4px; }
     .sectors-label { margin-top: 14px; }
@@ -247,6 +295,18 @@ interface BridgeStatus {
     .theme-lcars .work-host { color: #ffcc99; }
     .theme-lcars .work-verdict { color: #cc99cc; }
     .theme-lcars .nominal-icon, .theme-lcars .nominal-text { color: #66cc66; }
+    .theme-lcars .forecast-strip { background: #2a1d0a; border: 1px solid #ffcc00; }
+    .theme-lcars .forecast-icon { color: #ffcc00; }
+    .theme-lcars .forecast-pill { background: #ffcc00; color: #000; }
+    .theme-lcars .vitals { background: #1c1710; }
+    .theme-lcars .vitals .panel-label { color: #ffcc66; }
+    .theme-lcars .vital-label { color: #ff9966; }
+    .theme-lcars .vital-host { color: #ffcc99; }
+    .theme-lcars .vital-val { color: #ffcc99; }
+    .theme-lcars .vital-bar { background: #000; }
+    .theme-lcars .vital-fill[data-level="ok"] { background: #66cc66; }
+    .theme-lcars .vital-fill[data-level="high"] { background: #ffcc00; }
+    .theme-lcars .vital-fill[data-level="crit"] { background: #ff5544; }
     .theme-lcars .logs { background: #ff9966; border-radius: 0 18px 60px 0; padding: 14px 6px 14px 14px; }
     .theme-lcars .logs .panel-label { color: #000; }
     .theme-lcars .log-line { background: #000; }
@@ -291,6 +351,16 @@ interface BridgeStatus {
     .theme-holo .work-host { color: #cff6ff; }
     .theme-holo .work-verdict { color: #8fd0e8; }
     .theme-holo .nominal-icon, .theme-holo .nominal-text { color: #3dffa8; text-shadow: 0 0 18px rgba(61,255,168,.5); }
+    .theme-holo .forecast-strip { background: rgba(255,216,74,.08); border: 1px solid rgba(255,216,74,.4); }
+    .theme-holo .forecast-icon { color: #ffe27a; }
+    .theme-holo .forecast-pill { background: rgba(255,216,74,.15); color: #ffe27a; border: 1px solid rgba(255,216,74,.4); }
+    .theme-holo .vital-label { color: #5fc8ee; }
+    .theme-holo .vital-host { color: #bfefff; }
+    .theme-holo .vital-val { color: #cff6ff; }
+    .theme-holo .vital-bar { background: rgba(79,214,255,.1); }
+    .theme-holo .vital-fill[data-level="ok"] { background: #3dffa8; box-shadow: 0 0 8px rgba(61,255,168,.6); }
+    .theme-holo .vital-fill[data-level="high"] { background: #ffd84a; box-shadow: 0 0 8px rgba(255,216,74,.6); }
+    .theme-holo .vital-fill[data-level="crit"] { background: #ff5b6e; box-shadow: 0 0 8px rgba(255,91,110,.6); }
     .theme-holo .log-line { background: rgba(79,214,255,.04); }
     .theme-holo .log-title { color: #bfefff; }
     .theme-holo .log-dot { background: #3dffa8; box-shadow: 0 0 6px #3dffa8; }
@@ -382,6 +452,27 @@ export class BridgeComponent implements OnInit, OnDestroy {
   }
   openSource(src: string) {
     this.router.navigate(['/feed'], { queryParams: { source: src } });
+  }
+  openHost(host: string) {
+    this.router.navigate(['/feed'], { queryParams: { host } });
+  }
+
+  etaLabel(hours: number): string {
+    if (hours < 1) return `${Math.round(hours * 60)} Min`;
+    if (hours < 48) return `~${Math.round(hours)} Std`;
+    return `~${Math.round(hours / 24)} Tg`;
+  }
+
+  vitalPct(v: Vital): number {
+    // percentage metrics map directly; load is scaled against a nominal ceiling of 8
+    if (v.unit === '%') return Math.min(100, v.value);
+    return Math.min(100, (v.value / 8) * 100);
+  }
+  vitalLevel(v: Vital): string {
+    const pct = this.vitalPct(v);
+    if (pct >= 90) return 'crit';
+    if (pct >= 75) return 'high';
+    return 'ok';
   }
 
   workService(w: WorkItem): string {
