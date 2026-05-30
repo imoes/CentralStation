@@ -4,6 +4,7 @@ import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { environment } from '../../../environments/environment';
 import { WebsocketService } from '../../core/services/websocket.service';
+import { ThemeService } from '../../core/services/theme.service';
 
 interface SourceStatus { name: string; state: string; critical: number; high: number; total: number; }
 interface SectorStatus { name: string; state: string; critical: number; high: number; total: number; }
@@ -33,7 +34,7 @@ interface BridgeStatus {
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="bridge" [class.t-lcars]="theme()==='lcars'" [class.t-holo]="theme()==='holo'"
+    <div class="bridge" [class.t-lcars]="theme()==='lcars'" [class.t-holo]="theme()==='holo'" [class.t-classic]="theme()==='classic'"
          [attr.data-alert]="status()?.alert_state ?? 'green'">
 
       <!-- ══ LCARS frame: top sweep ══ -->
@@ -42,7 +43,6 @@ interface BridgeStatus {
         <div class="bar-seg seg-a">CENTRALSTATION</div>
         <div class="alert-banner" [attr.data-state]="status()?.alert_state ?? 'green'">{{ alertLabel() }}</div>
         <div class="bar-seg seg-b">{{ clock() }}</div>
-        <button class="pill-btn theme" (click)="toggleTheme()">{{ theme()==='lcars' ? 'HOLO' : 'LCARS' }}</button>
         <button class="pill-btn exit" (click)="exit()">EXIT</button>
         <div class="cap cap-tr"></div>
       </div>
@@ -240,6 +240,46 @@ interface BridgeStatus {
 
     @keyframes redPulse { 0%,100%{opacity:1} 50%{opacity:.5} }
 
+    /* ═══════════════ THEME: CLASSIC (hell, blauer Schleier, rund) ═══════════════ */
+    .t-classic { color:#1f2933;
+      background:
+        radial-gradient(circle at 50% 18%, color-mix(in srgb, #1565c0 18%, transparent), transparent 30rem),
+        linear-gradient(150deg, #eef4fb, #e6eef7 60%, #eef4fb); }
+    .t-classic .cap { display:none; }
+    .t-classic .seg-a { background:#1565c0; color:#fff; border-radius:14px; }
+    .t-classic .seg-b { background:#fff; color:#1f2933; border-radius:14px; box-shadow:0 1px 4px rgba(0,0,0,.12); }
+    .t-classic .seg-c { display:none; }
+    .t-classic .alert-banner { color:#1565c0; }
+    .t-classic[data-alert="red"] .alert-banner { color:#c62828; animation:redPulse 1s infinite; }
+    .t-classic[data-alert="yellow"] .alert-banner { color:#ef6c00; }
+    .t-classic .pill-btn.theme, .t-classic .pill-btn.exit { background:#fff; color:#1565c0; border:1px solid #cdd9e5; border-radius:14px; }
+    .t-classic .rail-label { color:#5b6b7b; }
+    .t-classic .rail-pill { background:#fff; color:#1f2933; border:1px solid #d7e0ea; border-radius:14px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .t-classic .rail-pill[data-state="red"] { border-left:5px solid #c62828; }
+    .t-classic .rail-pill[data-state="yellow"] { border-left:5px solid #ef6c00; }
+    .t-classic .hero-title { color:#1f2933; }
+    .t-classic .pill-btn.refresh { background:#1565c0; color:#fff; }
+    .t-classic .forecast-strip { background:#fff7e6; border:1px solid #ffc107; }
+    .t-classic .fc-icon { color:#ef6c00; } .t-classic .fc-pill { background:#ffecb3; color:#5d4037; }
+    .t-classic .work-row { background:#fff; border:1px solid #dde6ef; border-radius:14px; box-shadow:0 2px 6px rgba(0,0,0,.06); }
+    .t-classic .work-row[data-sev="critical"] { border-left:6px solid #c62828; }
+    .t-classic .work-row[data-sev="high"] { border-left:6px solid #ef6c00; }
+    .t-classic .work-rank { color:#90a4b8; }
+    .t-classic .work-sev { background:#c62828; color:#fff; }
+    .t-classic .work-row[data-sev="high"] .work-sev { background:#ef6c00; }
+    .t-classic .work-host { color:#1f2933; } .t-classic .work-svc { color:#5b6b7b; }
+    .t-classic .work-verdict { color:#37474f; }
+    .t-classic .nom-ic, .t-classic .nom-tx { color:#2e7d32; }
+    .t-classic .block { background:#fff; border:1px solid #dde6ef; border-radius:14px; }
+    .t-classic .block-head { background:#f1f5fa; color:#5b6b7b; }
+    .t-classic .v-lab { color:#5b6b7b; } .t-classic .v-host, .t-classic .v-val { color:#1f2933; }
+    .t-classic .v-bar { background:#e8eef4; }
+    .t-classic .v-fill[data-level="ok"]{ background:#2e7d32; } .t-classic .v-fill[data-level="high"]{ background:#ef6c00; } .t-classic .v-fill[data-level="crit"]{ background:#c62828; }
+    .t-classic .log-line { background:#f7fafc; } .t-classic .log-title { color:#37474f; } .t-classic .log-dot { background:#2e7d32; }
+    .t-classic .log-line[data-sev="critical"] .log-dot { background:#c62828; } .t-classic .log-line[data-sev="high"] .log-dot { background:#ef6c00; }
+    .t-classic .num-cell { border:1px solid #dde6ef; border-radius:14px; background:#fff; }
+    .t-classic .num-cell.crit b { color:#c62828; } .t-classic .num-cell.high b { color:#ef6c00; } .t-classic .num-cell.open b { color:#1565c0; }
+
     /* ═══════════════ THEME: LCARS ═══════════════ */
     .t-lcars { background:#000; color:#ff9966; font-family:'Antonio','Eurostile',sans-serif; text-transform:uppercase; }
     .t-lcars .work-verdict, .t-lcars .log-title { text-transform:none; }  /* keep prose readable */
@@ -336,11 +376,12 @@ export class BridgeComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private ws = inject(WebsocketService);
 
+  private themeSvc = inject(ThemeService);
   status = signal<BridgeStatus | null>(null);
   loading = signal(true);
   refreshing = signal(false);
   clock = signal('');
-  theme = signal<'lcars' | 'holo'>((localStorage.getItem('bridge_theme') as 'lcars'|'holo') || 'lcars');
+  theme = this.themeSvc.theme;   // follows the global app theme
 
   private pollTimer?: ReturnType<typeof setInterval>;
   private clockTimer?: ReturnType<typeof setInterval>;
@@ -355,6 +396,7 @@ export class BridgeComponent implements OnInit, OnDestroy {
   worklistAge = computed(() => { const u = this.status()?.worklist_updated; return u ? this.relTime(u) : '—'; });
 
   ngOnInit() {
+    document.body.classList.add('bridge-active');
     this.load();
     this.tickClock();
     this.pollTimer = setInterval(() => this.load(), 15_000);
@@ -362,6 +404,7 @@ export class BridgeComponent implements OnInit, OnDestroy {
     this.wsSub = this.ws.messages().subscribe((m: any) => { if (m?.type === 'ai_insight' || m?.type === 'alert') this.load(); });
   }
   ngOnDestroy() {
+    document.body.classList.remove('bridge-active');
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.clockTimer) clearInterval(this.clockTimer);
     this.wsSub?.unsubscribe();
@@ -382,7 +425,6 @@ export class BridgeComponent implements OnInit, OnDestroy {
       next: () => { this.refreshing.set(false); this.load(); }, error: () => this.refreshing.set(false),
     });
   }
-  toggleTheme() { const n = this.theme()==='lcars'?'holo':'lcars'; this.theme.set(n); localStorage.setItem('bridge_theme', n); }
   exit() { this.router.navigate(['/dashboard']); }
   openItem(w: WorkItem) { this.router.navigate(['/feed'], { queryParams: { severity: w.severity, host: w.host || undefined } }); }
   openLog(e: LogEntry) { this.router.navigate(['/feed'], { queryParams: { source: e.source, host: e.host || undefined } }); }

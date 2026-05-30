@@ -35,6 +35,8 @@ class UserPreference(Base):
     feed_disabled_search_ids: Mapped[list | None] = mapped_column(JSON)
     # Ticket seen map — {jira_key: ISO-timestamp} for badge tracking (server-side)
     ticket_seen_map: Mapped[dict | None] = mapped_column(JSON)
+    # UI theme: "classic" | "holo" | "lcars"
+    ui_theme: Mapped[str | None] = mapped_column(String(20), default="classic")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

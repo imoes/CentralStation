@@ -53,6 +53,7 @@ class PreferenceUpdate(BaseModel):
     checkmk_hostgroups:         list | None = None
     feed_disabled_search_ids:   list | None = None
     ticket_seen_map:            dict | None = None
+    ui_theme:                   str | None = None
 
 
 class JQLQueryCreate(BaseModel):
@@ -119,6 +120,7 @@ async def get_preferences(user: CurrentUser, db: Annotated[AsyncSession, Depends
         "checkmk_hostgroups":       prefs.checkmk_hostgroups  or [],
         "feed_disabled_search_ids": prefs.feed_disabled_search_ids or [],
         "ticket_seen_map": prefs.ticket_seen_map or {},
+        "ui_theme": getattr(prefs, "ui_theme", None) or "classic",
     }
 
 

@@ -10,6 +10,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatBadgeModule } from '@angular/material/badge';
 import { AuthService } from './core/auth/auth.service';
 import { WebsocketService } from './core/services/websocket.service';
+import { ThemeService } from './core/services/theme.service';
 import { environment } from '../environments/environment';
 
 interface NavItem {
@@ -101,6 +102,7 @@ export class App implements OnInit, OnDestroy {
   unreadTicketCount = signal<number>(0);
   private badgeInterval: ReturnType<typeof setInterval> | null = null;
   private http = inject(HttpClient);
+  private themeService = inject(ThemeService);
 
   visibleNavItems = computed(() => {
     const role = this.auth.userRole();
@@ -108,9 +110,12 @@ export class App implements OnInit, OnDestroy {
   });
 
   constructor(public auth: AuthService, private ws: WebsocketService) {
+    // Apply the locally-stored theme immediately (before login / first paint)
+    this.themeService.initFromStorage();
     effect(() => {
       if (this.auth.isLoggedIn()) {
         this.auth.fetchMe();
+        this.themeService.loadFromPreference();
         this.ws.connect();
         if (!this.badgeInterval) this.startBadgePolling();
       } else {

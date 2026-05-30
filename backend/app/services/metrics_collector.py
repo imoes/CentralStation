@@ -112,12 +112,20 @@ async def collect_checkmk_metrics() -> int:
     return written
 
 
+import re as _re
+_SWITCH_RE = _re.compile(r'^ns[asc]\d', _re.IGNORECASE)
+
+
 async def _get_active_hosts(connector: "CheckMKConnector") -> list[str]:
-    """Return hostnames with active WARN/CRIT services in CheckMK."""
+    """Return hostnames with active WARN/CRIT services in CheckMK.
+
+    Switch hosts (nsa*/nss*/nsc*) are skipped — they belong to the network module
+    and are excluded from the sysadmin feed, so their metrics would be inconsistent
+    (vitals for hosts the feed never shows)."""
     try:
         problems = await connector.get_problems(time_range_minutes=120)
-        hosts = list({p.get("host", "") for p in problems if p.get("host")})
-        return [h for h in hosts if h]
+        hosts = {p.get("host", "") for p in problems if p.get("host")}
+        return [h for h in hosts if h and not _SWITCH_RE.match(h.split(".")[0])]
     except Exception as e:
         log.debug("metrics_collector: could not get active hosts: %s", e)
         return []
