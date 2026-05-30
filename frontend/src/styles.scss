@@ -72,26 +72,27 @@ html.cs-theme-holo {
 }
 html.cs-theme-holo body { background: radial-gradient(circle at 50% 12%, rgba(20,60,90,.45), transparent 40rem), linear-gradient(160deg,#02060f,#050d1a 60%,#02060f); }
 
-/* ───── LCARS: black + orange/gold ───── */
+/* ───── LCARS: black + orange/gold/blue (authentic TNG palette) ───── */
+/* Dominant: orange structural, gold buttons, blue accents — violet barely exists */
 html.cs-theme-lcars {
   color-scheme: dark;
-  --mat-sys-surface: #0a0a0a;
-  --mat-sys-surface-container: #161616;
-  --mat-sys-surface-container-high: #1f1a12;
+  --mat-sys-surface: #000000;
+  --mat-sys-surface-container: #141008;
+  --mat-sys-surface-container-high: #1e1710;
   --mat-sys-surface-container-highest: #261f14;
-  --mat-sys-surface-container-low: #101010;
-  --mat-sys-surface-variant: #1f1a12;
-  --mat-sys-on-surface: #ffcc99;
-  --mat-sys-on-surface-variant: #cc99cc;
-  --mat-sys-primary: #ff9966;
+  --mat-sys-surface-container-low: #0a0804;
+  --mat-sys-surface-variant: #1e1710;
+  --mat-sys-on-surface: #ffe8a0;           /* gold/cream text */
+  --mat-sys-on-surface-variant: #e8a060;   /* amber text */
+  --mat-sys-primary: #e87c3a;              /* LCARS orange (structural) */
   --mat-sys-on-primary: #000000;
-  --mat-sys-primary-container: #5a2d12;
-  --mat-sys-on-primary-container: #ffcc99;
-  --mat-sys-secondary: #ffcc66;
-  --mat-sys-tertiary: #cc99cc;
-  --mat-sys-outline: #6a4a2a;
-  --mat-sys-outline-variant: #3a2c1a;
-  --mat-sys-error: #ff5544;
+  --mat-sys-primary-container: #4a2010;
+  --mat-sys-on-primary-container: #ffe8a0;
+  --mat-sys-secondary: #ffcc66;            /* gold (buttons/labels) */
+  --mat-sys-tertiary: #7fb3d3;             /* blue accent (very limited) */
+  --mat-sys-outline: #5a3a18;
+  --mat-sys-outline-variant: #3a2810;
+  --mat-sys-error: #ff4433;
   --mat-sys-background: #000000;
 }
 html.cs-theme-lcars body { background: #000; }

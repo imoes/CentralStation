@@ -292,22 +292,22 @@ interface BridgeStatus {
     .t-lcars .cap-bl { border-radius:0 0 0 46px; }
     .t-lcars .cap-br { border-radius:0 0 46px 0; width:30px; }
     .t-lcars .seg-a { background:#ffcc66; color:#000; border-radius:0; min-width:200px; justify-content:flex-end; }
-    .t-lcars .seg-b { background:#cc99cc; color:#000; }
-    .t-lcars .seg-c { background:#9999cc; }
+    .t-lcars .seg-b { background:#7fb3d3; color:#000; }
+    .t-lcars .seg-c { background:#7fb3d3; }
     .t-lcars .alert-banner { background:#000; color:#ffcc66; }
     .t-lcars[data-alert="red"] .alert-banner { color:#ff5544; animation:redPulse 1s infinite; }
     .t-lcars[data-alert="yellow"] .alert-banner { color:#ffcc00; }
-    .t-lcars .pill-btn.theme { background:#9999cc; color:#000; }
+    .t-lcars .pill-btn.theme { background:#7fb3d3; color:#000; }
     .t-lcars .pill-btn.exit { background:#cc6666; color:#000; }
     /* left rail pills — the classic LCARS sidebar */
     .t-lcars .rail-label { color:#ffcc66; }
     .t-lcars .rail-pill { background:#ff9966; color:#000; border-radius:0 18px 18px 0; }
-    .t-lcars .rail-pill:nth-child(3n) { background:#cc99cc; }
+    .t-lcars .rail-pill:nth-child(3n) { background:#7fb3d3; }
     .t-lcars .rail-pill:nth-child(3n+1) { background:#ffcc66; }
     .t-lcars .rail-pill[data-state="red"] { background:#ff5544; }
     .t-lcars .rail-pill[data-state="yellow"] { background:#ffcc00; }
     .t-lcars .hero-title { color:#ff9966; }
-    .t-lcars .pill-btn.refresh { background:#9999cc; color:#000; }
+    .t-lcars .pill-btn.refresh { background:#7fb3d3; color:#000; }
     .t-lcars .forecast-strip { background:#2a1d0a; border:1px solid #ffcc00; }
     .t-lcars .fc-icon { color:#ffcc00; } .t-lcars .fc-pill { background:#ffcc00; color:#000; }
     .t-lcars .work-row { background:#15120c; border-left:7px solid #ffcc66; border-radius:0 8px 8px 0; }
@@ -316,12 +316,12 @@ interface BridgeStatus {
     .t-lcars .work-rank { color:#ff9966; }
     .t-lcars .work-sev { background:#ffcc66; color:#000; }
     .t-lcars .work-row[data-sev="critical"] .work-sev { background:#ff5544; }
-    .t-lcars .work-host { color:#ffcc99; } .t-lcars .work-svc { color:#cc99cc; }
+    .t-lcars .work-host { color:#ffcc99; } .t-lcars .work-svc { color:#7fb3d3; }
     .t-lcars .work-verdict { color:#ffcc99; }
     .t-lcars .nom-ic, .t-lcars .nom-tx { color:#66cc66; }
     .t-lcars .block { background:#15120c; }
     .t-lcars .block-head { background:#ff9966; color:#000; }
-    .t-lcars .block.logs .block-head { background:#cc99cc; }
+    .t-lcars .block.logs .block-head { background:#7fb3d3; }
     .t-lcars .v-lab { color:#ff9966; } .t-lcars .v-host, .t-lcars .v-val { color:#ffcc99; }
     .t-lcars .v-bar { background:#000; }
     .t-lcars .v-fill[data-level="ok"]{ background:#66cc66; } .t-lcars .v-fill[data-level="high"]{ background:#ffcc00; } .t-lcars .v-fill[data-level="crit"]{ background:#ff5544; }
@@ -329,7 +329,7 @@ interface BridgeStatus {
     .t-lcars .log-title { color:#ffcc99; } .t-lcars .log-dot { background:#66cc66; }
     .t-lcars .log-line[data-sev="critical"] .log-dot { background:#ff5544; } .t-lcars .log-line[data-sev="high"] .log-dot { background:#ffcc00; }
     .t-lcars .num-cell.crit { background:#ff5544; color:#000; } .t-lcars .num-cell.high { background:#ffcc00; color:#000; }
-    .t-lcars .num-cell.med { background:#ffcc66; color:#000; } .t-lcars .num-cell.open { background:#9999cc; color:#000; }
+    .t-lcars .num-cell.med { background:#ffcc66; color:#000; } .t-lcars .num-cell.open { background:#7fb3d3; color:#000; }
 
     /* ═══════════════ THEME: HOLO ═══════════════ */
     .t-holo { color:#7fdfff; background:radial-gradient(circle at 50% 20%,rgba(20,60,90,.5),transparent 60%),linear-gradient(160deg,#02060f,#050d1a 60%,#02060f); }
