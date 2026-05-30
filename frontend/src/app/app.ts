@@ -157,7 +157,12 @@ export class App implements OnInit, OnDestroy {
             let changed = false;
             const updatedMap = { ...seenMap };
             for (const group of groups) {
-              for (const issue of group.issues ?? []) {
+              for (const issue of (group.issues ?? []) as Array<{ key: string; fields: { updated: string; status?: { statusCategory?: { key: string } } } }>) {
+                const isDone = issue.fields.status?.statusCategory?.key === 'done';
+                if (isDone) {
+                  if (issue.key in updatedMap) { delete updatedMap[issue.key]; changed = true; }
+                  continue;
+                }
                 const seen = updatedMap[issue.key];
                 if (!seen) { updatedMap[issue.key] = now; changed = true; continue; }
                 if (new Date(issue.fields.updated) > new Date(seen)) count++;
