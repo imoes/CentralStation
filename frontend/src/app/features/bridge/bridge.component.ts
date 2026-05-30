@@ -52,14 +52,22 @@ interface BridgeStatus {
         <aside class="rail">
           <div class="rail-label">SYSTEME</div>
           @for (s of status()?.sources ?? []; track s.name) {
-            <button class="rail-pill" [attr.data-state]="s.state" (click)="openSource(s.name)">
+            <button class="rail-pill" [attr.data-state]="s.state"
+                    [class.active]="activeSource() === s.name"
+                    (click)="toggleSourceFilter(s.name)">
               <span class="rp-name">{{ sourceLabel(s.name) }}</span>
               <span class="rp-val">{{ s.critical ? s.critical : (s.high ? s.high : 'OK') }}</span>
             </button>
           }
+          @if (activeSource()) {
+            <button class="rail-pill clear-filter" (click)="toggleSourceFilter('')">
+              <span class="rp-name">✕ Filter</span>
+            </button>
+          }
           <div class="rail-label">SEKTOREN</div>
           @for (sec of status()?.sectors ?? []; track sec.name) {
-            <button class="rail-pill" [attr.data-state]="sec.state" (click)="openSource('')">
+            <button class="rail-pill" [attr.data-state]="sec.state"
+                    (click)="openFeedWithLocation(sec.name)">
               <span class="rp-name">{{ sec.name }}</span>
               <span class="rp-val">{{ sec.critical ? sec.critical : (sec.high ? sec.high : 'OK') }}</span>
             </button>
@@ -87,7 +95,7 @@ interface BridgeStatus {
           }
 
           <div class="worklist">
-            @for (w of status()?.worklist ?? []; track w.external_id) {
+            @for (w of filteredWorklist(); track w.external_id) {
               <div class="work-row" [attr.data-sev]="w.severity" (click)="openItem(w)">
                 <div class="work-rank">{{ w.rank }}</div>
                 <div class="work-body">
@@ -181,6 +189,8 @@ interface BridgeStatus {
     .rp-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .rp-val { font-weight:800; font-variant-numeric:tabular-nums; }
     .rail-muted { font-size:12px; opacity:.5; padding:4px 8px; }
+    .rail-pill.active { outline: 2px solid currentColor; outline-offset: 2px; font-weight: 800; }
+    .rail-pill.clear-filter { opacity: .7; font-style: italic; }
     .rail-fill { flex:1; min-height:8px; }
 
     /* hero */
@@ -381,7 +391,14 @@ export class BridgeComponent implements OnInit, OnDestroy {
   loading = signal(true);
   refreshing = signal(false);
   clock = signal('');
+  activeSource = signal<string>('');   // '' = no filter, 'checkmk'|'graylog'|'wazuh' = filtered
   theme = this.themeSvc.theme;   // follows the global app theme
+
+  filteredWorklist = computed(() => {
+    const src = this.activeSource();
+    const all = this.status()?.worklist ?? [];
+    return src ? all.filter(w => w.source === src) : all;
+  });
 
   private pollTimer?: ReturnType<typeof setInterval>;
   private clockTimer?: ReturnType<typeof setInterval>;
@@ -428,8 +445,12 @@ export class BridgeComponent implements OnInit, OnDestroy {
   exit() { this.router.navigate(['/dashboard']); }
   openItem(w: WorkItem) { this.router.navigate(['/feed'], { queryParams: { severity: w.severity, host: w.host || undefined } }); }
   openLog(e: LogEntry) { this.router.navigate(['/feed'], { queryParams: { source: e.source, host: e.host || undefined } }); }
-  openSource(src: string) { if (src) this.router.navigate(['/feed'], { queryParams: { source: src } }); }
+  toggleSourceFilter(src: string) {
+    // Toggle: clicking same source again clears the filter
+    this.activeSource.set(this.activeSource() === src ? '' : src);
+  }
   openHost(h: string) { this.router.navigate(['/feed'], { queryParams: { host: h } }); }
+  openFeedWithLocation(loc: string) { this.router.navigate(['/feed'], { queryParams: { q: `metadata.location:${loc}` } }); }
 
   etaLabel(h: number): string { if (h < 1) return `${Math.round(h*60)}Min`; if (h < 48) return `~${Math.round(h)}Std`; return `~${Math.round(h/24)}Tg`; }
   vitalPct(v: Vital): number { return v.unit === '%' ? Math.min(100, v.value) : Math.min(100, (v.value/8)*100); }

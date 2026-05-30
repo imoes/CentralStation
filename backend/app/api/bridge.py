@@ -198,9 +198,21 @@ async def bridge_status(
                         "terms": {"field": "source", "size": 10},
                         "aggs": {"sev": {"terms": {"field": "severity", "size": 10}}},
                     },
+                    # location_name is empty for CheckMK (ID-Generator enrichment only
+                    # runs for Graylog/Wazuh). Use the CheckMK metadata.location folder
+                    # field instead — it contains the site path (e.g. "muenchen", "kassel").
                     "by_location": {
-                        "terms": {"field": "location_name", "size": 30},
+                        "terms": {"field": "location_city", "size": 30},
                         "aggs": {"sev": {"terms": {"field": "severity", "size": 10}}},
+                    },
+                    "by_checkmk_location": {
+                        "filter": {"term": {"source": "checkmk"}},
+                        "aggs": {
+                            "locs": {
+                                "terms": {"field": "metadata.location.keyword", "size": 30},
+                                "aggs": {"sev": {"terms": {"field": "severity", "size": 10}}},
+                            }
+                        },
                     },
                 },
             },
@@ -223,17 +235,32 @@ async def bridge_status(
                 elif sev["key"] == "high":
                     sources[src]["high"] = sev["doc_count"]
 
+        # location_city (Graylog/Wazuh) → sectors
         for b in aggs.get("by_location", {}).get("buckets", []):
             loc = b["key"]
             if not loc:
                 continue
             crit = high = 0
             for sev in b.get("sev", {}).get("buckets", []):
-                if sev["key"] == "critical":
-                    crit = sev["doc_count"]
-                elif sev["key"] == "high":
-                    high = sev["doc_count"]
+                if sev["key"] == "critical": crit = sev["doc_count"]
+                elif sev["key"] == "high": high = sev["doc_count"]
             sectors[loc] = {"critical": crit, "high": high, "total": b["doc_count"]}
+
+        # metadata.location.keyword (CheckMK folder paths) → sectors
+        for b in aggs.get("by_checkmk_location", {}).get("locs", {}).get("buckets", []):
+            loc = (b["key"] or "").strip().strip("/").replace("/", " › ")
+            if not loc or len(loc) < 2:
+                continue
+            crit = high = 0
+            for sev in b.get("sev", {}).get("buckets", []):
+                if sev["key"] == "critical": crit = sev["doc_count"]
+                elif sev["key"] == "high": high = sev["doc_count"]
+            if loc in sectors:
+                sectors[loc]["critical"] += crit
+                sectors[loc]["high"] += high
+                sectors[loc]["total"] += b["doc_count"]
+            else:
+                sectors[loc] = {"critical": crit, "high": high, "total": b["doc_count"]}
     except Exception as e:
         log.warning("bridge_status: aggregation failed: %s", e)
 
