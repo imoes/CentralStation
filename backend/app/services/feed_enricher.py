@@ -217,27 +217,33 @@ async def enrich_batch(
     if not severity_candidates:
         return
 
-    threshold = getattr(agent_cfg, "enrich_score_threshold", 80) if agent_cfg else 80
-    min_age = getattr(agent_cfg, "interval_minutes", 10) if agent_cfg else 10
-    flap_window = getattr(agent_cfg, "flap_window_minutes", 30) if agent_cfg else 30
-    flap_threshold = getattr(agent_cfg, "flap_threshold", 3) if agent_cfg else 3
+    scoring_on = not agent_cfg or getattr(agent_cfg, "scoring_enabled", True)
 
-    try:
-        from app.services.alert_scorer import score_alerts_batch
-        scored = await score_alerts_batch(
-            severity_candidates, db,
-            min_age_minutes=min_age,
-            flap_window_minutes=flap_window,
-            flap_threshold=flap_threshold,
-        )
-        targets = [a for score, a in scored if score >= threshold]
-        log.info(
-            "feed_enricher: %d/%d items above score threshold %d",
-            len(targets), len(severity_candidates), threshold,
-        )
-    except Exception as e:
-        log.debug("feed_enricher: scoring failed, falling back to all candidates: %s", e)
+    if not scoring_on:
+        # Beta bypass: scoring disabled — all severity-eligible items go to LLM
+        log.info("feed_enricher: CPU scoring disabled — enriching all %d candidates", len(severity_candidates))
         targets = severity_candidates
+    else:
+        threshold   = getattr(agent_cfg, "enrich_score_threshold", 80) if agent_cfg else 80
+        min_age     = getattr(agent_cfg, "interval_minutes", 10) if agent_cfg else 10
+        flap_window = getattr(agent_cfg, "flap_window_minutes", 30) if agent_cfg else 30
+        flap_thr    = getattr(agent_cfg, "flap_threshold", 3) if agent_cfg else 3
+        try:
+            from app.services.alert_scorer import score_alerts_batch
+            scored  = await score_alerts_batch(
+                severity_candidates, db,
+                min_age_minutes=min_age,
+                flap_window_minutes=flap_window,
+                flap_threshold=flap_thr,
+            )
+            targets = [a for score, a in scored if score >= threshold]
+            log.info(
+                "feed_enricher: %d/%d items above score threshold %d",
+                len(targets), len(severity_candidates), threshold,
+            )
+        except Exception as e:
+            log.debug("feed_enricher: scoring failed, falling back: %s", e)
+            targets = severity_candidates
 
     if not targets:
         return

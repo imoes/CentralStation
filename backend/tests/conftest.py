@@ -34,5 +34,6 @@ _make_module(
     FeedSearch=MagicMock(name="FeedSearch"),
     UserPreference=MagicMock(name="UserPreference"),
     DashboardWidget=MagicMock(name="DashboardWidget"),
+    AlertScoreAdjustment=MagicMock(name="AlertScoreAdjustment"),
 )
 _make_module("app.models.alert", Alert=MagicMock(name="Alert"))

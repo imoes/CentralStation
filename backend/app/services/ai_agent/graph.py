@@ -122,7 +122,8 @@ async def collect_data(state: dict, db: Any) -> dict:
 
     # ── CPU-scoring: trim to max_alerts_for_llm ───────────────────────────────
     max_for_llm = state.get("max_alerts_for_llm", 30)
-    if len(raw_alerts) > max_for_llm:
+    scoring_enabled = state.get("scoring_enabled", True)
+    if len(raw_alerts) > max_for_llm and scoring_enabled:
         try:
             from app.services.alert_scorer import score_alerts_batch
             scored = await score_alerts_batch(
@@ -633,6 +634,7 @@ async def run_sysadmin_workflow(
         "max_alerts_for_llm":  agent_config.max_alerts_for_llm,
         "flap_window_minutes": agent_config.flap_window_minutes,
         "flap_threshold":      agent_config.flap_threshold,
+        "scoring_enabled":     agent_config.scoring_enabled,
     }
 
     state = await collect_data(state, db)
