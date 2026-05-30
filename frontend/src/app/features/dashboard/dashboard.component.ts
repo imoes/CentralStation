@@ -530,11 +530,22 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     });
   }
 
+  // Set true by a dedicated inner-element handler (chart segment, finding, list item)
+  // so the host-level (click)="openWidget" — fired by the same bubbling DOM click —
+  // does not clobber the navigation with the widget's base config.
+  private suppressWidgetOpen = false;
+  private markHandled() {
+    this.suppressWidgetOpen = true;
+    setTimeout(() => (this.suppressWidgetOpen = false));
+  }
+
   openFeedItem(itemId: string) {
+    this.markHandled();
     this.router.navigate(['/feed'], { queryParams: { highlight: itemId } });
   }
 
   openFeedFinding(finding: { source: string; host: string | null; severity: string }) {
+    this.markHandled();
     const qp: Record<string, string> = {};
     if (finding.source) qp['source'] = finding.source;
     if (finding.severity) qp['severity'] = finding.severity;
@@ -543,15 +554,18 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   }
 
   openFeedSeverity(severity: string) {
+    this.markHandled();
     this.router.navigate(['/feed'], { queryParams: { severity: severity.toLowerCase() } });
   }
 
   openInsight(analysisId: string | null) {
+    this.markHandled();
     const qp = analysisId ? { analysis: analysisId } : {};
     this.router.navigate(['/ai-insights'], { queryParams: qp });
   }
 
   openFeedBar(event: { field: string; value: string }, widget: DashboardWidget) {
+    this.markHandled();
     const cfg = widget.config;
     const base = typeof cfg['query_string'] === 'string' && cfg['query_string']
       ? `(${cfg['query_string']}) AND `
@@ -571,6 +585,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   }
 
   openWidget(widget: DashboardWidget) {
+    if (this.suppressWidgetOpen) return;
     if (this.configMode()) return;
     if (widget.widget_type === 'grafana_panel') return;
 
