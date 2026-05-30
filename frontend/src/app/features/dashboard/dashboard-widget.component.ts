@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, computed, inject, input, output } from '@angular/core';
+import { Component, computed, inject, input, output, signal } from '@angular/core';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
@@ -91,10 +91,12 @@ import {
                 <div class="ai-summary">
                   <p>{{ aiSummary() }}</p>
                   @for (finding of aiFindings(); track finding.title) {
-                    <div class="finding clickable" (click)="onFindingClick($event, finding)">
-                      <span class="sev-dot" [style.background]="severityColor(finding.severity ?? 'info')"></span>
-                      <span>{{ finding.title }}</span>
-                      <mat-icon class="finding-arrow">arrow_forward</mat-icon>
+                    <div class="finding-block">
+                      <div class="finding clickable" (click)="onInsightOpen($event)">
+                        <span class="sev-dot" [style.background]="severityColor(finding.severity ?? 'info')"></span>
+                        <span class="finding-title">{{ finding.title }}</span>
+                        <mat-icon class="finding-arrow">arrow_forward</mat-icon>
+                      </div>
                     </div>
                   }
                 </div>
@@ -205,10 +207,24 @@ import {
     .grafana-frame { width: 100%; height: 100%; border: 0; border-radius: 10px; background: #111827; }
     .ai-summary { height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 7px; }
     .ai-summary p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--mat-sys-on-surface-variant); }
+    .finding-block { display: flex; flex-direction: column; }
     .finding { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; padding: 3px 4px; border-radius: 4px; cursor: pointer; }
     .finding:hover { background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent); }
-    .finding-arrow { font-size: 14px; height: 14px; width: 14px; opacity: 0; margin-left: auto; color: var(--mat-sys-primary); }
-    .finding:hover .finding-arrow { opacity: 1; }
+    .finding-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .finding-arrow { font-size: 16px; height: 16px; width: 16px; flex-shrink: 0; color: var(--mat-sys-primary); }
+    .finding-detail {
+      margin: 2px 4px 6px 18px;
+      padding: 8px 10px;
+      background: color-mix(in srgb, var(--mat-sys-primary) 6%, var(--mat-sys-surface-variant));
+      border-left: 2px solid var(--mat-sys-primary);
+      border-radius: 0 6px 6px 0;
+      font-size: 11px; line-height: 1.6;
+      color: var(--mat-sys-on-surface-variant);
+    }
+    .finding-detail p { margin: 0 0 6px; white-space: pre-wrap; word-break: break-word; }
+    .finding-detail-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+    .finding-feed-btn { font-size: 11px; height: 24px; min-width: 0; padding: 0 6px; color: var(--mat-sys-primary); }
+    .finding-feed-btn mat-icon { font-size: 13px; height: 13px; width: 13px; margin-right: 3px; }
     .host-list { display: flex; flex-direction: column; gap: 6px; overflow: auto; height: 100%; }
     .host-group { display: flex; flex-direction: column; gap: 2px; }
     .host-row {
@@ -236,9 +252,12 @@ export class DashboardWidgetComponent {
   readonly edit        = output<void>();
   readonly itemClick   = output<string>();
   readonly findingClick = output<{ source: string; host: string | null; severity: string }>();
+  readonly insightOpen = output<string | null>();
   readonly barClick    = output<{ field: string; value: string }>();
 
   private sanitizer = inject(DomSanitizer);
+
+  expandedFinding = signal<string | null>(null);
 
   // ── derived state (computed = stable reference until deps change) ──────────
 
@@ -289,7 +308,9 @@ export class DashboardWidgetComponent {
 
   readonly aiFindings = computed(() => {
     const d = this.data() as AiSummaryData | undefined;
-    return Array.isArray(d?.findings) ? d.findings : [] as Array<{ title: string; severity?: string }>;
+    return Array.isArray(d?.findings)
+      ? d.findings
+      : [] as Array<{ title: string; severity?: string; description?: string; host?: string | null; source?: string }>;
   });
 
   readonly topHosts = computed(() => {
@@ -449,6 +470,16 @@ export class DashboardWidgetComponent {
     const d = this.data() as BarData | undefined;
     const field = d?.agg_field ?? 'severity';
     this.barClick.emit({ field, value: params.name });
+  }
+
+  toggleFinding(title: string) {
+    this.expandedFinding.update(v => v === title ? null : title);
+  }
+
+  onInsightOpen(event: MouseEvent) {
+    event.stopPropagation();
+    const d = this.data() as AiSummaryData | undefined;
+    this.insightOpen.emit(d?.analysis_id ?? null);
   }
 
   onFindingClick(event: MouseEvent, finding: { source?: string; severity?: string; host?: string | null }) {

@@ -52,6 +52,7 @@ export interface BarData {
 }
 
 export interface AiSummaryData {
+  analysis_id?: string | null;
   summary: string;
   findings: Array<{ title: string; severity?: string; description?: string; host?: string | null; source?: string }>;
   recommendations: Array<{ title: string; priority?: string; description?: string }>;

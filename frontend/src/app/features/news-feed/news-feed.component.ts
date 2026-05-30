@@ -474,6 +474,16 @@ const SEVERITY_COLOR: Record<string, string> = {
                 <mat-icon>add_task</mat-icon>
                 Ticket
               </button>
+              <button mat-button class="action-btn ignore-btn" (click)="ignoreItem(item)"
+                      [disabled]="isIgnoring(item.id)"
+                      matTooltip="KI erstellt Ausschluss-Filter für ähnliche Meldungen">
+                @if (isIgnoring(item.id)) {
+                  <mat-spinner diameter="14" class="ki-spinner"></mat-spinner>
+                } @else {
+                  <mat-icon>block</mat-icon>
+                }
+                Ignorieren
+              </button>
               <span class="spacer"></span>
               <span class="item-type-hint">{{ typeLabel(item.type) }}</span>
             </div>
@@ -727,6 +737,8 @@ const SEVERITY_COLOR: Record<string, string> = {
     }
     .action-btn { font-size: 13px; color: var(--mat-sys-on-surface-variant); }
     .action-btn mat-icon { font-size: 16px; height: 16px; width: 16px; margin-right: 4px; }
+    .ignore-btn { color: var(--mat-sys-error) !important; opacity: 0.7; }
+    .ignore-btn:hover { opacity: 1; }
     .spacer { flex: 1; }
     .item-type-hint { font-size: 11px; color: var(--mat-sys-outline); padding-right: 8px; }
 
@@ -773,6 +785,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   activeFilter = signal<string[]>([]);
   autoEnrich = signal<boolean>(true);
   enrichingIds = signal<Set<string>>(new Set());
+  ignoringIds = signal<Set<string>>(new Set());
   feedSearches = signal<FeedSearch[]>([]);
   activeSearch = signal<FeedSearch | null>(null);
   systemSearches = computed(() => this.feedSearches().filter(s => s.is_system));
@@ -836,12 +849,19 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   private scrollToLastSeen() {
     if (this.hasTriedScrollToLastSeen) return;
     this.hasTriedScrollToLastSeen = true;
-    setTimeout(() => {
-      const divider = document.querySelector('.last-seen-divider');
-      if (divider) {
-        divider.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const attempt = (remaining: number) => {
+      const divider = document.querySelector('.last-seen-divider') as HTMLElement;
+      if (divider && this.scrollContainer) {
+        const offset = divider.getBoundingClientRect().top
+          - this.scrollContainer.getBoundingClientRect().top
+          + this.scrollContainer.scrollTop
+          - 80;
+        this.scrollContainer.scrollTo({ top: offset, behavior: 'smooth' });
+      } else if (!divider && remaining > 0) {
+        setTimeout(() => attempt(remaining - 1), 200);
       }
-    }, 300);
+    };
+    setTimeout(() => attempt(10), 50);
   }
 
   ngOnInit() {
@@ -1115,15 +1135,24 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params }).subscribe({
       next: (data) => {
         if (reset) {
-          this.items.set(data);
-          if (!this.badgeCleared) {
-            this.badgeCleared = true;
-            setTimeout(() => this.app.clearFeedBadge(), 3000);
+          if (silent) {
+            // Silent auto-refresh: only prepend genuinely new items to avoid scroll-jump
+            const existingIds = new Set(this.items().map(i => i.id));
+            const newItems = data.filter(i => !existingIds.has(i.id));
+            if (newItems.length > 0) {
+              this.items.update(prev => [...newItems, ...prev]);
+            }
+          } else {
+            this.items.set(data);
+            if (!this.badgeCleared) {
+              this.badgeCleared = true;
+              setTimeout(() => this.app.clearFeedBadge(), 3000);
+            }
+            const hadHighlight = !!this.highlightId;
+            this.scrollToHighlight();
+            this.highlightId = '';
+            if (!hadHighlight) this.scrollToLastSeen();
           }
-          const hadHighlight = !!this.highlightId;
-          this.scrollToHighlight();
-          this.highlightId = '';   // only pin on first load
-          if (!hadHighlight) this.scrollToLastSeen();
         } else {
           this.items.update(prev => [...prev, ...data]);
         }
@@ -1191,6 +1220,33 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   isEnriching(id: string): boolean { return this.enrichingIds().has(id); }
+
+  ignoreItem(item: FeedItem) {
+    const ids = new Set(this.ignoringIds());
+    ids.add(item.id);
+    this.ignoringIds.set(ids);
+
+    this.http.post<{ name: string; query_string: string }>(
+      `${environment.apiUrl}/feed/${item.id}/ignore`, {}
+    ).subscribe({
+      next: (res) => {
+        const next = new Set(this.ignoringIds());
+        next.delete(item.id);
+        this.ignoringIds.set(next);
+        // Remove all matching items from the local list immediately
+        this.items.update(prev => prev.filter(i => i.id !== item.id));
+        this.snackBar.open(`Ignoriert: „${res.name}" — ähnliche Meldungen werden ausgeblendet`, 'OK', { duration: 5000 });
+      },
+      error: (err) => {
+        const next = new Set(this.ignoringIds());
+        next.delete(item.id);
+        this.ignoringIds.set(next);
+        this.snackBar.open(err?.error?.detail ?? 'Fehler beim Erstellen des Filters', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  isIgnoring(id: string): boolean { return this.ignoringIds().has(id); }
 
   isFirstSeen(item: FeedItem, index: number): boolean {
     const ls = this.lastSeenAt();

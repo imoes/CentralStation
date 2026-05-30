@@ -516,7 +516,7 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
 
   openSession(issue: JiraIssue) {
     this.markSeen(issue);
-    this.dialog.open(WorkSessionDialogComponent, {
+    const ref = this.dialog.open(WorkSessionDialogComponent, {
       width: '820px',
       maxWidth: '95vw',
       data: {
@@ -525,6 +525,10 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
         jira_issue_id: issue.key,
       },
     });
+    // After closing, the ticket may have new activity (e.g. a comment just posted) →
+    // reload so updated timestamps refresh; hasUnread then shows the dot against the
+    // seen-time recorded when the dialog was opened.
+    ref.afterClosed().subscribe(() => this.loadTickets());
   }
 
   priorityColor(name: string = '') { return PRIORITY_COLOR[name] ?? '#757575'; }

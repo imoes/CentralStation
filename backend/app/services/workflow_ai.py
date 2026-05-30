@@ -191,7 +191,7 @@ async def generate_comment(
         "handoff":    "Übergabekommentar — Zusammenfassung für die übernehmende Person",
     }
 
-    # it-aikb DeepSearch for relevant infrastructure/runbook context (hard timeout: 15s)
+    # it-aikb DeepSearch for relevant infrastructure/runbook context (timeout: 180s — deepsearch takes ~2min)
     import asyncio
     kb_text = ""
     if db:
@@ -210,7 +210,7 @@ async def generate_comment(
                 creds = decrypt_credentials(conn.encrypted_credentials)
                 from app.services.connectors.it_aikb import ITAikbConnector
                 svc = ITAikbConnector(base_url=conn.base_url, credentials=creds)
-                results = await asyncio.wait_for(svc.deepsearch(ticket_title), timeout=15.0)
+                results = await asyncio.wait_for(svc.deepsearch(ticket_title), timeout=180.0)
                 if results:
                     snippets = "\n".join(
                         f"- {r.get('title', '')}: {(r.get('content') or r.get('text', ''))[:300]}"
@@ -218,7 +218,7 @@ async def generate_comment(
                     )
                     kb_text = f"\nWissensdatenbank-Kontext:\n{snippets}"
         except asyncio.TimeoutError:
-            log.debug("generate_comment: it-aikb lookup timed out after 15s, skipping")
+            log.debug("generate_comment: it-aikb lookup timed out after 180s, skipping")
         except Exception as e:
             log.debug("generate_comment: it-aikb lookup failed: %s", e)
 
@@ -336,7 +336,7 @@ async def suggest_solution(
                 async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
                     r = await client.get(
                         f"{searxng.base_url}/search",
-                        params={"q": plan["knowledge_query"], "format": "json", "language": "de,en"},
+                        params={"q": plan["knowledge_query"], "format": "json"},
                     )
                     if r.status_code == 200:
                         web_results = [
@@ -378,11 +378,13 @@ Antworte im JSON-Format:
 
 Wichtige JQL-Syntax:
 - assignee = currentUser()  — aktuell eingeloggter Benutzer
-- status != Done / status in (Open, "In Progress")
-- priority in (Highest, High)
+- statusCategory != Done  — NIEMALS status != Done, nur statusCategory verwenden (sprachunabhängig)
+- statusCategory in (new, indeterminate)  — für offene Tickets
+- priority in (Kritisch, Hoch, Normal, Niedrig)  — deutsche Namen, NIEMALS englische (Highest, High, Medium, Low)
 - created >= -7d  /  updated >= startOfDay()
 - project = "IMIT"  — spezifisches Projekt
 - issuetype in (Bug, Task, Story)
+- summary ~ "suchbegriff"  — Textsuche (NIEMALS summary = "...")
 - ORDER BY updated DESC, priority ASC"""
 
 
@@ -402,6 +404,50 @@ async def generate_jql(llm_config: Any, description: str) -> dict:
             "name": description[:50],
             "explanation": "Fallback-Textsuche",
         }
+
+
+_EXCLUSION_SYSTEM = """Du bist ein OpenSearch/Lucene-Query-Experte.
+
+Analysiere eine Monitoring-Meldung und erstelle eine OpenSearch Lucene-Ausschluss-Query,
+die ähnliche Meldungen dauerhaft ausblendet — ohne zu viele andere Meldungen zu blockieren.
+
+Regeln:
+- Nutze bevorzugt das `title`-Feld (body ist oft leer bei kurzen Meldungen)
+- Wähle charakteristische Phrasen oder Muster aus dem Titel (z.B. "[php-fpm:access]", "cci:ccitext")
+- Bei Container-spezifischen Logs: `metadata.container_name:"name"` mit einschließen wenn sinnvoll
+- Nicht zu breit (NICHT nur source:graylog oder severity:info)
+- Nicht zu eng (kein Timestamp, keine exakten numerischen Werte)
+- Antworte im JSON-Format: {"query": "...", "name": "Kurzer Name (max 60 Zeichen)"}
+- Antworte NUR mit dem JSON, kein Markdown, keine Erklärung"""
+
+
+async def generate_exclusion_query(llm_config: Any, item: dict) -> dict:
+    """Generate an OpenSearch exclusion query for a feed item using the LLM."""
+    source = item.get("source", "")
+    title = item.get("title", "")
+    body = (item.get("body") or "")[:300]
+    metadata = item.get("metadata") or {}
+    container = metadata.get("container_name", "")
+    host = metadata.get("host", "") or metadata.get("agent", "")
+
+    prompt_parts = [f"Source: {source}", f"Title: {title}"]
+    if body and body != title:
+        prompt_parts.append(f"Body: {body[:200]}")
+    if container:
+        prompt_parts.append(f"Container: {container}")
+    if host:
+        prompt_parts.append(f"Host: {host}")
+
+    try:
+        raw = await _invoke_llm(llm_config, _EXCLUSION_SYSTEM, "\n".join(prompt_parts))
+        if raw.startswith("```"):
+            raw = raw.split("```")[1].lstrip("json").strip()
+        result = json.loads(raw)
+        return {"query": result.get("query", ""), "name": result.get("name", title[:60])}
+    except Exception as e:
+        log.warning("generate_exclusion_query failed: %s", e)
+        safe = title.replace('"', '\\"')[:100]
+        return {"query": f'title:"{safe}"', "name": f"Ignoriert: {title[:50]}"}
 
 
 async def run_5why_analysis(

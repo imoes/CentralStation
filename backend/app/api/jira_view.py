@@ -75,12 +75,14 @@ async def my_tickets(
     for q in queries:
         merged: dict[str, dict] = {}  # key → issue, dedup across instances
         last_error: str | None = None
+        had_success = False  # at least one connector responded without error
         for _conn, jira in jira_clients:
             try:
                 issues = await jira.search_issues(
                     q.jql,
                     fields=["summary", "status", "priority", "assignee", "created", "updated", "issuetype", "comment"],
                 )
+                had_success = True
                 for issue in issues:
                     key = issue.get("key", "")
                     if key and key not in merged:
@@ -90,7 +92,7 @@ async def my_tickets(
 
         issues_list = sorted(merged.values(), key=lambda i: i.get("fields", {}).get("updated", ""), reverse=True)
         entry: dict = {"id": str(q.id), "name": q.name, "jql": q.jql, "issues": issues_list}
-        if not issues_list and last_error:
+        if not had_success and last_error:
             entry["error"] = last_error
         out.append(entry)
     return out

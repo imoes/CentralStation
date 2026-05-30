@@ -259,7 +259,7 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
                     results = await aikb_svc.search(query)
                     rag_context.append({"source": "aikb-standard", "query": query, "results": results})
             except Exception as e:
-                log.warning("rag_lookup: aikb failed for query '%s': %s", query, e)
+                log.warning("rag_lookup: aikb failed for query '%s': %r", query, e)
 
     # Step 3: SearXNG web search via HyDE pattern
     if searxng_config.is_configured and queries:
@@ -557,7 +557,8 @@ async def run_sysadmin_workflow(
         log.info("run_sysadmin_workflow: no alerts found")
         return state
     state = await enrich(state, db)
-    state = await rag_lookup(state, db, llm_config, searxng_config)
+    if agent_config.rag_enabled:
+        state = await rag_lookup(state, db, llm_config, searxng_config)
     state = await analyze(state, llm_config)
     state = await act(state, db)
     return state

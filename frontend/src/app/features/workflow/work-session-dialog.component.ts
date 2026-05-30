@@ -85,57 +85,84 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
 
         <!-- ── Tab 0: Jira Ticket Content ── -->
         <mat-tab label="Ticket">
-          <div class="tab-content">
-            @if (!session()?.jira_key) {
-              <div class="empty-notes">Kein Jira-Ticket verknüpft.</div>
-            } @else if (!jiraDetail()) {
-              <div class="spinner-center"><mat-spinner diameter="32"></mat-spinner></div>
-            } @else {
-              <div class="ticket-toolbar">
-                <button mat-stroked-button (click)="refreshJiraDetail()" [disabled]="jiraRefreshing()">
-                  @if (jiraRefreshing()) { <mat-spinner diameter="14"></mat-spinner> }
-                  @else { <mat-icon>refresh</mat-icon> }
-                  Jira aktualisieren
-                </button>
-              </div>
-              <!-- Meta row -->
-              <div class="jira-meta-row">
-                <span class="jira-meta-field"><strong>Status:</strong> {{ jiraDetail().status }}</span>
-                <span class="jira-meta-field"><strong>Priorität:</strong> {{ jiraDetail().priority }}</span>
-                @if (jiraDetail().assignee) {
-                  <span class="jira-meta-field"><strong>Zugewiesen:</strong> {{ jiraDetail().assignee }}</span>
-                }
-                <span class="jira-meta-field"><strong>Erstellt:</strong> {{ jiraDetail().created | date:'dd.MM.yyyy HH:mm' }}</span>
-              </div>
-
-              <!-- Description -->
-              <div class="jira-section">
-                <div class="jira-section-title">Beschreibung</div>
-                @if (jiraDetail().description) {
-                  <pre class="jira-body-text">{{ jiraDetail().description }}</pre>
-                } @else {
-                  <span class="empty-notes">Keine Beschreibung.</span>
-                }
-              </div>
-
-              <!-- Comments -->
-              @if (jiraDetail().comments?.length) {
-                <div class="jira-section">
-                  <div class="jira-section-title">Kommentare ({{ jiraDetail().comments.length }})</div>
-                  <div class="comment-list">
-                    @for (c of jiraDetail().comments; track c.id) {
-                      <div class="comment-entry">
-                        <div class="comment-meta">
-                          <mat-icon class="note-icon">person</mat-icon>
-                          <span class="note-author">{{ c.author }}</span>
-                          <span class="note-time">{{ c.created | date:'dd.MM.yyyy HH:mm' }}</span>
-                        </div>
-                        <pre class="note-content">{{ c.body }}</pre>
-                      </div>
-                    }
-                  </div>
+          <div class="ticket-tab-layout">
+            <div class="ticket-scroll-area">
+              @if (!session()?.jira_key) {
+                <div class="empty-notes">Kein Jira-Ticket verknüpft.</div>
+              } @else if (!jiraDetail()) {
+                <div class="spinner-center"><mat-spinner diameter="32"></mat-spinner></div>
+              } @else {
+                <div class="ticket-toolbar">
+                  <button mat-stroked-button (click)="refreshJiraDetail()" [disabled]="jiraRefreshing()">
+                    @if (jiraRefreshing()) { <mat-spinner diameter="14"></mat-spinner> }
+                    @else { <mat-icon>refresh</mat-icon> }
+                    Jira aktualisieren
+                  </button>
                 </div>
+                <!-- Meta row -->
+                <div class="jira-meta-row">
+                  <span class="jira-meta-field"><strong>Status:</strong> {{ jiraDetail().status }}</span>
+                  <span class="jira-meta-field"><strong>Priorität:</strong> {{ jiraDetail().priority }}</span>
+                  @if (jiraDetail().assignee) {
+                    <span class="jira-meta-field"><strong>Zugewiesen:</strong> {{ jiraDetail().assignee }}</span>
+                  }
+                  <span class="jira-meta-field"><strong>Erstellt:</strong> {{ jiraDetail().created | date:'dd.MM.yyyy HH:mm' }}</span>
+                </div>
+
+                <!-- Description -->
+                <div class="jira-section">
+                  <div class="jira-section-title">Beschreibung</div>
+                  @if (jiraDetail().description) {
+                    <pre class="jira-body-text">{{ jiraDetail().description }}</pre>
+                  } @else {
+                    <span class="empty-notes">Keine Beschreibung.</span>
+                  }
+                </div>
+
+                <!-- Comments -->
+                @if (jiraDetail().comments?.length) {
+                  <div class="jira-section">
+                    <div class="jira-section-title">Kommentare ({{ jiraDetail().comments.length }})</div>
+                    <div class="comment-list">
+                      @for (c of jiraDetail().comments; track c.id) {
+                        <div class="comment-entry">
+                          <div class="comment-meta">
+                            <mat-icon class="note-icon">person</mat-icon>
+                            <span class="note-author">{{ c.author }}</span>
+                            <span class="note-time">{{ c.created | date:'dd.MM.yyyy HH:mm' }}</span>
+                          </div>
+                          <pre class="note-content">{{ c.body }}</pre>
+                        </div>
+                      }
+                    </div>
+                  </div>
+                }
               }
+            </div>
+
+            <!-- Sticky comment bar at bottom -->
+            @if (session()?.jira_key) {
+              <div class="ticket-comment-bar">
+                <mat-form-field appearance="outline" class="full-width comment-bar-field">
+                  <mat-label>Kommentar in Jira posten</mat-label>
+                  <textarea matInput [(ngModel)]="manualComment" rows="3" placeholder="Kommentar eingeben…"></textarea>
+                </mat-form-field>
+                <div class="comment-bar-actions">
+                  <button mat-flat-button color="primary"
+                    (click)="postManualComment()"
+                    [disabled]="aiLoading.posting() || !manualComment.trim()">
+                    @if (aiLoading.posting()) {
+                      <mat-spinner diameter="16"></mat-spinner>
+                    } @else {
+                      <mat-icon>send</mat-icon>
+                    }
+                    Posten
+                  </button>
+                  @if (manualCommentPosted()) {
+                    <span class="post-success"><mat-icon>check_circle</mat-icon> Gepostet</span>
+                  }
+                </div>
+              </div>
             }
           </div>
         </mat-tab>
@@ -328,35 +355,6 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
               </div>
             </mat-expansion-panel>
 
-            <!-- Manual Comment -->
-            <mat-expansion-panel>
-              <mat-expansion-panel-header>
-                <mat-panel-title><mat-icon>edit_note</mat-icon> Kommentar manuell schreiben</mat-panel-title>
-              </mat-expansion-panel-header>
-              <div class="panel-body">
-                <mat-form-field appearance="outline" class="full-width">
-                  <mat-label>Kommentartext</mat-label>
-                  <textarea matInput [(ngModel)]="manualComment" rows="6"
-                    placeholder="Kommentar für das Jira-Ticket eingeben…"></textarea>
-                </mat-form-field>
-                <div class="ai-result-actions">
-                  <button mat-flat-button color="primary"
-                    (click)="postManualComment()"
-                    [disabled]="aiLoading.posting() || !session()?.jira_key || !manualComment.trim()"
-                    [matTooltip]="session()?.jira_key ? 'Kommentar in Jira ' + session()?.jira_key + ' posten' : 'Kein Jira-Ticket verknüpft'">
-                    @if (aiLoading.posting()) {
-                      <mat-spinner diameter="16"></mat-spinner> Wird gepostet…
-                    } @else {
-                      <mat-icon>send</mat-icon> In Jira posten
-                    }
-                  </button>
-                  @if (manualCommentPosted()) {
-                    <span class="post-success"><mat-icon>check_circle</mat-icon> In Jira gepostet</span>
-                  }
-                </div>
-              </div>
-            </mat-expansion-panel>
-
             <!-- Resolution Generator -->
             <mat-expansion-panel>
               <mat-expansion-panel-header>
@@ -472,6 +470,11 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
     .sla-label { font-weight: 500; }
     .sla-breach { color: #c62828; font-weight: 700; }
     .form-actions { display: flex; justify-content: flex-end; }
+    .ticket-tab-layout { display: flex; flex-direction: column; height: calc(85vh - 120px); }
+    .ticket-scroll-area { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .ticket-comment-bar { flex-shrink: 0; border-top: 1px solid var(--mat-sys-outline-variant); padding: 10px 16px 12px; background: var(--mat-sys-surface); display: flex; flex-direction: column; gap: 4px; }
+    .comment-bar-field { width: 100%; }
+    .comment-bar-actions { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
     .ticket-toolbar { display: flex; justify-content: flex-end; margin-bottom: 4px; }
     .ticket-toolbar button { font-size: 12px; }
     /* Jira detail tab */

@@ -9,6 +9,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { ActivatedRoute } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
 import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
 import { environment } from '../../../environments/environment';
@@ -41,7 +42,8 @@ const SEVERITY_COLORS: Record<string, string> = {
         <div class="spinner-center"><mat-spinner diameter="40"></mat-spinner></div>
       } @else {
         @for (analysis of analyses(); track analysis.id) {
-          <mat-card class="analysis-card">
+          <mat-card class="analysis-card" [class.highlighted]="analysis.id === highlightId()"
+                    [attr.data-analysis-id]="analysis.id">
             <mat-card-header>
               <div class="analysis-header">
                 <div class="analysis-meta">
@@ -65,7 +67,7 @@ const SEVERITY_COLORS: Record<string, string> = {
             <mat-card-content>
               <mat-accordion>
                 @if (analysis.findings?.length) {
-                  <mat-expansion-panel>
+                  <mat-expansion-panel [expanded]="analysis.id === highlightId()">
                     <mat-expansion-panel-header>
                       <mat-panel-title>Befunde ({{ analysis.findings.length }})</mat-panel-title>
                     </mat-expansion-panel-header>
@@ -166,7 +168,11 @@ const SEVERITY_COLORS: Record<string, string> = {
     .page-container { padding: 24px; max-width: 1000px; }
     .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
     .page-header h2 { margin: 0; }
-    .analysis-card { margin-bottom: 16px; }
+    .analysis-card { margin-bottom: 16px; transition: box-shadow .3s, background .3s; }
+    .analysis-card.highlighted {
+      box-shadow: 0 0 0 2px var(--mat-sys-primary), 0 4px 20px rgba(0,0,0,.18);
+      background: color-mix(in srgb, var(--mat-sys-primary) 6%, var(--mat-sys-surface));
+    }
     .analysis-header { display: flex; flex-direction: column; gap: 6px; width: 100%; }
     .analysis-meta { display: flex; align-items: center; gap: 10px; }
     .analysis-counts { display: flex; gap: 16px; font-size: 12px; color: var(--mat-sys-on-surface-variant); }
@@ -204,19 +210,31 @@ export class AiInsightsComponent implements OnInit, OnDestroy {
   analyses = signal<any[]>([]);
   loading = signal(true);
   triggering = signal(false);
+  highlightId = signal<string | null>(null);
   private destroy$ = new Subject<void>();
 
   constructor(
     private http: HttpClient,
     private ws: WebsocketService,
     private snack: MatSnackBar,
+    private route: ActivatedRoute,
   ) {}
 
   ngOnInit() {
+    this.highlightId.set(this.route.snapshot.queryParamMap.get('analysis'));
     this.load();
     this.ws.messages().pipe(takeUntil(this.destroy$)).subscribe((msg: WsMessage) => {
       if (msg.type === 'ai_insight') this.load();
     });
+  }
+
+  private scrollToHighlight() {
+    const id = this.highlightId();
+    if (!id) return;
+    setTimeout(() => {
+      const el = document.querySelector(`[data-analysis-id="${id}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 200);
   }
 
   ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); }
@@ -224,7 +242,7 @@ export class AiInsightsComponent implements OnInit, OnDestroy {
   load() {
     this.loading.set(true);
     this.http.get<any[]>(`${environment.apiUrl}/ai/analyses`).subscribe({
-      next: data => { this.analyses.set(data); this.loading.set(false); },
+      next: data => { this.analyses.set(data); this.loading.set(false); this.scrollToHighlight(); },
       error: () => this.loading.set(false),
     });
   }

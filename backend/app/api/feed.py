@@ -286,7 +286,7 @@ async def enrich_feed_item(
     """On-demand KI enrichment for a single feed item. Returns ai_insight text."""
     from app.services import feed_index
     from app.services.feed_enricher import enrich_single
-    from app.services.settings import get_llm_config
+    from app.services.settings import get_llm_config, get_agent_config, get_searxng_config
 
     item = await feed_index.get_by_id(item_id)
     if not item:
@@ -300,11 +300,60 @@ async def enrich_feed_item(
     if not llm_config.is_configured:
         raise HTTPException(503, "LLM nicht konfiguriert")
 
-    insight = await enrich_single(item, llm_config)
+    agent_cfg = await get_agent_config(db)
+    searxng = await get_searxng_config(db)
+    searxng_url = searxng.base_url if (agent_cfg.workflow_web_search and searxng.is_configured) else ""
+
+    insight = await enrich_single(item, llm_config, searxng_url=searxng_url)
     if not insight:
         raise HTTPException(500, "KI-Anreicherung fehlgeschlagen")
 
     return {"ai_insight": insight}
+
+
+@router.post("/{item_id}/ignore")
+async def ignore_feed_item(
+    item_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Use AI to generate an OpenSearch exclusion query and save it as a system FeedSearch."""
+    from app.services import feed_index
+    from app.services.settings import get_llm_config
+    from app.services.workflow_ai import generate_exclusion_query
+    from app.models.workflow import FeedSearch
+
+    item = await feed_index.get_by_id(item_id)
+    if not item:
+        raise HTTPException(404, "Feed-Item nicht gefunden")
+
+    llm_config = await get_llm_config(db)
+    if not llm_config.is_configured:
+        raise HTTPException(503, "LLM nicht konfiguriert")
+
+    result = await generate_exclusion_query(llm_config, item)
+    query_string = result["query"]
+    name = result["name"]
+
+    source = item.get("source", "")
+    index_map = {"graylog": "cs-feed-graylog", "wazuh": "cs-feed-wazuh", "checkmk": "cs-feed-checkmk"}
+    index_pattern = index_map.get(source, "cs-feed-*")
+
+    search = FeedSearch(
+        user_id=None,
+        index_pattern=index_pattern,
+        name=name,
+        query_string=query_string,
+        enabled=True,
+        is_system=True,
+        is_exclusion=True,
+        position=97,
+    )
+    db.add(search)
+    await db.commit()
+    await db.refresh(search)
+
+    return {"id": str(search.id), "name": name, "query_string": query_string}
 
 
 @router.post("/{alert_id}/acknowledge")
