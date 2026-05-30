@@ -639,8 +639,8 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
       const el = this.gridEl.nativeElement.querySelector(`[gs-id="${p.widget_id}"]`) as HTMLElement | null;
       if (el) {
         this.grid.update(el, { x: p.gs_x, y: p.gs_y, w: p.gs_w, h: p.gs_h });
-        if (p.hidden) { el.style.opacity = '0.25'; el.style.pointerEvents = 'none'; }
-        else          { el.style.opacity = ''; el.style.pointerEvents = ''; }
+        el.style.opacity = '';
+        el.style.pointerEvents = '';
       }
       updates.push(
         this.http.patch(`${environment.apiUrl}/dashboard-widgets/${p.widget_id}`,
