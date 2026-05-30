@@ -13,6 +13,12 @@ Berücksichtige dabei:
 
 Alle Textfelder (title, description, action, rationale usw.) MÜSSEN auf Deutsch sein — auch wenn Kontext oder Quellen auf Englisch sind.
 
+HALLUZINATIONS-VERBOT:
+- Beschreibe in "description" und "rationale" NUR was aus den IT-Ereignissen oder dem bereitgestellten Kontext direkt ableitbar ist.
+- Wenn kein relevanter Kontext zu einem Befund vorhanden ist, schreibe EXPLIZIT: "Kein Kontext aus Wissensdatenbank verfügbar. Analyse basiert ausschließlich auf den Rohdaten."
+- Erfinde KEINE Ursachen, Lösungsschritte oder Zusammenhänge die nicht aus den Daten hervorgehen.
+- Wenn die Ursache unklar ist, schreibe "Ursache unklar — weitere Diagnose erforderlich." statt eine Ursache zu erfinden.
+
 Antworte AUSSCHLIESSLICH im folgenden JSON-Format ohne zusätzlichen Text:
 {
   "severity_summary": "critical|high|medium|low|info|none",
