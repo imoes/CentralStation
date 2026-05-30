@@ -141,34 +141,37 @@ export class App implements OnInit, OnDestroy {
     this.fetchTicketUnread();
   }
 
-  /** Live nav badge for tickets: fetch the user's tickets and count those updated
-   *  after the last-seen timestamp (ticket_seen_map). Mirrors my-tickets semantics:
-   *  a ticket never seen before counts as seen (no badge on first appearance). */
+  /** Live nav badge: loads seen map from server preferences, counts updated tickets. */
   private fetchTicketUnread() {
-    this.http.get<Array<{ issues: Array<{ key: string; fields: { updated: string } }> }>>(
-      `${environment.apiUrl}/jira-view/my-tickets`,
+    this.http.get<{ ticket_seen_map: Record<string, string> }>(
+      `${environment.apiUrl}/preferences`,
     ).subscribe({
-      next: groups => {
-        let seenMap: Record<string, string> = {};
-        try { seenMap = JSON.parse(localStorage.getItem('ticket_seen_map') ?? '{}'); } catch {}
-        const now = new Date().toISOString();
-        let count = 0;
-        let changed = false;
-        for (const group of groups) {
-          for (const issue of group.issues ?? []) {
-            const seen = seenMap[issue.key];
-            if (!seen) { seenMap[issue.key] = now; changed = true; continue; }
-            if (new Date(issue.fields.updated) > new Date(seen)) count++;
-          }
-        }
-        if (changed) localStorage.setItem('ticket_seen_map', JSON.stringify(seenMap));
-        localStorage.setItem('tickets_unread_count', count.toString());
-        this.unreadTicketCount.set(count);
+      next: prefs => {
+        const seenMap = prefs.ticket_seen_map ?? {};
+        this.http.get<Array<{ issues: Array<{ key: string; fields: { updated: string } }> }>>(
+          `${environment.apiUrl}/jira-view/my-tickets`,
+        ).subscribe({
+          next: groups => {
+            const now = new Date().toISOString();
+            let count = 0;
+            let changed = false;
+            const updatedMap = { ...seenMap };
+            for (const group of groups) {
+              for (const issue of group.issues ?? []) {
+                const seen = updatedMap[issue.key];
+                if (!seen) { updatedMap[issue.key] = now; changed = true; continue; }
+                if (new Date(issue.fields.updated) > new Date(seen)) count++;
+              }
+            }
+            if (changed) {
+              this.http.patch(`${environment.apiUrl}/preferences`, { ticket_seen_map: updatedMap }).subscribe();
+            }
+            this.unreadTicketCount.set(count);
+          },
+          error: () => {},
+        });
       },
-      error: () => {
-        const stored = localStorage.getItem('tickets_unread_count');
-        this.unreadTicketCount.set(stored ? parseInt(stored, 10) : 0);
-      },
+      error: () => {},
     });
   }
 

@@ -130,8 +130,6 @@ export class JqlQueryDialogComponent {
 
 // ── Main Component ──────────────────────────────────────────────────────────────
 
-const SEEN_MAP_KEY = 'ticket_seen_map';
-
 @Component({
   selector: 'cs-my-tickets',
   standalone: true,
@@ -328,7 +326,7 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
   aiDesc = '';
   hasLlm = signal(false);
 
-  private seenMap: Record<string, string> = {};  // ticketKey → ISO timestamp of last seen
+  private seenMap: Record<string, string> = {};
 
   constructor(
     private http: HttpClient,
@@ -337,66 +335,52 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit() {
-    const raw = localStorage.getItem(SEEN_MAP_KEY);
-    this.seenMap = raw ? JSON.parse(raw) : {};
-    this.loadTickets();
+    this.http.get<{ ticket_seen_map: Record<string, string> }>(`${environment.apiUrl}/preferences`)
+      .subscribe({
+        next: prefs => {
+          this.seenMap = prefs.ticket_seen_map ?? {};
+          this.loadTickets();
+        },
+        error: () => this.loadTickets(),
+      });
     this.loadQueries();
     this.checkLlm();
   }
 
-  ngOnDestroy() {
-    this._persistSeenMap();
-  }
+  ngOnDestroy() {}
 
   private _persistSeenMap() {
-    localStorage.setItem(SEEN_MAP_KEY, JSON.stringify(this.seenMap));
-  }
-
-  private _computeUnreadCount(): number {
-    let count = 0;
-    for (const group of this.ticketGroups()) {
-      for (const issue of group.issues) {
-        if (this.hasUnread(issue)) count++;
-      }
-    }
-    return count;
-  }
-
-  private _updateBadge() {
-    const count = this._computeUnreadCount();
-    localStorage.setItem('tickets_unread_count', count.toString());
+    this.http.patch(`${environment.apiUrl}/preferences`, { ticket_seen_map: this.seenMap }).subscribe();
   }
 
   hasUnread(issue: JiraIssue): boolean {
     const seen = this.seenMap[issue.key];
-    if (!seen) return false;  // never opened — no dot on first load
+    if (!seen) return false;
     return new Date(issue.fields.updated) > new Date(seen);
   }
 
   markSeen(issue: JiraIssue) {
     this.seenMap[issue.key] = new Date().toISOString();
     this._persistSeenMap();
-    this._updateBadge();
   }
 
   loadTickets() {
     this.loadingTickets.set(true);
     this.http.get<TicketGroup[]>(`${environment.apiUrl}/jira-view/my-tickets`).subscribe({
       next: data => {
-        // First-time seen tickets: add to seenMap with "now - 1ms" so future updates are tracked
-        // but newly loaded items don't get a dot on first visit
         const now = new Date().toISOString();
+        let changed = false;
         for (const group of data) {
           for (const issue of group.issues) {
             if (!(issue.key in this.seenMap)) {
               this.seenMap[issue.key] = now;
+              changed = true;
             }
           }
         }
-        this._persistSeenMap();
+        if (changed) this._persistSeenMap();
         this.ticketGroups.set(data);
         this.loadingTickets.set(false);
-        this._updateBadge();
       },
       error: () => this.loadingTickets.set(false),
     });
@@ -415,7 +399,7 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
   }
 
   openQueryManager() { this.showQueryManager.set(true); }
-  closeQueryManager() { this.showQueryManager.set(false); this.loadTickets(); this._updateBadge(); }
+  closeQueryManager() { this.showQueryManager.set(false); this.loadTickets(); }
 
   onDrop(event: CdkDragDrop<JqlQuery[]>) {
     if (event.previousIndex === event.currentIndex) return;

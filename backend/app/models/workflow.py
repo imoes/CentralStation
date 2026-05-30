@@ -33,6 +33,8 @@ class UserPreference(Base):
     checkmk_hostgroups:  Mapped[list | None] = mapped_column(JSON)
     # Feed searches — list of UUIDs the user has explicitly disabled
     feed_disabled_search_ids: Mapped[list | None] = mapped_column(JSON)
+    # Ticket seen map — {jira_key: ISO-timestamp} for badge tracking (server-side)
+    ticket_seen_map: Mapped[dict | None] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
