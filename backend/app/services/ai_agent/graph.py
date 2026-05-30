@@ -199,28 +199,55 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
         from app.services.connectors.it_aikb import ITAikbConnector
         aikb_svc = ITAikbConnector(base_url=aikb_row.base_url, credentials=creds)
 
-    if aikb_svc:
-        # Extract unique short hostnames (strip domain, e.g. "docker0218.ippen.media" → "docker0218")
-        unique_hosts: set[str] = set()
-        for a in alerts:
-            raw = (a.get("host") or a.get("agent") or "").strip()
-            if raw:
-                short = raw.split(".")[0].lower()
-                if short:
-                    unique_hosts.add(short)
+    # Extract unique hostnames for KB + metrics lookups
+    unique_hosts: set[str] = set()
+    for a in alerts:
+        raw = (a.get("host") or a.get("agent") or "").strip()
+        if raw:
+            unique_hosts.add(raw)
 
-        for host in list(unique_hosts)[:10]:   # cap to avoid excessive calls
+    if aikb_svc:
+        for host in list(unique_hosts)[:10]:
+            short = host.split(".")[0].lower()
             try:
-                hits = await aikb_svc.search_opensearch(host, top_k=3)
+                hits = await aikb_svc.search_opensearch(short, top_k=3)
                 if hits:
                     rag_context.append({
                         "source": "server-kb",
-                        "query": host,
+                        "query": short,
                         "results": hits,
                     })
-                    log.debug("rag_lookup: KB hit for host '%s' (%d chunks)", host, len(hits))
+                    log.debug("rag_lookup: KB hit for host '%s' (%d chunks)", short, len(hits))
             except Exception as e:
-                log.debug("rag_lookup: KB lookup for '%s' failed: %s", host, e)
+                log.debug("rag_lookup: KB lookup for '%s' failed: %s", short, e)
+
+    # ── Step 0b: Recent metrics from cs-metrics-checkmk ──────────────────────
+    # For hosts with critical/high alerts, pull recent metric snapshots so the
+    # LLM can correlate "CPU was 94% → OOM → container restart" in one context.
+    critical_hosts = {
+        (a.get("host") or a.get("agent") or "").strip()
+        for a in alerts
+        if a.get("severity") in ("critical", "high") and (a.get("host") or a.get("agent"))
+    }
+    if critical_hosts:
+        from app.services.metrics_collector import query_metrics_for_host
+        for host in list(critical_hosts)[:5]:
+            try:
+                metrics = await query_metrics_for_host(host, hours=2)
+                if metrics:
+                    # Format as compact text for LLM context
+                    snippets = [
+                        f"{m['service']}/{m['metric']}: {m['value']:.2f}{m.get('unit','')} @ {m['timestamp'][:16]}"
+                        for m in metrics[:20]
+                    ]
+                    rag_context.append({
+                        "source": "checkmk-metrics",
+                        "query": host,
+                        "results": [{"title": f"Aktuelle Metriken {host}", "content": "\n".join(snippets)}],
+                    })
+                    log.debug("rag_lookup: %d metric points for host '%s'", len(metrics), host)
+            except Exception as e:
+                log.debug("rag_lookup: metrics for '%s' failed: %s", host, e)
 
     # Build events summary for LLM decision
     events_summary = "\n".join(

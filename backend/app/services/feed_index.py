@@ -50,6 +50,24 @@ def _index(source: str) -> str:
     return f"{INDEX_PREFIX}-{source}"
 
 
+METRICS_INDEX = "cs-metrics-checkmk"
+
+_METRICS_MAPPING = {
+    "mappings": {
+        "properties": {
+            "host":        {"type": "keyword"},
+            "service":     {"type": "keyword"},
+            "metric":      {"type": "keyword"},
+            "value":       {"type": "float"},
+            "unit":        {"type": "keyword"},
+            "timestamp":   {"type": "date"},
+            "location":    {"type": "keyword"},
+        }
+    },
+    "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+}
+
+
 async def ensure_indices() -> None:
     """Create indices if they don't exist; push mapping updates to existing ones."""
     os_client = get_opensearch()
@@ -66,6 +84,15 @@ async def ensure_indices() -> None:
                 await os_client.indices.put_mapping(index=idx, body=_mapping_update)
         except Exception as e:
             log.warning("Could not create/update index %s: %s", idx, e)
+
+    # Metrics index
+    try:
+        exists = await os_client.indices.exists(index=METRICS_INDEX)
+        if not exists:
+            await os_client.indices.create(index=METRICS_INDEX, body=_METRICS_MAPPING)
+            log.info("Created OpenSearch index: %s", METRICS_INDEX)
+    except Exception as e:
+        log.warning("Could not create metrics index: %s", e)
 
 
 async def backfill_from_db(days: int = 7) -> int:

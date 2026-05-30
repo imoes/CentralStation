@@ -60,6 +60,12 @@ async def run_network_agent() -> None:
         await run_network_workflow(db)
 
 
+async def run_metrics_collection() -> None:
+    """Collect CheckMK RRD metrics for active hosts → cs-metrics-checkmk."""
+    from app.services.metrics_collector import collect_checkmk_metrics
+    await collect_checkmk_metrics()
+
+
 async def run_feed_housekeeping() -> None:
     """Delete feed items older than per-source retention (from global_settings)."""
     from app.core.database import AsyncSessionLocal
@@ -97,11 +103,13 @@ async def start_scheduler() -> None:
     _scheduler.add_job(run_network_agent, "interval",
                        minutes=config.interval_minutes,
                        id="network_agent", replace_existing=True)
+    _scheduler.add_job(run_metrics_collection, "interval",
+                       minutes=5, id="metrics_collection", replace_existing=True)
     _scheduler.add_job(run_feed_housekeeping, "cron", hour=3, minute=0,
                        id="feed_housekeeping", replace_existing=True)
     _scheduler.start()
     logger.info(
-        "APScheduler started — aggregation: %dmin, agent: %dmin",
+        "APScheduler started — aggregation: %dmin, agent: %dmin, metrics: 5min",
         config.aggregation_interval_minutes, config.interval_minutes,
     )
 
