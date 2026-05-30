@@ -396,6 +396,100 @@ class CheckMKConnector(BaseConnector):
         except Exception as e:
             return {"series": [], "error": str(e)}
 
+    async def get_forecast_data(
+        self,
+        host_name: str,
+        service_description: str,
+        metric_id: str = "",
+        graph_index: int = 0,
+        history_hours: int = 72,
+        horizon_hours: int = 24,
+    ) -> dict:
+        """Return historical RRD data plus a linear-regression forecast.
+
+        CheckMK CEE 2.3 exposes no dedicated forecast REST endpoint — the GUI-only
+        Forecast Dashlet is not accessible via API. We therefore fetch extended
+        history and project forward using linear regression + ±1-sigma confidence band.
+
+        Returns:
+          {
+            "series_history":  [{"time": iso, "value": float}, ...],
+            "series_forecast":  [{"time": iso, "value": float}, ...],
+            "confidence_band":  [{"time": iso, "lower": float, "upper": float}, ...],
+            "title": str,
+            "unit":  str,
+          }
+        or {"series_history": [], "error": str} on failure.
+        """
+        hist = await self.get_graph_data(
+            host_name, service_description,
+            graph_index=graph_index,
+            hours=history_hours,
+            metric_id=metric_id,
+        )
+        if hist.get("error") or not hist.get("series"):
+            return {"series_history": [], "series_forecast": [], "confidence_band": [],
+                    "error": hist.get("error", "No historical data")}
+
+        series = hist["series"]
+        title = hist.get("title", service_description)
+        unit = hist.get("unit", "")
+
+        # Convert to numeric timestamps + values for regression
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            import math
+
+            xs = [_dt.fromisoformat(p["time"]).timestamp() for p in series]
+            ys = [p["value"] for p in series]
+            n = len(xs)
+            if n < 2:
+                return {"series_history": series, "series_forecast": [], "confidence_band": [],
+                        "title": title, "unit": unit}
+
+            # Linear regression: y = a*x + b
+            mx = sum(xs) / n
+            my = sum(ys) / n
+            ss_xx = sum((x - mx) ** 2 for x in xs)
+            ss_xy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+            a = ss_xy / ss_xx if ss_xx else 0.0
+            b = my - a * mx
+
+            # Residual std-dev for confidence band
+            residuals = [y - (a * x + b) for x, y in zip(xs, ys)]
+            sigma = math.sqrt(sum(r ** 2 for r in residuals) / n) if n > 1 else 0.0
+
+            # Project forward using same step as history
+            step_seconds = (xs[-1] - xs[0]) / (n - 1) if n > 1 else 300
+            n_forecast = max(1, int(horizon_hours * 3600 / step_seconds))
+            # Cap at 288 points (24h @ 5min step) to keep response size reasonable
+            n_forecast = min(n_forecast, 288)
+
+            from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td
+            series_forecast = []
+            confidence_band = []
+            for i in range(1, n_forecast + 1):
+                t = xs[-1] + i * step_seconds
+                v = a * t + b
+                iso = _dt2.fromtimestamp(t, tz=_tz2.utc).isoformat()
+                series_forecast.append({"time": iso, "value": round(v, 4)})
+                confidence_band.append({
+                    "time": iso,
+                    "lower": round(v - sigma, 4),
+                    "upper": round(v + sigma, 4),
+                })
+
+            return {
+                "series_history": series,
+                "series_forecast": series_forecast,
+                "confidence_band": confidence_band,
+                "title": title,
+                "unit": unit,
+            }
+        except Exception as e:
+            return {"series_history": series, "series_forecast": [], "confidence_band": [],
+                    "title": title, "unit": unit, "error": f"Forecast projection failed: {e}"}
+
     async def list_services(self, host_name: str) -> list[dict]:
         """Return all services for a host (name + state), used to populate metric picker."""
         try:

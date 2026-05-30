@@ -18,6 +18,7 @@ import {
   StatData,
   TimeseriesData,
   TopHostsData,
+  ForecastData,
   WidgetData,
 } from './dashboard-widget.model';
 
@@ -132,6 +133,16 @@ import {
                 <div echarts [options]="timeseriesOptions()" class="chart"></div>
               }
             }
+            @case ('forecast') {
+              @if (forecastError()) {
+                <div class="empty">{{ forecastError() }}</div>
+              } @else if (forecastOptions()) {
+                <div class="forecast-title">{{ forecastTitle() }}</div>
+                <div echarts [options]="forecastOptions()!" class="chart forecast-chart"></div>
+              } @else {
+                <div class="empty">Keine Forecast-Daten verfügbar</div>
+              }
+            }
             @case ('grafana_panel') {
               @if (grafanaUrl()) {
                 <iframe class="grafana-frame" [src]="grafanaUrl()!" loading="lazy"></iframe>
@@ -204,6 +215,8 @@ import {
     .list-host { font-family: monospace; color: var(--mat-sys-on-surface); font-weight: 600; }
     .meta-sep { opacity: 0.5; }
     .chart { height: 100%; min-height: 140px; width: 100%; display: block; }
+    .forecast-chart { min-height: 160px; }
+    .forecast-title { font-size: 11px; color: var(--mat-sys-on-surface-variant); padding: 0 4px 2px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .grafana-frame { width: 100%; height: 100%; border: 0; border-radius: 10px; background: #111827; }
     .ai-summary { height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 7px; }
     .ai-summary p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--mat-sys-on-surface-variant); }
@@ -430,6 +443,47 @@ export class DashboardWidgetComponent {
   readonly timeseriesError = computed(() => {
     const d = this.data() as TimeseriesData | undefined;
     return d?.error ?? '';
+  });
+
+  readonly forecastError = computed(() => (this.data() as ForecastData | undefined)?.error ?? '');
+  readonly forecastTitle = computed(() => (this.data() as ForecastData | undefined)?.title ?? '');
+
+  readonly forecastOptions = computed(() => {
+    const d = this.data() as ForecastData | undefined;
+    if (!d?.series_history?.length) return null;
+    const unit = d.unit ?? '';
+
+    const histTimes = d.series_history.map(p => p.time.replace('T', ' ').substring(0, 16));
+    const histVals  = d.series_history.map(p => p.value);
+    const fcTimes   = d.series_forecast.map(p => p.time.replace('T', ' ').substring(0, 16));
+    const fcVals    = d.series_forecast.map(p => p.value);
+    const upper     = d.confidence_band.map(p => p.upper);
+    const lower     = d.confidence_band.map(p => p.lower);
+
+    // ECharts: history (solid) + forecast (dashed) + confidence band (areaStyle)
+    const allTimes = [...histTimes, ...fcTimes];
+
+    return {
+      tooltip: { trigger: 'axis', formatter: (params: any[]) => {
+        const lines = params.filter((p: any) => p.seriesName !== 'band_lower')
+          .map((p: any) => `${p.marker}${p.seriesName}: ${typeof p.value === 'number' ? p.value.toFixed(2) : '--'}${unit}`);
+        return [params[0]?.axisValue, ...lines].join('<br/>');
+      }},
+      grid: { left: 40, right: 12, top: 12, bottom: 30, containLabel: true },
+      xAxis: { type: 'category', data: allTimes, axisLabel: { fontSize: 10, rotate: 30 }, boundaryGap: false },
+      yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: (v: number) => v + unit } },
+      series: [
+        { name: 'Historie', type: 'line', data: [...histVals, ...fcTimes.map(() => null)],
+          lineStyle: { color: '#3b82f6', width: 2 }, symbol: 'none', connectNulls: false },
+        { name: 'Prognose', type: 'line', data: [...histTimes.map(() => null), ...fcVals],
+          lineStyle: { color: '#f97316', width: 2, type: 'dashed' }, symbol: 'none', connectNulls: false },
+        { name: 'Konfidenz', type: 'line', data: [...histTimes.map(() => null), ...upper],
+          lineStyle: { opacity: 0 }, symbol: 'none', areaStyle: { color: 'rgba(249,115,22,0.12)' }, connectNulls: false, stack: 'conf' },
+        { name: 'band_lower', type: 'line', data: [...histTimes.map(() => null), ...lower],
+          lineStyle: { opacity: 0 }, symbol: 'none', areaStyle: { color: 'rgba(249,115,22,0.12)', opacity: -1 }, connectNulls: false, stack: 'conf' },
+      ],
+      legend: { data: ['Historie', 'Prognose', 'Konfidenz'], bottom: 0, textStyle: { color: '#94a3b8', fontSize: 10 } },
+    };
   });
 
   readonly grafanaUrl = computed((): SafeResourceUrl | null => {
