@@ -27,6 +27,14 @@ log = logging.getLogger(__name__)
 
 _SEV_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 
+# CheckMK meta-services = monitoring plumbing, not real service problems → blind alarms
+_META_SERVICE_SUFFIXES = ("— check_mk", "— check_mk discovery", "— check_mk agent", "— check_mk hw/sw inventory")
+
+
+def _is_meta_check(title: str) -> bool:
+    t = (title or "").lower().strip()
+    return any(t.endswith(suf) for suf in _META_SERVICE_SUFFIXES)
+
 
 def _alert_state(critical: int, high: int) -> str:
     if critical > 0:
@@ -45,6 +53,14 @@ async def build_worklist(db: Any, *, hours: int = 24, size: int = 15) -> dict:
     os_client = get_opensearch()
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
 
+    # Apply the SAME exclusion searches the feed uses, so the worklist never
+    # surfaces curated noise / blind alarms that the operator already hid.
+    from app.services.feed_index import get_exclusion_must_not_clauses
+    must_not = [{"term": {"status": "resolved"}}]
+    try:
+        must_not.extend(await get_exclusion_must_not_clauses(db))
+    except Exception as e:
+        log.debug("worklist: exclusion clauses failed: %s", e)
     # ── 1. Group open alerts by external_id ──────────────────────────────────
     buckets = []
     try:
@@ -54,7 +70,7 @@ async def build_worklist(db: Any, *, hours: int = 24, size: int = 15) -> dict:
                 "query": {
                     "bool": {
                         "must": [{"range": {"created_at": {"gte": since}}}],
-                        "must_not": [{"term": {"status": "resolved"}}],
+                        "must_not": must_not,
                     }
                 },
                 "size": 0,
@@ -87,6 +103,9 @@ async def build_worklist(db: Any, *, hours: int = 24, size: int = 15) -> dict:
         if not hits:
             continue
         doc = hits[0]["_source"]
+        # Skip CheckMK meta-services (Check_MK / Discovery) — blind alarms
+        if _is_meta_check(doc.get("title", "")):
+            continue
         meta = doc.get("metadata") or {}
         host = meta.get("host") or meta.get("agent") or meta.get("container_name") or ""
         recent_counts[ext_id] = count
