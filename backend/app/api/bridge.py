@@ -209,6 +209,10 @@ async def bridge_status(
         key=lambda x: (-_SEV_RANK.get("critical" if x["critical"] else ("high" if x["high"] else "info"), 0), x["name"]),
     )[:8]
 
+    # ── 4. AI-prioritised worklist (cached snapshot, no LLM at request time) ──
+    from app.services.worklist_builder import get_latest_worklist
+    worklist = await get_latest_worklist(db)
+
     return {
         "alert_state": alert_state,
         "counts": {
@@ -220,6 +224,22 @@ async def bridge_status(
         "sources": source_list,
         "sectors": sector_list,
         "primary_incident": primary_incident,
-        "sensor_log": sensor_log,
-        "stardate": datetime.now(timezone.utc).isoformat(),
+        "logs": sensor_log,
+        "worklist": worklist["items"] if worklist else [],
+        "worklist_open_count": worklist["open_count"] if worklist else 0,
+        "worklist_updated": worklist["created_at"] if worklist else None,
+        "server_time": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.post("/refresh-worklist")
+async def refresh_worklist(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Rebuild the worklist on demand (otherwise runs on the configured interval)."""
+    from app.services.worklist_builder import build_worklist
+    from app.services.settings import get_agent_config
+    cfg = await get_agent_config(db)
+    snapshot = await build_worklist(db, hours=24, size=cfg.worklist_size)
+    return {"ok": True, "count": len(snapshot.get("items", []))}

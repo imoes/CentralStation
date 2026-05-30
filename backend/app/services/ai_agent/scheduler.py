@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -64,6 +65,16 @@ async def run_metrics_collection() -> None:
     """Collect CheckMK RRD metrics for active hosts → cs-metrics-checkmk."""
     from app.services.metrics_collector import collect_checkmk_metrics
     await collect_checkmk_metrics()
+
+
+async def run_worklist_build() -> None:
+    """Build the AI-prioritised worklist for the bridge."""
+    from app.core.database import AsyncSessionLocal
+    from app.services.worklist_builder import build_worklist
+    from app.services.settings import get_agent_config
+    async with AsyncSessionLocal() as db:
+        cfg = await get_agent_config(db)
+        await build_worklist(db, hours=24, size=cfg.worklist_size)
 
 
 async def run_score_housekeeping() -> None:
@@ -136,6 +147,9 @@ async def start_scheduler() -> None:
                        id="network_agent", replace_existing=True)
     _scheduler.add_job(run_metrics_collection, "interval",
                        minutes=5, id="metrics_collection", replace_existing=True)
+    _scheduler.add_job(run_worklist_build, "interval",
+                       minutes=config.worklist_interval_minutes, id="worklist_build",
+                       replace_existing=True, next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30))
     _scheduler.add_job(run_score_housekeeping, "cron", hour=2, minute=0,
                        id="score_housekeeping", replace_existing=True)
     _scheduler.add_job(run_feed_housekeeping, "cron", hour=3, minute=0,
