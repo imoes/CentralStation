@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { ActivatedRoute, Router } from '@angular/router';
+import { skip } from 'rxjs';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -872,6 +873,20 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.loadAutoEnrichSetting();
     this.loadSearches();
     this.refreshTimer = setInterval(() => this.load(true, true), 30_000);
+
+    // React to query-param changes when already on /feed (same-route navigation).
+    // skip(1) ignores the initial emission already handled by applyRouteParams().
+    this.route.queryParamMap.pipe(skip(1)).subscribe(params => {
+      this.severityFilter = params.get('severity') ?? '';
+      this.hostFilter     = params.get('host')     ?? '';
+      const source        = params.get('source');
+      if (source) {
+        this.routeSourceSet = true;
+        this.activeFilter.set(source.split(',').filter(Boolean));
+      }
+      if (this.severityFilter || this.hostFilter) this.showFilters.set(true);
+      this.load(true);
+    });
   }
 
   ngAfterViewInit() {
@@ -931,7 +946,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       this.activeFilter.set(source.split(',').filter(Boolean));
     }
     const severity = params.get('severity');
-    if (severity) this.severityFilter = severity;
+    if (severity) { this.severityFilter = severity; this.showFilters.set(true); }
     const host = params.get('host');
     if (host) { this.hostFilter = host; this.showFilters.set(true); }
   }
