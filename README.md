@@ -195,7 +195,7 @@ Da OS/Standort/VE/Criticality CheckMK-eigene Konzepte sind, greift der Filter **
 
 | Bereich | Funktionen |
 |---------|------------|
-| **Operations Cockpit** | Konfigurierbares Widget-Dashboard (GridStack), Stat-Karten, Listen, Donut-/Balken-Charts (klickbar → Feed-Filter), Zeitreihen (Prometheus/CheckMK), KI-Lagebericht, Top-Hosts |
+| **Operations Cockpit** | Dual-Mode Dashboard (Klassisch/Generativ), Widget-Typen: Stat, Liste, Donut, Balken, Zeitreihe, Forecast, KI-Lagebericht, Top-Hosts; klickbare Charts (→ Feed-Filter); Pin/Reset im generativen Modus |
 | **Alert-Aggregation** | CheckMK, Graylog, Wazuh — zentrale Timeline, Acknowledge, Severity-Filter, OS/Standort/VE/Hostgruppen-Filter |
 | **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung (ai_insight pro Alert), KI-Ignorieren (Auto-Ausschluss-Query) |
 | **Kanban-Board** | Drag-Drop, bidirektionaler Jira-/ServiceDesk-Sync, automatische Jira-Importe, AI-erstellte Cards |
@@ -230,6 +230,7 @@ Das Dashboard besteht aus frei konfigurierbaren GridStack-Widgets. Jedes Widget 
 | `top_hosts` | Hosts mit den meisten Alerts | OpenSearch aggregation | `sources`, `limit` (default 5) |
 | `ai_summary` | Letzter KI-Lagebericht (Findings + Empfehlungen) | PostgreSQL `ai_analyses` | *(keine)* |
 | `timeseries` | Zeitreihen-Liniendiagramm (ECharts) | Prometheus PromQL / CheckMK RRD | `promql`, `step`, `hours` |
+| `forecast` | CheckMK RRD-Historie + lineare Trendprojektion + ±1σ-Konfidenzband | CheckMK `get_forecast_data()` | `host`, `service`, `metric_id`, `history_hours` (default 72), `horizon_hours` (default 24) |
 | `grafana_panel` | Eingebettetes Grafana-Panel als iFrame | Grafana Embed-URL | `panel_url` |
 
 ### Widget-Config-Schemas
@@ -287,6 +288,20 @@ Das Dashboard besteht aus frei konfigurierbaren GridStack-Widgets. Jedes Widget 
 - **Layout speichern**: Automatisch beim Verlassen des Konfigurationsmodus
 - **Mehrere Dashboards**: Tab-Leiste oben; über `+`-Icon neues Dashboard anlegen
 - **Standard-Layout**: Pro Dashboard-Rücksetzung auf Default-Widgets möglich (`POST /api/dashboard-widgets/dashboards/{id}/reset-defaults`)
+
+### Dual-Mode: Klassisch ↔ Generativ
+
+Toggle-Button im Dashboard-Header wechselt zwischen zwei Modi:
+
+**Klassisch** (Standard): manuelles Drag-Drop-Layout, `saveLayout` beim Verlassen des Konfigurationsmodus — wie bisher.
+
+**Generativ**: Die KI-Layout-Engine passt das Dashboard situativ an:
+- Beim Aktivieren + bei jedem WebSocket-Event `ai_insight` wird `POST /dashboard-widgets/dashboards/{id}/suggest-layout` aufgerufen
+- Die Engine scoret Widgets nach KI-Analyse (severity_summary, Findings-Sources) + Live OpenSearch-Counts
+- Relevante Widgets wandern nach oben/werden größer; ruhige Widgets schrumpfen/werden ausgeblendet
+- **Pin-Button** je Widget (NASA-Override-Regel): gepinnte Widgets werden von der KI nie bewegt
+- **Reset-Button** stellt das Standard-Layout in einem Klick wieder her
+- Der Modus wird in `Dashboard.mode` gespeichert und beim nächsten Besuch wiederhergestellt
 - **Klick auf Widget (Hintergrund)**: Öffnet den News Feed mit den passenden Filtern des Widgets
 - **Klick auf Donut-Segment**: Öffnet den Feed gefiltert auf die angeklickte Severity
 - **Klick auf Balken (`bar`)**: Öffnet den Feed gefiltert auf den Feld-Wert des Balkens
@@ -663,6 +678,31 @@ Node 4: act
 
 ---
 
+## CheckMK Metriken-Collector
+
+### Architektur
+
+Alle 5 Minuten läuft ein APScheduler-Job (`run_metrics_collection`):
+1. Findet alle Hosts mit aktiven WARN/CRIT-Problemen via CheckMK `get_problems()`
+2. Fetcht Standard-Metriken (CPU load, Memory, Disk, cmk_time_agent) pro Host via `get_graph_data()`
+3. Schreibt den jeweils neuesten Datenpunkt als OpenSearch-Dokument in `cs-metrics-checkmk`
+
+**Index:** `cs-metrics-checkmk` — Felder: `host`, `service`, `metric`, `value`, `unit`, `timestamp`
+
+### KI-Korrelation
+
+Der KI-Agent liest beim `rag_lookup`-Step aktuelle Metrik-Punkte der betroffenen Hosts aus `cs-metrics-checkmk`. Damit kann das LLM Muster wie *„CPU war 94% → 5 Min. später OOM-Kill → CheckMK-Alert"* in einem Kontext sehen statt sie getrennt suchen zu müssen.
+
+### AI War Room: Blast-Radius
+
+Bei Critical/High-Alerts wird automatisch eine Blast-Radius-Analyse gestartet (`blast_radius.py`):
+- **Standort** des Hosts via ID-Generator (`resolve_host_to_location()`, nutzt `virt_servers`-SQL)
+- **Ko-VMs** auf demselben physischen Host via NetBox (`get_vm_host()`)
+- **Ko-lokalisierte Hosts** am selben Standort via `cs-metrics-checkmk`
+- Der Blast-Radius wird als Kontext an das LLM übergeben → kausale Narrative möglich
+
+---
+
 ## Prometheus-Metriken & PromQL
 
 ### Lucene → PromQL Konverter
@@ -693,7 +733,7 @@ ansible all -m service -a "name=prometheus-node-exporter enabled=yes state=start
 ```
 Danach scrapt Prometheus die node_exporter und das `timeseries`-Widget nutzt `data_source: "prometheus"` mit PromQL.
 
-**Forecast:** CheckMK CEE bietet native Forecast-Graphen (Predictive Monitoring) — geplant zur Anbindung über eine neue `get_forecast_data()`-Connector-Methode (siehe Plan-Datei, Phase 0).
+**Forecast:** CheckMK CEE hat **keinen** Forecast-REST-Endpoint (nur GUI-Dashlet). CentralStation implementiert daher eine eigene lineare Regression auf den historischen RRD-Daten: `get_forecast_data()` holt 72h History, projiziert via linearer Regression + berechnet ±1σ Konfidenzband. Ergebnis: `series_history`, `series_forecast`, `confidence_band`.
 
 ---
 
@@ -842,6 +882,7 @@ Alle Einstellungen werden verschlüsselt in der Datenbank gespeichert und über 
 | `/api/dashboard-widgets/dashboards/{id}` | PATCH | Dashboard umbenennen |
 | `/api/dashboard-widgets/dashboards/{id}` | DELETE | Dashboard löschen |
 | `/api/dashboard-widgets/dashboards/{id}/reset-defaults` | POST | Standard-Widgets wiederherstellen |
+| `/api/dashboard-widgets/dashboards/{id}/suggest-layout` | POST | Generativen Layout-Vorschlag berechnen (schreibt nicht selbst) |
 | `/api/dashboard-widgets/` | GET | Alle Widgets des Users (nach Dashboard) |
 | `/api/dashboard-widgets/` | POST | Neues Widget anlegen |
 | `/api/dashboard-widgets/{id}` | PATCH | Widget (Layout/Config/Titel) ändern |
@@ -941,6 +982,7 @@ Alle Einstellungen werden verschlüsselt in der Datenbank gespeichert und über 
 | `0012` | `user_preferences.checkmk_hostgroups` (falls fehlend) |
 | `0013` | `feed_searches.is_exclusion` Boolean-Feld |
 | `0014` | `user_preferences.ticket_seen_map` (JSON) — serverseitiges Ticket-Badge-Tracking |
+| `0015` | `dashboards.mode` (`classic`/`generative`), `dashboard_widgets.pinned`, `dashboard_widgets.hidden` — Generativer Modus |
 
 ---
 
