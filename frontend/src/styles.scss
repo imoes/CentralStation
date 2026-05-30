@@ -150,10 +150,25 @@ html.cs-theme-lcars [class*="subtitle"] { color: #e8a060 !important; }
 html.cs-theme-lcars .mat-mdc-raised-button.mat-primary,
 html.cs-theme-lcars .mat-mdc-raised-button.mat-primary span { color: #000 !important; }
 
-/* Holo theme text fix: same approach for Holo */
+/* ── Holo: same full token set ── */
+html.cs-theme-holo body,
+html.cs-theme-holo mat-card,
+html.cs-theme-holo .mat-mdc-card,
+html.cs-theme-holo mat-list-item,
+html.cs-theme-holo .mat-mdc-list-item,
+html.cs-theme-holo .mdc-list-item__primary-text { color: #cfeeff; }
+
+html.cs-theme-holo .mat-mdc-card-subtitle,
+html.cs-theme-holo small, html.cs-theme-holo .hint,
+html.cs-theme-holo .timestamp, html.cs-theme-holo [class*="meta"],
+html.cs-theme-holo [class*="subtitle"],
+html.cs-theme-holo .mdc-list-item__secondary-text { color: #8fb8cf !important; }
+
 html.cs-theme-holo {
   --mdc-list-list-item-label-text-color: #cfeeff;
   --mdc-list-list-item-supporting-text-color: #8fb8cf;
+  --mdc-list-list-item-secondary-text-color: #8fb8cf;
+  --mdc-list-list-item-trailing-supporting-text-color: #8fb8cf;
   --mat-card-title-text-color: #cfeeff;
   --mat-card-subtitle-text-color: #8fb8cf;
   --mat-option-label-text-color: #cfeeff;
@@ -164,4 +179,9 @@ html.cs-theme-holo {
   --mat-expansion-header-text-color: #cfeeff;
   --mat-expansion-container-text-color: #cfeeff;
   --mdc-chip-label-text-color: #cfeeff;
+  --mat-table-row-item-label-text-color: #cfeeff;
+  --mat-table-header-headline-color: #8fb8cf;
+  --mat-sidenav-content-text-color: #cfeeff;
+  --mat-text-button-label-text-color: #cfeeff;
+  --mat-outlined-button-label-text-color: #8fb8cf;
 }
