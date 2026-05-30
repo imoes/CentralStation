@@ -195,9 +195,9 @@ Da OS/Standort/VE/Criticality CheckMK-eigene Konzepte sind, greift der Filter **
 
 | Bereich | Funktionen |
 |---------|------------|
-| **Operations Cockpit** | Konfigurierbares Widget-Dashboard (GridStack), Stat-Karten, Listen, Donut-Charts, Zeitreihen (Prometheus), KI-Lagebericht, Top-Hosts |
+| **Operations Cockpit** | Konfigurierbares Widget-Dashboard (GridStack), Stat-Karten, Listen, Donut-/Balken-Charts (klickbar → Feed-Filter), Zeitreihen (Prometheus/CheckMK), KI-Lagebericht, Top-Hosts |
 | **Alert-Aggregation** | CheckMK, Graylog, Wazuh — zentrale Timeline, Acknowledge, Severity-Filter, OS/Standort/VE/Hostgruppen-Filter |
-| **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung (ai_insight pro Alert) |
+| **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung (ai_insight pro Alert), KI-Ignorieren (Auto-Ausschluss-Query) |
 | **Kanban-Board** | Drag-Drop, bidirektionaler Jira-/ServiceDesk-Sync, automatische Jira-Importe, AI-erstellte Cards |
 | **Meine Tickets** | Per-User Jira-Sicht, JQL-Filter-Verwaltung, KI-JQL-Generator (Freitext → JQL), Live-Ergebnisse; roter Punkt bei neuer Aktivität, Unread-Badge im Nav |
 | **Arbeitsdokumentation** | ITIL Work Sessions: Impact/Urgency/Priorität P1–P4, SLA-Tracking, Arbeitsnotizen |
@@ -224,11 +224,12 @@ Das Dashboard besteht aus frei konfigurierbaren GridStack-Widgets. Jedes Widget 
 | Typ | Beschreibung | Datenquelle | Pflicht-Config |
 |-----|--------------|-------------|----------------|
 | `stat` | Einzelne Zahl (Alert-Count) | OpenSearch count query | `severity` oder `search_id` |
-| `list` | Alert-Liste mit Severity-Dot | OpenSearch query | `sources`, `limit` (default 10) |
+| `list` | Alert-Liste mit Severity-Dot + Host/Container | OpenSearch query | `sources`, `limit` (default 10) |
 | `donut` | Severity-Verteilung als Donut-Chart (ECharts) | OpenSearch aggregation | `sources` |
+| `bar` | Balkendiagramm über ein Aggregations-Feld (ECharts) | OpenSearch terms-aggregation | `agg_field`, `limit` (default 10) |
 | `top_hosts` | Hosts mit den meisten Alerts | OpenSearch aggregation | `sources`, `limit` (default 5) |
 | `ai_summary` | Letzter KI-Lagebericht (Findings + Empfehlungen) | PostgreSQL `ai_analyses` | *(keine)* |
-| `timeseries` | Zeitreihen-Liniendiagramm (ECharts) | Prometheus PromQL | `promql`, `step`, `hours` |
+| `timeseries` | Zeitreihen-Liniendiagramm (ECharts) | Prometheus PromQL / CheckMK RRD | `promql`, `step`, `hours` |
 | `grafana_panel` | Eingebettetes Grafana-Panel als iFrame | Grafana Embed-URL | `panel_url` |
 
 ### Widget-Config-Schemas
@@ -244,6 +245,9 @@ Das Dashboard besteht aus frei konfigurierbaren GridStack-Widgets. Jedes Widget 
 
 // donut
 { "sources": ["checkmk", "graylog", "wazuh"] }
+
+// bar — agg_field: severity | source | metadata.host.keyword | metadata.hostgroups.keyword
+{ "index_pattern": "cs-feed-*", "query_string": "", "agg_field": "severity", "limit": 10 }
 
 // top_hosts
 { "sources": ["checkmk", "wazuh"], "limit": 5 }
@@ -283,8 +287,11 @@ Das Dashboard besteht aus frei konfigurierbaren GridStack-Widgets. Jedes Widget 
 - **Layout speichern**: Automatisch beim Verlassen des Konfigurationsmodus
 - **Mehrere Dashboards**: Tab-Leiste oben; über `+`-Icon neues Dashboard anlegen
 - **Standard-Layout**: Pro Dashboard-Rücksetzung auf Default-Widgets möglich (`POST /api/dashboard-widgets/dashboards/{id}/reset-defaults`)
-- **Klick auf Widget**: Öffnet den News Feed mit den passenden Filtern des Widgets
-- **KI-Findings anklicken**: Direktlink aus dem `ai_summary`-Widget-Finding in den Feed mit Hostnamen-/Source-Filter
+- **Klick auf Widget (Hintergrund)**: Öffnet den News Feed mit den passenden Filtern des Widgets
+- **Klick auf Donut-Segment**: Öffnet den Feed gefiltert auf die angeklickte Severity
+- **Klick auf Balken (`bar`)**: Öffnet den Feed gefiltert auf den Feld-Wert des Balkens
+- **KI-Findings anklicken**: Direktlink aus dem `ai_summary`-Widget-Finding in die **KI-Insights** (`/ai-insights?analysis=<id>`) — die zugehörige Analyse wird hervorgehoben und das Befunde-Panel aufgeklappt
+- **Interne Klicks vs. Widget-Klick**: Dedizierte Klicks (Donut/Bar/Finding/Item) haben Vorrang; der Hintergrund-Klick (`openWidget`) wird per Suppression-Flag unterdrückt, damit der Filter nicht überschrieben wird
 
 ### Standard-Widgets (automatisch beim ersten Login)
 
@@ -330,9 +337,25 @@ Der News Feed zeigt alle Ereignisse aus den aktiven OpenSearch-Indices (`cs-feed
 
 - Rote Zahl am „Meine Tickets"-Navigationseintrag zeigt Anzahl Tickets mit neuer Aktivität
 - **Roter Punkt** an einzelnen Ticket-Zeilen erscheint, wenn das Ticket seit dem letzten Öffnen aktualisiert wurde (neuer Kommentar, Statuswechsel, etc.)
-- Punkt und Badge verschwinden automatisch, wenn das Ticket in der WorkSession geöffnet wird
-- Tracking basiert auf `localStorage` (`ticket_seen_map`): kein separater Backend-Endpunkt nötig
-- Beim ersten Besuch der Seite werden alle sichtbaren Tickets als „gesehen" markiert (keine Dots beim Erstbesuch)
+- Beim Schließen des WorkSession-Dialogs wird die Ticket-Liste neu geladen, sodass der Punkt anhand der frischen `updated`-Zeit korrekt erscheint
+- Tracking basiert **serverseitig** auf `user_preferences.ticket_seen_map` (JSON, `{jira_key: ISO-Zeit}`) — geräte- und browserübergreifend persistent (kein localStorage mehr)
+- Geladen/geschrieben über `GET`/`PATCH /api/preferences` (Feld `ticket_seen_map`)
+- Beim ersten Besuch der Seite werden alle sichtbaren offenen Tickets als „gesehen" markiert (keine Dots beim Erstbesuch)
+- **Geschlossene Tickets** (`statusCategory = done`) werden aus der Map entfernt; wird ein Ticket wieder geöffnet, startet das Tracking neu
+- Der Nav-Badge wird live im 60-Sekunden-Polling neu berechnet (Tickets + `ticket_seen_map`), unabhängig davon, ob die „Meine Tickets"-Seite geöffnet ist
+
+### Ignorieren-Button (KI-Ausschluss)
+
+- Jede Feed-Karte hat einen **Ignorieren**-Button
+- Klick ruft `POST /api/feed/{id}/ignore` auf: die KI generiert aus dem Item eine OpenSearch-Lucene-Ausschluss-Query (charakteristische Phrase aus `title`/`body`, ggf. Container)
+- Die Query wird als **System-Ausschluss-Suche** (`is_system=true, is_exclusion=true`) gespeichert → ähnliche Meldungen verschwinden dauerhaft aus dem Feed
+- Das angeklickte Item wird sofort lokal aus der Liste entfernt
+
+### KI-Analyse mit Websuche
+
+- Button **KI Analyse** je Alert ruft `POST /api/feed/{id}/enrich` auf
+- Bei aktivem `workflow.web_search` (Default an) ergänzt eine SearXNG-Websuche den Kontext zusätzlich zur it-aikb-RAG-Suche (HyDE)
+- Steuerung der automatischen Anreicherung über `agent.auto_enrich`
 
 ### „Neueste Meldungen"-Button
 
@@ -623,13 +646,20 @@ Node 4: act
 | `llm.vision_model_url` | Vision-Modell Endpunkt | — |
 | `llm.vision_model` | Vision-Modell-ID | — |
 | `llm.thinking_mode` | Extended Thinking aktivieren | `false` |
-| `agent.auto_enrich` | KI-Anreicherung automatisch nach Aggregation | `true` |
+| `agent.auto_enrich` | KI-Anreicherung automatisch nach Aggregation (aus = On-Demand) | `true` |
+| `agent.rag_enabled` | Wissensdatenbank-Suche (RAG/it-aikb) im KI-Agenten | `true` |
+| `workflow.web_search` | Websuche (SearXNG) bei KI-Analyse von Feed/Alerts | `true` |
 | `agent.interval_minutes` | Intervall für Hintergrund-Agenten (Minuten) | `10` |
-| `agent.auto_create_jira` | Jira-Tickets automatisch anlegen | `true` |
+| `agent.auto_jira` | Jira-Tickets automatisch anlegen | `true` |
 | `agent.jira_severity_threshold` | Ab welcher Severity Tickets anlegen | `critical` |
 | `rag.base_url` | it-aikb RAG API URL | — |
 | `rag.api_token` | it-aikb Bearer Token | — |
 | `searxng.base_url` | SearXNG Web-Suche URL | — |
+
+**KI-Ausgabe-Verhalten:**
+- Der SysAdmin-Agent gibt alle Textfelder (Befunde, Empfehlungen) **auf Deutsch** aus — auch wenn RAG-/Web-Kontext auf Englisch vorliegt
+- **Halluzinations-Verbot**: Fehlt Kontext, nennt die KI das explizit (`„Kein Kontext aus Wissensdatenbank verfügbar…"`) statt Ursachen zu erfinden
+- it-aikb-Aufrufe (Standard + DeepSearch) haben ein Timeout von **300 s** (DeepSearch dauert ~2 min)
 
 ---
 
@@ -646,30 +676,24 @@ Im Dashboard **Widget hinzufügen → Zeitreihe → PromQL-Konverter**:
 | `Netzwerk-Traffic srv023` | `rate(node_network_receive_bytes_total{instance="srv023:9100"}[5m])` |
 | `disk` | `100 * (1 - node_filesystem_free_bytes / node_filesystem_size_bytes)` |
 
-### CheckMK-Daten in Prometheus
+### CheckMK-Metriken — Integrationsrichtung
 
-**Option A – CheckMK Built-in Export:**
-```yaml
-# prometheus.yml
-scrape_configs:
-  - job_name: 'checkmk'
-    metrics_path: '/cmk/api/1.0/domain-types/metric/collections/all'
-    params:
-      output_format: ['openmetrics']
-    basic_auth:
-      username: 'automation'
-      password: '<automation-password>'
-    static_configs:
-      - targets: ['monitoring.ippen.media:443']
-    scheme: https
-```
+> **Wichtig:** CheckMK **exportiert nicht** nach Prometheus. Die native Prometheus-Integration ist einseitig — CheckMK *scrapt* Prometheus (CheckMK als Konsument). Nativer Metrik-Export geht nur nach InfluxDB/Graphite. Bestätigt: `monitoring.ippen.media` läuft als **CheckMK 2.3.0 CEE** (Commercial Enterprise Edition).
 
-**Option B – node_exporter:**
+Daher zwei reale Wege, CheckMK-Performance-Daten in CentralStation zu bekommen:
+
+**Option A – CheckMK RRD via REST-API (genutzt):**
+Der `CheckMKConnector.get_graph_data()` zieht RRD-Zeitreihen über `/domain-types/metric/actions/get/invoke`. Das `timeseries`-Widget kann mit `data_source: "checkmk"` direkt darauf zugreifen — **kein Prometheus nötig**.
+
+**Option B – node_exporter → Prometheus (optional, für Host-Metriken):**
 ```bash
 # Ansible-Deploy auf allen Hosts:
 ansible all -m apt -a "name=prometheus-node-exporter state=present" -b
 ansible all -m service -a "name=prometheus-node-exporter enabled=yes state=started" -b
 ```
+Danach scrapt Prometheus die node_exporter und das `timeseries`-Widget nutzt `data_source: "prometheus"` mit PromQL.
+
+**Forecast:** CheckMK CEE bietet native Forecast-Graphen (Predictive Monitoring) — geplant zur Anbindung über eine neue `get_forecast_data()`-Connector-Methode (siehe Plan-Datei, Phase 0).
 
 ---
 
@@ -738,6 +762,7 @@ Persönlicher Konnektor hat immer Vorrang vor dem globalen Admin-Konnektor.
 | `checkmk_os` | Betriebssystem-Filter |
 | `checkmk_hostgroups` | Hostgruppen-Filter |
 | `feed_disabled_search_ids` | Deaktivierte gespeicherte Suchen |
+| `ticket_seen_map` | JSON `{jira_key: ISO-Zeit}` — Ticket-Badge-Tracking (ersetzt localStorage) |
 | `feed_checkmk_min_age_minutes` | CheckMK-Mindest-Alter (sehr aktuelle Items ausblenden) |
 | `feed_sources_enabled` | Welche Quellen im Feed angezeigt werden |
 | `feed_teams_channels` | Microsoft Teams Kanal-IDs für persönlichen Feed |
@@ -794,7 +819,8 @@ Alle Einstellungen werden verschlüsselt in der Datenbank gespeichert und über 
 | `/api/feed/unread-count` | GET | Ungelesene Alerts seit `?since=<ISO>` |
 | `/api/feed/checkmk-filter-values` | GET | Verfügbare Filter-Werte aus CheckMK-Index |
 | `/api/feed/{item_id}/acknowledge` | POST | Alert als bestätigt markieren |
-| `/api/feed/{item_id}/enrich` | POST | KI-Anreicherung für einzelnes Item auslösen |
+| `/api/feed/{item_id}/enrich` | POST | KI-Anreicherung (it-aikb RAG + optional SearXNG) für einzelnes Item |
+| `/api/feed/{item_id}/ignore` | POST | KI generiert OpenSearch-Ausschluss-Query → als System-Exclusion-Suche speichern |
 
 ### FeedSearches
 
@@ -828,9 +854,9 @@ Alle Einstellungen werden verschlüsselt in der Datenbank gespeichert und über 
 |------|---------|-------------|
 | `/api/ai/search-assistant` | POST | Freitext → Lucene-Query; kann FeedSearch/Widget anlegen |
 | `/api/ai/promql-assistant` | POST | Lucene/Freitext → PromQL |
-| `/api/ai/trigger/sysadmin` | POST | SysAdmin-Agent manuell auslösen |
-| `/api/ai/trigger/network` | POST | Network-Agent manuell auslösen |
-| `/api/ai/insights` | GET | Letzte KI-Analysen (ai_analyses) |
+| `/api/ai/trigger/{agent_type}` | POST | Agent manuell auslösen (`sysadmin` / `network`) |
+| `/api/ai/analyses` | GET | Letzte KI-Analysen (ai_analyses) |
+| `/api/ai/analyses/{analysis_id}` | GET | Einzelne Analyse (Deep-Link aus KI-Summary-Widget: `/ai-insights?analysis=<id>`) |
 
 ### Präferenzen
 
@@ -869,7 +895,8 @@ Alle Einstellungen werden verschlüsselt in der Datenbank gespeichert und über 
 | `/api/workflow/{id}` | GET | Work Session mit allen Notizen |
 | `/api/workflow/{id}` | PATCH | Work Session bearbeiten |
 | `/api/workflow/{id}/notes` | POST | Notiz hinzufügen |
-| `/api/workflow/{id}/generate-comment` | POST | KI-Jira-Kommentar generieren |
+| `/api/workflow/{id}/generate-comment` | POST | KI-Jira-Kommentar generieren (it-aikb DeepSearch-Kontext, 300 s Timeout) |
+| `/api/workflow/{id}/post-comment` | POST | Kommentar in Jira posten (`{"comment": "..."}`) — KI-generiert oder manuell |
 | `/api/workflow/{id}/generate-resolution` | POST | Abschlussdokumentation generieren |
 | `/api/workflow/{id}/auto-categorize` | POST | Kategorisierung per KI |
 | `/api/workflow/{id}/suggest-solution` | POST | RAG + Web-Lösungssuche |
@@ -913,6 +940,7 @@ Alle Einstellungen werden verschlüsselt in der Datenbank gespeichert und über 
 | `0011` | `dashboards` Tabelle + `dashboard_id` FK in `dashboard_widgets` |
 | `0012` | `user_preferences.checkmk_hostgroups` (falls fehlend) |
 | `0013` | `feed_searches.is_exclusion` Boolean-Feld |
+| `0014` | `user_preferences.ticket_seen_map` (JSON) — serverseitiges Ticket-Badge-Tracking |
 
 ---
 
