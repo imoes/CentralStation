@@ -35,6 +35,7 @@ _INDEX_MAPPING = {
             "external_url":  {"type": "keyword"},
             "external_id":   {"type": "keyword"},
             "ai_insight":    {"type": "text"},
+            "alert_score":   {"type": "float"},
             # owner of personal items (o365, teams) — empty = shared/all-roles
             "user_id":       {"type": "keyword"},
         }

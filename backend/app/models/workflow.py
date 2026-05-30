@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -109,6 +109,27 @@ class Dashboard(Base):
     mode: Mapped[str] = mapped_column(String(20), default="classic")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class AlertScoreAdjustment(Base):
+    """Adaptive scoring: learned delta for a specific alert pattern.
+
+    Pattern is identified by source + hashed title prefix.
+    score_delta is added to the base CPU score — positive = LLM more likely,
+    negative = LLM less likely. Expires after score_delta_decay_days days.
+    """
+    __tablename__ = "alert_score_adjustments"
+
+    pattern_hash: Mapped[str] = mapped_column(String(12), primary_key=True)
+    pattern_desc: Mapped[str | None] = mapped_column(String(200))
+    score_delta: Mapped[float] = mapped_column(Float, default=0.0)
+    sample_count: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 

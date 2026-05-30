@@ -700,4 +700,56 @@ async def get_widget_data(
         # Grafana panel is rendered client-side as iframe; backend returns URL only
         return {"panel_url": cfg.get("panel_url", ""), "refresh_seconds": cfg.get("refresh_seconds", 30)}
 
+    elif w.widget_type == "war_room":
+        from app.models.ai import AiAnalysis
+        from app.services.incident.blast_radius import get_blast_radius_for_alerts
+
+        agent_type = cfg.get("agent_type", "sysadmin")
+        # Only activate war room for critical/high situations
+        r = await db.execute(
+            select(AiAnalysis)
+            .where(
+                AiAnalysis.agent_type == agent_type,
+                AiAnalysis.severity_summary.in_(["critical", "high"]),
+            )
+            .order_by(AiAnalysis.run_at.desc())
+            .limit(1)
+        )
+        analysis = r.scalar_one_or_none()
+        if not analysis:
+            return {"active": False, "severity": "none", "findings": [], "blast_radius": [], "run_at": None}
+
+        findings = (analysis.findings or [])[:5]
+        # Build blast-radius for critical/high findings
+        fake_alerts = [
+            {"host": f.get("host") or f.get("affected_service", ""), "severity": f.get("severity", "high")}
+            for f in findings
+            if f.get("host") or f.get("affected_service")
+        ]
+        blast_radius = []
+        if fake_alerts:
+            try:
+                blast_radius = await get_blast_radius_for_alerts(fake_alerts, db)
+            except Exception as e:
+                log.debug("war_room: blast_radius failed: %s", e)
+
+        return {
+            "active": True,
+            "analysis_id": str(analysis.id),
+            "severity": analysis.severity_summary,
+            "findings": [
+                {
+                    "title": f.get("title", ""),
+                    "severity": f.get("severity", ""),
+                    "description": f.get("description", ""),
+                    "host": f.get("host") or f.get("affected_service", ""),
+                    "source": f.get("source", ""),
+                }
+                for f in findings
+            ],
+            "recommendations": (analysis.recommendations or [])[:3],
+            "blast_radius": blast_radius,
+            "run_at": analysis.run_at.isoformat() if analysis.run_at else None,
+        }
+
     return {}

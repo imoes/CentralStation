@@ -68,6 +68,13 @@ class AgentConfig:
     jira_severity_threshold: str = "critical"
     checkmk_locations: list = None  # type: ignore[assignment]
     workflow_web_search: bool = True
+    # Alert scoring
+    enrich_score_threshold: int = 80
+    max_alerts_for_llm: int = 30
+    flap_window_minutes: int = 30
+    flap_threshold: int = 3
+    score_learning_enabled: bool = True
+    score_delta_decay_days: int = 7
 
     def __post_init__(self):
         if self.checkmk_locations is None:
@@ -172,4 +179,10 @@ async def get_agent_config(db: AsyncSession) -> AgentConfig:
         jira_severity_threshold=s.get("agent.jira_severity_threshold") or "critical",
         checkmk_locations=_csv_list(s, "agent.checkmk_locations"),
         workflow_web_search=s.get("workflow.web_search", "true") == "true",
+        enrich_score_threshold=int(s.get("agent.enrich_score_threshold") or 80),
+        max_alerts_for_llm=int(s.get("agent.max_alerts_for_llm") or 30),
+        flap_window_minutes=int(s.get("agent.flap_window_minutes") or 30),
+        flap_threshold=int(s.get("agent.flap_threshold") or 3),
+        score_learning_enabled=s.get("agent.score_learning_enabled", "true") == "true",
+        score_delta_decay_days=int(s.get("agent.score_delta_decay_days") or 7),
     )

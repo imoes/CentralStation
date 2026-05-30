@@ -197,17 +197,48 @@ async def _load_aikb_svc():
     return None
 
 
-async def enrich_batch(items: list[dict], llm_config, searxng_url: str = "") -> None:
+async def enrich_batch(
+    items: list[dict],
+    llm_config,
+    searxng_url: str = "",
+    agent_cfg=None,
+    db=None,
+) -> None:
     """Enrich a batch of feed items with AI insights (best-effort, non-blocking).
 
-    Uses HyDE pattern when it-aikb connector is configured:
-    LLM generates search query → it-aikb RAG lookup → context-aware explanation.
-    Optional SearXNG web search adds live context if searxng_url is provided.
+    Applies CPU-based scoring before calling the LLM — only items above
+    agent_cfg.enrich_score_threshold receive LLM analysis.
     """
     if not llm_config or not llm_config.is_configured:
         return
 
-    targets = [i for i in items if i.get("severity") in _ENRICH_SEVERITIES]
+    # ── Score-based pre-filter ────────────────────────────────────────────────
+    severity_candidates = [i for i in items if i.get("severity") in _ENRICH_SEVERITIES]
+    if not severity_candidates:
+        return
+
+    threshold = getattr(agent_cfg, "enrich_score_threshold", 80) if agent_cfg else 80
+    min_age = getattr(agent_cfg, "interval_minutes", 10) if agent_cfg else 10
+    flap_window = getattr(agent_cfg, "flap_window_minutes", 30) if agent_cfg else 30
+    flap_threshold = getattr(agent_cfg, "flap_threshold", 3) if agent_cfg else 3
+
+    try:
+        from app.services.alert_scorer import score_alerts_batch
+        scored = await score_alerts_batch(
+            severity_candidates, db,
+            min_age_minutes=min_age,
+            flap_window_minutes=flap_window,
+            flap_threshold=flap_threshold,
+        )
+        targets = [a for score, a in scored if score >= threshold]
+        log.info(
+            "feed_enricher: %d/%d items above score threshold %d",
+            len(targets), len(severity_candidates), threshold,
+        )
+    except Exception as e:
+        log.debug("feed_enricher: scoring failed, falling back to all candidates: %s", e)
+        targets = severity_candidates
+
     if not targets:
         return
 

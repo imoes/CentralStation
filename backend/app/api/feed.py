@@ -308,6 +308,14 @@ async def enrich_feed_item(
     if not insight:
         raise HTTPException(500, "KI-Anreicherung fehlgeschlagen")
 
+    # Adaptive learning: user manually requested LLM → this pattern was relevant
+    if agent_cfg.score_learning_enabled:
+        try:
+            from app.services.alert_score_learner import record_manual_enrich_requested
+            await record_manual_enrich_requested(item, db)
+        except Exception:
+            pass
+
     return {"ai_insight": insight}
 
 
