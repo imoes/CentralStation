@@ -299,6 +299,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   creatingFromPrompt = signal(false);
   dashboardPrompt = '';
   private grid?: GridStack;
+  private generativeTimer?: ReturnType<typeof setInterval>;
   private injector = inject(Injector);
   private wsSubscription?: import('rxjs').Subscription;
 
@@ -324,6 +325,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   ngOnDestroy() {
     this.grid?.destroy(false);
     this.wsSubscription?.unsubscribe();
+    if (this.generativeTimer) clearInterval(this.generativeTimer);
   }
 
   private readonly STORAGE_KEY = 'cs_selected_dashboard_id';
@@ -610,25 +612,11 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     }
     if (next) {
       this.applyGenerativeLayout();
-      this.wsSubscription?.unsubscribe();
-      this.wsSubscription = this.ws.messages().subscribe((msg: any) => {
-        if (msg?.type === 'ai_insight') {
-          this.applyGenerativeLayout();
-          if (msg.severity === 'critical' || msg.severity === 'high') {
-            this.warRoomActive.set(true);
-            this.refreshWarRoomWidgets();
-          }
-        }
-      });
+      // Refresh every 15 minutes — not on every AI insight to avoid constant reordering
+      if (this.generativeTimer) clearInterval(this.generativeTimer);
+      this.generativeTimer = setInterval(() => this.applyGenerativeLayout(), 15 * 60 * 1000);
     } else {
-      // Even in classic mode: show war room overlay on critical incidents
-      this.wsSubscription?.unsubscribe();
-      this.wsSubscription = this.ws.messages().subscribe((msg: any) => {
-        if (msg?.type === 'ai_insight' && (msg.severity === 'critical' || msg.severity === 'high')) {
-          this.warRoomActive.set(true);
-          this.refreshWarRoomWidgets();
-        }
-      });
+      if (this.generativeTimer) { clearInterval(this.generativeTimer); this.generativeTimer = undefined; }
     }
   }
 

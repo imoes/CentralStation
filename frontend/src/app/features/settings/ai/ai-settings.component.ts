@@ -42,6 +42,7 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
       'agent.auto_enrich',
       'agent.rag_enabled',
       'workflow.web_search',
+      'agent.scoring_enabled',
       'agent.enrich_score_threshold',
       'agent.max_alerts_for_llm',
       'agent.flap_window_minutes',
@@ -54,7 +55,7 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
   },
 ];
 
-const BOOLEAN_KEYS = new Set(['searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled', 'llm.thinking_mode', 'workflow.web_search', 'agent.score_learning_enabled']);
+const BOOLEAN_KEYS = new Set(['searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled', 'llm.thinking_mode', 'workflow.web_search', 'agent.score_learning_enabled', 'agent.scoring_enabled']);
 const SELECT_KEYS: Record<string, string[]> = {
   'llm.api_mode': ['chat_completions', 'responses'],
   'agent.jira_severity_threshold': ['critical', 'high', 'medium'],
@@ -290,6 +291,7 @@ export class AiSettingsComponent implements OnInit {
       'agent.auto_enrich':                    'KI-Anreicherung automatisch (aus = On Demand)',
       'agent.rag_enabled':                    'Wissensdatenbank-Suche (RAG) im KI-Agenten',
       'workflow.web_search':                  'Websuche bei KI-Analyse (News Feed / Alerts)',
+      'agent.scoring_enabled':                'CPU-Scoring aktiv (aus = alle Alerts ans LLM, für Beta-Vergleich)',
       'agent.enrich_score_threshold':         'Score-Schwellwert für automatische KI-Anreicherung (0–200, default 80)',
       'agent.max_alerts_for_llm':             'Max. Alerts pro KI-Agent-Lauf ans LLM (default 30)',
       'agent.flap_window_minutes':            'Flapping-Erkennungsfenster in Minuten (default 30)',
