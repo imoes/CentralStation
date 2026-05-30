@@ -75,3 +75,37 @@ class NetBoxConnector(BaseConnector):
             )
             r.raise_for_status()
         return r.json().get("results", [])
+
+    async def get_vm_host(self, vm_name: str) -> str | None:
+        """Return the physical host (device name) that runs the given VM."""
+        async with self._client(timeout=20.0) as client:
+            r = await client.get(
+                self._api("/virtualization/virtual-machines/"),
+                headers=self._headers(),
+                params={"name": vm_name},
+            )
+            r.raise_for_status()
+        results = r.json().get("results", [])
+        if not results:
+            return None
+        device = results[0].get("device")
+        return device.get("name") if device else None
+
+    async def get_cluster_hosts(self, cluster_name: str) -> list[str]:
+        """Return hostnames of all physical devices in a cluster."""
+        async with self._client(timeout=20.0) as client:
+            r = await client.get(
+                self._api("/dcim/devices/"),
+                headers=self._headers(),
+                params={"cluster": cluster_name},
+            )
+            r.raise_for_status()
+        return [d.get("name", "") for d in r.json().get("results", []) if d.get("name")]
+
+    async def get_device_site(self, device_name: str) -> str | None:
+        """Return the site/location name for a physical device."""
+        device = await self.get_device(device_name)
+        if not device:
+            return None
+        site = device.get("site")
+        return site.get("name") if site else None

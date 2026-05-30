@@ -88,6 +88,41 @@ class IDGeneratorConnector(BaseConnector):
         data = r.json()
         return data if isinstance(data, list) else data.get("results", [])
 
+    async def resolve_host_to_location(self, hostname: str) -> dict | None:
+        """Resolve a hostname to a location via the virt_servers table.
+
+        Falls back to IP-based resolution if the hostname cannot be found in virt_servers.
+        """
+        # Try virt_servers table first (covers VPP*/VVE* and other virtual hosts)
+        short = hostname.split(".")[0]
+        sql = f"SELECT v.location_id, l.name as loc_name, l.city FROM virt_servers v LEFT JOIN locations l ON v.location_id = l.id WHERE v.name = '{short}' LIMIT 1"
+        try:
+            async with self._client(timeout=10.0) as client:
+                r = await client.get(
+                    self._api("locations"),
+                    params={"limit": 0, "sql-query": sql},
+                    auth=self._auth(),
+                )
+            if r.status_code == 200:
+                rows = r.json()
+                if rows:
+                    row = rows[0]
+                    return {
+                        "location_id": row.get("location_id"),
+                        "location_name": row.get("loc_name", ""),
+                        "location_city": row.get("city", ""),
+                    }
+        except Exception:
+            pass
+
+        # Fallback: DNS + IP lookup
+        try:
+            import socket
+            ip = socket.gethostbyname(hostname)
+            return await self.resolve_ip_to_location(ip)
+        except Exception:
+            return None
+
     async def resolve_switch_to_location(self, switch_name: str) -> dict | None:
         """Given a switch name (e.g. NSA001), return location data."""
         switch_type = switch_name[:3].lower()
