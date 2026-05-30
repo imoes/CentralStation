@@ -95,27 +95,73 @@ html.cs-theme-lcars {
   --mat-sys-error: #ff4433;
   --mat-sys-background: #000000;
 }
-html.cs-theme-lcars body { background: #000; }
+html.cs-theme-lcars body { background: #000; color: #ffe8a0; }
 
-/* Force readable text everywhere in LCARS: gold on black, black on colored elements */
+/* ── LCARS: set ALL Material 3 text tokens explicitly (--mat-sys-* alone is not enough) ── */
 html.cs-theme-lcars {
-  /* Material card/surface tokens */
+  /* MDC card */
   --mat-card-title-text-color: #ffe8a0;
   --mat-card-subtitle-text-color: #e8a060;
-  --mat-list-item-label-text-color: #ffe8a0;
-  --mat-list-item-supporting-text-color: #e8a060;
+  /* MDC list items */
+  --mdc-list-list-item-label-text-color: #ffe8a0;
+  --mdc-list-list-item-supporting-text-color: #e8a060;
+  --mdc-list-list-item-secondary-text-color: #e8a060;
+  --mdc-list-list-item-trailing-supporting-text-color: #e8a060;
+  /* MDC chips */
+  --mdc-chip-label-text-color: #ffe8a0;
+  /* MDC select / option */
+  --mat-option-label-text-color: #ffe8a0;
+  --mat-select-enabled-trigger-text-color: #ffe8a0;
+  /* MDC form field */
+  --mat-form-field-container-text-color: #ffe8a0;
+  --mat-form-field-label-text-color: #e8a060;
+  --mat-input-element-color: #ffe8a0;
+  /* MDC button text */
+  --mat-text-button-label-text-color: #ffe8a0;
+  --mat-outlined-button-label-text-color: #e8a060;
+  /* MDC table */
+  --mat-table-row-item-label-text-color: #ffe8a0;
+  --mat-table-header-headline-color: #e8a060;
+  /* MDC expansion panel */
+  --mat-expansion-header-text-color: #ffe8a0;
+  --mat-expansion-container-text-color: #ffe8a0;
+  /* MDC sidenav */
+  --mat-sidenav-content-text-color: #ffe8a0;
+  /* MDC tooltip */
+  --mdc-plain-tooltip-supporting-text-color: #000;
 }
-html.cs-theme-lcars .mat-mdc-card-title,
+
+/* Global cascade: any text not covered by tokens gets gold on black */
+html.cs-theme-lcars body,
+html.cs-theme-lcars mat-card,
+html.cs-theme-lcars .mat-mdc-card,
+html.cs-theme-lcars mat-list-item,
+html.cs-theme-lcars .mat-mdc-list-item,
+html.cs-theme-lcars .mdc-list-item__primary-text,
+html.cs-theme-lcars .mdc-list-item__secondary-text { color: #ffe8a0; }
+
 html.cs-theme-lcars .mat-mdc-card-subtitle,
-html.cs-theme-lcars .mdc-card__title { color: #ffe8a0 !important; }
-html.cs-theme-lcars .widget-subtitle,
-html.cs-theme-lcars .widget-title { color: #ffe8a0 !important; }
-/* Any remaining dark-on-dark: force all non-explicitly-colored text to gold */
-html.cs-theme-lcars p,
-html.cs-theme-lcars span:not([class*="badge"]):not([class*="sev"]):not([class*="chip"]),
-html.cs-theme-lcars label,
-html.cs-theme-lcars .mat-mdc-card-content { color: inherit; }
-/* Black text on orange/gold backgrounds (LCARS rule: dark text on light panels) */
-html.cs-theme-lcars [style*="background: #e87c3a"],
-html.cs-theme-lcars [style*="background: #ffcc66"],
+html.cs-theme-lcars .mat-mdc-card-header-text .mat-mdc-card-subtitle,
+html.cs-theme-lcars small, html.cs-theme-lcars .hint,
+html.cs-theme-lcars .timestamp, html.cs-theme-lcars [class*="meta"],
+html.cs-theme-lcars [class*="subtitle"] { color: #e8a060 !important; }
+
+/* Critical: black text on any orange/gold colored backgrounds */
+html.cs-theme-lcars .mat-mdc-raised-button.mat-primary,
 html.cs-theme-lcars .mat-mdc-raised-button.mat-primary span { color: #000 !important; }
+
+/* Holo theme text fix: same approach for Holo */
+html.cs-theme-holo {
+  --mdc-list-list-item-label-text-color: #cfeeff;
+  --mdc-list-list-item-supporting-text-color: #8fb8cf;
+  --mat-card-title-text-color: #cfeeff;
+  --mat-card-subtitle-text-color: #8fb8cf;
+  --mat-option-label-text-color: #cfeeff;
+  --mat-select-enabled-trigger-text-color: #cfeeff;
+  --mat-form-field-container-text-color: #cfeeff;
+  --mat-form-field-label-text-color: #8fb8cf;
+  --mat-input-element-color: #cfeeff;
+  --mat-expansion-header-text-color: #cfeeff;
+  --mat-expansion-container-text-color: #cfeeff;
+  --mdc-chip-label-text-color: #cfeeff;
+}
