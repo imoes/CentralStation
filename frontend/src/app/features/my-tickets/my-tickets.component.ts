@@ -34,7 +34,7 @@ interface JiraIssue {
   key: string;
   fields: {
     summary: string;
-    status: { name: string };
+    status: { name: string; statusCategory?: { key: string } };
     priority: { name: string };
     assignee: { displayName: string } | null;
     updated: string;
@@ -370,11 +370,23 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
       next: data => {
         const now = new Date().toISOString();
         let changed = false;
+        const allKeys = new Set<string>();
         for (const group of data) {
           for (const issue of group.issues) {
-            if (!(issue.key in this.seenMap)) {
-              this.seenMap[issue.key] = now;
-              changed = true;
+            allKeys.add(issue.key);
+            const isDone = issue.fields.status?.statusCategory?.key === 'done';
+            if (isDone) {
+              // Closed tickets: remove from seen map
+              if (issue.key in this.seenMap) {
+                delete this.seenMap[issue.key];
+                changed = true;
+              }
+            } else {
+              // Open tickets: add to seen map if not tracked yet
+              if (!(issue.key in this.seenMap)) {
+                this.seenMap[issue.key] = now;
+                changed = true;
+              }
             }
           }
         }
