@@ -96,3 +96,26 @@ html.cs-theme-lcars {
   --mat-sys-background: #000000;
 }
 html.cs-theme-lcars body { background: #000; }
+
+/* Force readable text everywhere in LCARS: gold on black, black on colored elements */
+html.cs-theme-lcars {
+  /* Material card/surface tokens */
+  --mat-card-title-text-color: #ffe8a0;
+  --mat-card-subtitle-text-color: #e8a060;
+  --mat-list-item-label-text-color: #ffe8a0;
+  --mat-list-item-supporting-text-color: #e8a060;
+}
+html.cs-theme-lcars .mat-mdc-card-title,
+html.cs-theme-lcars .mat-mdc-card-subtitle,
+html.cs-theme-lcars .mdc-card__title { color: #ffe8a0 !important; }
+html.cs-theme-lcars .widget-subtitle,
+html.cs-theme-lcars .widget-title { color: #ffe8a0 !important; }
+/* Any remaining dark-on-dark: force all non-explicitly-colored text to gold */
+html.cs-theme-lcars p,
+html.cs-theme-lcars span:not([class*="badge"]):not([class*="sev"]):not([class*="chip"]),
+html.cs-theme-lcars label,
+html.cs-theme-lcars .mat-mdc-card-content { color: inherit; }
+/* Black text on orange/gold backgrounds (LCARS rule: dark text on light panels) */
+html.cs-theme-lcars [style*="background: #e87c3a"],
+html.cs-theme-lcars [style*="background: #ffcc66"],
+html.cs-theme-lcars .mat-mdc-raised-button.mat-primary span { color: #000 !important; }
