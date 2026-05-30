@@ -2,7 +2,7 @@ export interface DashboardWidget {
   id: string;
   user_id: string;
   dashboard_id?: string | null;
-  widget_type: 'stat' | 'list' | 'donut' | 'bar' | 'ai_summary' | 'top_hosts' | 'timeseries' | 'grafana_panel' | 'forecast';
+  widget_type: 'stat' | 'list' | 'donut' | 'bar' | 'ai_summary' | 'top_hosts' | 'timeseries' | 'grafana_panel' | 'forecast' | 'war_room';
   title: string;
   gs_x: number;
   gs_y: number;
@@ -45,7 +45,7 @@ export interface FeedItem {
   metadata?: Record<string, unknown> | null;
 }
 
-export type WidgetData = StatData | ListData | DonutData | BarData | AiSummaryData | TopHostsData | TimeseriesData | GrafanaPanelData | ForecastData;
+export type WidgetData = StatData | ListData | DonutData | BarData | AiSummaryData | TopHostsData | TimeseriesData | GrafanaPanelData | ForecastData | WarRoomData;
 
 export interface StatData {
   count: number;
@@ -81,6 +81,32 @@ export interface TimeseriesData {
   series_list?: Array<{ label: string; series: Array<{ time: string; value: number }>; error?: string }>;
   unit?: string;
   error?: string;
+}
+
+export interface WarRoomFinding {
+  title: string;
+  severity: string;
+  description: string;
+  host: string;
+  source: string;
+}
+
+export interface WarRoomBlastRadius {
+  host: string;
+  location?: string | null;
+  co_hosted_vms: string[];
+  co_located_hosts: string[];
+  reason: string;
+}
+
+export interface WarRoomData {
+  active: boolean;
+  analysis_id?: string;
+  severity: string;
+  findings: WarRoomFinding[];
+  recommendations: Array<{ action: string; priority: string; rationale: string; jira_title?: string }>;
+  blast_radius: WarRoomBlastRadius[];
+  run_at?: string | null;
 }
 
 export interface ForecastData {

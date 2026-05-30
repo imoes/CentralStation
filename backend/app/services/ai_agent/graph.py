@@ -56,7 +56,7 @@ async def collect_data(state: dict, db: Any) -> dict:
             )
         )
         .order_by(Alert.created_at.desc())
-        .limit(100)
+        .limit(200)   # fetch wider set; scoring trims to max_alerts_for_llm
     )
     db_alerts = result.scalars().all()
 
@@ -119,6 +119,26 @@ async def collect_data(state: dict, db: Any) -> dict:
             continue
         filtered.append(a)
     raw_alerts = filtered
+
+    # ── CPU-scoring: trim to max_alerts_for_llm ───────────────────────────────
+    max_for_llm = state.get("max_alerts_for_llm", 30)
+    if len(raw_alerts) > max_for_llm:
+        try:
+            from app.services.alert_scorer import score_alerts_batch
+            scored = await score_alerts_batch(
+                raw_alerts, db,
+                min_age_minutes=min_age_minutes,
+                flap_window_minutes=state.get("flap_window_minutes", 30),
+                flap_threshold=state.get("flap_threshold", 3),
+            )
+            raw_alerts = [a for _, a in scored[:max_for_llm]]
+            log.info(
+                "collect_data: scored %d → top %d alerts for LLM",
+                len(filtered), len(raw_alerts),
+            )
+        except Exception as e:
+            log.debug("collect_data: scoring failed, using first %d: %s", max_for_llm, e)
+            raw_alerts = raw_alerts[:max_for_llm]
 
     log.info(
         "collect_data: %d open alerts (look_back=%dh, min_age=%dmin)",
@@ -510,6 +530,16 @@ async def act(state: dict, db: Any) -> dict:
                         labels=["CentralStation", "AI-generated"],
                     )
                     tickets_created.append(issue.get("key", "?"))
+                    # Adaptive learning: this alert pattern led to a ticket → boost
+                    try:
+                        from app.services.alert_score_learner import record_jira_created
+                        # Find the alert in enriched_alerts that matches this finding
+                        for a in state.get("enriched_alerts", []):
+                            if rec.action and (a.get("host", "") in rec.action or a.get("title", "") in title):
+                                await record_jira_created(a, db)
+                                break
+                    except Exception:
+                        pass
                 except Exception as e:
                     log.warning("act: Jira ticket creation failed: %s", e)
 
@@ -599,6 +629,10 @@ async def run_sysadmin_workflow(
         "_checkmk_ve":          user_checkmk_ve          or [],
         "_checkmk_criticality": user_checkmk_criticality or [],
         "_checkmk_os":          user_checkmk_os          or [],
+        # Scoring settings
+        "max_alerts_for_llm":  agent_config.max_alerts_for_llm,
+        "flap_window_minutes": agent_config.flap_window_minutes,
+        "flap_threshold":      agent_config.flap_threshold,
     }
 
     state = await collect_data(state, db)

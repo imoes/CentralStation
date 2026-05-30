@@ -20,6 +20,7 @@ import {
   TimeseriesData,
   TopHostsData,
   ForecastData,
+  WarRoomData,
   WidgetData,
 } from './dashboard-widget.model';
 
@@ -153,6 +154,65 @@ import {
                 <div class="empty">Keine Forecast-Daten verfügbar</div>
               }
             }
+            @case ('war_room') {
+              @if (!warRoomData()?.active) {
+                <div class="empty wr-quiet">
+                  <mat-icon>check_circle_outline</mat-icon>
+                  <span>Kein aktiver Incident</span>
+                </div>
+              } @else {
+                <div class="war-room">
+                  <div class="wr-header" [style.background]="severityColor(warRoomData()!.severity) + '22'">
+                    <span class="wr-sev-dot" [style.background]="severityColor(warRoomData()!.severity)"></span>
+                    <span class="wr-sev">{{ warRoomData()!.severity | uppercase }}</span>
+                    <span class="wr-time">{{ warRoomData()!.run_at | date:'HH:mm' }}</span>
+                    <button mat-icon-button class="wr-insights-btn" (click)="onInsightOpen($event)"
+                      matTooltip="KI-Insights öffnen"><mat-icon>psychology</mat-icon></button>
+                  </div>
+                  @for (f of warRoomData()!.findings; track f.title) {
+                    <div class="wr-finding">
+                      <span class="sev-dot" [style.background]="severityColor(f.severity)"></span>
+                      <div class="wr-finding-body">
+                        <span class="wr-finding-title">{{ f.title }}</span>
+                        @if (f.host) { <span class="wr-host">{{ f.host }}</span> }
+                        @if (f.description) { <span class="wr-desc">{{ f.description }}</span> }
+                      </div>
+                    </div>
+                  }
+                  @if (warRoomData()!.blast_radius?.length) {
+                    <div class="wr-section-label">Blast-Radius</div>
+                    @for (br of warRoomData()!.blast_radius; track br.host) {
+                      <div class="wr-blast">
+                        <mat-icon>device_hub</mat-icon>
+                        <div>
+                          <span class="wr-host">{{ br.host }}</span>
+                          @if (br.location) { <span class="wr-loc"> · {{ br.location }}</span> }
+                          @if (br.co_hosted_vms?.length) {
+                            <div class="wr-cohost">VMs: {{ br.co_hosted_vms.slice(0,3).join(', ') }}</div>
+                          }
+                        </div>
+                      </div>
+                    }
+                  }
+                  @if (warRoomData()!.recommendations?.length) {
+                    <div class="wr-section-label">Empfehlungen</div>
+                    @for (r of warRoomData()!.recommendations.slice(0,2); track r.action) {
+                      <div class="wr-rec">
+                        <span class="sev-dot" [style.background]="severityColor(r.priority)"></span>
+                        <div>
+                          <span class="wr-rec-action">{{ r.action }}</span>
+                          @if (r.jira_title) {
+                            <button mat-button class="wr-jira-btn" (click)="onWarRoomJira($event, r.jira_title)">
+                              <mat-icon>add_task</mat-icon> Jira
+                            </button>
+                          }
+                        </div>
+                      </div>
+                    }
+                  }
+                </div>
+              }
+            }
             @case ('grafana_panel') {
               @if (grafanaUrl()) {
                 <iframe class="grafana-frame" [src]="grafanaUrl()!" loading="lazy"></iframe>
@@ -226,6 +286,29 @@ import {
     .meta-sep { opacity: 0.5; }
     .chart { height: 100%; min-height: 140px; width: 100%; display: block; }
     .forecast-chart { min-height: 160px; }
+    /* War Room */
+    .war-room { display: flex; flex-direction: column; gap: 6px; height: 100%; overflow-y: auto; }
+    .wr-quiet { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #388e3c; opacity: .6; height: 100%; }
+    .wr-quiet mat-icon { font-size: 36px; height: 36px; width: 36px; }
+    .wr-header { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; font-size: 12px; }
+    .wr-sev-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .wr-sev { font-weight: 800; font-size: 11px; letter-spacing: .05em; flex: 1; }
+    .wr-time { font-size: 11px; color: var(--mat-sys-on-surface-variant); }
+    .wr-insights-btn { width: 28px; height: 28px; line-height: 28px; }
+    .wr-insights-btn mat-icon { font-size: 16px; }
+    .wr-finding { display: flex; gap: 6px; padding: 4px 6px; background: var(--mat-sys-surface-variant); border-radius: 6px; }
+    .wr-finding-body { display: flex; flex-direction: column; min-width: 0; }
+    .wr-finding-title { font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wr-host { font-size: 10px; font-family: monospace; color: var(--mat-sys-primary); }
+    .wr-loc { font-size: 10px; color: var(--mat-sys-on-surface-variant); }
+    .wr-desc { font-size: 10px; color: var(--mat-sys-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wr-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--mat-sys-on-surface-variant); padding: 2px 4px; }
+    .wr-blast { display: flex; align-items: flex-start; gap: 5px; font-size: 10px; padding: 2px 4px; }
+    .wr-blast mat-icon { font-size: 14px; height: 14px; width: 14px; color: var(--mat-sys-primary); flex-shrink: 0; margin-top: 1px; }
+    .wr-cohost { font-size: 10px; color: var(--mat-sys-on-surface-variant); font-style: italic; }
+    .wr-rec { display: flex; align-items: flex-start; gap: 6px; padding: 3px 4px; }
+    .wr-rec-action { font-size: 11px; flex: 1; min-width: 0; }
+    .wr-jira-btn { font-size: 10px; height: 22px; line-height: 22px; padding: 0 6px; color: var(--mat-sys-primary); min-width: 0; }
     .header-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
     .pin-btn { opacity: 0.4; transition: opacity .2s, color .2s; }
     .pin-btn:hover { opacity: 1; }
@@ -284,6 +367,7 @@ export class DashboardWidgetComponent {
   readonly insightOpen = output<string | null>();
   readonly donutClick  = output<string>();
   readonly barClick    = output<{ field: string; value: string }>();
+  readonly warRoomJira = output<string>();
 
   private sanitizer = inject(DomSanitizer);
 
@@ -501,6 +585,13 @@ export class DashboardWidgetComponent {
       legend: { data: ['Historie', 'Prognose', 'Konfidenz'], bottom: 0, textStyle: { color: '#94a3b8', fontSize: 10 } },
     };
   });
+
+  readonly warRoomData = computed(() => this.data() as WarRoomData | undefined);
+
+  onWarRoomJira(event: MouseEvent, jiraTitle: string) {
+    event.stopPropagation();
+    this.warRoomJira.emit(jiraTitle);
+  }
 
   readonly grafanaUrl = computed((): SafeResourceUrl | null => {
     const cfgUrl  = this.widget().config['panel_url'];

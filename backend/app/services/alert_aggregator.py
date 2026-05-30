@@ -493,7 +493,12 @@ async def run_aggregation(db: AsyncSession) -> int:
                     searxng_url = searxng.base_url if (agent_cfg.workflow_web_search and searxng.is_configured) else ""
                     relevant = await _filter_enrichable_docs(docs_to_enrich, s)
                 if relevant:
-                    asyncio.create_task(enrich_batch(relevant, llm_cfg, searxng_url=searxng_url))
+                    asyncio.create_task(enrich_batch(
+                        relevant, llm_cfg,
+                        searxng_url=searxng_url,
+                        agent_cfg=agent_cfg,
+                        db=None,  # background task — open fresh session in scorer
+                    ))
 
             asyncio.create_task(_do_enrich(docs))
         except Exception as exc:

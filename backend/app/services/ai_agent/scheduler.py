@@ -66,6 +66,37 @@ async def run_metrics_collection() -> None:
     await collect_checkmk_metrics()
 
 
+async def run_score_housekeeping() -> None:
+    """Expire stale score adjustments and detect long-ignored alerts."""
+    from app.core.database import AsyncSessionLocal
+    from app.services.alert_score_learner import cleanup_expired_adjustments, record_alert_ignored
+    from app.models.alert import Alert
+    from sqlalchemy import select
+    from datetime import datetime, timezone, timedelta
+
+    async with AsyncSessionLocal() as db:
+        # 1. Reset expired deltas
+        await cleanup_expired_adjustments(db)
+
+        # 2. Alerts open >4h without ticket or ack → they were important
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=4)
+        result = await db.execute(
+            select(Alert).where(
+                Alert.status == "new",
+                Alert.created_at <= cutoff,
+                Alert.acknowledged_by.is_(None),
+            ).limit(50)
+        )
+        for a in result.scalars().all():
+            await record_alert_ignored({
+                "source": a.source,
+                "title": a.title,
+                "severity": a.severity,
+                "external_id": a.external_id,
+                "metadata": a.metadata_ or {},
+            }, db)
+
+
 async def run_feed_housekeeping() -> None:
     """Delete feed items older than per-source retention (from global_settings)."""
     from app.core.database import AsyncSessionLocal
@@ -105,6 +136,8 @@ async def start_scheduler() -> None:
                        id="network_agent", replace_existing=True)
     _scheduler.add_job(run_metrics_collection, "interval",
                        minutes=5, id="metrics_collection", replace_existing=True)
+    _scheduler.add_job(run_score_housekeeping, "cron", hour=2, minute=0,
+                       id="score_housekeeping", replace_existing=True)
     _scheduler.add_job(run_feed_housekeeping, "cron", hour=3, minute=0,
                        id="feed_housekeeping", replace_existing=True)
     _scheduler.start()

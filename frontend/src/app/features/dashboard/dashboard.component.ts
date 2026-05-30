@@ -56,6 +56,26 @@ import { WebsocketService } from '../../core/services/websocket.service';
     DashboardWidgetComponent,
   ],
   template: `
+    <!-- War Room Overlay — erscheint automatisch bei Critical-KI-Insight -->
+    @if (warRoomActive()) {
+      <div class="war-room-overlay" (click)="dismissWarRoom()">
+        <div class="war-room-panel" (click)="$event.stopPropagation()">
+          <div class="wr-overlay-header">
+            <mat-icon class="wr-pulse">warning</mat-icon>
+            <span>INCIDENT DETECTED</span>
+            <button mat-icon-button (click)="dismissWarRoom()"><mat-icon>close</mat-icon></button>
+          </div>
+          <p>Der KI-Agent hat einen kritischen Vorfall erkannt. Bitte öffne den War-Room-Widget für Details.</p>
+          <div class="wr-overlay-actions">
+            <button mat-flat-button color="warn" (click)="scrollToWarRoom(); dismissWarRoom()">
+              <mat-icon>radar</mat-icon> War Room öffnen
+            </button>
+            <button mat-button (click)="dismissWarRoom()">Schließen</button>
+          </div>
+        </div>
+      </div>
+    }
+
     <div class="dashboard-shell">
       <section class="hero">
         <div>
@@ -167,7 +187,8 @@ import { WebsocketService } from '../../core/services/websocket.service';
                 (findingClick)="openFeedFinding($event)"
                 (insightOpen)="openInsight($event)"
                 (donutClick)="openFeedSeverity($event)"
-                (barClick)="openFeedBar($event, widget)" />
+                (barClick)="openFeedBar($event, widget)"
+                (warRoomJira)="createWarRoomTicket($event)" />
             </div>
           </div>
         }
@@ -212,6 +233,16 @@ import { WebsocketService } from '../../core/services/websocket.service';
     }
     .hero-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
     .generative-active { background: color-mix(in srgb, #7c3aed 12%, transparent) !important; color: #7c3aed !important; border-color: #7c3aed !important; }
+    /* War Room Overlay */
+    .war-room-overlay { position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; padding-top: 80px; animation: fadeIn .25s ease; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .war-room-panel { background: var(--mat-sys-surface); border-radius: 16px; padding: 24px; max-width: 440px; width: 90%; border: 2px solid #c62828; box-shadow: 0 8px 40px rgba(198,40,40,.35); }
+    .wr-overlay-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-weight: 700; font-size: 16px; color: #c62828; }
+    .wr-overlay-header mat-icon { font-size: 26px; height: 26px; width: 26px; }
+    .wr-overlay-header button { margin-left: auto; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+    .wr-pulse { animation: pulse 1.2s infinite; }
+    .wr-overlay-actions { display: flex; gap: 10px; margin-top: 16px; justify-content: flex-end; }
     .dashboard-select { width: 240px; }
     .loading-card {
       display: flex;
@@ -263,6 +294,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   widgetData = signal<Record<string, WidgetData>>({});
   configMode = signal(false);
   generativeMode = signal(false);
+  warRoomActive = signal(false);
   loading = signal(true);
   creatingFromPrompt = signal(false);
   dashboardPrompt = '';
@@ -280,6 +312,13 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
 
   ngAfterViewInit() {
     this.loadDashboards();
+    // Always listen for critical AI insights to show War Room overlay
+    this.wsSubscription = this.ws.messages().subscribe((msg: any) => {
+      if (msg?.type === 'ai_insight' && (msg.severity === 'critical' || msg.severity === 'high')) {
+        this.warRoomActive.set(true);
+        this.refreshWarRoomWidgets();
+      }
+    });
   }
 
   ngOnDestroy() {
@@ -573,11 +612,23 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
       this.applyGenerativeLayout();
       this.wsSubscription?.unsubscribe();
       this.wsSubscription = this.ws.messages().subscribe((msg: any) => {
-        if (msg?.type === 'ai_insight') this.applyGenerativeLayout();
+        if (msg?.type === 'ai_insight') {
+          this.applyGenerativeLayout();
+          if (msg.severity === 'critical' || msg.severity === 'high') {
+            this.warRoomActive.set(true);
+            this.refreshWarRoomWidgets();
+          }
+        }
       });
     } else {
+      // Even in classic mode: show war room overlay on critical incidents
       this.wsSubscription?.unsubscribe();
-      this.wsSubscription = undefined;
+      this.wsSubscription = this.ws.messages().subscribe((msg: any) => {
+        if (msg?.type === 'ai_insight' && (msg.severity === 'critical' || msg.severity === 'high')) {
+          this.warRoomActive.set(true);
+          this.refreshWarRoomWidgets();
+        }
+      });
     }
   }
 
@@ -615,6 +666,25 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     if (updates.length) {
       import('rxjs').then(({ forkJoin }) => forkJoin(updates).subscribe());
     }
+  }
+
+  dismissWarRoom() { this.warRoomActive.set(false); }
+
+  scrollToWarRoom() {
+    setTimeout(() => {
+      const el = document.querySelector('[gs-type="war_room"]') as HTMLElement | null;
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+  }
+
+  refreshWarRoomWidgets() {
+    const warRoomWidgets = this.widgets().filter(w => w.widget_type === 'war_room');
+    warRoomWidgets.forEach(w => this.loadWidgetData(w.id));
+  }
+
+  createWarRoomTicket(jiraTitle: string) {
+    this.markHandled();
+    this.router.navigate(['/workflow'], { queryParams: { title: jiraTitle, auto_jira: '1' } });
   }
 
   toggleWidgetPin(widget: DashboardWidget) {
