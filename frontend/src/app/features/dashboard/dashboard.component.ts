@@ -24,6 +24,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { environment } from '../../../environments/environment';
 import { AddWidgetDialogComponent } from './add-widget-dialog.component';
 import { DashboardWidgetComponent } from './dashboard-widget.component';
@@ -32,7 +33,9 @@ import {
   DashboardWidgetCreate,
   Dashboard,
   WidgetData,
+  LayoutPlacement,
 } from './dashboard-widget.model';
+import { WebsocketService } from '../../core/services/websocket.service';
 
 @Component({
   selector: 'cs-dashboard',
@@ -49,6 +52,7 @@ import {
     MatSelectModule,
     MatProgressSpinnerModule,
     MatSnackBarModule,
+    MatTooltipModule,
     DashboardWidgetComponent,
   ],
   template: `
@@ -90,6 +94,22 @@ import {
             <mat-icon>{{ configMode() ? 'done' : 'dashboard_customize' }}</mat-icon>
             {{ configMode() ? 'Layout speichern' : 'Dashboard anpassen' }}
           </button>
+
+          <!-- Generative / Classic toggle -->
+          <button mat-stroked-button
+            [color]="generativeMode() ? 'accent' : ''"
+            [class.generative-active]="generativeMode()"
+            (click)="toggleGenerativeMode()"
+            [matTooltip]="generativeMode() ? 'Generativer Modus — KI ordnet Widgets situativ. Klicken zum Deaktivieren.' : 'Generativen Modus aktivieren — Layout passt sich automatisch an die aktuelle Lage an'">
+            <mat-icon>{{ generativeMode() ? 'auto_awesome' : 'auto_awesome' }}</mat-icon>
+            {{ generativeMode() ? 'Generativ' : 'Klassisch' }}
+          </button>
+          @if (generativeMode()) {
+            <button mat-icon-button (click)="resetGenerativeLayout()" matTooltip="Layout zurücksetzen (Standard)">
+              <mat-icon>restart_alt</mat-icon>
+            </button>
+          }
+
           <button mat-icon-button (click)="refreshAll()" [disabled]="loading()" title="Aktualisieren">
             <mat-icon>refresh</mat-icon>
           </button>
@@ -138,9 +158,11 @@ import {
                 [widget]="widget"
                 [data]="widgetData()[widget.id]"
                 [editMode]="configMode()"
+                [generativeMode]="generativeMode()"
                 (click)="openWidget(widget)"
                 (remove)="deleteWidget(widget.id)"
                 (edit)="editWidget(widget)"
+                (pinToggle)="toggleWidgetPin(widget)"
                 (itemClick)="openFeedItem($event)"
                 (findingClick)="openFeedFinding($event)"
                 (insightOpen)="openInsight($event)"
@@ -189,6 +211,7 @@ import {
       font-size: 14px;
     }
     .hero-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    .generative-active { background: color-mix(in srgb, #7c3aed 12%, transparent) !important; color: #7c3aed !important; border-color: #7c3aed !important; }
     .dashboard-select { width: 240px; }
     .loading-card {
       display: flex;
@@ -239,17 +262,20 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   selectedDashboardId = signal<string>('');
   widgetData = signal<Record<string, WidgetData>>({});
   configMode = signal(false);
+  generativeMode = signal(false);
   loading = signal(true);
   creatingFromPrompt = signal(false);
   dashboardPrompt = '';
   private grid?: GridStack;
   private injector = inject(Injector);
+  private wsSubscription?: import('rxjs').Subscription;
 
   constructor(
     private http: HttpClient,
     private router: Router,
     private dialog: MatDialog,
     private snackBar: MatSnackBar,
+    private ws: WebsocketService,
   ) {}
 
   ngAfterViewInit() {
@@ -258,6 +284,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
 
   ngOnDestroy() {
     this.grid?.destroy(false);
+    this.wsSubscription?.unsubscribe();
   }
 
   private readonly STORAGE_KEY = 'cs_selected_dashboard_id';
@@ -270,6 +297,8 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
         const validSaved = saved && dashboards.some(d => d.id === saved) ? saved : '';
         const selected = validSaved || dashboards.find(d => d.is_default)?.id || dashboards[0]?.id || '';
         this.selectedDashboardId.set(selected);
+        const currentDashboard = dashboards.find(d => d.id === selected);
+        this.generativeMode.set(currentDashboard?.mode === 'generative');
         this.loadWidgets();
       },
       error: () => {
@@ -527,6 +556,84 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
         this.rebuildGrid();
       },
       error: () => this.snackBar.open('Widget konnte nicht gelöscht werden', 'OK', { duration: 4000 }),
+    });
+  }
+
+  // ── Generative Mode ────────────────────────────────────────────────────────
+
+  toggleGenerativeMode() {
+    const next = !this.generativeMode();
+    this.generativeMode.set(next);
+    const dashId = this.selectedDashboardId();
+    if (dashId) {
+      this.http.patch(`${environment.apiUrl}/dashboard-widgets/dashboards/${dashId}`,
+        { mode: next ? 'generative' : 'classic' }).subscribe();
+    }
+    if (next) {
+      this.applyGenerativeLayout();
+      this.wsSubscription?.unsubscribe();
+      this.wsSubscription = this.ws.messages().subscribe((msg: any) => {
+        if (msg?.type === 'ai_insight') this.applyGenerativeLayout();
+      });
+    } else {
+      this.wsSubscription?.unsubscribe();
+      this.wsSubscription = undefined;
+    }
+  }
+
+  applyGenerativeLayout() {
+    const dashId = this.selectedDashboardId();
+    if (!dashId) return;
+    this.http.post<{ placements: LayoutPlacement[] }>(
+      `${environment.apiUrl}/dashboard-widgets/dashboards/${dashId}/suggest-layout`, {}
+    ).subscribe({
+      next: ({ placements }) => this._applyPlacements(placements),
+      error: () => {},
+    });
+  }
+
+  private _applyPlacements(placements: LayoutPlacement[]) {
+    if (!this.grid) return;
+    const updates: Array<import('rxjs').Observable<unknown>> = [];
+    for (const p of placements) {
+      if (p.pinned) continue;
+      const el = this.gridEl.nativeElement.querySelector(`[gs-id="${p.widget_id}"]`) as HTMLElement | null;
+      if (el) {
+        this.grid.update(el, { x: p.gs_x, y: p.gs_y, w: p.gs_w, h: p.gs_h });
+        if (p.hidden) { el.style.opacity = '0.25'; el.style.pointerEvents = 'none'; }
+        else          { el.style.opacity = ''; el.style.pointerEvents = ''; }
+      }
+      updates.push(
+        this.http.patch(`${environment.apiUrl}/dashboard-widgets/${p.widget_id}`,
+          { gs_x: p.gs_x, gs_y: p.gs_y, gs_w: p.gs_w, gs_h: p.gs_h, hidden: p.hidden })
+      );
+      this.widgets.update(ws => ws.map(w => w.id === p.widget_id
+        ? { ...w, gs_x: p.gs_x, gs_y: p.gs_y, gs_w: p.gs_w, gs_h: p.gs_h, hidden: p.hidden }
+        : w
+      ));
+    }
+    if (updates.length) {
+      import('rxjs').then(({ forkJoin }) => forkJoin(updates).subscribe());
+    }
+  }
+
+  toggleWidgetPin(widget: DashboardWidget) {
+    const next = !widget.pinned;
+    this.widgets.update(ws => ws.map(w => w.id === widget.id ? { ...w, pinned: next } : w));
+    this.http.patch(`${environment.apiUrl}/dashboard-widgets/${widget.id}`, { pinned: next }).subscribe();
+  }
+
+  resetGenerativeLayout() {
+    const dashId = this.selectedDashboardId();
+    if (!dashId) return;
+    this.http.post<DashboardWidget[]>(
+      `${environment.apiUrl}/dashboard-widgets/dashboards/${dashId}/reset-defaults`, {}
+    ).subscribe({
+      next: widgets => {
+        this.widgets.set(widgets);
+        this.rebuildGrid();
+        widgets.forEach(w => this.loadWidgetData(w.id));
+      },
     });
   }
 

@@ -5,6 +5,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { NgxEchartsDirective } from 'ngx-echarts';
 import {
   DashboardWidget,
@@ -31,6 +32,7 @@ import {
     MatCardModule,
     MatIconModule,
     MatProgressSpinnerModule,
+    MatTooltipModule,
     NgxEchartsDirective,
   ],
   template: `
@@ -40,16 +42,24 @@ import {
           <div class="widget-title">{{ widget().title }}</div>
           <div class="widget-subtitle">{{ widget().widget_type }}</div>
         </div>
-        @if (editMode()) {
-          <div class="edit-actions">
+        <div class="header-actions">
+          @if (generativeMode()) {
+            <button mat-icon-button class="pin-btn"
+              [class.pinned]="widget().pinned"
+              (click)="togglePin($event)"
+              [matTooltip]="widget().pinned ? 'Fixiert — KI bewegt dieses Widget nicht' : 'Fixieren'">
+              <mat-icon>{{ widget().pinned ? 'push_pin' : 'push_pin' }}</mat-icon>
+            </button>
+          }
+          @if (editMode()) {
             <button mat-icon-button (click)="editWidget($event)" aria-label="Widget konfigurieren">
               <mat-icon>edit</mat-icon>
             </button>
             <button mat-icon-button (click)="removeWidget($event)" aria-label="Widget löschen">
               <mat-icon>close</mat-icon>
             </button>
-          </div>
-        }
+          }
+        </div>
       </div>
 
       <div class="widget-body">
@@ -216,6 +226,10 @@ import {
     .meta-sep { opacity: 0.5; }
     .chart { height: 100%; min-height: 140px; width: 100%; display: block; }
     .forecast-chart { min-height: 160px; }
+    .header-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+    .pin-btn { opacity: 0.4; transition: opacity .2s, color .2s; }
+    .pin-btn:hover { opacity: 1; }
+    .pin-btn.pinned { opacity: 1; color: var(--mat-sys-primary) !important; }
     .forecast-title { font-size: 11px; color: var(--mat-sys-on-surface-variant); padding: 0 4px 2px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .grafana-frame { width: 100%; height: 100%; border: 0; border-radius: 10px; background: #111827; }
     .ai-summary { height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 7px; }
@@ -261,8 +275,10 @@ export class DashboardWidgetComponent {
   readonly widget = input.required<DashboardWidget>();
   readonly data   = input<WidgetData>();
   readonly editMode = input<boolean>(false);
+  readonly generativeMode = input<boolean>(false);
   readonly remove      = output<void>();
   readonly edit        = output<void>();
+  readonly pinToggle   = output<void>();
   readonly itemClick   = output<string>();
   readonly findingClick = output<{ source: string; host: string | null; severity: string }>();
   readonly insightOpen = output<string | null>();
@@ -514,6 +530,11 @@ export class DashboardWidgetComponent {
   editWidget(event: MouseEvent) {
     event.stopPropagation();
     this.edit.emit();
+  }
+
+  togglePin(event: MouseEvent) {
+    event.stopPropagation();
+    this.pinToggle.emit();
   }
 
   onItemClick(event: MouseEvent, itemId: string) {

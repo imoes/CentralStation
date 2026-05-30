@@ -85,6 +85,10 @@ class DashboardWidget(Base):
     gs_h: Mapped[int] = mapped_column(Integer, default=3)
     # Widget-specific config (data source, filters, promql, etc.)
     config: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Generative-UI: pinned widgets are never moved by the layout engine
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Generative-UI: hidden widgets are collapsed/invisible in generative mode
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -101,6 +105,8 @@ class Dashboard(Base):
     description: Mapped[str | None] = mapped_column(Text)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # "classic" | "generative"
+    mode: Mapped[str] = mapped_column(String(20), default="classic")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

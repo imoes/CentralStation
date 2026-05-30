@@ -87,6 +87,8 @@ class WidgetUpdate(BaseModel):
     gs_w: int | None = None
     gs_h: int | None = None
     config: dict | None = None
+    pinned: bool | None = None
+    hidden: bool | None = None
 
 
 class DashboardCreate(BaseModel):
@@ -100,6 +102,7 @@ class DashboardUpdate(BaseModel):
     description: str | None = None
     is_default: bool | None = None
     position: int | None = None
+    mode: str | None = None
 
 
 def _dashboard_to_dict(d: Dashboard) -> dict:
@@ -110,6 +113,7 @@ def _dashboard_to_dict(d: Dashboard) -> dict:
         "description": d.description,
         "is_default": d.is_default,
         "position": d.position,
+        "mode": getattr(d, "mode", "classic") or "classic",
         "created_at": d.created_at.isoformat() if d.created_at else None,
     }
 
@@ -124,6 +128,8 @@ def _to_dict(w: DashboardWidget) -> dict:
         "gs_x": w.gs_x, "gs_y": w.gs_y,
         "gs_w": w.gs_w, "gs_h": w.gs_h,
         "config": w.config or {},
+        "pinned": getattr(w, "pinned", False) or False,
+        "hidden": getattr(w, "hidden", False) or False,
         "created_at": w.created_at.isoformat() if w.created_at else None,
     }
 
@@ -283,6 +289,24 @@ async def reset_dashboard_defaults(
     for w in widgets:
         await db.refresh(w)
     return [_to_dict(w) for w in widgets]
+
+
+@router.post("/dashboards/{dashboard_id}/suggest-layout", status_code=200)
+async def suggest_layout(
+    dashboard_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return a generative layout proposal for all non-pinned widgets.
+
+    Does NOT write to the database — the frontend applies the proposal
+    via GridStack and then persists by calling PATCH on each widget.
+    Pinned widgets are included with their current position unchanged.
+    """
+    await _get_dashboard_or_404(dashboard_id, current_user.id, db)
+    from app.services.dashboard.layout_engine import propose_layout
+    placements = await propose_layout(db, str(dashboard_id), str(current_user.id))
+    return {"placements": placements}
 
 
 @router.get("/")
