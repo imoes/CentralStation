@@ -81,7 +81,7 @@ import {
               </div>
             }
             @case ('donut') {
-              <div echarts [options]="donutOptions()" class="chart"></div>
+              <div echarts [options]="donutOptions()" (chartClick)="onDonutClick($event)" class="chart"></div>
             }
             @case ('bar') {
               <div echarts [options]="barOptions()" (chartClick)="onBarClick($event)" class="chart"></div>
@@ -253,6 +253,7 @@ export class DashboardWidgetComponent {
   readonly itemClick   = output<string>();
   readonly findingClick = output<{ source: string; host: string | null; severity: string }>();
   readonly insightOpen = output<string | null>();
+  readonly donutClick  = output<string>();
   readonly barClick    = output<{ field: string; value: string }>();
 
   private sanitizer = inject(DomSanitizer);
@@ -470,6 +471,10 @@ export class DashboardWidgetComponent {
     const d = this.data() as BarData | undefined;
     const field = d?.agg_field ?? 'severity';
     this.barClick.emit({ field, value: params.name });
+  }
+
+  onDonutClick(params: { name: string }) {
+    if (params?.name) this.donutClick.emit(params.name);
   }
 
   toggleFinding(title: string) {
