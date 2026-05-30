@@ -9,6 +9,8 @@ export interface DashboardWidget {
   gs_w: number;
   gs_h: number;
   config: Record<string, unknown>;
+  pinned: boolean;
+  hidden: boolean;
 }
 
 export interface Dashboard {
@@ -18,7 +20,18 @@ export interface Dashboard {
   description?: string | null;
   is_default: boolean;
   position: number;
+  mode: 'classic' | 'generative';
   created_at?: string | null;
+}
+
+export interface LayoutPlacement {
+  widget_id: string;
+  gs_x: number;
+  gs_y: number;
+  gs_w: number;
+  gs_h: number;
+  hidden: boolean;
+  pinned: boolean;
 }
 
 export interface FeedItem {
