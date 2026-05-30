@@ -643,6 +643,35 @@ async def get_widget_data(
             except Exception as e:
                 return {"series": [], "unit": "", "error": str(e)}
 
+    elif w.widget_type == "forecast":
+        from app.services.connectors import get_connector
+        from app.core.security import decrypt_credentials
+        from app.models.connector import ConnectorConfig as ConnectorModel
+        from sqlalchemy import select as sa_select
+
+        cmk_result = await db.execute(
+            sa_select(ConnectorModel)
+            .where(ConnectorModel.type == "checkmk")
+            .where(ConnectorModel.enabled == True)  # noqa: E712
+            .limit(1)
+        )
+        cmk_conn = cmk_result.scalar_one_or_none()
+        if not cmk_conn:
+            return {"series_history": [], "series_forecast": [], "confidence_band": [],
+                    "error": "No CheckMK connector configured"}
+
+        credentials = decrypt_credentials(cmk_conn.encrypted_credentials)
+        connector = get_connector("checkmk", cmk_conn.base_url, credentials)
+        result = await connector.get_forecast_data(
+            host_name=cfg.get("host", ""),
+            service_description=cfg.get("service", ""),
+            metric_id=cfg.get("metric_id", ""),
+            graph_index=int(cfg.get("graph_index", 0)),
+            history_hours=int(cfg.get("history_hours", 72)),
+            horizon_hours=int(cfg.get("horizon_hours", 24)),
+        )
+        return result
+
     elif w.widget_type == "grafana_panel":
         # Grafana panel is rendered client-side as iframe; backend returns URL only
         return {"panel_url": cfg.get("panel_url", ""), "refresh_seconds": cfg.get("refresh_seconds", 30)}

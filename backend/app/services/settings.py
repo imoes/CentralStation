@@ -33,6 +33,21 @@ class VisionConfig:
 
 
 @dataclass
+class PrometheusConfig:
+    """Settings for a future Prometheus deployment (node_exporter on hosts).
+    Connector credentials (URL, auth) are stored per-connector in connector_configs.
+    These global settings govern query behaviour defaults.
+    """
+    query_timeout: int = 30
+    default_step: str = "1m"
+    default_hours: int = 4
+
+    @property
+    def is_configured(self) -> bool:
+        return True  # no required fields; depends on connector being present
+
+
+@dataclass
 class SearXNGConfig:
     base_url: str
     enabled: bool = True
@@ -130,6 +145,15 @@ async def get_searxng_config(db: AsyncSession) -> SearXNGConfig:
         base_url=s.get("searxng.base_url") or "",
         enabled=s.get("searxng.enabled", "true") == "true",
         results_count=int(s.get("searxng.results_count") or 5),
+    )
+
+
+async def get_prometheus_config(db: AsyncSession) -> PrometheusConfig:
+    s = await get_all_settings(db)
+    return PrometheusConfig(
+        query_timeout=int(s.get("prometheus.query_timeout") or 30),
+        default_step=s.get("prometheus.default_step") or "1m",
+        default_hours=int(s.get("prometheus.default_hours") or 4),
     )
 
 
