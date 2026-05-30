@@ -132,8 +132,8 @@ async def propose_layout(db: Any, dashboard_id: str, user_id: str) -> list[dict]
         else:
             w_size, h_size = _DEFAULT_SIZE.get(w.widget_type, (4, 3))
 
-        # Hide very low-scoring widgets during a hot incident
-        hidden = incident_mode and score < 15
+        # Never hide widgets — low-scoring ones are simply placed further down
+        hidden = False
 
         # Choose column: left (0) or right (COLS//2)
         left_h = col_heights[0]
