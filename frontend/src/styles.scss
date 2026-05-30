@@ -38,3 +38,60 @@ body {
 
 html, body { height: 100%; }
 body { margin: 0; font-family: Roboto, "Helvetica Neue", sans-serif; }
+
+/* ══════════ Bridge full-screen: hide app chrome while the cockpit is open ══════════ */
+body.bridge-active .sidenav,
+body.bridge-active mat-sidenav { display: none !important; }
+body.bridge-active mat-sidenav-content { margin: 0 !important; }
+
+/* ══════════ App-wide themes (color reskin via Material system variables) ══════════
+   classic = default (untouched). holo + lcars override --mat-sys-* tokens so all
+   Material components and custom views re-skin globally. */
+
+/* ───── HOLO: dark blue glass + cyan ───── */
+html.cs-theme-holo {
+  color-scheme: dark;
+  --mat-sys-surface: #050d1a;
+  --mat-sys-surface-container: #0a1c2e;
+  --mat-sys-surface-container-high: #0e2236;
+  --mat-sys-surface-container-highest: #123048;
+  --mat-sys-surface-container-low: #07131f;
+  --mat-sys-surface-variant: #0e2236;
+  --mat-sys-on-surface: #cfeeff;
+  --mat-sys-on-surface-variant: #8fb8cf;
+  --mat-sys-primary: #4fd6ff;
+  --mat-sys-on-primary: #00131f;
+  --mat-sys-primary-container: #0e3a52;
+  --mat-sys-on-primary-container: #bfeaff;
+  --mat-sys-secondary: #7fdfff;
+  --mat-sys-tertiary: #6ad7ff;
+  --mat-sys-outline: #2c5a74;
+  --mat-sys-outline-variant: #1b3a4d;
+  --mat-sys-error: #ff5b6e;
+  --mat-sys-background: #02060f;
+}
+html.cs-theme-holo body { background: radial-gradient(circle at 50% 12%, rgba(20,60,90,.45), transparent 40rem), linear-gradient(160deg,#02060f,#050d1a 60%,#02060f); }
+
+/* ───── LCARS: black + orange/gold ───── */
+html.cs-theme-lcars {
+  color-scheme: dark;
+  --mat-sys-surface: #0a0a0a;
+  --mat-sys-surface-container: #161616;
+  --mat-sys-surface-container-high: #1f1a12;
+  --mat-sys-surface-container-highest: #261f14;
+  --mat-sys-surface-container-low: #101010;
+  --mat-sys-surface-variant: #1f1a12;
+  --mat-sys-on-surface: #ffcc99;
+  --mat-sys-on-surface-variant: #cc99cc;
+  --mat-sys-primary: #ff9966;
+  --mat-sys-on-primary: #000000;
+  --mat-sys-primary-container: #5a2d12;
+  --mat-sys-on-primary-container: #ffcc99;
+  --mat-sys-secondary: #ffcc66;
+  --mat-sys-tertiary: #cc99cc;
+  --mat-sys-outline: #6a4a2a;
+  --mat-sys-outline-variant: #3a2c1a;
+  --mat-sys-error: #ff5544;
+  --mat-sys-background: #000000;
+}
+html.cs-theme-lcars body { background: #000; }

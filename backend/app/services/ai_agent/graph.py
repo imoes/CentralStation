@@ -89,6 +89,11 @@ async def collect_data(state: dict, db: Any) -> dict:
     import re
     _SWITCH_RE = re.compile(r'^ns[asc]\d', re.IGNORECASE)
 
+    # Apply the same exclusion searches the feed/worklist use, so the agent never
+    # analyses (and reports) noise the operator already excluded (e.g. promiscuous mode).
+    from app.services.feed_index import get_exclusion_matchers, matches_exclusion
+    exclusion_matchers = await get_exclusion_matchers(db)
+
     filtered = []
     for a in raw_alerts:
         source = a["source"]
@@ -97,6 +102,10 @@ async def collect_data(state: dict, db: Any) -> dict:
         # Exclude Graylog switch messages (nsa*/nss*/nsc* hosts) — these belong to the
         # Network-Technician agent, not the SysAdmin analysis.
         if source == "graylog" and _SWITCH_RE.match(host):
+            continue
+
+        # Skip alerts matching an active exclusion rule (body/title, AND/OR aware)
+        if exclusion_matchers and matches_exclusion(f"{a.get('title','')} {a.get('body','')}", exclusion_matchers):
             continue
 
         if source != "checkmk":

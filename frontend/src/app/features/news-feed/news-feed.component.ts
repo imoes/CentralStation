@@ -504,8 +504,13 @@ const SEVERITY_COLOR: Record<string, string> = {
         @if (!loading() && visibleItems().length === 0) {
           <div class="empty-state">
             <mat-icon>check_circle_outline</mat-icon>
-            <p>Keine neuen Meldungen</p>
-            <span>Alle Systeme sind ruhig.</span>
+            @if (hostFilter) {
+              <p>Keine offenen Alerts für „{{ hostFilter }}"</p>
+              <span>Dieser Host hat aktuell keine Meldungen im Feed (ggf. nur Metrik-Auslastung).</span>
+            } @else {
+              <p>Keine neuen Meldungen</p>
+              <span>Alle Systeme sind ruhig.</span>
+            }
           </div>
         }
 

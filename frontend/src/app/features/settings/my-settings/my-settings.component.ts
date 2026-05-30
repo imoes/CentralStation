@@ -13,6 +13,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatIconModule } from '@angular/material/icon';
 import { forkJoin } from 'rxjs';
 import { environment } from '../../../../environments/environment';
+import { ThemeService } from '../../../core/services/theme.service';
 
 @Component({
   selector: 'cs-my-settings',
@@ -32,6 +33,24 @@ import { environment } from '../../../../environments/environment';
           @else { <ng-container><mat-icon>save</mat-icon> Speichern</ng-container> }
         </button>
       </div>
+
+      <mat-card class="settings-card">
+        <mat-card-header>
+          <mat-card-title>Darstellung</mat-card-title>
+          <mat-card-subtitle>Design der gesamten Anwendung. Wird pro Benutzer gespeichert.</mat-card-subtitle>
+        </mat-card-header>
+        <mat-card-content>
+          <div class="theme-grid">
+            @for (t of themes; track t.id) {
+              <button class="theme-card" [class.active]="theme.theme() === t.id" (click)="theme.setTheme(t.id)">
+                <span class="theme-swatch" [style.background]="t.swatch"></span>
+                <span class="theme-name">{{ t.label }}</span>
+                <span class="theme-desc">{{ t.desc }}</span>
+              </button>
+            }
+          </div>
+        </mat-card-content>
+      </mat-card>
 
       @if (loading()) {
         <div class="spinner-center"><mat-spinner diameter="40"></mat-spinner></div>
@@ -188,6 +207,13 @@ import { environment } from '../../../../environments/environment';
     .page-container { padding: 24px; max-width: 700px; }
     .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
     .page-header h2 { margin: 0; }
+    .theme-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .theme-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px; cursor: pointer;
+      border: 2px solid var(--mat-sys-outline-variant); border-radius: 12px; background: var(--mat-sys-surface-container); text-align: left; font-family: inherit; }
+    .theme-card.active { border-color: var(--mat-sys-primary); box-shadow: 0 0 0 2px var(--mat-sys-primary); }
+    .theme-swatch { width: 100%; height: 42px; border-radius: 8px; }
+    .theme-name { font-weight: 700; font-size: 14px; color: var(--mat-sys-on-surface); }
+    .theme-desc { font-size: 11px; color: var(--mat-sys-on-surface-variant); }
     .settings-card mat-card-content { padding-top: 16px; display: flex; flex-direction: column; gap: 8px; }
     .full-width { width: 100%; }
     .age-field { width: 320px; }
@@ -208,6 +234,12 @@ export class MySettingsComponent implements OnInit {
   loading = signal(true);
   saving  = signal(false);
 
+  readonly themes: { id: 'classic'|'holo'|'lcars'; label: string; desc: string; swatch: string }[] = [
+    { id: 'classic', label: 'Klassisch', desc: 'Hell, aufgeräumt, blauer Schleier', swatch: 'linear-gradient(135deg,#eef4fb,#1565c0)' },
+    { id: 'holo',    label: 'Holo-HUD',  desc: 'Dunkelblau, Cyan-Glow',            swatch: 'linear-gradient(135deg,#050d1a,#4fd6ff)' },
+    { id: 'lcars',   label: 'LCARS',     desc: 'Schwarz/Orange, Star Trek',        swatch: 'linear-gradient(135deg,#000,#ff9966)' },
+  ];
+
   pwCurrent = '';
   pwNew     = '';
   pwConfirm = '';
@@ -226,7 +258,7 @@ export class MySettingsComponent implements OnInit {
     location: [], ve: [], criticality: [], os: [], hostgroups: [],
   };
 
-  constructor(private http: HttpClient, private snack: MatSnackBar) {}
+  constructor(private http: HttpClient, private snack: MatSnackBar, public theme: ThemeService) {}
 
   ngOnInit() {
     forkJoin({

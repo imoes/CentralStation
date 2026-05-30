@@ -264,6 +264,68 @@ def _apply_metadata_filters(
     return result
 
 
+async def get_exclusion_matchers(db: Any) -> list[dict]:
+    """Build safe text matchers from active exclusion FeedSearches.
+
+    Used by code paths that filter in Python (e.g. the AI agent's collect_data,
+    which reads the Alert DB, not OpenSearch). Each matcher is
+    {"terms": [lowercase phrases], "mode": "and"|"or"} derived ONLY from the
+    body:/title: clauses of the query — structural fields (source/status/severity)
+    are ignored so generic values like "wazuh"/"new" never cause over-filtering.
+
+    AND-queries match only when ALL their text terms are present; OR-queries
+    match when ANY is present. Mirrors the boolean intent of the exclusion.
+    """
+    import re
+    matchers: list[dict] = []
+    try:
+        from sqlalchemy import select
+        from app.models.workflow import FeedSearch
+        result = await db.execute(
+            select(FeedSearch).where(
+                FeedSearch.is_exclusion == True,  # noqa: E712
+                FeedSearch.enabled == True,  # noqa: E712
+                FeedSearch.query_string != "",
+            )
+        )
+        for s in result.scalars().all():
+            q = s.query_string or ""
+            is_or = " OR " in q.upper()
+            terms: list[str] = []
+            for token in re.split(r"\s+(?:OR|AND|NOT)\s+", q):
+                token = token.strip().strip("()").strip()
+                if ":" not in token:
+                    continue
+                field, val = token.split(":", 1)
+                field = field.strip().lower().lstrip("(")
+                if field not in ("body", "title"):
+                    continue  # ignore source/status/severity/metadata.* etc.
+                val = val.strip().strip('()').strip('"').rstrip("*").strip()
+                if len(val) >= 3:
+                    terms.append(val.lower())
+            if terms:
+                matchers.append({"terms": terms, "mode": "or" if is_or else "and"})
+    except Exception as e:
+        log.warning("Failed to build exclusion matchers: %s", e)
+    return matchers
+
+
+def matches_exclusion(text: str, matchers: list[dict]) -> bool:
+    """True if `text` (title+body) is covered by any exclusion matcher."""
+    t = (text or "").lower()
+    for m in matchers:
+        terms = m.get("terms") or []
+        if not terms:
+            continue
+        if m.get("mode") == "or":
+            if any(term in t for term in terms):
+                return True
+        else:
+            if all(term in t for term in terms):
+                return True
+    return False
+
+
 async def get_exclusion_must_not_clauses(db: Any) -> list[dict]:
     """Return OpenSearch must_not clauses for all active exclusion FeedSearches."""
     try:
