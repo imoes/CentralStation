@@ -376,7 +376,29 @@ async def analyze(state: dict, llm_config: Any) -> dict:
                 url_part = f" (URL: {url})" if url else ""
                 rag_text += f"- {title}{url_part}: {content[:200]}\n"
 
+    # ── Blast-Radius: topological context for critical alerts ─────────────────
+    blast_text = ""
+    try:
+        from app.services.incident.blast_radius import get_blast_radius_for_alerts
+        br_results = await get_blast_radius_for_alerts(alerts, db)
+        if br_results:
+            lines = []
+            for br in br_results:
+                line = f"Host {br['host']}"
+                if br.get("location"):
+                    line += f" (Standort: {br['location']})"
+                if br.get("co_hosted_vms"):
+                    line += f" | Ko-lokalisierte VMs: {', '.join(br['co_hosted_vms'][:5])}"
+                if br.get("co_located_hosts"):
+                    line += f" | Weitere Hosts am Standort: {', '.join(br['co_located_hosts'][:5])}"
+                lines.append(line)
+            blast_text = "\n\nBlast-Radius (betroffene Topologie):\n" + "\n".join(lines)
+    except Exception as e:
+        log.debug("analyze: blast_radius failed: %s", e)
+
     user_content = f"IT-Ereignisse der letzten Stunde:\n{alerts_text}"
+    if blast_text:
+        user_content += blast_text
     if kb_text:
         user_content += f"\n\nServer-Inventar aus Confluence (CheckMK-Checks, Runbooks):{kb_text}"
     if rag_text:
