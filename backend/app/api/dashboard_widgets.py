@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -136,6 +137,96 @@ def _to_dict(w: DashboardWidget) -> dict:
         "hidden": getattr(w, "hidden", False) or False,
         "created_at": w.created_at.isoformat() if w.created_at else None,
     }
+
+
+def _finding_host(finding: dict) -> str:
+    return str(
+        finding.get("host")
+        or finding.get("affected_service")
+        or (finding.get("metadata") or {}).get("host")
+        or ""
+    ).strip()
+
+
+def _filter_analysis_for_host_scope(analysis, host_scope: list[str] | None) -> tuple[list[dict], list[dict]]:
+    findings = analysis.findings or []
+    recommendations = analysis.recommendations or []
+    if not host_scope:
+        return findings, recommendations
+
+    allowed = {h.lower() for h in host_scope if h}
+    if not allowed:
+        return findings, recommendations
+
+    scoped_findings = [
+        f for f in findings
+        if (host := _finding_host(f)) and host.lower() in allowed
+    ]
+    disallowed_hosts = {
+        host.lower()
+        for f in findings
+        if (host := _finding_host(f)) and host.lower() not in allowed
+    }
+
+    def _rec_mentions_disallowed(rec: dict) -> bool:
+        text = " ".join(str(rec.get(k, "")) for k in ("action", "title", "rationale", "jira_title")).lower()
+        return any(host in text for host in disallowed_hosts)
+
+    scoped_recommendations = [r for r in recommendations if not _rec_mentions_disallowed(r)]
+    return scoped_findings, scoped_recommendations
+
+
+def _build_ai_summary_text(analysis, findings: list[dict] | None = None, recommendations: list[dict] | None = None) -> str:
+    scoped = findings is not None
+    findings = findings if findings is not None else (analysis.findings or [])
+    recommendations = recommendations if recommendations is not None else (analysis.recommendations or [])
+    hosts = sorted({h for h in (_finding_host(f) for f in findings) if h}, key=str.lower)
+    severities = Counter(str(f.get("severity", "info")) for f in findings)
+    sources = Counter(str(f.get("source", "unbekannt") or "unbekannt") for f in findings)
+
+    if scoped:
+        sev_order = ["critical", "high", "medium", "low", "info"]
+        severity_label = next((s for s in sev_order if severities.get(s)), "none").upper()
+    else:
+        severity_label = (analysis.severity_summary or "none").upper()
+    parts: list[str] = [
+        f"Lagebild: {severity_label} mit {len(findings)} Befund(en)."
+    ]
+
+    if severities:
+        sev_order = ["critical", "high", "medium", "low", "info"]
+        sev_text = ", ".join(
+            f"{severities[s]} {s}" for s in sev_order if severities.get(s)
+        )
+        parts.append(f"Severity-Verteilung: {sev_text}.")
+
+    if sources:
+        src_text = ", ".join(f"{src}: {count}" for src, count in sources.most_common())
+        parts.append(f"Quellen: {src_text}.")
+
+    if hosts:
+        parts.append(f"Betroffene Hosts vollständig: {', '.join(hosts)}.")
+    else:
+        parts.append("Keine passenden Host-Befunde im aktuellen Standort-Scope.")
+
+    critical_titles = [
+        f.get("title", "").strip()
+        for f in findings
+        if f.get("severity") in ("critical", "high") and f.get("title")
+    ]
+    if critical_titles:
+        parts.append("Schwerpunkt: " + " | ".join(critical_titles[:6]) + ".")
+
+    if recommendations:
+        rec_lines = [
+            str(r.get("action") or r.get("title") or "").strip()
+            for r in recommendations
+            if str(r.get("action") or r.get("title") or "").strip()
+        ]
+        if rec_lines:
+            parts.append("Empfohlene nächste Schritte: " + " | ".join(rec_lines[:4]) + ".")
+
+    return "\n".join(parts)
 
 
 async def _create_defaults(user_id: uuid.UUID, dashboard_id: uuid.UUID, db: AsyncSession) -> list[DashboardWidget]:
@@ -517,6 +608,7 @@ async def get_widget_data(
     query_string = cfg.get("query_string", "")
     user_id_str = str(current_user.id)
     host_scope = await feed_index.get_user_checkmk_host_scope(db, user_id_str)
+    exclusion_clauses = await feed_index.get_exclusion_must_not_clauses(db)
 
     def _host_scope_filter() -> dict | None:
         if not host_scope:
@@ -555,6 +647,8 @@ async def get_widget_data(
                 "filter": filters,
             }
         }
+        if exclusion_clauses:
+            body_query["bool"]["must_not"] = exclusion_clauses
         try:
             resp = await os_client.count(
                 index=index_pattern,
@@ -573,6 +667,7 @@ async def get_widget_data(
             size=limit,
             user_id=user_id_str,
             host_scope=host_scope,
+            db=db,
         )
         return {"items": items}
 
@@ -598,6 +693,8 @@ async def get_widget_data(
             "query": {"bool": {"must": [query], "filter": filters}},
             "aggs": {"by_severity": {"terms": {"field": "severity", "size": 10}}},
         }
+        if exclusion_clauses:
+            body["query"]["bool"]["must_not"] = exclusion_clauses
         try:
             resp = await os_client.search(index=index_pattern, body=body, ignore_unavailable=True)
             buckets = [
@@ -626,9 +723,11 @@ async def get_widget_data(
         query = {"query_string": {"query": query_string or "*"}} if query_string else {"match_all": {}}
         body = {
             "size": 0,
-            "query": {"bool": {"must": [query], "filter": []}},
+            "query": {"bool": {"must": [query], "filter": [_host_scope_filter()] if _host_scope_filter() else []}},
             "aggs": {"bars": {"terms": {"field": os_field, "size": limit, "order": {"_count": "desc"}}}},
         }
+        if exclusion_clauses:
+            body["query"]["bool"]["must_not"] = exclusion_clauses
         try:
             resp = await os_client.search(index=index_pattern, body=body, ignore_unavailable=True)
             buckets = [
@@ -651,9 +750,10 @@ async def get_widget_data(
         analysis = result.scalar_one_or_none()
         if not analysis:
             return {"analysis_id": None, "summary": "", "findings": [], "recommendations": [], "run_at": None}
+        scoped_findings, scoped_recommendations = _filter_analysis_for_host_scope(analysis, host_scope)
         return {
             "analysis_id": str(analysis.id),
-            "summary": analysis.severity_summary,
+            "summary": _build_ai_summary_text(analysis, scoped_findings, scoped_recommendations),
             "findings": [
                 {
                     "title":       f.get("title", ""),
@@ -662,9 +762,9 @@ async def get_widget_data(
                     "host":        f.get("host") or f.get("affected_service"),
                     "source":      f.get("source", ""),
                 }
-                for f in (analysis.findings or [])[:5]
+                for f in scoped_findings
             ],
-            "recommendations": (analysis.recommendations or [])[:3],
+            "recommendations": scoped_recommendations,
             "run_at": analysis.run_at.isoformat() if analysis.run_at else None,
         }
 
@@ -676,6 +776,7 @@ async def get_widget_data(
             size=200,
             user_id=user_id_str,
             host_scope=host_scope,
+            db=db,
         )
         groups: dict[str, dict] = {}
         for item in items:
@@ -832,7 +933,10 @@ async def get_widget_data(
         if not analysis:
             return {"active": False, "severity": "none", "findings": [], "blast_radius": [], "run_at": None}
 
-        findings = (analysis.findings or [])[:5]
+        findings, recommendations = _filter_analysis_for_host_scope(analysis, host_scope)
+        if host_scope and not findings:
+            return {"active": False, "severity": "none", "findings": [], "blast_radius": [], "run_at": None}
+        findings = findings[:5]
         # Build blast-radius for critical/high findings
         fake_alerts = [
             {"host": f.get("host") or f.get("affected_service", ""), "severity": f.get("severity", "high")}
@@ -860,7 +964,7 @@ async def get_widget_data(
                 }
                 for f in findings
             ],
-            "recommendations": (analysis.recommendations or [])[:3],
+            "recommendations": recommendations[:3],
             "blast_radius": blast_radius,
             "run_at": analysis.run_at.isoformat() if analysis.run_at else None,
         }
