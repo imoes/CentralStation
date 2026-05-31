@@ -363,7 +363,7 @@ const SEVERITY_COLOR: Record<string, string> = {
           @if (isFirstSeen(item, idx)) {
             <div class="last-seen-divider"><span>Zuletzt gesehen ↑</span></div>
           }
-          <mat-card class="feed-card" [class.card-acknowledged]="item.status === 'acknowledged'" [attr.data-feed-id]="item.id">
+          <mat-card class="feed-card" [class.card-acknowledged]="item.status === 'acknowledged'" [attr.data-feed-id]="item.id" [attr.data-severity]="item.severity">
 
             <!-- Card header: avatar + meta -->
             <div class="card-top">
@@ -771,6 +771,134 @@ const SEVERITY_COLOR: Record<string, string> = {
     @media (max-width: 760px) {
       .ai-search-box, .search-editor { grid-template-columns: 1fr; }
     }
+
+    /* ══ LCARS THEME ══════════════════════════════════════════════════════════ */
+    :host-context(html.cs-theme-lcars) .feed-page {
+      font-family: 'Antonio','Eurostile','Roboto Condensed',sans-serif;
+      padding: 12px 16px; max-width: 900px;
+    }
+    :host-context(html.cs-theme-lcars) .feed-topbar h2 {
+      font-size: 20px; font-weight: 800; letter-spacing: .22em; text-transform: uppercase;
+      color: #ffcc66; background: #000; display: inline-block; padding: 3px 10px 3px 0;
+    }
+    /* ── feed cards ── */
+    :host-context(html.cs-theme-lcars) .feed-card {
+      background: #15120c !important;
+      border: none !important;
+      border-left: 8px solid #e87c3a !important;
+      border-radius: 0 14px 14px 0 !important;
+      box-shadow: none !important;
+      transition: background .15s !important;
+    }
+    :host-context(html.cs-theme-lcars) .feed-card:hover { background: #1e1710 !important; }
+    :host-context(html.cs-theme-lcars) .feed-card.card-acknowledged { opacity: .45; }
+    /* severity → left border color */
+    :host-context(html.cs-theme-lcars) .feed-card[data-severity="critical"] { border-left-color: #ff5544 !important; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-severity="high"]     { border-left-color: #ffcc00 !important; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-severity="medium"]   { border-left-color: #ff9966 !important; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-severity="warning"]  { border-left-color: #ffcc00 !important; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-severity="low"]      { border-left-color: #7fb3d3 !important; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-severity="info"]     { border-left-color: #66cc66 !important; }
+    /* ── card top (header bar) ── */
+    :host-context(html.cs-theme-lcars) .card-top {
+      background: #1e1710; padding: 6px 14px;
+      border-bottom: 1px solid #2a1d0a;
+    }
+    :host-context(html.cs-theme-lcars) .source-avatar { display: none; }
+    :host-context(html.cs-theme-lcars) .card-meta { flex: 1; min-width: 0; }
+    :host-context(html.cs-theme-lcars) .source-label {
+      color: #ffcc66 !important; font-weight: 900; text-transform: uppercase;
+      letter-spacing: .1em; font-size: 11px;
+    }
+    :host-context(html.cs-theme-lcars) .severity-badge {
+      font-size: 10px; font-weight: 900; border-radius: 3px;
+      padding: 2px 7px; letter-spacing: .06em;
+    }
+    :host-context(html.cs-theme-lcars) .host-tag { color: #e8a060; font-family: 'Fira Code', monospace; font-size: 12px; }
+    :host-context(html.cs-theme-lcars) .location-tag { color: #7fb3d3; }
+    :host-context(html.cs-theme-lcars) .timestamp { color: rgba(255,232,160,.45); }
+    :host-context(html.cs-theme-lcars) .ack-stamp { color: #66cc66; }
+    /* ── title ── */
+    :host-context(html.cs-theme-lcars) .card-title { color: #ffe8a0; padding: 8px 14px 6px; font-size: 14px; }
+    :host-context(html.cs-theme-lcars) .card-title-link { color: #ffe8a0; }
+    :host-context(html.cs-theme-lcars) .severity-critical { color: #ff7766 !important; }
+    /* ── body ── */
+    :host-context(html.cs-theme-lcars) .card-body-text { color: #e8a060; padding: 0 14px 8px; font-size: 12px; }
+    :host-context(html.cs-theme-lcars) .card-body-text.collapsed {
+      -webkit-mask-image: linear-gradient(to bottom, #ffe8a0 40%, transparent 100%);
+    }
+    :host-context(html.cs-theme-lcars) .expand-btn { color: #ffcc66 !important; }
+    /* ── AI insight ── */
+    :host-context(html.cs-theme-lcars) .ai-insight {
+      background: rgba(232,124,58,.1); border-left: 3px solid #e87c3a;
+      color: #ffcc99; margin: 0 14px 8px; border-radius: 0;
+    }
+    :host-context(html.cs-theme-lcars) .ai-insight-icon { color: #e87c3a; }
+    :host-context(html.cs-theme-lcars) .ai-demand-row { padding: 4px 14px 8px; }
+    :host-context(html.cs-theme-lcars) .ki-btn { color: #e87c3a !important; border-color: #e87c3a !important; }
+    /* ── actions bar ── */
+    :host-context(html.cs-theme-lcars) mat-divider { --mat-divider-color: #2a1d0a; }
+    :host-context(html.cs-theme-lcars) .card-actions { background: #0a0804; padding: 4px 10px; border-top: 1px solid #2a1d0a; }
+    :host-context(html.cs-theme-lcars) .action-btn { color: #e8a060 !important; font-size: 12px; }
+    :host-context(html.cs-theme-lcars) .ignore-btn { color: #ff7766 !important; }
+    :host-context(html.cs-theme-lcars) .item-type-hint { color: rgba(255,204,153,.3); font-size: 10px; }
+    /* ── divider & empty ── */
+    :host-context(html.cs-theme-lcars) .last-seen-divider { color: #ffcc66; font-family: 'Antonio','Eurostile',sans-serif; letter-spacing: .08em; text-transform: uppercase; font-size: 11px; }
+    :host-context(html.cs-theme-lcars) .last-seen-divider::before, :host-context(html.cs-theme-lcars) .last-seen-divider::after { background: #3a2810; }
+    :host-context(html.cs-theme-lcars) .empty-state { color: #5a3a18; }
+    :host-context(html.cs-theme-lcars) .empty-state mat-icon { color: #3a2810; }
+    /* ── panels (filter / settings / search manager) ── */
+    :host-context(html.cs-theme-lcars) .settings-card { background: #15120c !important; border: 1px solid #2a1d0a !important; border-radius: 0 14px 14px 0 !important; box-shadow: none !important; }
+    :host-context(html.cs-theme-lcars) .active-search-bar { background: rgba(232,124,58,.1); border: 1px solid rgba(232,124,58,.3); border-radius: 0 10px 10px 0; color: #ffcc99; }
+    :host-context(html.cs-theme-lcars) .active-search-name { color: #e87c3a; }
+    :host-context(html.cs-theme-lcars) .system-search-tile { background: #15120c; border-color: #2a1d0a; color: #ffe8a0; border-radius: 0 8px 8px 0; }
+    :host-context(html.cs-theme-lcars) .system-search-tile:hover { background: #1e1710; }
+    :host-context(html.cs-theme-lcars) .system-search-tile.active { border-color: #e87c3a; background: rgba(232,124,58,.12); }
+    :host-context(html.cs-theme-lcars) .system-search-name { color: #ffe8a0; }
+    :host-context(html.cs-theme-lcars) .system-search-meta { color: #e8a060; }
+    :host-context(html.cs-theme-lcars) .saved-search-row { background: #15120c; border-radius: 0 8px 8px 0; }
+    :host-context(html.cs-theme-lcars) .saved-search-name { color: #ffe8a0; }
+    :host-context(html.cs-theme-lcars) .saved-search-query { color: #e8a060; }
+    :host-context(html.cs-theme-lcars) .section-label { color: #ffcc66; }
+    :host-context(html.cs-theme-lcars) .no-searches { color: #5a3a18; }
+    /* highlight animation override */
+    @keyframes feedHighlightLcars {
+      0%   { box-shadow: 0 0 0 2px #ffcc66; background: #2a1d0a; }
+      80%  { box-shadow: 0 0 0 2px #ffcc66; }
+      100% { box-shadow: none; background: #15120c; }
+    }
+    :host-context(html.cs-theme-lcars) .feed-highlight { animation: feedHighlightLcars 2.8s ease-out forwards; }
+
+    /* ══ HOLO THEME ══════════════════════════════════════════════════════════ */
+    :host-context(html.cs-theme-holo) .feed-topbar h2 { color: #9fe8ff; font-size: 18px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    :host-context(html.cs-theme-holo) .feed-card {
+      background: rgba(10,28,46,.85) !important;
+      border: none !important;
+      border-left: 6px solid #4fd6ff !important;
+      border-radius: 0 12px 12px 0 !important;
+      box-shadow: 0 0 12px rgba(79,214,255,.06) !important;
+    }
+    :host-context(html.cs-theme-holo) .feed-card[data-severity="critical"] { border-left-color: #ff5b6e !important; }
+    :host-context(html.cs-theme-holo) .feed-card[data-severity="high"]     { border-left-color: #ffd84a !important; }
+    :host-context(html.cs-theme-holo) .feed-card[data-severity="medium"]   { border-left-color: #4fd6ff !important; }
+    :host-context(html.cs-theme-holo) .feed-card[data-severity="low"]      { border-left-color: #3dffa8 !important; }
+    :host-context(html.cs-theme-holo) .card-top { background: rgba(79,214,255,.06); border-bottom: 1px solid rgba(79,214,255,.12); padding: 6px 14px; }
+    :host-context(html.cs-theme-holo) .source-avatar { display: none; }
+    :host-context(html.cs-theme-holo) .source-label { color: #9fe8ff !important; font-weight: 700; text-transform: uppercase; font-size: 11px; }
+    :host-context(html.cs-theme-holo) .host-tag { color: #8fb8cf; }
+    :host-context(html.cs-theme-holo) .location-tag { color: #5fc8ee; }
+    :host-context(html.cs-theme-holo) .timestamp { color: rgba(143,184,207,.5); }
+    :host-context(html.cs-theme-holo) .card-title { color: #cfeeff; padding: 8px 14px 6px; }
+    :host-context(html.cs-theme-holo) .card-body-text { color: #8fb8cf; padding: 0 14px 8px; }
+    :host-context(html.cs-theme-holo) .ai-insight { background: rgba(79,214,255,.08); border-left: 3px solid #4fd6ff; color: #bfefff; margin: 0 14px 8px; }
+    :host-context(html.cs-theme-holo) .ai-insight-icon { color: #4fd6ff; }
+    :host-context(html.cs-theme-holo) .card-actions { background: rgba(5,15,30,.5); border-top: 1px solid rgba(79,214,255,.1); }
+    :host-context(html.cs-theme-holo) .action-btn { color: #8fb8cf !important; }
+    :host-context(html.cs-theme-holo) .ki-btn { color: #4fd6ff !important; border-color: rgba(79,214,255,.5) !important; }
+    :host-context(html.cs-theme-holo) .last-seen-divider { color: #4fd6ff; }
+    :host-context(html.cs-theme-holo) .last-seen-divider::before, :host-context(html.cs-theme-holo) .last-seen-divider::after { background: rgba(79,214,255,.2); }
+    :host-context(html.cs-theme-holo) .empty-state { color: rgba(79,214,255,.3); }
+    :host-context(html.cs-theme-holo) .settings-card { background: rgba(10,28,46,.85) !important; border: 1px solid rgba(79,214,255,.2) !important; box-shadow: none !important; }
   `],
 })
 export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {

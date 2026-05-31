@@ -137,7 +137,7 @@ const SEVERITY_COLORS: Record<string, string> = {
       } @else {
         <div class="alert-list">
           @for (alert of filteredAlerts(); track alert.id) {
-            <div class="alert-row" [class.alert-new]="alert.status === 'new'">
+            <div class="alert-row" [class.alert-new]="alert.status === 'new'" [attr.data-severity]="alert.severity">
               <div class="severity-bar" [style.background-color]="severityColor(alert.severity)"></div>
               <div class="alert-content">
                 <div class="alert-top">
@@ -230,6 +230,87 @@ const SEVERITY_COLORS: Record<string, string> = {
     .empty-state { text-align: center; padding: 40px; color: var(--mat-sys-on-surface-variant); }
     .spinner-center { display: flex; justify-content: center; padding: 40px; }
     mat-spinner { display: inline-block; }
+
+    /* ══ LCARS THEME ══════════════════════════════════════════════════════════ */
+    :host-context(html.cs-theme-lcars) .page-container {
+      font-family: 'Antonio','Eurostile','Roboto Condensed',sans-serif;
+      padding: 12px 16px;
+    }
+    :host-context(html.cs-theme-lcars) .page-header h2 {
+      font-size: 20px; font-weight: 800; letter-spacing: .22em; text-transform: uppercase;
+      color: #ffcc66; background: #000; display: inline-block; padding: 3px 10px 3px 0;
+      margin: 0;
+    }
+    :host-context(html.cs-theme-lcars) .page-subtitle { color: rgba(255,204,153,.5); font-size: 11px; letter-spacing: .06em; }
+    :host-context(html.cs-theme-lcars) .alert-list { gap: 6px; }
+    :host-context(html.cs-theme-lcars) .alert-row {
+      background: #15120c;
+      border: none;
+      border-left: 8px solid #e87c3a;
+      border-radius: 0 14px 14px 0;
+      box-shadow: none;
+      overflow: hidden;
+    }
+    /* severity → left border color */
+    :host-context(html.cs-theme-lcars) .alert-row[data-severity="critical"] { border-left-color: #ff5544; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-severity="high"]     { border-left-color: #ffcc00; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-severity="medium"]   { border-left-color: #ff9966; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-severity="warning"]  { border-left-color: #ffcc00; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-severity="low"]      { border-left-color: #7fb3d3; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-severity="info"]     { border-left-color: #66cc66; }
+    /* hide the 4px severity-bar (replaced by border-left) */
+    :host-context(html.cs-theme-lcars) .severity-bar { display: none; }
+    :host-context(html.cs-theme-lcars) .alert-content { padding: 8px 14px 6px; }
+    :host-context(html.cs-theme-lcars) .alert-title { color: #ffe8a0; font-size: 13px; font-weight: 600; }
+    :host-context(html.cs-theme-lcars) .alert-top { margin-bottom: 5px; }
+    /* chips → LCARS labels */
+    :host-context(html.cs-theme-lcars) mat-chip.chip-source,
+    :host-context(html.cs-theme-lcars) mat-chip.chip-severity,
+    :host-context(html.cs-theme-lcars) mat-chip.chip-host,
+    :host-context(html.cs-theme-lcars) mat-chip.chip-location {
+      --mdc-chip-container-color: #1e1710;
+      --mdc-chip-label-text-color: #e8a060;
+      --mdc-chip-outline-color: #3a2810;
+      border-radius: 3px !important;
+      font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    }
+    :host-context(html.cs-theme-lcars) mat-chip.chip-host {
+      --mdc-chip-label-text-color: #ffcc99;
+      font-family: 'Fira Code', monospace; font-size: 11px; text-transform: none;
+    }
+    :host-context(html.cs-theme-lcars) .alert-body { color: #e8a060; font-size: 11px; line-height: 1.5; }
+    :host-context(html.cs-theme-lcars) .ai-insight {
+      background: rgba(232,124,58,.1); border-left: 3px solid #e87c3a;
+      color: #ffcc99; margin: 6px 0 4px; border-radius: 0;
+    }
+    :host-context(html.cs-theme-lcars) .ai-insight-icon { color: #e87c3a; }
+    :host-context(html.cs-theme-lcars) .alert-meta { color: rgba(255,232,160,.45); font-size: 10px; }
+    :host-context(html.cs-theme-lcars) .ki-btn { color: #e87c3a !important; }
+    :host-context(html.cs-theme-lcars) .alert-actions { background: #0a0804; border-left: 1px solid #2a1d0a; }
+    :host-context(html.cs-theme-lcars) .ack-icon { color: #66cc66; }
+    :host-context(html.cs-theme-lcars) .empty-state { color: #5a3a18; }
+    :host-context(html.cs-theme-lcars) .spinner-center mat-spinner { --mdc-circular-progress-active-indicator-color: #e87c3a; }
+
+    /* ══ HOLO THEME ══════════════════════════════════════════════════════════ */
+    :host-context(html.cs-theme-holo) .page-header h2 { color: #9fe8ff; font-size: 18px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    :host-context(html.cs-theme-holo) .page-subtitle { color: rgba(143,184,207,.6); }
+    :host-context(html.cs-theme-holo) .alert-row {
+      background: rgba(10,28,46,.85); border: none;
+      border-left: 6px solid #4fd6ff; border-radius: 0 12px 12px 0; box-shadow: none;
+    }
+    :host-context(html.cs-theme-holo) .alert-row[data-severity="critical"] { border-left-color: #ff5b6e; }
+    :host-context(html.cs-theme-holo) .alert-row[data-severity="high"]     { border-left-color: #ffd84a; }
+    :host-context(html.cs-theme-holo) .alert-row[data-severity="low"]      { border-left-color: #3dffa8; }
+    :host-context(html.cs-theme-holo) .severity-bar { display: none; }
+    :host-context(html.cs-theme-holo) .alert-title { color: #cfeeff; }
+    :host-context(html.cs-theme-holo) .alert-body { color: #8fb8cf; }
+    :host-context(html.cs-theme-holo) .ai-insight { background: rgba(79,214,255,.08); border-left: 3px solid #4fd6ff; color: #bfefff; }
+    :host-context(html.cs-theme-holo) .ai-insight-icon { color: #4fd6ff; }
+    :host-context(html.cs-theme-holo) .alert-meta { color: rgba(143,184,207,.5); }
+    :host-context(html.cs-theme-holo) .ki-btn { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-holo) .alert-actions { background: rgba(5,15,30,.5); }
+    :host-context(html.cs-theme-holo) .ack-icon { color: #3dffa8; }
+    :host-context(html.cs-theme-holo) .empty-state { color: rgba(79,214,255,.3); }
   `],
 })
 export class AlertsComponent implements OnInit, OnDestroy {
