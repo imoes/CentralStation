@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, computed, inject, input, output, signal } from '@angular/core';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
+import { ThemeService } from '../../core/services/theme.service';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
@@ -352,6 +353,119 @@ import {
       color: var(--mat-sys-on-surface-variant);
     }
     .host-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ═══════════════════════════════════════════════════════════
+       LCARS THEME — widgets look like bridge panels
+       Orange header bar | black body | gold text | elbow cap
+       ═══════════════════════════════════════════════════════════ */
+    :host-context(html.cs-theme-lcars) .widget-card {
+      background: #0a0804;
+      border: none !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      border-left: 7px solid #e87c3a;
+      position: relative;
+      overflow: visible !important;
+    }
+    :host-context(html.cs-theme-lcars) .widget-card.edit-mode {
+      border-left: 7px solid #ffcc66 !important;
+      outline: none !important;
+    }
+    :host-context(html.cs-theme-lcars) .widget-header {
+      background: #e87c3a;
+      padding: 6px 14px;
+      border-radius: 0;
+      flex-shrink: 0;
+    }
+    :host-context(html.cs-theme-lcars) .widget-title {
+      color: #000 !important;
+      font-family: 'Eurostile', 'Antonio', 'Roboto Condensed', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      font-weight: 900;
+      font-size: 12px;
+    }
+    :host-context(html.cs-theme-lcars) .widget-subtitle {
+      color: rgba(0,0,0,.6) !important;
+      letter-spacing: .1em;
+    }
+    :host-context(html.cs-theme-lcars) .header-actions button { color: #000 !important; }
+    :host-context(html.cs-theme-lcars) .widget-body {
+      color: #ffe8a0;
+    }
+    :host-context(html.cs-theme-lcars) .stat-value {
+      color: #e87c3a !important;
+      font-family: 'Eurostile', 'Antonio', sans-serif;
+      font-size: clamp(54px, 10vw, 90px);
+      letter-spacing: -.02em;
+    }
+    :host-context(html.cs-theme-lcars) .list-item {
+      border-bottom-color: #2a1d0a !important;
+    }
+    :host-context(html.cs-theme-lcars) .list-title { color: #ffe8a0 !important; }
+    :host-context(html.cs-theme-lcars) .list-meta { color: #e8a060 !important; }
+    :host-context(html.cs-theme-lcars) .list-host { color: #ffcc66 !important; }
+    :host-context(html.cs-theme-lcars) .empty { color: #5a3a18 !important; }
+    :host-context(html.cs-theme-lcars) .loading mat-spinner { --mdc-circular-progress-active-indicator-color: #e87c3a; }
+    :host-context(html.cs-theme-lcars) .clickable:hover { background: rgba(232,124,58,.12) !important; }
+    :host-context(html.cs-theme-lcars) .host-row {
+      background: #1e1710 !important;
+      border-left: 3px solid #e87c3a;
+    }
+    :host-context(html.cs-theme-lcars) .host-name { color: #ffcc66 !important; }
+    :host-context(html.cs-theme-lcars) .host-count { background: #e87c3a !important; color: #000 !important; }
+    :host-context(html.cs-theme-lcars) .host-item { color: #e8a060 !important; }
+    :host-context(html.cs-theme-lcars) .ai-summary p { color: #e8a060 !important; }
+    :host-context(html.cs-theme-lcars) .finding { color: #ffe8a0 !important; }
+    :host-context(html.cs-theme-lcars) .finding:hover { background: rgba(232,124,58,.15) !important; }
+    :host-context(html.cs-theme-lcars) .finding-arrow { color: #e87c3a !important; }
+    :host-context(html.cs-theme-lcars) .wr-finding { background: #1e1710 !important; }
+    :host-context(html.cs-theme-lcars) .wr-finding-title { color: #ffe8a0 !important; }
+    :host-context(html.cs-theme-lcars) .wr-host { color: #e87c3a !important; }
+    :host-context(html.cs-theme-lcars) .wr-section-label { color: #ffcc66 !important; letter-spacing: .15em; }
+    :host-context(html.cs-theme-lcars) .wr-rec-action { color: #ffe8a0 !important; }
+    :host-context(html.cs-theme-lcars) .wr-jira-btn { color: #e87c3a !important; }
+    :host-context(html.cs-theme-lcars) .wr-quiet { color: #66aa66 !important; }
+    :host-context(html.cs-theme-lcars) .forecast-title { color: #ffcc66 !important; }
+    :host-context(html.cs-theme-lcars) .pin-btn { color: #e87c3a !important; }
+
+    /* ═══════════════════════════════════════════════════════════
+       HOLO THEME — dark navy + cyan glow
+       ═══════════════════════════════════════════════════════════ */
+    :host-context(html.cs-theme-holo) .widget-card {
+      background: rgba(10,28,46,.85) !important;
+      border: 1px solid rgba(79,214,255,.22) !important;
+      box-shadow: 0 0 18px rgba(79,214,255,.07) !important;
+    }
+    :host-context(html.cs-theme-holo) .widget-card.edit-mode {
+      outline: 2px dashed rgba(79,214,255,.5) !important;
+      border-color: rgba(79,214,255,.5) !important;
+    }
+    :host-context(html.cs-theme-holo) .widget-header {
+      background: rgba(79,214,255,.1);
+      border-bottom: 1px solid rgba(79,214,255,.2);
+    }
+    :host-context(html.cs-theme-holo) .widget-title { color: #9fe8ff !important; letter-spacing: .06em; }
+    :host-context(html.cs-theme-holo) .widget-subtitle { color: #5fc8ee !important; }
+    :host-context(html.cs-theme-holo) .widget-body { color: #bfefff; }
+    :host-context(html.cs-theme-holo) .stat-value { color: #4fd6ff !important; text-shadow: 0 0 22px rgba(79,214,255,.45); }
+    :host-context(html.cs-theme-holo) .list-item { border-bottom-color: rgba(79,214,255,.12) !important; }
+    :host-context(html.cs-theme-holo) .list-title { color: #cfeeff !important; }
+    :host-context(html.cs-theme-holo) .list-meta { color: #8fb8cf !important; }
+    :host-context(html.cs-theme-holo) .list-host { color: #9fe8ff !important; }
+    :host-context(html.cs-theme-holo) .empty { color: rgba(79,214,255,.4) !important; }
+    :host-context(html.cs-theme-holo) .clickable:hover { background: rgba(79,214,255,.08) !important; }
+    :host-context(html.cs-theme-holo) .host-row { background: rgba(79,214,255,.06) !important; border-color: rgba(79,214,255,.3) !important; }
+    :host-context(html.cs-theme-holo) .host-name { color: #9fe8ff !important; }
+    :host-context(html.cs-theme-holo) .host-count { background: #4fd6ff !important; color: #00131f !important; }
+    :host-context(html.cs-theme-holo) .ai-summary p { color: #8fb8cf !important; }
+    :host-context(html.cs-theme-holo) .finding { color: #cfeeff !important; }
+    :host-context(html.cs-theme-holo) .finding-arrow { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-holo) .wr-finding { background: rgba(79,214,255,.06) !important; }
+    :host-context(html.cs-theme-holo) .wr-finding-title { color: #cfeeff !important; }
+    :host-context(html.cs-theme-holo) .wr-host { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-holo) .wr-section-label { color: #5fc8ee !important; }
+    :host-context(html.cs-theme-holo) .forecast-title { color: #8fb8cf !important; }
   `],
 })
 export class DashboardWidgetComponent {
@@ -370,8 +484,14 @@ export class DashboardWidgetComponent {
   readonly warRoomJira = output<string>();
 
   private sanitizer = inject(DomSanitizer);
+  private themeSvc = inject(ThemeService);
 
   expandedFinding = signal<string | null>(null);
+
+  // theme-aware chart axis/grid colors
+  private get _chartText() { const t = this.themeSvc.theme(); return t === 'lcars' ? '#e8a060' : t === 'holo' ? '#5fc8ee' : '#94a3b8'; }
+  private get _chartGrid() { const t = this.themeSvc.theme(); return t === 'lcars' ? '#2a1d0a' : t === 'holo' ? '#0e2236' : '#334155'; }
+  private get _chartPrimary() { const t = this.themeSvc.theme(); return t === 'lcars' ? '#e87c3a' : t === 'holo' ? '#4fd6ff' : '#60a5fa'; }
 
   // ── derived state (computed = stable reference until deps change) ──────────
 
@@ -392,11 +512,12 @@ export class DashboardWidgetComponent {
 
   readonly donutOptions = computed(() => {
     const buckets = this.donutBuckets();
+    const txt = this._chartText;
     return {
       tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
       legend: {
         bottom: 4,
-        textStyle: { color: '#94a3b8', fontSize: 11 },
+        textStyle: { color: txt, fontSize: 11 },
         itemWidth: 12,
         itemHeight: 12,
       },
@@ -437,28 +558,30 @@ export class DashboardWidgetComponent {
   readonly timeseriesOptions = computed(() => {
     const d = this.data() as TimeseriesData | undefined;
     const unit = d?.unit ?? '';
+    const txt = this._chartText;
+    const gridCol = this._chartGrid;
+    const primary = this._chartPrimary;
 
     // Multi-host: series_list → one line per host
     if (d?.series_list && d.series_list.length > 0) {
-      // Use timestamps from the first non-empty series as x-axis
       const first = d.series_list.find(s => s.series.length > 0);
       const xLabels = (first?.series ?? []).map(p =>
         new Date(p.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       );
-      const palette = ['#60a5fa', '#34d399', '#f97316', '#a78bfa', '#fb7185', '#facc15'];
+      const palette = [primary, '#34d399', '#f97316', '#a78bfa', '#fb7185', '#facc15'];
       return {
         tooltip: { trigger: 'axis' },
-        legend: { bottom: 0, textStyle: { color: '#94a3b8', fontSize: 10 } },
+        legend: { bottom: 0, textStyle: { color: txt, fontSize: 10 } },
         grid: { left: 50, right: 14, top: 16, bottom: 40 },
         xAxis: {
           type: 'category',
           data: xLabels,
-          axisLabel: { color: '#94a3b8', fontSize: 10 },
+          axisLabel: { color: txt, fontSize: 10 },
         },
         yAxis: {
           type: 'value',
-          axisLabel: { formatter: `{value}${unit}`, color: '#94a3b8', fontSize: 10 },
-          splitLine: { lineStyle: { color: '#334155' } },
+          axisLabel: { formatter: `{value}${unit}`, color: txt, fontSize: 10 },
+          splitLine: { lineStyle: { color: gridCol } },
         },
         series: d.series_list.map((s, i) => ({
           name: s.label,
@@ -482,19 +605,20 @@ export class DashboardWidgetComponent {
         data: series.map(p =>
           new Date(p.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         ),
-        axisLabel: { color: '#94a3b8', fontSize: 10 },
+        axisLabel: { color: txt, fontSize: 10 },
       },
       yAxis: {
         type: 'value',
-        axisLabel: { formatter: `{value}${unit}`, color: '#94a3b8', fontSize: 10 },
-        splitLine: { lineStyle: { color: '#334155' } },
+        axisLabel: { formatter: `{value}${unit}`, color: txt, fontSize: 10 },
+        splitLine: { lineStyle: { color: gridCol } },
       },
       series: [{
         type: 'line',
         smooth: true,
         showSymbol: false,
-        areaStyle: { opacity: 0.18 },
-        lineStyle: { width: 2 },
+        areaStyle: { color: primary, opacity: 0.15 },
+        lineStyle: { width: 2, color: primary },
+        itemStyle: { color: primary },
         data: series.map(p => p.value),
       }],
     };
@@ -509,6 +633,9 @@ export class DashboardWidgetComponent {
     const buckets = this.barBuckets();
     const keys = buckets.map(b => b.key);
     const counts = buckets.map(b => b.count);
+    const txt = this._chartText;
+    const grid = this._chartGrid;
+    const primary = this._chartPrimary;
     return {
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
       grid: { left: 14, right: 14, top: 12, bottom: 60, containLabel: true },
@@ -516,24 +643,24 @@ export class DashboardWidgetComponent {
         type: 'category',
         data: keys,
         axisLabel: {
-          color: '#94a3b8',
+          color: txt,
           fontSize: 10,
           rotate: keys.some(k => k.length > 10) ? 30 : 0,
           overflow: 'truncate',
           width: 90,
         },
-        axisLine: { lineStyle: { color: '#334155' } },
+        axisLine: { lineStyle: { color: grid } },
       },
       yAxis: {
         type: 'value',
-        axisLabel: { color: '#94a3b8', fontSize: 10 },
-        splitLine: { lineStyle: { color: '#334155' } },
+        axisLabel: { color: txt, fontSize: 10 },
+        splitLine: { lineStyle: { color: grid } },
       },
       series: [{
         type: 'bar',
         data: counts.map((v, i) => ({
           value: v,
-          itemStyle: { color: SEVERITY_COLORS[keys[i]] ?? '#60a5fa', borderRadius: [4, 4, 0, 0] },
+          itemStyle: { color: SEVERITY_COLORS[keys[i]] ?? primary, borderRadius: [4, 4, 0, 0] },
         })),
         emphasis: { itemStyle: { opacity: 0.75 } },
       }],
