@@ -164,26 +164,26 @@ import { WebsocketService } from '../../core/services/websocket.service';
 
       @if (generativeMode()) {
         <div class="gen-banner">
-          <mat-icon class="gen-icon" [class.spinning]="generativeLoading()">auto_awesome</mat-icon>
-          <div class="gen-text">
-            <div class="gen-line">
-              <strong>KI-komponiertes Lagebild</strong>
-              @if (generativeAgo()) { <span class="gen-ago">· {{ generativeAgo() }}</span> }
-            </div>
-            @if (generativeRationale()) {
-              <div class="gen-rationale" [class.collapsed]="!rationaleExpanded()">
-                {{ generativeRationale() }}
-              </div>
-              <button mat-button class="gen-why" (click)="rationaleExpanded.set(!rationaleExpanded())">
-                {{ rationaleExpanded() ? 'Weniger' : 'Warum dieses Layout?' }}
-              </button>
-            }
+          <!-- Header bar — same visual weight as a widget header -->
+          <div class="gen-header">
+            <mat-icon class="gen-icon" [class.spinning]="generativeLoading()">auto_awesome</mat-icon>
+            <span class="gen-header-title">KI-Komponiertes Lagebild</span>
+            @if (generativeAgo()) { <span class="gen-ago">{{ generativeAgo() }}</span> }
+            <button mat-flat-button color="primary" (click)="regenerate()" [disabled]="generativeLoading()">
+              @if (generativeLoading()) { <mat-spinner diameter="18"></mat-spinner> }
+              @else { <mat-icon>refresh</mat-icon> }
+              Neu generieren
+            </button>
           </div>
-          <button mat-flat-button color="primary" (click)="regenerate()" [disabled]="generativeLoading()">
-            @if (generativeLoading()) { <mat-spinner diameter="18"></mat-spinner> }
-            @else { <mat-icon>refresh</mat-icon> }
-            Neu generieren
-          </button>
+          <!-- Body — dark background like widget body -->
+          @if (generativeRationale()) {
+            <div class="gen-body">
+              <p class="gen-rationale" [class.collapsed]="!rationaleExpanded()">{{ generativeRationale() }}</p>
+              <button mat-button class="gen-why" (click)="rationaleExpanded.set(!rationaleExpanded())">
+                {{ rationaleExpanded() ? '▲ Weniger' : '▼ Mehr' }}
+              </button>
+            </div>
+          }
         </div>
       }
 
@@ -269,28 +269,34 @@ import { WebsocketService } from '../../core/services/websocket.service';
       border-radius: 0 12px 12px 0;
     }
     .eyebrow {
-      margin: 0 0 4px;
-      color: #ffcc66;
-      font-size: 12px;
+      margin: 0 0 6px;
+      color: #ff9966;
+      font-size: 11px;
       font-weight: 800;
-      letter-spacing: .14em;
+      letter-spacing: .22em;
       text-transform: uppercase;
+      opacity: .75;
     }
     h1 {
+      /* Bridge-style section heading — compact, uppercase, letter-spaced */
       margin: 0;
-      font-size: clamp(30px, 4vw, 54px);
-      line-height: 1;
-      letter-spacing: .04em;
-      font-weight: 900;
-      white-space: nowrap;
-      color: #ff9966;
+      font-size: clamp(20px, 2.2vw, 26px);
+      line-height: 1.15;
+      letter-spacing: .22em;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: #ffcc66;
+      background: #000;                 /* LCARS "cut-through" dark background */
+      display: inline-block;
+      padding: 3px 12px 3px 0;
     }
     .subtitle {
-      margin: 6px 0 0;
+      margin: 8px 0 0;
       max-width: 320px;
-      color: #ffcc99;
-      font-size: 12px;
+      color: rgba(255,204,153,.6);
+      font-size: 11px;
       line-height: 1.35;
+      letter-spacing: .04em;
     }
     .hero-actions {
       display: flex;
@@ -367,45 +373,61 @@ import { WebsocketService } from '../../core/services/websocket.service';
     .ai-builder p { margin: 0; color: var(--mat-sys-on-surface-variant); font-size: 12px; line-height: 1.4; }
     .ai-builder mat-form-field { width: 100%; }
     .ai-builder mat-spinner { display: inline-block; margin-right: 6px; }
+    /* gen-banner matches the lcars-widget design exactly:
+       gold left border · gold header bar · dark body · button in header */
     .gen-banner {
-      display: grid;
-      grid-template-columns: 180px 1fr auto;
-      align-items: center;
-      gap: 12px;
-      padding: 0;
-      margin: 0 0 12px;
-      border: 0;
-      border-radius: 44px 8px 8px 0;
-      background: #0a0804;
-      color: #ffcc99;
-      box-shadow: none;
+      display: flex;
+      flex-direction: column;
+      margin: 0 0 10px;
+      border: none;
+      border-left: 8px solid #ffcc66;     /* same as nth-child(2) gold widgets */
+      border-radius: 0 14px 14px 0;
       overflow: hidden;
+      box-shadow: none;
     }
-    .gen-icon {
-      color: #000;
-      justify-self: stretch;
-      align-self: stretch;
+    .gen-header {
+      /* mimics .widget-header in lcars-widget */
       display: flex;
       align-items: center;
-      justify-content: center;
+      gap: 10px;
       background: #ffcc66;
-      border-left: 22px solid #ff9966;
-      border-radius: 44px 0 0 0;
-      min-height: 74px;
+      color: #000;
+      padding: 8px 14px;
+      flex-shrink: 0;
+      min-height: 42px;
+    }
+    .gen-header-title {
+      font-family: 'Antonio', 'Eurostile', 'Roboto Condensed', sans-serif;
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      flex: 1;
+    }
+    .gen-ago { font-size: 11px; opacity: .65; }
+    .gen-icon {
+      font-size: 18px; width: 18px; height: 18px;
+      display: inline-flex; align-items: center;
     }
     .gen-icon.spinning { animation: spin 1.4s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .gen-text { flex: 1; min-width: 0; padding: 12px 8px; }
-    .gen-line { font-size: 13px; color: #ffcc66; letter-spacing: .06em; text-transform: uppercase; }
-    .gen-ago { color: #e8a060; font-size: 12px; }
-    .gen-rationale { margin-top: 6px; font-size: 13px; color: #ffcc99; line-height: 1.55; }
+    .gen-body {
+      background: #000;
+      color: #ffe8a0;
+      padding: 10px 14px 10px;
+    }
+    .gen-rationale { font-size: 13px; color: #ffcc99; line-height: 1.55; margin: 0; }
     .gen-rationale.collapsed { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-    .gen-why { font-size: 12px; min-height: 28px; line-height: 28px; padding: 0 6px; color: #ffcc66; }
+    .gen-why { font-size: 11px; min-height: 26px; line-height: 26px; padding: 0; color: #ffcc66; margin-top: 4px; display: inline-block; }
     .gen-banner button[color="primary"] {
-      background: #ff9966 !important;
+      background: #e87c3a !important;
       color: #000 !important;
-      border-radius: 18px;
-      margin-right: 18px;
+      border-radius: 14px;
+      font-size: 12px;
+      font-weight: 900;
+      height: 30px;
+      line-height: 30px;
+      padding: 0 14px;
     }
     /* ── LCARS: dark canvas, gen-banner uses its own LCARS grid design already ── */
     :host-context(html.cs-theme-lcars) .dashboard-shell { background: #000 !important; }
@@ -442,27 +464,23 @@ import { WebsocketService } from '../../core/services/websocket.service';
     }
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero::after { display: none; }
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .eyebrow { color: var(--mat-sys-primary); }
-    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) h1 { color: var(--mat-sys-on-surface); font-size: clamp(28px, 5vw, 52px); line-height: .98; letter-spacing: -.06em; }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) h1 { color: var(--mat-sys-primary); background: transparent; padding: 0; font-size: clamp(20px, 2.2vw, 26px); letter-spacing: .12em; }
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .subtitle { color: var(--mat-sys-on-surface-variant); }
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero-actions button { background: revert !important; color: revert !important; border-color: revert !important; border-radius: revert !important; font-weight: revert !important; }
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero-actions button mat-icon { color: revert !important; }
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .dashboard-select { --mat-form-field-container-text-color: revert; --mat-select-enabled-trigger-text-color: revert; --mdc-outlined-text-field-outline-color: revert; }
 
-    /* ── Classic: gen-banner needs light-friendly override ── */
-    :host-context(html.cs-theme-classic) .gen-banner,
+    /* ── Classic theme: gen-banner light override ── */
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-banner {
-      background: color-mix(in srgb, var(--mat-sys-primary) 6%, var(--mat-sys-surface));
-      border: 1px solid color-mix(in srgb, var(--mat-sys-primary) 25%, transparent);
-      border-radius: 16px;
-      color: var(--mat-sys-on-surface);
+      border-left-color: var(--mat-sys-primary);
+      border-radius: 0 14px 14px 0;
     }
-    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-icon {
-      background: color-mix(in srgb, var(--mat-sys-primary) 15%, var(--mat-sys-surface-container));
-      color: var(--mat-sys-primary) !important;
-      border-left: none;
-      border-radius: 16px 0 0 16px;
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-header {
+      background: var(--mat-sys-primary-container);
+      color: var(--mat-sys-on-primary-container);
     }
-    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-line { color: var(--mat-sys-primary); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-header-title { color: var(--mat-sys-on-primary-container); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-body { background: var(--mat-sys-surface-container); }
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-rationale { color: var(--mat-sys-on-surface-variant); }
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-why { color: var(--mat-sys-primary); }
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-banner button[color="primary"] {
@@ -473,13 +491,10 @@ import { WebsocketService } from '../../core/services/websocket.service';
     :host-context(html.cs-theme-holo) .dashboard-shell {
       background: radial-gradient(circle at 50% 8%, rgba(20,60,90,.4), transparent 36rem), linear-gradient(160deg,#02060f,#050d1a 60%,#02060f) !important;
     }
-    :host-context(html.cs-theme-holo) .gen-banner {
-      background: rgba(5, 20, 35, .85);
-      border: 1px solid rgba(79,214,255,.3);
-      border-radius: 16px;
-    }
-    :host-context(html.cs-theme-holo) .gen-icon { background: rgba(79,214,255,.15) !important; color: #4fd6ff !important; border-left: none; border-radius: 16px 0 0 16px; }
-    :host-context(html.cs-theme-holo) .gen-line { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-holo) .gen-banner { border-left-color: #4fd6ff; }
+    :host-context(html.cs-theme-holo) .gen-header { background: rgba(79,214,255,.15); color: #9fe8ff; }
+    :host-context(html.cs-theme-holo) .gen-header-title { color: #9fe8ff !important; }
+    :host-context(html.cs-theme-holo) .gen-body { background: rgba(5,20,35,.9); }
     :host-context(html.cs-theme-holo) .gen-rationale { color: #8fb8cf !important; }
     :host-context(html.cs-theme-holo) .gen-why { color: #4fd6ff !important; }
     :host-context(html.cs-theme-holo) .gen-banner button[color="primary"] {
