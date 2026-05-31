@@ -1007,6 +1007,12 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.loadSearches();
     this.refreshTimer = setInterval(() => this.load(true, true), 30_000);
 
+    // Deferred re-assert: if hostFilter or severityFilter was set by applyRouteParams(),
+    // ensure the filter panel remains open after async initialisation (loadPrefs etc.).
+    queueMicrotask(() => {
+      if (this.hostFilter || this.severityFilter) this.showFilters.set(true);
+    });
+
     // React to query-param changes when already on /feed (same-route navigation).
     // skip(1) ignores the initial emission already handled by applyRouteParams().
     this.route.queryParamMap.pipe(skip(1)).subscribe(params => {

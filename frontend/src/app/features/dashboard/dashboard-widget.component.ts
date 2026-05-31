@@ -286,8 +286,8 @@ import {
     .list-meta { font-size: 10px; color: var(--mat-sys-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .list-host { font-family: monospace; color: var(--mat-sys-on-surface); font-weight: 600; }
     .meta-sep { opacity: 0.5; }
-    .chart { height: 100%; min-height: 140px; width: 100%; display: block; }
-    .forecast-chart { min-height: 160px; }
+    .chart { height: 100%; min-height: 0; width: 100%; display: block; }
+    .forecast-chart { min-height: 0; }
     /* War Room */
     .war-room { display: flex; flex-direction: column; gap: 6px; height: 100%; overflow-y: auto; }
     .wr-quiet { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #388e3c; opacity: .6; height: 100%; }
