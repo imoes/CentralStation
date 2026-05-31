@@ -26,26 +26,13 @@
     background: transparent;
   }
 
-  .station-mark {
-    width: 24px; height: 24px; flex: 0 0 24px;
-    position: relative; display: inline-block;
+  .brand-icon {
+    flex: 0 0 auto;
+    color: var(--mat-sys-primary);
+    font-size: 24px; width: 24px; height: 24px;
   }
-  .station-mark::before, .station-mark::after {
-    content: ''; position: absolute;
-    background: var(--mat-sys-primary); border-radius: 2px;
-  }
-  .station-mark::before { left: 5px; right: 5px; top: 11px; height: 3px; }
-  .station-mark::after  { left: 11px; top: 5px; bottom: 5px; width: 3px; }
-  .station-mark span {
-    position: absolute; width: 7px; height: 7px;
-    background: var(--mat-sys-primary); border-radius: 50%;
-  }
-  .station-mark span:nth-child(1) { left: 0; top: 8px; }
-  .station-mark span:nth-child(2) { right: 0; top: 8px; }
-  .station-mark span:nth-child(3) { left: 8px; top: 0; }
-  .station-mark span:nth-child(4) { left: 8px; bottom: 0; }
 
-  .station-mark, .brand-label, .nav-label, .role-chip {
+  .brand-icon, .brand-label, .nav-label, .role-chip {
     transition: opacity 120ms ease, width 160ms ease;
   }
 
@@ -84,7 +71,7 @@
   &.collapsed {
     width: 68px;
     .sidenav-header { justify-content: center; padding-inline: 6px; }
-    .station-mark, .brand-label, .nav-label, .role-chip {
+    .brand-icon, .brand-label, .nav-label, .role-chip {
       opacity: 0; width: 0; max-width: 0; overflow: hidden; pointer-events: none;
     }
     .sidenav-footer { justify-content: center; padding-inline: 6px; }
@@ -103,7 +90,7 @@ html.cs-theme-lcars .sidenav {
 
   .sidenav-header { background: #000; border-bottom: 6px solid #15120c; color: #ff9966; }
   .nav-toggle { color: #ffcc66; }
-  .station-mark::before, .station-mark::after, .station-mark span { background: #ff9966; }
+  .brand-icon { color: #ff9966; }
 
   a[mat-list-item] {
     color: #ffcc99 !important;
@@ -131,7 +118,7 @@ html.cs-theme-holo .sidenav {
 
   .sidenav-header { background: rgba(79,214,255,.07); border-bottom: 1px solid rgba(79,214,255,.2); color: #9fe8ff; }
   .nav-toggle { color: #4fd6ff; }
-  .station-mark::before, .station-mark::after, .station-mark span { background: #4fd6ff; }
+  .brand-icon { color: #4fd6ff; }
 
   a[mat-list-item] {
     color: #8fb8cf !important;
