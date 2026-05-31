@@ -356,41 +356,48 @@ import {
     .host-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* ═══════════════════════════════════════════════════════════
-       LCARS THEME — clean panel: colored left border + full-width
-       header bar. Color per widget type via --w-accent.
-       No ::before overlay (caused header gap + stat cutoff).
+       LCARS THEME — exactly matches bridge panel style.
+       Reference: .t-lcars .block, .t-lcars .block-head.
+       Flat left edge + colored left border + colored header bar.
+       border-radius: 0 8px 8px 0 — NO left rounding → NO clipping.
        ═══════════════════════════════════════════════════════════ */
     :host-context(html.cs-theme-lcars) .widget-card {
-      background: #000 !important;
+      background: #15120c !important;    /* bridge: #15120c */
       border: none !important;
-      border-left: 14px solid var(--w-accent, #e87c3a) !important;
-      border-radius: 28px 8px 8px 28px !important;   /* LCARS rounded left pill */
+      border-left: 8px solid var(--w-accent, #e87c3a) !important;
+      border-radius: 0 8px 8px 0 !important;   /* flat left, rounded right = no corner clip */
       box-shadow: none !important;
       overflow: hidden !important;
     }
-    :host-context(html.cs-theme-lcars) .widget-card.edit-mode { outline: 2px dashed #ffcc66 !important; border-left-color: #ffcc66 !important; }
+    :host-context(html.cs-theme-lcars) .widget-card.edit-mode {
+      outline: 2px dashed #ffcc66 !important;
+      outline-offset: 2px;
+      border-left-color: #ffcc66 !important;
+    }
     :host-context(html.cs-theme-lcars) .widget-header {
       background: var(--w-accent, #e87c3a);
-      padding: 8px 16px;
-      border-radius: 0;           /* header spans full width; card border-radius clips the corner */
+      padding: 8px 14px;        /* no special left offset needed — border is outside content */
+      border-radius: 0;
       flex-shrink: 0;
     }
     :host-context(html.cs-theme-lcars) .widget-title {
       color: #000 !important;
-      font-family: 'Eurostile', 'Antonio', 'Roboto Condensed', sans-serif;
+      font-family: 'Antonio', 'Eurostile', 'Roboto Condensed', sans-serif;
       text-transform: uppercase;
-      letter-spacing: .12em;
+      letter-spacing: .1em;
       font-weight: 900;
       font-size: 12px;
     }
     :host-context(html.cs-theme-lcars) .widget-subtitle {
       color: rgba(0,0,0,.55) !important;
       letter-spacing: .1em;
+      font-size: 10px;
     }
     :host-context(html.cs-theme-lcars) .header-actions button { color: #000 !important; }
     :host-context(html.cs-theme-lcars) .widget-body {
       color: #ffe8a0;
-      padding: 8px 14px 12px;     /* no extra left offset needed */
+      background: #000;     /* inner body darker than card edge for contrast */
+      padding: 8px 14px 12px;
     }
     :host-context(html.cs-theme-lcars) .stat-value {
       color: var(--w-accent, #e87c3a) !important;
