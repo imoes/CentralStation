@@ -236,6 +236,8 @@ import { WebsocketService } from '../../core/services/websocket.service';
       background: #000;
       color: #ffcc99;
       min-height: 104px;
+      position: relative;     /* stacking context so ::before/::after stay inside */
+      isolation: isolate;     /* new stacking context — hero cannot bleed over gen-banner */
     }
     .hero > div:first-child {
       background: #000;
@@ -257,6 +259,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
       height: calc(100% + 30px);
       background: #ff9966;
       border-radius: 44px 0 0 0;
+      pointer-events: none;   /* must not intercept clicks below the hero */
     }
     .hero > div:first-child::after {
       content: '';
@@ -267,6 +270,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
       height: 18px;
       background: #ff9966;
       border-radius: 0 12px 12px 0;
+      pointer-events: none;
     }
     .eyebrow {
       margin: 0 0 6px;
@@ -314,6 +318,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
     .hero::after {
       content: '';
       display: block;
+      pointer-events: none;
       background: #000;
       border-top: 18px solid #e8ec9a;
       border-bottom: 12px solid #e8ec9a;
@@ -384,6 +389,8 @@ import { WebsocketService } from '../../core/services/websocket.service';
       border-radius: 0 14px 14px 0;
       overflow: hidden;
       box-shadow: none;
+      position: relative;
+      z-index: 2;   /* ensure gen-banner sits above any hero-area overflow */
     }
     .gen-header {
       /* mimics .widget-header in lcars-widget */
