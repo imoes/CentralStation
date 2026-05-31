@@ -129,6 +129,27 @@ html.cs-theme-lcars {
   --mat-sidenav-content-text-color: #ffe8a0;
   /* MDC tooltip */
   --mdc-plain-tooltip-supporting-text-color: #000;
+  /* ── Buttons (the most-missed token set) ── */
+  /* mat-raised-button / mat-flat-button color="primary" */
+  --mdc-protected-button-container-color: #e87c3a;
+  --mdc-protected-button-label-text-color: #000000;
+  --mdc-protected-button-disabled-container-color: #3a2810;
+  --mdc-protected-button-disabled-label-text-color: #5a3a18;
+  --mdc-filled-button-container-color: #e87c3a;
+  --mdc-filled-button-label-text-color: #000000;
+  --mdc-filled-button-disabled-container-color: #3a2810;
+  --mdc-filled-button-disabled-label-text-color: #5a3a18;
+  /* mat-stroked-button / mat-outlined-button */
+  --mdc-outlined-button-label-text-color: #e8a060;
+  --mdc-outlined-button-outline-color: #e87c3a;
+  --mdc-outlined-button-disabled-label-text-color: #5a3a18;
+  --mdc-outlined-button-disabled-outline-color: #3a2810;
+  /* mat-button (text only) */
+  --mdc-text-button-label-text-color: #ffe8a0;
+  --mdc-text-button-disabled-label-text-color: #5a3a18;
+  /* Default raised button (no color) */
+  --mat-protected-button-container-color: #1e1710;
+  --mat-protected-button-state-layer-color: #e87c3a;
 }
 
 /* Global cascade: any text not covered by tokens gets gold on black */
@@ -184,4 +205,14 @@ html.cs-theme-holo {
   --mat-sidenav-content-text-color: #cfeeff;
   --mat-text-button-label-text-color: #cfeeff;
   --mat-outlined-button-label-text-color: #8fb8cf;
+  /* Holo buttons */
+  --mdc-protected-button-container-color: #4fd6ff;
+  --mdc-protected-button-label-text-color: #00131f;
+  --mdc-protected-button-disabled-container-color: #0e2236;
+  --mdc-protected-button-disabled-label-text-color: #2c5a74;
+  --mdc-filled-button-container-color: #4fd6ff;
+  --mdc-filled-button-label-text-color: #00131f;
+  --mdc-outlined-button-label-text-color: #8fb8cf;
+  --mdc-outlined-button-outline-color: #4fd6ff;
+  --mdc-text-button-label-text-color: #cfeeff;
 }
