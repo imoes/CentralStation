@@ -210,6 +210,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
                 (insightOpen)="openInsight($event)"
                 (donutClick)="openFeedSeverity($event)"
                 (barClick)="openFeedBar($event, widget)"
+                (hostClick)="openFeedHost($event)"
                 (warRoomJira)="createWarRoomTicket($event)" />
             </div>
           </div>
@@ -985,6 +986,11 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     if (finding.severity) qp['severity'] = finding.severity;
     if (finding.host) qp['host'] = finding.host;
     this.router.navigate(['/feed'], { queryParams: qp });
+  }
+
+  openFeedHost(hostName: string) {
+    this.markHandled();
+    this.router.navigate(['/feed'], { queryParams: { host: hostName } });
   }
 
   openFeedSeverity(severity: string) {
