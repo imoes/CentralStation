@@ -167,9 +167,29 @@ html.cs-theme-lcars small, html.cs-theme-lcars .hint,
 html.cs-theme-lcars .timestamp, html.cs-theme-lcars [class*="meta"],
 html.cs-theme-lcars [class*="subtitle"] { color: #e8a060 !important; }
 
-/* Critical: black text on any orange/gold colored backgrounds */
-html.cs-theme-lcars .mat-mdc-raised-button.mat-primary,
-html.cs-theme-lcars .mat-mdc-raised-button.mat-primary span { color: #000 !important; }
+/* ── Direct button overrides (tokens alone don't always pierce MDC) ── */
+html.cs-theme-lcars button.mat-mdc-raised-button.mat-primary,
+html.cs-theme-lcars button.mat-mdc-raised-button[color="primary"],
+html.cs-theme-lcars button.mat-mdc-unelevated-button.mat-primary,
+html.cs-theme-lcars button.mat-mdc-unelevated-button[color="primary"] {
+  background-color: #e87c3a !important;
+}
+html.cs-theme-lcars button.mat-mdc-raised-button.mat-primary .mdc-button__label,
+html.cs-theme-lcars button.mat-mdc-raised-button[color="primary"] .mdc-button__label,
+html.cs-theme-lcars button.mat-mdc-unelevated-button.mat-primary .mdc-button__label,
+html.cs-theme-lcars button.mat-mdc-unelevated-button[color="primary"] .mdc-button__label,
+html.cs-theme-lcars button.mat-mdc-raised-button.mat-primary span,
+html.cs-theme-lcars button.mat-mdc-unelevated-button.mat-primary span {
+  color: #000 !important;
+}
+/* Stroked/outlined buttons */
+html.cs-theme-lcars button.mat-mdc-outlined-button,
+html.cs-theme-lcars button.mat-mdc-outlined-button span { color: #e8a060 !important; }
+/* Default (no color) raised buttons */
+html.cs-theme-lcars button.mat-mdc-raised-button:not(.mat-primary):not([color]) {
+  background-color: #1e1710 !important;
+}
+html.cs-theme-lcars button.mat-mdc-raised-button:not(.mat-primary):not([color]) span { color: #ffe8a0 !important; }
 
 /* ── Holo: same full token set ── */
 html.cs-theme-holo body,
