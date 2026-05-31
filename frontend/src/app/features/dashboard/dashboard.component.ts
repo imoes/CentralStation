@@ -412,6 +412,42 @@ import { WebsocketService } from '../../core/services/websocket.service';
     :host-context(html.cs-theme-lcars) h1 { color: #ffcc66; }
     /* NOTE: do NOT override gen-banner here — the base CSS is already LCARS-styled */
 
+    /* ── Classic theme: restore light look (base CSS is LCARS-dark, needs override) ── */
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .dashboard-shell {
+      background:
+        radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--mat-sys-primary) 15%, transparent), transparent 26rem),
+        linear-gradient(145deg, color-mix(in srgb, var(--mat-sys-surface-container) 70%, #eef7f2), var(--mat-sys-surface)) !important;
+      color: var(--mat-sys-on-surface) !important;
+      font-family: Roboto, 'Helvetica Neue', sans-serif !important;
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero {
+      background: transparent;
+      color: var(--mat-sys-on-surface);
+      border: none;
+      min-height: auto;
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero > div:first-child {
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      color: var(--mat-sys-on-surface);
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero > div:first-child::before,
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero > div:first-child::after {
+      display: none;
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero-actions {
+      background: transparent; border: none; padding: 0;
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero::after { display: none; }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .eyebrow { color: var(--mat-sys-primary); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) h1 { color: var(--mat-sys-on-surface); font-size: clamp(28px, 5vw, 52px); line-height: .98; letter-spacing: -.06em; }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .subtitle { color: var(--mat-sys-on-surface-variant); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero-actions button { background: revert !important; color: revert !important; border-color: revert !important; border-radius: revert !important; font-weight: revert !important; }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero-actions button mat-icon { color: revert !important; }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .dashboard-select { --mat-form-field-container-text-color: revert; --mat-select-enabled-trigger-text-color: revert; --mdc-outlined-text-field-outline-color: revert; }
+
     /* ── Classic: gen-banner needs light-friendly override ── */
     :host-context(html.cs-theme-classic) .gen-banner,
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-banner {
@@ -458,7 +494,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
       border-radius: 0;
       padding-bottom: 12px;
     }
-    .grid-stack-item-content { inset: 8px 8px 8px 12px !important; overflow: hidden !important; }
+    .grid-stack-item-content { inset: 6px !important; overflow: hidden !important; }
 
     @media (max-width: 820px) {
       .dashboard-shell { padding: 16px; }
