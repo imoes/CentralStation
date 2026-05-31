@@ -534,6 +534,8 @@ async def trigger_agent(
     user_ve          = (prefs.checkmk_ve          or []) if prefs else []
     user_criticality = (prefs.checkmk_criticality or []) if prefs else []
     user_os          = (prefs.checkmk_os          or []) if prefs else []
+    from app.services.feed_index import get_user_checkmk_host_scope
+    user_host_scope  = await get_user_checkmk_host_scope(db, str(current_user.id))
     # Minimum alert age: only analyse problems that have persisted this long
     min_age_minutes  = (prefs.feed_checkmk_min_age_minutes or 10) if prefs else 10
 
@@ -546,6 +548,7 @@ async def trigger_agent(
                 user_checkmk_ve=user_ve or None,
                 user_checkmk_criticality=user_criticality or None,
                 user_checkmk_os=user_os or None,
+                user_checkmk_host_scope=user_host_scope or None,
                 min_age_minutes=min_age_minutes,
             )
 

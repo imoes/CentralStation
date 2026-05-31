@@ -42,6 +42,10 @@ async def run_sysadmin_agent() -> None:
         ve    = (prefs.checkmk_ve          or []) if prefs else []
         crit  = (prefs.checkmk_criticality or []) if prefs else []
         os_   = (prefs.checkmk_os          or []) if prefs else []
+        host_scope = []
+        if prefs:
+            from app.services.feed_index import get_user_checkmk_host_scope
+            host_scope = await get_user_checkmk_host_scope(db, str(prefs.user_id))
 
         await run_sysadmin_workflow(
             db,
@@ -50,6 +54,7 @@ async def run_sysadmin_agent() -> None:
             user_checkmk_ve=ve            or None,
             user_checkmk_criticality=crit or None,
             user_checkmk_os=os_           or None,
+            user_checkmk_host_scope=host_scope or None,
         )
 
 
@@ -97,11 +102,10 @@ async def run_generative_refresh() -> None:
         dashboards = result.scalars().all()
         if not dashboards:
             return
-        # One LLM call for the shared situation
-        spec = await design_dashboard(db, str(dashboards[0].user_id))
         from datetime import datetime as _dt, timezone as _tz
         now = _dt.now(_tz.utc)
         for dash in dashboards:
+            spec = await design_dashboard(db, str(dash.user_id))
             existing = await db.execute(
                 select(DashboardWidget).where(DashboardWidget.dashboard_id == dash.id)
             )
@@ -118,7 +122,7 @@ async def run_generative_refresh() -> None:
             dash.rationale = spec.get("rationale") or ""
             dash.generated_at = now
         await db.commit()
-        logger.info("Generative refresh: recomposed %d dashboard(s)", len(dashboards))
+        logger.info("Generative refresh: recomposed %d user-scoped dashboard(s)", len(dashboards))
 
 
 async def run_score_housekeeping() -> None:

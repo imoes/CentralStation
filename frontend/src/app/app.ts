@@ -31,18 +31,23 @@ interface NavItem {
   template: `
     @if (auth.isLoggedIn()) {
       <mat-sidenav-container class="app-container">
-        <mat-sidenav mode="side" opened class="sidenav">
+        <mat-sidenav mode="side" opened class="sidenav" [class.collapsed]="navCollapsed()">
           <div class="sidenav-header">
-            <mat-icon>hub</mat-icon>
-            <span>CentralStation</span>
+            <button mat-icon-button class="nav-toggle" (click)="toggleNav()" title="Navigation ein-/ausklappen">
+              <mat-icon>menu</mat-icon>
+            </button>
+            <span class="station-mark" aria-hidden="true">
+              <span></span><span></span><span></span><span></span>
+            </span>
+            <span class="brand-label">CentralStation</span>
           </div>
           <mat-nav-list>
             @for (item of visibleNavItems(); track item.path) {
               @if (item.path === '/feed') {
                 <a mat-list-item [routerLink]="item.path" routerLinkActive="active"
-                   (click)="onFeedClick()">
+                   (click)="onFeedClick()" [title]="item.label">
                   <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                  <span matListItemTitle>
+                  <span matListItemTitle class="nav-label">
                     {{ item.label }}
                     @if (unreadFeedCount() > 0) {
                       <span class="feed-badge">{{ unreadFeedCount() > 99 ? '99+' : unreadFeedCount() }}</span>
@@ -50,9 +55,9 @@ interface NavItem {
                   </span>
                 </a>
               } @else if (item.path === '/my-tickets') {
-                <a mat-list-item [routerLink]="item.path" routerLinkActive="active">
+                <a mat-list-item [routerLink]="item.path" routerLinkActive="active" [title]="item.label">
                   <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                  <span matListItemTitle>
+                  <span matListItemTitle class="nav-label">
                     {{ item.label }}
                     @if (unreadTicketCount() > 0) {
                       <span class="feed-badge">{{ unreadTicketCount() > 99 ? '99+' : unreadTicketCount() }}</span>
@@ -60,9 +65,9 @@ interface NavItem {
                   </span>
                 </a>
               } @else {
-                <a mat-list-item [routerLink]="item.path" routerLinkActive="active">
+                <a mat-list-item [routerLink]="item.path" routerLinkActive="active" [title]="item.label">
                   <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                  <span matListItemTitle>{{ item.label }}</span>
+                  <span matListItemTitle class="nav-label">{{ item.label }}</span>
                 </a>
               }
             }
@@ -100,6 +105,7 @@ export class App implements OnInit, OnDestroy {
 
   unreadFeedCount = signal<number>(0);
   unreadTicketCount = signal<number>(0);
+  navCollapsed = signal<boolean>(localStorage.getItem('cs_nav_collapsed') === '1');
   private badgeInterval: ReturnType<typeof setInterval> | null = null;
   private http = inject(HttpClient);
   private themeService = inject(ThemeService);
@@ -193,5 +199,13 @@ export class App implements OnInit, OnDestroy {
   onFeedClick() {
     // Badge is cleared by the news-feed component after items load (3s delay)
     // This just provides immediate visual feedback
+  }
+
+  toggleNav() {
+    this.navCollapsed.update(v => {
+      const next = !v;
+      localStorage.setItem('cs_nav_collapsed', next ? '1' : '0');
+      return next;
+    });
   }
 }

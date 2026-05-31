@@ -191,6 +191,154 @@ html.cs-theme-lcars button.mat-mdc-raised-button:not(.mat-primary):not([color]) 
 }
 html.cs-theme-lcars button.mat-mdc-raised-button:not(.mat-primary):not([color]) span { color: #ffe8a0 !important; }
 
+/* Dashboard widgets use the Bridge/LCARS panel language by default. */
+cs-dashboard-widget .widget-card.lcars-widget {
+  background: #0a0804 !important;
+  border: 0 !important;
+  border-left: 22px solid #e87c3a !important;
+  border-radius: 0 8px 8px 0 !important;
+  box-shadow: none !important;
+  position: relative;
+  overflow: hidden !important;
+  color: #ffe8a0;
+}
+cs-dashboard-widget .widget-card.lcars-widget::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 22px;
+  height: 100%;
+  background: #ffcc66;
+  z-index: 2;
+}
+cs-dashboard-widget .widget-card.lcars-widget::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: min(34%, 180px);
+  height: 34px;
+  background: #7fb3d3;
+  border-radius: 0 8px 0 0;
+  pointer-events: none;
+}
+cs-dashboard-widget .widget-card.lcars-widget.edit-mode {
+  border-left-color: #ffcc66 !important;
+  outline: 2px solid #7fb3d3 !important;
+  outline-offset: 2px;
+}
+cs-dashboard-widget .widget-card.lcars-widget .widget-header {
+  min-height: 42px;
+  background: #e87c3a;
+  color: #000;
+  padding: 7px 14px 7px 22px;
+  border-radius: 0;
+  position: relative;
+  z-index: 1;
+}
+cs-dashboard-widget .widget-card.lcars-widget .widget-title {
+  color: #000 !important;
+  font-family: 'Antonio', 'Eurostile', 'Roboto Condensed', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  font-weight: 900;
+  font-size: 12px;
+}
+cs-dashboard-widget .widget-card.lcars-widget .widget-subtitle {
+  color: rgba(0,0,0,.62) !important;
+  letter-spacing: .1em;
+}
+cs-dashboard-widget .widget-card.lcars-widget .header-actions button { color: #000 !important; }
+cs-dashboard-widget .widget-card.lcars-widget .widget-body {
+  padding-top: 12px;
+  padding-left: 4px;
+  color: #ffe8a0;
+  background: #0a0804;
+}
+cs-dashboard-widget .widget-card.lcars-widget .stat-value {
+  color: #ffcc66 !important;
+  font-family: 'Antonio', 'Eurostile', sans-serif;
+  font-size: clamp(54px, 10vw, 90px);
+  letter-spacing: 0;
+}
+cs-dashboard-widget .widget-card.lcars-widget .list-item { border-bottom-color: #2a1d0a !important; }
+cs-dashboard-widget .widget-card.lcars-widget .list-title,
+cs-dashboard-widget .widget-card.lcars-widget .finding,
+cs-dashboard-widget .widget-card.lcars-widget .wr-finding-title,
+cs-dashboard-widget .widget-card.lcars-widget .wr-rec-action {
+  color: #ffe8a0 !important;
+}
+cs-dashboard-widget .widget-card.lcars-widget .list-meta,
+cs-dashboard-widget .widget-card.lcars-widget .host-item,
+cs-dashboard-widget .widget-card.lcars-widget .ai-summary p {
+  color: #e8a060 !important;
+}
+cs-dashboard-widget .widget-card.lcars-widget .list-host,
+cs-dashboard-widget .widget-card.lcars-widget .host-name,
+cs-dashboard-widget .widget-card.lcars-widget .forecast-title,
+cs-dashboard-widget .widget-card.lcars-widget .wr-section-label {
+  color: #ffcc66 !important;
+}
+cs-dashboard-widget .widget-card.lcars-widget .empty { color: #5a3a18 !important; }
+cs-dashboard-widget .widget-card.lcars-widget .loading mat-spinner { --mdc-circular-progress-active-indicator-color: #e87c3a; }
+cs-dashboard-widget .widget-card.lcars-widget .clickable:hover { background: rgba(232,124,58,.14) !important; }
+cs-dashboard-widget .widget-card.lcars-widget .host-row,
+cs-dashboard-widget .widget-card.lcars-widget .wr-finding {
+  background: #1e1710 !important;
+  border-left: 3px solid #e87c3a;
+  border-radius: 0 8px 8px 0;
+}
+cs-dashboard-widget .widget-card.lcars-widget .host-count {
+  background: #ffcc66 !important;
+  color: #000 !important;
+}
+cs-dashboard-widget .widget-card.lcars-widget .finding-arrow,
+cs-dashboard-widget .widget-card.lcars-widget .wr-host,
+cs-dashboard-widget .widget-card.lcars-widget .wr-jira-btn,
+cs-dashboard-widget .widget-card.lcars-widget .pin-btn {
+  color: #e87c3a !important;
+}
+cs-dashboard-widget .widget-card.lcars-widget .wr-quiet { color: #66aa66 !important; }
+cs-dashboard-widget .widget-card.lcars-widget .wr-desc,
+cs-dashboard-widget .widget-card.lcars-widget .wr-loc,
+cs-dashboard-widget .widget-card.lcars-widget .wr-cohost,
+cs-dashboard-widget .widget-card.lcars-widget .wr-blast,
+cs-dashboard-widget .widget-card.lcars-widget .wr-rec {
+  color: #ffcc99 !important;
+}
+cs-dashboard-widget .widget-card.lcars-widget .wr-finding-body span,
+cs-dashboard-widget .widget-card.lcars-widget .wr-blast span {
+  text-shadow: none;
+}
+.grid-stack-item:nth-child(4n + 1) cs-dashboard-widget .widget-card.lcars-widget {
+  border-left-color: #ff9966 !important;
+}
+.grid-stack-item:nth-child(4n + 1) cs-dashboard-widget .widget-card.lcars-widget .widget-header {
+  background: #ff9966 !important;
+}
+.grid-stack-item:nth-child(4n + 2) cs-dashboard-widget .widget-card.lcars-widget {
+  border-left-color: #ffcc66 !important;
+}
+.grid-stack-item:nth-child(4n + 2) cs-dashboard-widget .widget-card.lcars-widget .widget-header,
+.grid-stack-item:nth-child(4n + 2) cs-dashboard-widget .widget-card.lcars-widget::before {
+  background: #ffcc66 !important;
+}
+.grid-stack-item:nth-child(4n + 3) cs-dashboard-widget .widget-card.lcars-widget {
+  border-left-color: #7fb3d3 !important;
+}
+.grid-stack-item:nth-child(4n + 3) cs-dashboard-widget .widget-card.lcars-widget .widget-header,
+.grid-stack-item:nth-child(4n + 3) cs-dashboard-widget .widget-card.lcars-widget::before {
+  background: #7fb3d3 !important;
+}
+.grid-stack-item:nth-child(4n) cs-dashboard-widget .widget-card.lcars-widget {
+  border-left-color: #c99aa4 !important;
+}
+.grid-stack-item:nth-child(4n) cs-dashboard-widget .widget-card.lcars-widget .widget-header,
+.grid-stack-item:nth-child(4n) cs-dashboard-widget .widget-card.lcars-widget::before {
+  background: #c99aa4 !important;
+}
+
 /* ── Holo: same full token set ── */
 html.cs-theme-holo body,
 html.cs-theme-holo mat-card,

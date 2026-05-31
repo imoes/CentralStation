@@ -270,7 +270,7 @@ import {
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: clamp(42px, 8vw, 74px);
+      font-size: clamp(36px, 5vw, 62px);
       font-weight: 800;
       color: var(--mat-sys-primary);
       line-height: 1;
@@ -356,33 +356,23 @@ import {
     .host-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* ═══════════════════════════════════════════════════════════
-       LCARS THEME — authentic panel look (black body, colored left
-       rail + header pill, rounded left elbow). Color per widget type
-       via --w-accent. NB: no geometry-changing border-left (that was
-       clipping the first characters) — the rail is a ::before overlay.
+       LCARS THEME — clean panel: colored left border + full-width
+       header bar. Color per widget type via --w-accent.
+       No ::before overlay (caused header gap + stat cutoff).
        ═══════════════════════════════════════════════════════════ */
     :host-context(html.cs-theme-lcars) .widget-card {
       background: #000 !important;
       border: none !important;
-      border-radius: 18px 6px 6px 18px !important;   /* rounded left elbow */
+      border-left: 14px solid var(--w-accent, #e87c3a) !important;
+      border-radius: 28px 8px 8px 28px !important;   /* LCARS rounded left pill */
       box-shadow: none !important;
-      position: relative;
       overflow: hidden !important;
     }
-    /* left accent rail (overlay — does not shift content) */
-    :host-context(html.cs-theme-lcars) .widget-card::before {
-      content: '';
-      position: absolute; left: 0; top: 0; bottom: 0;
-      width: 12px;
-      background: var(--w-accent, #e87c3a);
-      z-index: 2;
-    }
-    :host-context(html.cs-theme-lcars) .widget-card.edit-mode { outline: 2px dashed #ffcc66 !important; }
+    :host-context(html.cs-theme-lcars) .widget-card.edit-mode { outline: 2px dashed #ffcc66 !important; border-left-color: #ffcc66 !important; }
     :host-context(html.cs-theme-lcars) .widget-header {
       background: var(--w-accent, #e87c3a);
-      padding: 7px 16px 7px 24px;            /* extra left padding clears the rail */
-      border-radius: 0 6px 0 0;
-      margin-left: 12px;                      /* sit to the right of the rail */
+      padding: 8px 16px;
+      border-radius: 0;           /* header spans full width; card border-radius clips the corner */
       flex-shrink: 0;
     }
     :host-context(html.cs-theme-lcars) .widget-title {
@@ -394,18 +384,20 @@ import {
       font-size: 12px;
     }
     :host-context(html.cs-theme-lcars) .widget-subtitle {
-      color: rgba(0,0,0,.6) !important;
+      color: rgba(0,0,0,.55) !important;
       letter-spacing: .1em;
     }
     :host-context(html.cs-theme-lcars) .header-actions button { color: #000 !important; }
     :host-context(html.cs-theme-lcars) .widget-body {
       color: #ffe8a0;
-      padding-left: 26px;                     /* clear the left rail */
+      padding: 8px 14px 12px;     /* no extra left offset needed */
     }
     :host-context(html.cs-theme-lcars) .stat-value {
       color: var(--w-accent, #e87c3a) !important;
       font-family: 'Eurostile', 'Antonio', sans-serif;
-      font-size: clamp(54px, 10vw, 90px);
+      /* Stat widget is typically 2 rows tall (≈160px). Header takes ~42px.
+         Body padding ~20px. Remaining ≈98px → font max 72px is safe. */
+      font-size: clamp(42px, 6vw, 72px);
       letter-spacing: -.02em;
     }
     :host-context(html.cs-theme-lcars) .list-item {

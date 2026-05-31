@@ -73,7 +73,7 @@ def _linreg_eta(points: list[tuple[float, float]], threshold: float) -> float | 
     return hours if hours >= 0 else None
 
 
-async def _compute_metrics(os_client) -> tuple[list, list]:
+async def _compute_metrics(os_client, host_scope: list[str] | None = None) -> tuple[list, list]:
     """Compute fleet vitals (current pressure) + forecast warnings (projected breaches)
     from the cs-metrics-checkmk index. Pure CPU math on stored time series."""
     vitals: list[dict] = []
@@ -81,10 +81,21 @@ async def _compute_metrics(os_client) -> tuple[list, list]:
     try:
         from dateutil.parser import parse as _parse
         # Pull recent metric points; group by host+metric, keep the series
+        query: dict = {"range": {"timestamp": {"gte": "now-12h"}}}
+        if host_scope:
+            hosts = [h for h in host_scope if h]
+            if hosts:
+                query = {
+                    "bool": {
+                        "must": [{"range": {"timestamp": {"gte": "now-12h"}}}],
+                        "filter": [{"terms": {"host": hosts}}],
+                    }
+                }
+
         resp = await os_client.search(
             index="cs-metrics-checkmk",
             body={
-                "query": {"range": {"timestamp": {"gte": "now-12h"}}},
+                "query": query,
                 "size": 0,
                 "aggs": {
                     "by_metric": {
@@ -365,7 +376,9 @@ async def bridge_status(
     )[:8]
 
     # ── 4. Fleet vitals + forecast warnings (from cs-metrics-checkmk) ────────
-    vitals, forecasts = await _compute_metrics(os_client)
+    from app.services.feed_index import get_user_checkmk_host_scope
+    host_scope = await get_user_checkmk_host_scope(db, str(user.id))
+    vitals, forecasts = await _compute_metrics(os_client, host_scope)
 
     # ── 5. AI-prioritised worklist — build fresh for this user's scope ─────────
     # We rebuild on each status call only if no recent snapshot exists (< 16 min).

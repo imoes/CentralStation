@@ -607,6 +607,7 @@ async def search_by_query(
     from_: int = 0,
     user_id: str | None = None,
     host_scope: list[str] | None = None,
+    db: Any = None,
 ) -> list[dict]:
     """Execute an OpenSearch Lucene query string against an index pattern."""
     os_client = get_opensearch()
@@ -616,6 +617,9 @@ async def search_by_query(
         query = {"match_all": {}}
 
     filter_clauses: list[dict] = []
+    must_not: list[dict] = []
+    if db is not None:
+        must_not.extend(await get_exclusion_must_not_clauses(db))
     if user_id:
         filter_clauses.append({
             "bool": {
@@ -644,8 +648,12 @@ async def search_by_query(
                 }
             })
 
-    if filter_clauses:
-        body_query: dict = {"bool": {"must": [query], "filter": filter_clauses}}
+    if filter_clauses or must_not:
+        body_query: dict = {"bool": {"must": [query]}}
+        if filter_clauses:
+            body_query["bool"]["filter"] = filter_clauses
+        if must_not:
+            body_query["bool"]["must_not"] = must_not
     else:
         body_query = query
 
