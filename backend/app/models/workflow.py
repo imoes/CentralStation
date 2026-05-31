@@ -109,6 +109,10 @@ class Dashboard(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)
     # "classic" | "generative"
     mode: Mapped[str] = mapped_column(String(20), default="classic")
+    # Generative dashboard only: the LLM's explanation for the chosen layout
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Generative dashboard only: when the AI last composed this layout
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

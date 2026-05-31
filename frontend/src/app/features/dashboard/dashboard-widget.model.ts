@@ -21,7 +21,17 @@ export interface Dashboard {
   is_default: boolean;
   position: number;
   mode: 'classic' | 'generative';
+  rationale?: string | null;
+  generated_at?: string | null;
   created_at?: string | null;
+}
+
+/** Response from the generative dashboard endpoints. */
+export interface GenerativePayload {
+  dashboard: Dashboard;
+  widgets: DashboardWidget[];
+  rationale?: string | null;
+  generated_at?: string | null;
 }
 
 export interface LayoutPlacement {

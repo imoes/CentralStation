@@ -78,6 +78,7 @@ class AgentConfig:
     score_delta_decay_days: int = 7
     worklist_interval_minutes: int = 15
     worklist_size: int = 15
+    generative_interval_minutes: int = 15
 
     def __post_init__(self):
         if self.checkmk_locations is None:
@@ -191,4 +192,5 @@ async def get_agent_config(db: AsyncSession) -> AgentConfig:
         score_delta_decay_days=int(s.get("agent.score_delta_decay_days") or 7),
         worklist_interval_minutes=int(s.get("agent.worklist_interval_minutes") or 15),
         worklist_size=int(s.get("agent.worklist_size") or 15),
+        generative_interval_minutes=int(s.get("agent.generative_interval_minutes") or 15),
     )

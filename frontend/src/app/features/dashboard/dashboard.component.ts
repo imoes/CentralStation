@@ -6,6 +6,7 @@ import {
   OnDestroy,
   ViewChild,
   afterNextRender,
+  computed,
   inject,
   signal,
 } from '@angular/core';
@@ -33,7 +34,7 @@ import {
   DashboardWidgetCreate,
   Dashboard,
   WidgetData,
-  LayoutPlacement,
+  GenerativePayload,
 } from './dashboard-widget.model';
 import { WebsocketService } from '../../core/services/websocket.service';
 
@@ -94,41 +95,37 @@ import { WebsocketService } from '../../core/services/websocket.service';
               }
             </mat-select>
           </mat-form-field>
-          @if (configMode()) {
-            <button mat-flat-button color="primary" (click)="addWidget()">
-              <mat-icon>add</mat-icon>
-              Widget hinzufügen
-            </button>
-            <button mat-stroked-button color="warn" (click)="resetDefaults()" title="Alle Widgets löschen und Standard-Layout wiederherstellen">
-              <mat-icon>restore</mat-icon>
-              Defaults
+          @if (!generativeMode()) {
+            @if (configMode()) {
+              <button mat-flat-button color="primary" (click)="addWidget()">
+                <mat-icon>add</mat-icon>
+                Widget hinzufügen
+              </button>
+              <button mat-stroked-button color="warn" (click)="resetDefaults()" title="Alle Widgets löschen und Standard-Layout wiederherstellen">
+                <mat-icon>restore</mat-icon>
+                Defaults
+              </button>
+              <button mat-stroked-button (click)="cancelConfigMode()">
+                <mat-icon>close</mat-icon>
+                Abbrechen
+              </button>
+            }
+            <button mat-stroked-button [color]="configMode() ? 'warn' : 'primary'" (click)="toggleConfigMode()">
+              <mat-icon>{{ configMode() ? 'done' : 'dashboard_customize' }}</mat-icon>
+              {{ configMode() ? 'Layout speichern' : 'Dashboard anpassen' }}
             </button>
           }
-          @if (configMode()) {
-            <button mat-stroked-button (click)="cancelConfigMode()">
-              <mat-icon>close</mat-icon>
-              Abbrechen
-            </button>
-          }
-          <button mat-stroked-button [color]="configMode() ? 'warn' : 'primary'" (click)="toggleConfigMode()">
-            <mat-icon>{{ configMode() ? 'done' : 'dashboard_customize' }}</mat-icon>
-            {{ configMode() ? 'Layout speichern' : 'Dashboard anpassen' }}
-          </button>
 
-          <!-- Generative / Classic toggle -->
+          <!-- Generative / Classic toggle — switches the whole view (classic
+               dashboards are untouched; generative is a separate AI canvas) -->
           <button mat-stroked-button
             [color]="generativeMode() ? 'accent' : ''"
             [class.generative-active]="generativeMode()"
             (click)="toggleGenerativeMode()"
-            [matTooltip]="generativeMode() ? 'Generativer Modus — KI ordnet Widgets situativ. Klicken zum Deaktivieren.' : 'Generativen Modus aktivieren — Layout passt sich automatisch an die aktuelle Lage an'">
-            <mat-icon>{{ generativeMode() ? 'auto_awesome' : 'auto_awesome' }}</mat-icon>
+            [matTooltip]="generativeMode() ? 'Generativer Modus — KI komponiert das Dashboard für die aktuelle Lage. Klicken für Klassisch.' : 'Generativen Modus aktivieren — die KI komponiert ein Lagebild aus der aktuellen Situation'">
+            <mat-icon>auto_awesome</mat-icon>
             {{ generativeMode() ? 'Generativ' : 'Klassisch' }}
           </button>
-          @if (generativeMode()) {
-            <button mat-icon-button (click)="resetGenerativeLayout()" matTooltip="Layout zurücksetzen (Standard)">
-              <mat-icon>restart_alt</mat-icon>
-            </button>
-          }
 
           <button mat-icon-button (click)="refreshAll()" [disabled]="loading()" title="Aktualisieren">
             <mat-icon>refresh</mat-icon>
@@ -161,6 +158,31 @@ import { WebsocketService } from '../../core/services/websocket.service';
           <button mat-stroked-button color="primary" (click)="createDashboardFromPrompt()" [disabled]="creatingFromPrompt() || !dashboardPrompt.trim()">
             <mat-icon>dashboard_customize</mat-icon>
             Neues Dashboard
+          </button>
+        </mat-card>
+      }
+
+      @if (generativeMode()) {
+        <mat-card class="gen-banner">
+          <mat-icon class="gen-icon" [class.spinning]="generativeLoading()">auto_awesome</mat-icon>
+          <div class="gen-text">
+            <div class="gen-line">
+              <strong>KI-komponiertes Lagebild</strong>
+              @if (generativeAgo()) { <span class="gen-ago">· {{ generativeAgo() }}</span> }
+            </div>
+            @if (generativeRationale()) {
+              <div class="gen-rationale" [class.collapsed]="!rationaleExpanded()">
+                {{ generativeRationale() }}
+              </div>
+              <button mat-button class="gen-why" (click)="rationaleExpanded.set(!rationaleExpanded())">
+                {{ rationaleExpanded() ? 'Weniger' : 'Warum dieses Layout?' }}
+              </button>
+            }
+          </div>
+          <button mat-flat-button color="primary" (click)="regenerate()" [disabled]="generativeLoading()">
+            @if (generativeLoading()) { <mat-spinner diameter="18"></mat-spinner> }
+            @else { <mat-icon>refresh</mat-icon> }
+            Neu generieren
           </button>
         </mat-card>
       }
@@ -266,6 +288,21 @@ import { WebsocketService } from '../../core/services/websocket.service';
     .ai-builder p { margin: 0; color: var(--mat-sys-on-surface-variant); font-size: 12px; line-height: 1.4; }
     .ai-builder mat-form-field { width: 100%; }
     .ai-builder mat-spinner { display: inline-block; margin-right: 6px; }
+    .gen-banner {
+      display: flex; align-items: center; gap: 14px;
+      padding: 12px 16px; margin-bottom: 16px;
+      border: 1px solid color-mix(in srgb, #7c3aed 30%, transparent);
+      background: color-mix(in srgb, #7c3aed 8%, var(--mat-sys-surface));
+    }
+    .gen-icon { color: #7c3aed; }
+    .gen-icon.spinning { animation: spin 1.4s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .gen-text { flex: 1; min-width: 0; }
+    .gen-line { font-size: 14px; }
+    .gen-ago { color: var(--mat-sys-on-surface-variant); font-size: 12px; }
+    .gen-rationale { margin-top: 4px; font-size: 13px; color: var(--mat-sys-on-surface-variant); line-height: 1.45; }
+    .gen-rationale.collapsed { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+    .gen-why { font-size: 12px; min-height: 28px; line-height: 28px; padding: 0 6px; }
     .grid-stack { min-height: 520px; }
     .grid-stack.config-mode {
       background-image:
@@ -294,14 +331,28 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   widgetData = signal<Record<string, WidgetData>>({});
   configMode = signal(false);
   generativeMode = signal(false);
+  generativeLoading = signal(false);
+  generativeRationale = signal<string | null>(null);
+  generativeGeneratedAt = signal<string | null>(null);
+  rationaleExpanded = signal(false);
+  generativeAgo = computed(() => {
+    const ts = this.generativeGeneratedAt();
+    if (!ts) return '';
+    const mins = Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 60000));
+    if (mins < 1) return 'gerade eben';
+    if (mins < 60) return `vor ${mins} Min`;
+    const h = Math.round(mins / 60);
+    return `vor ${h} Std`;
+  });
   warRoomActive = signal(false);
   loading = signal(true);
   creatingFromPrompt = signal(false);
   dashboardPrompt = '';
   private grid?: GridStack;
-  private generativeTimer?: ReturnType<typeof setInterval>;
+  private wsRegenTimer?: ReturnType<typeof setTimeout>;
   private injector = inject(Injector);
   private wsSubscription?: import('rxjs').Subscription;
+  private readonly GEN_KEY = 'cs_generative_mode';
 
   constructor(
     private http: HttpClient,
@@ -318,6 +369,12 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
       if (msg?.type === 'ai_insight' && (msg.severity === 'critical' || msg.severity === 'high')) {
         this.warRoomActive.set(true);
         this.refreshWarRoomWidgets();
+        // Escalation → recompose the generative dashboard (debounced so a wave
+        // of critical insights triggers a single regeneration, not many).
+        if (this.generativeMode()) {
+          if (this.wsRegenTimer) clearTimeout(this.wsRegenTimer);
+          this.wsRegenTimer = setTimeout(() => this.regenerate(), 8000);
+        }
       }
     });
   }
@@ -325,7 +382,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   ngOnDestroy() {
     this.grid?.destroy(false);
     this.wsSubscription?.unsubscribe();
-    if (this.generativeTimer) clearInterval(this.generativeTimer);
+    if (this.wsRegenTimer) clearTimeout(this.wsRegenTimer);
   }
 
   private readonly STORAGE_KEY = 'cs_selected_dashboard_id';
@@ -338,9 +395,13 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
         const validSaved = saved && dashboards.some(d => d.id === saved) ? saved : '';
         const selected = validSaved || dashboards.find(d => d.is_default)?.id || dashboards[0]?.id || '';
         this.selectedDashboardId.set(selected);
-        const currentDashboard = dashboards.find(d => d.id === selected);
-        this.generativeMode.set(currentDashboard?.mode === 'generative');
-        this.loadWidgets();
+        // The generative view is a separate AI canvas, persisted per-browser.
+        if (localStorage.getItem(this.GEN_KEY) === '1') {
+          this.generativeMode.set(true);
+          this.loadGenerative();
+        } else {
+          this.loadWidgets();
+        }
       },
       error: () => {
         this.loading.set(false);
@@ -353,6 +414,11 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     this.selectedDashboardId.set(dashboardId);
     localStorage.setItem(this.STORAGE_KEY, dashboardId);
     this.widgetData.set({});
+    // Choosing a classic dashboard leaves the generative view.
+    if (this.generativeMode()) {
+      this.generativeMode.set(false);
+      localStorage.removeItem(this.GEN_KEY);
+    }
     this.loadWidgets();
   }
 
@@ -600,60 +666,68 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     });
   }
 
-  // ── Generative Mode ────────────────────────────────────────────────────────
+  // ── Generative Mode (separate AI-composed dashboard) ─────────────────────────
 
   toggleGenerativeMode() {
     const next = !this.generativeMode();
     this.generativeMode.set(next);
-    const dashId = this.selectedDashboardId();
-    if (dashId) {
-      this.http.patch(`${environment.apiUrl}/dashboard-widgets/dashboards/${dashId}`,
-        { mode: next ? 'generative' : 'classic' }).subscribe();
-    }
     if (next) {
-      this.applyGenerativeLayout();
-      // Refresh every 15 minutes — not on every AI insight to avoid constant reordering
-      if (this.generativeTimer) clearInterval(this.generativeTimer);
-      this.generativeTimer = setInterval(() => this.applyGenerativeLayout(), 15 * 60 * 1000);
+      // Leave config mode — the generative canvas is AI-driven, not hand-edited.
+      if (this.configMode()) { this.configMode.set(false); this.grid?.disable(); }
+      localStorage.setItem(this.GEN_KEY, '1');
+      this.loadGenerative();
     } else {
-      if (this.generativeTimer) { clearInterval(this.generativeTimer); this.generativeTimer = undefined; }
+      localStorage.removeItem(this.GEN_KEY);
+      this.generativeRationale.set(null);
+      this.generativeGeneratedAt.set(null);
+      this.widgetData.set({});
+      this.loadWidgets();
     }
   }
 
-  applyGenerativeLayout() {
-    const dashId = this.selectedDashboardId();
-    if (!dashId) return;
-    this.http.post<{ placements: LayoutPlacement[] }>(
-      `${environment.apiUrl}/dashboard-widgets/dashboards/${dashId}/suggest-layout`, {}
-    ).subscribe({
-      next: ({ placements }) => this._applyPlacements(placements),
-      error: () => {},
+  /** Load the existing AI-composed dashboard; generate one if it's still empty. */
+  loadGenerative() {
+    this.loading.set(true);
+    this.http.get<GenerativePayload>(`${environment.apiUrl}/dashboard-widgets/dashboards/generative`).subscribe({
+      next: payload => {
+        if (!payload.widgets?.length) {
+          this.regenerate();
+          return;
+        }
+        this._applyGenerative(payload);
+      },
+      error: () => {
+        this.loading.set(false);
+        this.snackBar.open('Generatives Dashboard konnte nicht geladen werden', 'OK', { duration: 4000 });
+      },
     });
   }
 
-  private _applyPlacements(placements: LayoutPlacement[]) {
-    if (!this.grid) return;
-    const updates: Array<import('rxjs').Observable<unknown>> = [];
-    for (const p of placements) {
-      if (p.pinned) continue;
-      const el = this.gridEl.nativeElement.querySelector(`[gs-id="${p.widget_id}"]`) as HTMLElement | null;
-      if (el) {
-        this.grid.update(el, { x: p.gs_x, y: p.gs_y, w: p.gs_w, h: p.gs_h });
-        el.style.opacity = '';
-        el.style.pointerEvents = '';
-      }
-      updates.push(
-        this.http.patch(`${environment.apiUrl}/dashboard-widgets/${p.widget_id}`,
-          { gs_x: p.gs_x, gs_y: p.gs_y, gs_w: p.gs_w, gs_h: p.gs_h, hidden: p.hidden })
-      );
-      this.widgets.update(ws => ws.map(w => w.id === p.widget_id
-        ? { ...w, gs_x: p.gs_x, gs_y: p.gs_y, gs_w: p.gs_w, gs_h: p.gs_h, hidden: p.hidden }
-        : w
-      ));
-    }
-    if (updates.length) {
-      import('rxjs').then(({ forkJoin }) => forkJoin(updates).subscribe());
-    }
+  /** Trigger a fresh AI composition (one LLM call). */
+  regenerate() {
+    this.generativeLoading.set(true);
+    this.loading.set(true);
+    this.http.post<GenerativePayload>(`${environment.apiUrl}/dashboard-widgets/dashboards/generate`, {}).subscribe({
+      next: payload => {
+        this._applyGenerative(payload);
+        this.generativeLoading.set(false);
+        this.snackBar.open('Dashboard neu komponiert', '', { duration: 2000 });
+      },
+      error: () => {
+        this.generativeLoading.set(false);
+        this.loading.set(false);
+        this.snackBar.open('Komposition fehlgeschlagen', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  private _applyGenerative(payload: GenerativePayload) {
+    this.generativeRationale.set(payload.rationale ?? null);
+    this.generativeGeneratedAt.set(payload.generated_at ?? null);
+    this.widgetData.set({});
+    this.widgets.set(payload.widgets ?? []);
+    this.loading.set(false);
+    this.rebuildGrid(true);
   }
 
   dismissWarRoom() { this.warRoomActive.set(false); }
@@ -679,20 +753,6 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     const next = !widget.pinned;
     this.widgets.update(ws => ws.map(w => w.id === widget.id ? { ...w, pinned: next } : w));
     this.http.patch(`${environment.apiUrl}/dashboard-widgets/${widget.id}`, { pinned: next }).subscribe();
-  }
-
-  resetGenerativeLayout() {
-    const dashId = this.selectedDashboardId();
-    if (!dashId) return;
-    this.http.post<DashboardWidget[]>(
-      `${environment.apiUrl}/dashboard-widgets/dashboards/${dashId}/reset-defaults`, {}
-    ).subscribe({
-      next: widgets => {
-        this.widgets.set(widgets);
-        this.rebuildGrid();
-        widgets.forEach(w => this.loadWidgetData(w.id));
-      },
-    });
   }
 
   // Set true by a dedicated inner-element handler (chart segment, finding, list item)
