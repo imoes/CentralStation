@@ -122,7 +122,7 @@ import {
               <div class="host-list">
                 @for (host of topHosts(); track host.host) {
                   <div class="host-group">
-                    <div class="host-row">
+                    <div class="host-row clickable" (click)="onHostClick($event, host.host)">
                       <mat-icon>dns</mat-icon>
                       <span class="host-name">{{ host.host }}</span>
                       <span class="host-count">{{ host.count }}</span>
@@ -407,6 +407,7 @@ export class DashboardWidgetComponent {
   readonly insightOpen = output<string | null>();
   readonly donutClick  = output<string>();
   readonly barClick    = output<{ field: string; value: string }>();
+  readonly hostClick   = output<string>();   /* host name from top_hosts host-row click */
   readonly warRoomJira = output<string>();
 
   private sanitizer = inject(DomSanitizer);
@@ -710,6 +711,11 @@ export class DashboardWidgetComponent {
 
   onDonutClick(params: { name: string }) {
     if (params?.name) this.donutClick.emit(params.name);
+  }
+
+  onHostClick(event: MouseEvent, hostName: string) {
+    event.stopPropagation();
+    if (hostName) this.hostClick.emit(hostName);
   }
 
   toggleFinding(title: string) {

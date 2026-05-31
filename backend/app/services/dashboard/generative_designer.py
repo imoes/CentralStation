@@ -62,8 +62,8 @@ _DEFAULT_SIZE: dict[str, tuple[int, int]] = {
     "top_hosts":  (4, 4),
     "ai_summary": (6, 4),
     "war_room":   (12, 5),
-    "timeseries": (6, 4),
-    "forecast":   (6, 4),
+    "timeseries": (6, 5),
+    "forecast":   (6, 5),   # extra height: chart shows history + dashed forecast line
 }
 
 # Map a bridge forecast/vital metric id to its CheckMK service description.
@@ -259,11 +259,14 @@ REGELN:
 - Bei ruhiger Lage: kompakteres Dashboard (Counts + Liste + Donut), keine Forecasts erzwingen.
 - Gruppiere thematisch; nutze die volle Breite (gs_w summiert sich pro Zeile zu 12).
 
-Die "rationale" ist ein kurzes LAGE-Briefing für den Sysadmin — beschreibe NUR was los ist:
-was ist kritisch, welche Systeme/Standorte sind betroffen, worauf muss man achten.
-NICHT beschreiben, welche Widgets du wählst oder wie das Layout aufgebaut ist. KEINE Widget-Typnamen
-(ai_summary, war_room, forecast, ...) nennen. KEINE vollständige Host-Liste aufzählen — max. die 2-3
-wichtigsten Hosts. Maximal 2-3 Sätze.
+Die "rationale" ist ein LAGE-BRIEFING für den Sysadmin — beschreibe präzise was los ist.
+Pflichtinhalt (sofern Daten vorhanden):
+- Konkrete Severity/Anzahl der offenen Alerts (z.B. "2 critical, 5 high")
+- Namentlich die 2-4 wichtigsten betroffenen Hosts mit dem jeweiligen Problem
+- Quantitative Metrik-Werte: RAM/Disk-Auslastung in % + ETA bis Schwellwert für Forecast-Kandidaten
+- CPU-Last auf auffälligen Hosts falls vorhanden
+NICHT beschreiben, welche Widgets gewählt wurden oder wie das Layout aussieht. KEINE Widget-Typnamen.
+Maximal 4 präzise Sätze. Lieber kürzer als ausschweifend — nur die dringenden Facts.
 
 Antworte AUSSCHLIESSLICH mit JSON in genau dieser Form (keine Erklärung außerhalb):
 {"rationale":"<2-3 Sätze Lage-Briefing: was ist los, was ist kritisch, worauf achten>",
