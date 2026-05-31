@@ -1,6 +1,7 @@
 """Dashboard Widgets — per-user configurable GridStack widgets."""
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -15,6 +16,7 @@ from app.models.workflow import Dashboard, DashboardWidget
 from app.services import feed_index
 
 router = APIRouter(prefix="/dashboard-widgets", tags=["dashboard-widgets"])
+log = logging.getLogger(__name__)
 
 _DEFAULT_WIDGETS = [
     {
@@ -114,6 +116,8 @@ def _dashboard_to_dict(d: Dashboard) -> dict:
         "is_default": d.is_default,
         "position": d.position,
         "mode": getattr(d, "mode", "classic") or "classic",
+        "rationale": getattr(d, "rationale", None),
+        "generated_at": d.generated_at.isoformat() if getattr(d, "generated_at", None) else None,
         "created_at": d.created_at.isoformat() if d.created_at else None,
     }
 
@@ -204,9 +208,12 @@ async def list_dashboards(
     await _ensure_default_dashboard(current_user.id, db)
     result = await db.execute(
         select(Dashboard)
-        .where(Dashboard.user_id == current_user.id)
+        .where(Dashboard.user_id == current_user.id, Dashboard.name != _GENERATIVE_NAME)
         .order_by(Dashboard.is_default.desc(), Dashboard.position, Dashboard.created_at)
     )
+    # The AI-composed generative dashboard is a separate, hidden canvas driven by
+    # the Klassisch/Generativ toggle — identified by its reserved name so a user's
+    # hand-built dashboard is never hidden even if its mode column is stale.
     return [_dashboard_to_dict(d) for d in result.scalars().all()]
 
 
@@ -307,6 +314,111 @@ async def suggest_layout(
     from app.services.dashboard.layout_engine import propose_layout
     placements = await propose_layout(db, str(dashboard_id), str(current_user.id))
     return {"placements": placements}
+
+
+# ── Generative (AI-composed) dashboard ──────────────────────────────────────
+
+from app.services.dashboard.generative_designer import GENERATIVE_DASHBOARD_NAME as _GENERATIVE_NAME
+
+
+async def _get_or_create_generative_dashboard(user_id: uuid.UUID, db: AsyncSession) -> Dashboard:
+    """Return the user's singleton AI-composed dashboard.
+
+    Identified by the reserved name (not mode alone), so it can never collide
+    with a user's hand-built dashboard. This is a *separate* canvas — the
+    classic dashboards are never touched; the toggle just switches the view."""
+    result = await db.execute(
+        select(Dashboard).where(
+            Dashboard.user_id == user_id,
+            Dashboard.name == _GENERATIVE_NAME,
+        ).order_by(Dashboard.created_at).limit(1)
+    )
+    dashboard = result.scalar_one_or_none()
+    if dashboard:
+        if dashboard.mode != "generative":
+            dashboard.mode = "generative"
+            await db.commit()
+        return dashboard
+    dashboard = Dashboard(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        name=_GENERATIVE_NAME,
+        description="Von der KI situativ komponiertes Lagebild.",
+        is_default=False,
+        mode="generative",
+    )
+    db.add(dashboard)
+    await db.commit()
+    await db.refresh(dashboard)
+    return dashboard
+
+
+async def _generative_payload(dashboard: Dashboard, db: AsyncSession) -> dict:
+    result = await db.execute(
+        select(DashboardWidget)
+        .where(DashboardWidget.dashboard_id == dashboard.id)
+        .order_by(DashboardWidget.gs_y, DashboardWidget.gs_x)
+    )
+    widgets = result.scalars().all()
+    return {
+        "dashboard": _dashboard_to_dict(dashboard),
+        "widgets": [_to_dict(w) for w in widgets],
+        "rationale": dashboard.rationale,
+        "generated_at": dashboard.generated_at.isoformat() if dashboard.generated_at else None,
+    }
+
+
+@router.get("/dashboards/generative", status_code=200)
+async def get_generative_dashboard(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return the current AI-composed dashboard without re-running the LLM.
+
+    Used when toggling into Generativ mode and by the interval refresh check."""
+    dashboard = await _get_or_create_generative_dashboard(current_user.id, db)
+    return await _generative_payload(dashboard, db)
+
+
+@router.post("/dashboards/generate", status_code=200)
+async def generate_dashboard(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Compose a fresh AI dashboard for the current situation (one LLM call).
+
+    Replaces the generative dashboard's widgets with the new spec. The classic
+    dashboards are untouched."""
+    from app.services.dashboard.generative_designer import design_dashboard
+
+    dashboard = await _get_or_create_generative_dashboard(current_user.id, db)
+    spec = await design_dashboard(db, str(current_user.id))
+
+    # Replace all widgets on the generative dashboard
+    existing = await db.execute(
+        select(DashboardWidget).where(DashboardWidget.dashboard_id == dashboard.id)
+    )
+    for w in existing.scalars().all():
+        await db.delete(w)
+    await db.flush()
+
+    for spec_w in spec["widgets"]:
+        db.add(DashboardWidget(
+            id=uuid.uuid4(),
+            user_id=current_user.id,
+            dashboard_id=dashboard.id,
+            widget_type=spec_w["widget_type"],
+            title=spec_w["title"],
+            gs_x=spec_w["gs_x"], gs_y=spec_w["gs_y"],
+            gs_w=spec_w["gs_w"], gs_h=spec_w["gs_h"],
+            config=spec_w["config"],
+        ))
+
+    dashboard.rationale = spec.get("rationale") or ""
+    dashboard.generated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(dashboard)
+    return await _generative_payload(dashboard, db)
 
 
 @router.get("/")
@@ -604,6 +716,7 @@ async def get_widget_data(
             service = cfg.get("service", "")
             graph_index = int(cfg.get("graph_index", 0))
             hours = int(cfg.get("hours", 4))
+            metric_id = cfg.get("metric_id", "")  # preferred: exact metric (e.g. mem_used_percent)
 
             # Multi-host: hosts list → series_list with one line per host
             hosts: list[str] = cfg.get("hosts") or ([cfg["host"]] if cfg.get("host") else [])
@@ -611,14 +724,14 @@ async def get_widget_data(
                 return {"series": [], "unit": "", "error": "host/hosts and service required for CheckMK timeseries"}
 
             if len(hosts) == 1:
-                result = await connector.get_graph_data(hosts[0], service, graph_index, hours)
+                result = await connector.get_graph_data(hosts[0], service, graph_index, hours, metric_id=metric_id)
                 if cfg.get("unit"):
                     result["unit"] = cfg["unit"]
                 return result
 
             # Fetch all hosts in parallel
             results = await asyncio.gather(
-                *[connector.get_graph_data(h, service, graph_index, hours) for h in hosts],
+                *[connector.get_graph_data(h, service, graph_index, hours, metric_id=metric_id) for h in hosts],
                 return_exceptions=True,
             )
             unit = cfg.get("unit", "")

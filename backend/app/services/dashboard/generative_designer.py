@@ -1,0 +1,445 @@
+"""Generative dashboard designer — the AI *composes* a bespoke dashboard.
+
+Unlike layout_engine.py (which only reorders a fixed set of widgets), this
+service analyses the full operational situation — including the metrics and
+forecasts collected into cs-metrics-checkmk — and asks the LLM to design a
+brand-new set of widgets tailored to the current situation: which widget types,
+which queries, which layout.
+
+Pipeline:
+  1. gather_situation()   — severity counts, latest AI findings, worklist,
+                            fleet vitals + forecast candidates (host/service/
+                            metric_id resolved from real metrics, so the LLM
+                            cannot hallucinate metric ids)
+  2. _ask_llm()           — one LLM call → JSON {rationale, widgets:[...]}
+  3. _validate_widgets()  — drop unknown types / bad configs, resolve metric
+                            widgets against the real candidates, clamp + pack
+                            the grid. Never trusts the model blindly.
+  4. fallback             — if the LLM fails or returns nothing usable, build a
+                            deterministic set (counts + ai_summary + top_hosts +
+                            the acute forecast widgets) so the dashboard is
+                            always populated.
+
+The result is a list of widget specs (type/title/grid/config) + a rationale.
+The API layer persists them as real DashboardWidget rows so the existing
+/dashboard-widgets/{id}/data renderer handles everything — no new render code.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+log = logging.getLogger(__name__)
+
+COLS = 12  # GridStack columns
+
+# Reserved name of the per-user AI-composed dashboard. This — NOT the `mode`
+# column alone — uniquely identifies the generative singleton, so the scheduler
+# and the dashboard-list filter never touch a user's hand-built dashboard even
+# if its mode column was mislabelled by an earlier version.
+GENERATIVE_DASHBOARD_NAME = "🪄 KI-Lagebild"
+
+# Widget types the designer may emit and the config keys each accepts.
+_ALLOWED_CONFIG_KEYS: dict[str, set[str]] = {
+    "stat":       {"index_pattern", "query_string"},
+    "list":       {"index_pattern", "query_string", "limit"},
+    "donut":      {"index_pattern", "query_string"},
+    "bar":        {"index_pattern", "query_string", "agg_field", "limit"},
+    "top_hosts":  {"index_pattern", "query_string", "limit"},
+    "ai_summary": {"agent_type"},
+    "war_room":   {"agent_type"},
+    "timeseries": {"data_source", "host", "hosts", "service", "metric_id", "graph_index", "hours", "unit"},
+    "forecast":   {"host", "service", "metric_id", "graph_index", "history_hours", "horizon_hours", "unit"},
+}
+
+# Default grid size per type (w, h)
+_DEFAULT_SIZE: dict[str, tuple[int, int]] = {
+    "stat":       (3, 2),
+    "donut":      (4, 4),
+    "list":       (6, 5),
+    "bar":        (5, 4),
+    "top_hosts":  (4, 4),
+    "ai_summary": (6, 4),
+    "war_room":   (12, 5),
+    "timeseries": (6, 4),
+    "forecast":   (6, 4),
+}
+
+# Map a bridge forecast/vital metric id to its CheckMK service description.
+_METRIC_SERVICE: dict[str, str] = {
+    "fs_used_percent":  "Filesystem /",
+    "mem_used_percent": "Memory",
+    "load1":            "CPU load",
+    "load5":            "CPU load",
+}
+
+
+# ── 1. Situation gathering ──────────────────────────────────────────────────
+
+async def gather_situation(db: Any) -> dict:
+    """Collect the full operational picture for the LLM prompt.
+
+    Reuses the bridge metrics math and the layout-engine severity counts so the
+    generative dashboard sees exactly what the cockpit sees."""
+    from app.core.opensearch import get_opensearch
+    from app.services.dashboard.layout_engine import _get_severity_counts
+    from app.api.bridge import _compute_metrics
+    from app.services.worklist_builder import get_latest_worklist
+    from app.models.ai import AiAnalysis
+    from sqlalchemy import select
+
+    os_client = get_opensearch()
+
+    # Severity counts (last hour, all sources)
+    sev_counts = await _get_severity_counts()
+
+    # Latest sysadmin analysis findings
+    findings: list[dict] = []
+    severity_summary = "none"
+    try:
+        r = await db.execute(
+            select(AiAnalysis)
+            .where(AiAnalysis.agent_type == "sysadmin")
+            .order_by(AiAnalysis.run_at.desc())
+            .limit(1)
+        )
+        analysis = r.scalar_one_or_none()
+        if analysis:
+            severity_summary = analysis.severity_summary or "none"
+            findings = [
+                {
+                    "title": f.get("title", ""),
+                    "severity": f.get("severity", "info"),
+                    "host": f.get("host") or f.get("affected_service") or "",
+                    "source": f.get("source", ""),
+                }
+                for f in (analysis.findings or [])[:6]
+            ]
+    except Exception as e:
+        log.debug("gather_situation: findings failed: %s", e)
+
+    # Fleet vitals + forecast candidates from cs-metrics-checkmk
+    vitals: list[dict] = []
+    forecast_candidates: list[dict] = []
+    try:
+        raw_vitals, raw_forecasts = await _compute_metrics(os_client)
+        # Enrich vitals with the CheckMK service so the LLM can build timeseries
+        for v in raw_vitals:
+            service = _METRIC_SERVICE.get(v.get("metric", ""), "")
+            vitals.append({
+                "host": v["host"], "metric_id": v["metric"], "service": service,
+                "label": v.get("label", ""), "value": v.get("value"),
+                "unit": v.get("unit", ""),
+            })
+        # Forecast candidates carry the exact (host, service, metric_id) tuple
+        # so the LLM can reference a *valid* forecast widget — no hallucination.
+        for f in raw_forecasts:
+            service = _METRIC_SERVICE.get(f.get("metric", ""), "")
+            if not service:
+                continue
+            forecast_candidates.append({
+                "host": f["host"],
+                "service": service,
+                "metric_id": f["metric"],
+                "label": f.get("label", ""),
+                "current": f.get("current"),
+                "threshold": f.get("threshold"),
+                "eta_hours": f.get("eta_hours"),
+            })
+    except Exception as e:
+        log.debug("gather_situation: metrics failed: %s", e)
+
+    # Worklist top items
+    worklist_items: list[dict] = []
+    try:
+        wl = await get_latest_worklist(db)
+        if wl:
+            for item in (wl.get("items") or [])[:6]:
+                worklist_items.append({
+                    "host": item.get("host", ""),
+                    "title": item.get("title", ""),
+                    "severity": item.get("severity", ""),
+                    "source": item.get("source", ""),
+                })
+    except Exception as e:
+        log.debug("gather_situation: worklist failed: %s", e)
+
+    return {
+        "severity_counts": sev_counts,
+        "severity_summary": severity_summary,
+        "findings": findings,
+        "vitals": vitals,
+        "forecast_candidates": forecast_candidates,
+        "worklist": worklist_items,
+    }
+
+
+# ── 2. LLM composition ──────────────────────────────────────────────────────
+
+_SYSTEM_PROMPT = """Du bist Dashboard-Designer für ein IT-Operations-Cockpit (CentralStation).
+Komponiere ein maßgeschneidertes Dashboard, das die AKTUELLE Lage optimal abbildet.
+Wähle 4–8 Widgets, ihre Anordnung in einem 12-Spalten-Grid und ihre Konfiguration.
+
+NUTZE NUR diese Widget-Typen mit exakt diesen config-Schlüsseln:
+- "stat": {"index_pattern":"cs-feed-*","query_string":"<lucene>"}  — eine große Kennzahl
+- "list": {"index_pattern":"cs-feed-*","query_string":"<lucene>","limit":15}  — Alert-Liste
+- "donut": {"index_pattern":"cs-feed-*","query_string":"<lucene>"}  — Severity-Verteilung
+- "bar": {"index_pattern":"cs-feed-*","query_string":"<lucene>","agg_field":"source|severity|host","limit":10}
+- "top_hosts": {"index_pattern":"cs-feed-*","query_string":"<lucene>","limit":8}  — Problem-Hosts
+- "ai_summary": {"agent_type":"sysadmin"}  — KI-Lagebericht
+- "war_room": {"agent_type":"sysadmin"}  — Blast-Radius (NUR bei critical/high sinnvoll)
+- "timeseries": {"data_source":"checkmk","host":"<host>","service":"<service>","metric_id":"<metric_id>","hours":4}  — Metrik-Verlauf
+- "forecast": {"host":"<host>","service":"<service>","metric_id":"<metric_id>","history_hours":72,"horizon_hours":24}
+
+REGELN:
+- Lucene query_string: z.B. "severity:critical AND NOT status:resolved". Standard immer "NOT status:resolved" anhängen.
+- WICHTIG: Wenn in forecast_candidates ein Host auf einen Schwellwert zuläuft, MUSST du ein "forecast"-Widget
+  mit EXAKT dessen host/service/metric_id einfügen — kopiere diese Werte unverändert. Erfinde keine metric_ids.
+- Für "timeseries" nur Einträge aus der vitals-Liste verwenden — kopiere host, service UND metric_id unverändert.
+- Bei hohem Ressourcendruck (vitals) ein timeseries-Widget für den Druck-Host.
+- Bei critical/high: ai_summary und/oder war_room prominent oben platzieren.
+- Bei ruhiger Lage: kompakteres Dashboard (Counts + Liste + Donut), keine Forecasts erzwingen.
+- Gruppiere thematisch; nutze die volle Breite (gs_w summiert sich pro Zeile zu 12).
+
+Antworte AUSSCHLIESSLICH mit JSON in genau dieser Form (keine Erklärung außerhalb):
+{"rationale":"<1-2 Sätze warum dieses Layout zur Lage passt>",
+ "widgets":[{"type":"...","title":"...","gs_x":0,"gs_y":0,"gs_w":4,"gs_h":3,"config":{...}}]}"""
+
+
+async def _ask_llm(db: Any, situation: dict) -> dict | None:
+    """One LLM call → parsed {rationale, widgets}. Returns None on any failure."""
+    from app.services.settings import get_llm_config
+    from app.services.llm_client import generate_text, LLMInvocationError
+
+    llm_cfg = await get_llm_config(db)
+    if not llm_cfg.is_configured:
+        log.info("generative_designer: no LLM configured → fallback")
+        return None
+
+    user_msg = "Aktuelle Lage:\n" + json.dumps(situation, ensure_ascii=False, indent=0)
+    try:
+        raw = await generate_text(
+            llm_cfg,
+            [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.3,
+            reasoning_effort="low",
+            max_output_tokens=2000,
+        )
+    except LLMInvocationError as e:
+        log.warning("generative_designer: LLM call failed: %s", e)
+        return None
+    except Exception as e:
+        log.warning("generative_designer: LLM error: %s", e)
+        return None
+
+    parsed = _parse_json(raw)
+    if not parsed or not isinstance(parsed.get("widgets"), list):
+        log.warning("generative_designer: LLM returned no usable widgets")
+        return None
+    return parsed
+
+
+def _parse_json(raw: str) -> dict | None:
+    """Tolerant JSON extraction — strips code fences and finds the object."""
+    if not raw:
+        return None
+    text = raw.strip()
+    if text.startswith("```"):
+        # remove ```json ... ``` fences
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+    # Find the outermost JSON object
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        return json.loads(text[start:end + 1])
+    except Exception:
+        return None
+
+
+# ── 3. Validation + grid packing ────────────────────────────────────────────
+
+def _validate_widgets(raw_widgets: list, situation: dict) -> list[dict]:
+    """Keep only well-formed widgets with valid configs; resolve metric widgets
+    against the real candidates. Returns clean specs (grid packed later)."""
+    # Valid metric reference sets
+    forecast_keys = {
+        (c["host"], c["service"], c["metric_id"])
+        for c in situation.get("forecast_candidates", [])
+    }
+    # Map (host, service) → metric_id from the real vitals so timeseries widgets
+    # always carry the exact metric_id (the working CheckMK lookup path).
+    vital_metric_by_hs: dict[tuple, str] = {
+        (v["host"], v["service"]): v.get("metric_id", "")
+        for v in situation.get("vitals", []) if v.get("service")
+    }
+
+    clean: list[dict] = []
+    for w in raw_widgets:
+        if not isinstance(w, dict):
+            continue
+        wtype = str(w.get("type", "")).strip()
+        if wtype not in _ALLOWED_CONFIG_KEYS:
+            continue
+        title = str(w.get("title") or wtype).strip()[:100]
+        cfg_in = w.get("config") if isinstance(w.get("config"), dict) else {}
+        # Keep only allowed keys for this type
+        cfg = {k: v for k, v in cfg_in.items() if k in _ALLOWED_CONFIG_KEYS[wtype]}
+
+        # Type-specific resolution / sanity
+        if wtype in ("stat", "list", "donut", "bar", "top_hosts"):
+            cfg.setdefault("index_pattern", "cs-feed-*")
+            cfg.setdefault("query_string", "NOT status:resolved")
+            if wtype in ("list", "top_hosts", "bar"):
+                cfg["limit"] = int(cfg.get("limit") or (15 if wtype == "list" else 8))
+            if wtype == "bar":
+                cfg.setdefault("agg_field", "source")
+        elif wtype in ("ai_summary", "war_room"):
+            cfg["agent_type"] = cfg.get("agent_type") or "sysadmin"
+        elif wtype == "forecast":
+            key = (cfg.get("host"), cfg.get("service"), cfg.get("metric_id"))
+            if key not in forecast_keys:
+                log.debug("generative_designer: dropping forecast widget (unknown %s)", key)
+                continue
+            cfg["history_hours"] = int(cfg.get("history_hours") or 72)
+            cfg["horizon_hours"] = int(cfg.get("horizon_hours") or 24)
+        elif wtype == "timeseries":
+            cfg["data_source"] = "checkmk"
+            key = (cfg.get("host"), cfg.get("service"))
+            if key not in vital_metric_by_hs:
+                log.debug("generative_designer: dropping timeseries widget (unknown %s)", key)
+                continue
+            # Always carry the exact metric_id from the real vitals so the widget
+            # uses CheckMK's metric_id lookup (graph_index alone returns HTTP 400).
+            cfg["metric_id"] = vital_metric_by_hs[key]
+            cfg["hours"] = int(cfg.get("hours") or 4)
+
+        clean.append({"widget_type": wtype, "title": title, "config": cfg})
+
+    return clean[:8]
+
+
+def _pack_grid(specs: list[dict]) -> list[dict]:
+    """Assign gs_x/gs_y/gs_w/gs_h by row packing into a 12-col grid."""
+    placed: list[dict] = []
+    x = 0
+    y = 0
+    row_h = 0
+    for s in specs:
+        w, h = _DEFAULT_SIZE.get(s["widget_type"], (4, 3))
+        w = min(w, COLS)
+        if x + w > COLS:
+            # next row
+            y += row_h
+            x = 0
+            row_h = 0
+        s["gs_x"], s["gs_y"], s["gs_w"], s["gs_h"] = x, y, w, h
+        x += w
+        row_h = max(row_h, h)
+        placed.append(s)
+    return placed
+
+
+# ── 4. Fallback ─────────────────────────────────────────────────────────────
+
+def _fallback_widgets(situation: dict) -> tuple[list[dict], str]:
+    """Deterministic dashboard when the LLM is unavailable / unusable.
+
+    Always includes the acute forecast widgets so the metrics still drive the
+    composition even without an LLM."""
+    specs: list[dict] = [
+        {"widget_type": "stat", "title": "Kritisch",
+         "config": {"index_pattern": "cs-feed-*", "query_string": "severity:critical AND NOT status:resolved"}},
+        {"widget_type": "stat", "title": "Hoch",
+         "config": {"index_pattern": "cs-feed-*", "query_string": "severity:high AND NOT status:resolved"}},
+        {"widget_type": "stat", "title": "Gesamt",
+         "config": {"index_pattern": "cs-feed-*", "query_string": "NOT status:resolved"}},
+        {"widget_type": "ai_summary", "title": "KI-Lagebericht",
+         "config": {"agent_type": "sysadmin"}},
+        {"widget_type": "list", "title": "Aktive Alerts",
+         "config": {"index_pattern": "cs-feed-*", "query_string": "NOT status:resolved", "limit": 15}},
+        {"widget_type": "top_hosts", "title": "Top Problem-Hosts",
+         "config": {"index_pattern": "cs-feed-*", "query_string": "NOT status:resolved", "limit": 8}},
+    ]
+    sev = situation.get("severity_summary", "none")
+    if sev in ("critical", "high"):
+        specs.insert(3, {"widget_type": "war_room", "title": "War Room",
+                         "config": {"agent_type": "sysadmin"}})
+    # The acute forecast candidates → one forecast widget each (max 2)
+    for c in situation.get("forecast_candidates", [])[:2]:
+        specs.append({
+            "widget_type": "forecast",
+            "title": f"Prognose {c.get('label','')} · {c['host'].split('.')[0]}",
+            "config": {
+                "host": c["host"], "service": c["service"], "metric_id": c["metric_id"],
+                "history_hours": 72, "horizon_hours": 24,
+            },
+        })
+    n_fc = len(situation.get("forecast_candidates", [])[:2])
+    if n_fc:
+        rationale = (f"Automatisches Lagebild: {sev}-Lage, {n_fc} Host(s) laufen laut "
+                     f"Metrik-Prognose auf einen Schwellwert zu — Prognose-Widgets ergänzt.")
+    else:
+        rationale = f"Automatisches Lagebild ({sev}-Lage) — KI-Komposition nicht verfügbar, Standardauswahl."
+    return specs, rationale
+
+
+# ── Public entry point ──────────────────────────────────────────────────────
+
+async def design_dashboard(db: Any, user_id: str) -> dict:
+    """Compose a bespoke dashboard for the current situation.
+
+    Returns {"widgets": [{widget_type,title,gs_*,config}], "rationale": str}.
+    Always returns a usable set (LLM result or deterministic fallback)."""
+    situation = await gather_situation(db)
+
+    llm_result = await _ask_llm(db, situation)
+    rationale = ""
+    specs: list[dict] = []
+    if llm_result:
+        specs = _validate_widgets(llm_result.get("widgets", []), situation)
+        rationale = str(llm_result.get("rationale") or "").strip()[:600]
+
+    if not specs:
+        specs, fb_rationale = _fallback_widgets(situation)
+        if not rationale:
+            rationale = fb_rationale
+
+    # Guarantee the metrics drive the composition: every acute forecast
+    # candidate MUST appear as a forecast widget. If the LLM omitted one
+    # (it often just mentions it in prose), inject it — this is the whole
+    # point of collecting the metrics in the first place.
+    specs = _ensure_forecast_widgets(specs, situation)
+
+    placed = _pack_grid(specs)
+    return {"widgets": placed, "rationale": rationale}
+
+
+def _ensure_forecast_widgets(specs: list[dict], situation: dict) -> list[dict]:
+    """Append a forecast widget for any acute candidate the LLM left out."""
+    candidates = situation.get("forecast_candidates", [])[:2]
+    if not candidates:
+        return specs
+    present = {
+        (s["config"].get("host"), s["config"].get("metric_id"))
+        for s in specs if s["widget_type"] == "forecast"
+    }
+    for c in candidates:
+        if (c["host"], c["metric_id"]) in present:
+            continue
+        specs.append({
+            "widget_type": "forecast",
+            "title": f"Prognose {c.get('label','')} · {c['host'].split('.')[0]}",
+            "config": {
+                "host": c["host"], "service": c["service"], "metric_id": c["metric_id"],
+                "history_hours": 72, "horizon_hours": 24,
+            },
+        })
+    return specs[:9]  # allow one extra slot beyond the 8-widget soft cap
