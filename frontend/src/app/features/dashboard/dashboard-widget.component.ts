@@ -28,6 +28,7 @@ import {
 @Component({
   selector: 'cs-dashboard-widget',
   standalone: true,
+  host: { '[style.--w-accent]': 'accentColor()' },
   imports: [
     CommonModule,
     MatButtonModule,
@@ -38,7 +39,7 @@ import {
     NgxEchartsDirective,
   ],
   template: `
-    <mat-card class="widget-card" [class.edit-mode]="editMode()">
+    <mat-card class="widget-card lcars-widget" [class.edit-mode]="editMode()">
       <div class="widget-header">
         <div>
           <div class="widget-title">{{ widget().title }}</div>
@@ -254,7 +255,7 @@ import {
       letter-spacing: .08em;
       margin-top: 2px;
     }
-    .widget-body { flex: 1; min-height: 0; padding: 0 14px 14px; overflow: hidden; }
+    .widget-body { flex: 1; min-height: 0; padding: 0 14px 14px; overflow: auto; }
     .loading, .empty {
       height: 100%;
       display: flex;
@@ -317,7 +318,7 @@ import {
     .forecast-title { font-size: 11px; color: var(--mat-sys-on-surface-variant); padding: 0 4px 2px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .grafana-frame { width: 100%; height: 100%; border: 0; border-radius: 10px; background: #111827; }
     .ai-summary { height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 7px; }
-    .ai-summary p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--mat-sys-on-surface-variant); }
+    .ai-summary p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--mat-sys-on-surface-variant); white-space: pre-line; }
     .finding-block { display: flex; flex-direction: column; }
     .finding { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; padding: 3px 4px; border-radius: 4px; cursor: pointer; }
     .finding:hover { background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent); }
@@ -355,26 +356,33 @@ import {
     .host-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* ═══════════════════════════════════════════════════════════
-       LCARS THEME — widgets look like bridge panels
-       Orange header bar | black body | gold text | elbow cap
+       LCARS THEME — authentic panel look (black body, colored left
+       rail + header pill, rounded left elbow). Color per widget type
+       via --w-accent. NB: no geometry-changing border-left (that was
+       clipping the first characters) — the rail is a ::before overlay.
        ═══════════════════════════════════════════════════════════ */
     :host-context(html.cs-theme-lcars) .widget-card {
-      background: #0a0804;
+      background: #000 !important;
       border: none !important;
-      border-radius: 0 !important;
+      border-radius: 18px 6px 6px 18px !important;   /* rounded left elbow */
       box-shadow: none !important;
-      border-left: 7px solid #e87c3a;
       position: relative;
-      overflow: visible !important;
+      overflow: hidden !important;
     }
-    :host-context(html.cs-theme-lcars) .widget-card.edit-mode {
-      border-left: 7px solid #ffcc66 !important;
-      outline: none !important;
+    /* left accent rail (overlay — does not shift content) */
+    :host-context(html.cs-theme-lcars) .widget-card::before {
+      content: '';
+      position: absolute; left: 0; top: 0; bottom: 0;
+      width: 12px;
+      background: var(--w-accent, #e87c3a);
+      z-index: 2;
     }
+    :host-context(html.cs-theme-lcars) .widget-card.edit-mode { outline: 2px dashed #ffcc66 !important; }
     :host-context(html.cs-theme-lcars) .widget-header {
-      background: #e87c3a;
-      padding: 6px 14px;
-      border-radius: 0;
+      background: var(--w-accent, #e87c3a);
+      padding: 7px 16px 7px 24px;            /* extra left padding clears the rail */
+      border-radius: 0 6px 0 0;
+      margin-left: 12px;                      /* sit to the right of the rail */
       flex-shrink: 0;
     }
     :host-context(html.cs-theme-lcars) .widget-title {
@@ -392,9 +400,10 @@ import {
     :host-context(html.cs-theme-lcars) .header-actions button { color: #000 !important; }
     :host-context(html.cs-theme-lcars) .widget-body {
       color: #ffe8a0;
+      padding-left: 26px;                     /* clear the left rail */
     }
     :host-context(html.cs-theme-lcars) .stat-value {
-      color: #e87c3a !important;
+      color: var(--w-accent, #e87c3a) !important;
       font-family: 'Eurostile', 'Antonio', sans-serif;
       font-size: clamp(54px, 10vw, 90px);
       letter-spacing: -.02em;
@@ -410,10 +419,10 @@ import {
     :host-context(html.cs-theme-lcars) .clickable:hover { background: rgba(232,124,58,.12) !important; }
     :host-context(html.cs-theme-lcars) .host-row {
       background: #1e1710 !important;
-      border-left: 3px solid #e87c3a;
+      border-left: 3px solid var(--w-accent, #e87c3a);
     }
     :host-context(html.cs-theme-lcars) .host-name { color: #ffcc66 !important; }
-    :host-context(html.cs-theme-lcars) .host-count { background: #e87c3a !important; color: #000 !important; }
+    :host-context(html.cs-theme-lcars) .host-count { background: var(--w-accent, #e87c3a) !important; color: #000 !important; }
     :host-context(html.cs-theme-lcars) .host-item { color: #e8a060 !important; }
     :host-context(html.cs-theme-lcars) .ai-summary p { color: #e8a060 !important; }
     :host-context(html.cs-theme-lcars) .finding { color: #ffe8a0 !important; }
@@ -487,6 +496,18 @@ export class DashboardWidgetComponent {
   private themeSvc = inject(ThemeService);
 
   expandedFinding = signal<string | null>(null);
+
+  // LCARS panels cycle colors per widget type (like the bridge rail) — orange,
+  // gold, blue, salmon — set as --w-accent on the host and used by LCARS CSS.
+  readonly accentColor = computed(() => {
+    const map: Record<string, string> = {
+      ai_summary: '#e87c3a', list: '#e87c3a',
+      stat: '#ffcc66', top_hosts: '#ffcc66', bar: '#ffcc66',
+      donut: '#7fb3d3', timeseries: '#7fb3d3',
+      war_room: '#cc6666', forecast: '#cc6666',
+    };
+    return map[this.widget().widget_type] ?? '#e87c3a';
+  });
 
   // theme-aware chart axis/grid colors
   private get _chartText() { const t = this.themeSvc.theme(); return t === 'lcars' ? '#e8a060' : t === 'holo' ? '#5fc8ee' : '#94a3b8'; }

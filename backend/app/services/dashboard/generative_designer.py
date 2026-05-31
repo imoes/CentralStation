@@ -75,9 +75,51 @@ _METRIC_SERVICE: dict[str, str] = {
 }
 
 
+async def _get_scoped_severity_counts(os_client: Any, host_scope: list[str]) -> dict[str, int]:
+    """Severity counts constrained to the user's selected CheckMK host scope."""
+    from datetime import datetime, timezone, timedelta
+
+    hosts = [h for h in host_scope if h]
+    if not hosts:
+        return {}
+    since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    try:
+        resp = await os_client.search(
+            index="cs-feed-*",
+            body={
+                "query": {
+                    "bool": {
+                        "must": [{"range": {"created_at": {"gte": since}}}],
+                        "filter": [{
+                            "bool": {
+                                "should": [
+                                    {"terms": {"metadata.host.keyword": hosts}},
+                                    {"terms": {"metadata.agent.keyword": hosts}},
+                                    {"terms": {"metadata.host_candidates.keyword": hosts}},
+                                ],
+                                "minimum_should_match": 1,
+                            }
+                        }],
+                        "must_not": [{"term": {"status": "resolved"}}],
+                    }
+                },
+                "aggs": {"by_sev": {"terms": {"field": "severity", "size": 10}}},
+                "size": 0,
+            },
+            ignore_unavailable=True,
+        )
+        return {
+            b["key"]: b["doc_count"]
+            for b in resp.get("aggregations", {}).get("by_sev", {}).get("buckets", [])
+        }
+    except Exception as e:
+        log.debug("generative_designer: scoped severity counts failed: %s", e)
+        return {}
+
+
 # ── 1. Situation gathering ──────────────────────────────────────────────────
 
-async def gather_situation(db: Any) -> dict:
+async def gather_situation(db: Any, user_id: str | None = None) -> dict:
     """Collect the full operational picture for the LLM prompt.
 
     Reuses the bridge metrics math and the layout-engine severity counts so the
@@ -85,14 +127,17 @@ async def gather_situation(db: Any) -> dict:
     from app.core.opensearch import get_opensearch
     from app.services.dashboard.layout_engine import _get_severity_counts
     from app.api.bridge import _compute_metrics
+    from app.services.feed_index import get_user_checkmk_host_scope
     from app.services.worklist_builder import get_latest_worklist
     from app.models.ai import AiAnalysis
     from sqlalchemy import select
 
     os_client = get_opensearch()
+    host_scope = await get_user_checkmk_host_scope(db, user_id) if user_id else []
+    host_scope_lc = {h.lower() for h in host_scope if h}
 
-    # Severity counts (last hour, all sources)
-    sev_counts = await _get_severity_counts()
+    # Severity counts (last hour, scoped to the user's selected sites when set)
+    sev_counts = await _get_scoped_severity_counts(os_client, host_scope) if host_scope else await _get_severity_counts()
 
     # Latest sysadmin analysis findings
     findings: list[dict] = []
@@ -114,8 +159,17 @@ async def gather_situation(db: Any) -> dict:
                     "host": f.get("host") or f.get("affected_service") or "",
                     "source": f.get("source", ""),
                 }
-                for f in (analysis.findings or [])[:6]
+                for f in (analysis.findings or [])
+                if not host_scope_lc
+                or ((f.get("host") or f.get("affected_service") or "").lower() in host_scope_lc)
             ]
+            findings = findings[:6]
+            if host_scope_lc:
+                sev_order = ["critical", "high", "medium", "low", "info"]
+                severity_summary = next(
+                    (sev for sev in sev_order if any(f.get("severity") == sev for f in findings)),
+                    "none",
+                )
     except Exception as e:
         log.debug("gather_situation: findings failed: %s", e)
 
@@ -123,7 +177,7 @@ async def gather_situation(db: Any) -> dict:
     vitals: list[dict] = []
     forecast_candidates: list[dict] = []
     try:
-        raw_vitals, raw_forecasts = await _compute_metrics(os_client)
+        raw_vitals, raw_forecasts = await _compute_metrics(os_client, host_scope)
         # Enrich vitals with the CheckMK service so the LLM can build timeseries
         for v in raw_vitals:
             service = _METRIC_SERVICE.get(v.get("metric", ""), "")
@@ -156,6 +210,8 @@ async def gather_situation(db: Any) -> dict:
         wl = await get_latest_worklist(db)
         if wl:
             for item in (wl.get("items") or [])[:6]:
+                if host_scope_lc and (item.get("host") or "").lower() not in host_scope_lc:
+                    continue
                 worklist_items.append({
                     "host": item.get("host", ""),
                     "title": item.get("title", ""),
@@ -168,6 +224,7 @@ async def gather_situation(db: Any) -> dict:
     return {
         "severity_counts": sev_counts,
         "severity_summary": severity_summary,
+        "host_scope": host_scope,
         "findings": findings,
         "vitals": vitals,
         "forecast_candidates": forecast_candidates,
@@ -202,8 +259,14 @@ REGELN:
 - Bei ruhiger Lage: kompakteres Dashboard (Counts + Liste + Donut), keine Forecasts erzwingen.
 - Gruppiere thematisch; nutze die volle Breite (gs_w summiert sich pro Zeile zu 12).
 
+Die "rationale" ist ein kurzes LAGE-Briefing für den Sysadmin — beschreibe NUR was los ist:
+was ist kritisch, welche Systeme/Standorte sind betroffen, worauf muss man achten.
+NICHT beschreiben, welche Widgets du wählst oder wie das Layout aufgebaut ist. KEINE Widget-Typnamen
+(ai_summary, war_room, forecast, ...) nennen. KEINE vollständige Host-Liste aufzählen — max. die 2-3
+wichtigsten Hosts. Maximal 2-3 Sätze.
+
 Antworte AUSSCHLIESSLICH mit JSON in genau dieser Form (keine Erklärung außerhalb):
-{"rationale":"<1-2 Sätze warum dieses Layout zur Lage passt>",
+{"rationale":"<2-3 Sätze Lage-Briefing: was ist los, was ist kritisch, worauf achten>",
  "widgets":[{"type":"...","title":"...","gs_x":0,"gs_y":0,"gs_w":4,"gs_h":3,"config":{...}}]}"""
 
 
@@ -241,6 +304,30 @@ async def _ask_llm(db: Any, situation: dict) -> dict | None:
         log.warning("generative_designer: LLM returned no usable widgets")
         return None
     return parsed
+
+
+# Markers after which the LLM tends to dump a full host list — cut the rationale
+# there so the briefing stays a short situational summary.
+_RATIONALE_CUT_MARKERS = (
+    "betroffene hosts", "betroffene systeme", "affected hosts",
+    "vollständige liste", "hosts vollständig", "host-liste",
+)
+
+
+def _clean_rationale(text: str) -> str:
+    """Trim the LLM rationale to a short situational briefing.
+
+    Removes any trailing 'Betroffene Hosts: …' style dump and caps length."""
+    t = (text or "").strip()
+    low = t.lower()
+    cut = len(t)
+    for marker in _RATIONALE_CUT_MARKERS:
+        i = low.find(marker)
+        if i != -1:
+            cut = min(cut, i)
+    t = t[:cut].strip().rstrip(",;:.").strip()
+    # If the cut left a dangling sentence opener, also drop a trailing connector
+    return (t + ".") if t and not t.endswith((".", "!", "?")) else t
 
 
 def _parse_json(raw: str) -> dict | None:
@@ -387,11 +474,33 @@ def _fallback_widgets(situation: dict) -> tuple[list[dict], str]:
         })
     n_fc = len(situation.get("forecast_candidates", [])[:2])
     if n_fc:
+        host_list = ", ".join(c["host"] for c in situation.get("forecast_candidates", [])[:2])
         rationale = (f"Automatisches Lagebild: {sev}-Lage, {n_fc} Host(s) laufen laut "
-                     f"Metrik-Prognose auf einen Schwellwert zu — Prognose-Widgets ergänzt.")
+                     f"Metrik-Prognose auf einen Schwellwert zu ({host_list}) — Prognose-Widgets ergänzt.")
     else:
         rationale = f"Automatisches Lagebild ({sev}-Lage) — KI-Komposition nicht verfügbar, Standardauswahl."
     return specs, rationale
+
+
+def _situation_hosts(situation: dict) -> list[str]:
+    hosts: set[str] = set()
+    for key in ("findings", "vitals", "forecast_candidates", "worklist"):
+        for item in situation.get(key, []) or []:
+            host = str(item.get("host") or "").strip()
+            if host:
+                hosts.add(host)
+    return sorted(hosts, key=str.lower)
+
+
+def _rationale_with_hosts(rationale: str, situation: dict) -> str:
+    hosts = _situation_hosts(situation)
+    if not hosts:
+        return rationale
+    missing = [host for host in hosts if host.lower() not in rationale.lower()]
+    if not missing:
+        return rationale
+    suffix = " Betroffene Hosts vollständig: " + ", ".join(hosts) + "."
+    return (rationale.rstrip() + suffix)[:1200]
 
 
 # ── Public entry point ──────────────────────────────────────────────────────
@@ -401,19 +510,21 @@ async def design_dashboard(db: Any, user_id: str) -> dict:
 
     Returns {"widgets": [{widget_type,title,gs_*,config}], "rationale": str}.
     Always returns a usable set (LLM result or deterministic fallback)."""
-    situation = await gather_situation(db)
+    situation = await gather_situation(db, user_id)
 
     llm_result = await _ask_llm(db, situation)
     rationale = ""
     specs: list[dict] = []
     if llm_result:
         specs = _validate_widgets(llm_result.get("widgets", []), situation)
-        rationale = str(llm_result.get("rationale") or "").strip()[:600]
+        rationale = _clean_rationale(str(llm_result.get("rationale") or ""))
 
     if not specs:
         specs, fb_rationale = _fallback_widgets(situation)
         if not rationale:
             rationale = fb_rationale
+    # NB: the rationale is a SITUATION briefing only — no full host dump
+    # (_clean_rationale already strips any trailing "Betroffene Hosts: …").
 
     # Guarantee the metrics drive the composition: every acute forecast
     # candidate MUST appear as a forecast widget. If the LLM omitted one
