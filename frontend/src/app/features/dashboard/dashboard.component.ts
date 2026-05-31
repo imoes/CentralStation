@@ -119,8 +119,8 @@ import { WebsocketService } from '../../core/services/websocket.service';
           <!-- Generative / Classic toggle — switches the whole view (classic
                dashboards are untouched; generative is a separate AI canvas) -->
           <button mat-stroked-button
-            [color]="generativeMode() ? 'accent' : ''"
             [class.generative-active]="generativeMode()"
+            [class.mode-klassisch]="!generativeMode()"
             (click)="toggleGenerativeMode()"
             [matTooltip]="generativeMode() ? 'Generativer Modus — KI komponiert das Dashboard für die aktuelle Lage. Klicken für Klassisch.' : 'Generativen Modus aktivieren — die KI komponiert ein Lagebild aus der aktuellen Situation'">
             <mat-icon>auto_awesome</mat-icon>
@@ -163,7 +163,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
       }
 
       @if (generativeMode()) {
-        <mat-card class="gen-banner">
+        <div class="gen-banner">
           <mat-icon class="gen-icon" [class.spinning]="generativeLoading()">auto_awesome</mat-icon>
           <div class="gen-text">
             <div class="gen-line">
@@ -184,7 +184,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
             @else { <mat-icon>refresh</mat-icon> }
             Neu generieren
           </button>
-        </mat-card>
+        </div>
       }
 
       <div #grid class="grid-stack" [class.config-mode]="configMode()">
@@ -330,7 +330,11 @@ import { WebsocketService } from '../../core/services/websocket.service';
       --mdc-outlined-text-field-label-text-color: #ffcc66;
       --mdc-outlined-text-field-input-text-color: #ffcc99;
     }
+    /* Generative toggle: gold when active; explicit text for inactive (Classic = dark, LCARS/Holo = theme) */
     .generative-active { background: #ffcc66 !important; color: #000 !important; border-color: #ffcc66 !important; }
+    .mode-klassisch { color: var(--mat-sys-on-surface) !important; border-color: var(--mat-sys-outline) !important; }
+    :host-context(html.cs-theme-lcars) .mode-klassisch { color: #e8a060 !important; border-color: #e87c3a !important; }
+    :host-context(html.cs-theme-holo) .mode-klassisch { color: #8fb8cf !important; border-color: rgba(79,214,255,.5) !important; }
     /* War Room Overlay */
     .war-room-overlay { position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; padding-top: 80px; animation: fadeIn .25s ease; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -403,31 +407,48 @@ import { WebsocketService } from '../../core/services/websocket.service';
       border-radius: 18px;
       margin-right: 18px;
     }
-    /* ── LCARS: black canvas + themed banner ── */
-    :host-context(html.cs-theme-lcars) .dashboard-shell {
-      background: #000 !important;
-    }
+    /* ── LCARS: dark canvas, gen-banner uses its own LCARS grid design already ── */
+    :host-context(html.cs-theme-lcars) .dashboard-shell { background: #000 !important; }
     :host-context(html.cs-theme-lcars) h1 { color: #ffcc66; }
-    :host-context(html.cs-theme-lcars) .gen-banner {
-      background: #1a1206 !important;
-      border: none !important;
-      border-left: 12px solid #e87c3a !important;
-      border-radius: 0 8px 8px 0;
+    /* NOTE: do NOT override gen-banner here — the base CSS is already LCARS-styled */
+
+    /* ── Classic: gen-banner needs light-friendly override ── */
+    :host-context(html.cs-theme-classic) .gen-banner,
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-banner {
+      background: color-mix(in srgb, var(--mat-sys-primary) 6%, var(--mat-sys-surface));
+      border: 1px solid color-mix(in srgb, var(--mat-sys-primary) 25%, transparent);
+      border-radius: 16px;
+      color: var(--mat-sys-on-surface);
     }
-    :host-context(html.cs-theme-lcars) .gen-icon { color: #ffcc66 !important; }
-    :host-context(html.cs-theme-lcars) .gen-line strong { color: #ffcc66; text-transform: uppercase; letter-spacing: .08em; }
-    :host-context(html.cs-theme-lcars) .gen-rationale { color: #e8a060 !important; }
-    :host-context(html.cs-theme-lcars) .gen-why { color: #ffcc66 !important; }
-    /* ── Holo: dark canvas + themed banner ── */
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-icon {
+      background: color-mix(in srgb, var(--mat-sys-primary) 15%, var(--mat-sys-surface-container));
+      color: var(--mat-sys-primary) !important;
+      border-left: none;
+      border-radius: 16px 0 0 16px;
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-line { color: var(--mat-sys-primary); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-rationale { color: var(--mat-sys-on-surface-variant); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-why { color: var(--mat-sys-primary); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-banner button[color="primary"] {
+      background: var(--mat-sys-primary) !important; color: var(--mat-sys-on-primary) !important;
+    }
+
+    /* ── Holo: dark canvas + cyan gen-banner ── */
     :host-context(html.cs-theme-holo) .dashboard-shell {
       background: radial-gradient(circle at 50% 8%, rgba(20,60,90,.4), transparent 36rem), linear-gradient(160deg,#02060f,#050d1a 60%,#02060f) !important;
     }
     :host-context(html.cs-theme-holo) .gen-banner {
-      background: rgba(79,214,255,.06) !important;
-      border: 1px solid rgba(79,214,255,.3) !important;
+      background: rgba(5, 20, 35, .85);
+      border: 1px solid rgba(79,214,255,.3);
+      border-radius: 16px;
     }
-    :host-context(html.cs-theme-holo) .gen-icon { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-holo) .gen-icon { background: rgba(79,214,255,.15) !important; color: #4fd6ff !important; border-left: none; border-radius: 16px 0 0 16px; }
+    :host-context(html.cs-theme-holo) .gen-line { color: #4fd6ff !important; }
     :host-context(html.cs-theme-holo) .gen-rationale { color: #8fb8cf !important; }
+    :host-context(html.cs-theme-holo) .gen-why { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-holo) .gen-banner button[color="primary"] {
+      background: #4fd6ff !important; color: #00131f !important;
+    }
     .grid-stack { min-height: 520px; }
     .grid-stack.config-mode {
       background-image:

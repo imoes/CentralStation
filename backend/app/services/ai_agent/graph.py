@@ -85,6 +85,7 @@ async def collect_data(state: dict, db: Any) -> dict:
     ve_filter   = {v.lower() for v in (state.get("_checkmk_ve")          or [])}
     crit_filter = {v.lower() for v in (state.get("_checkmk_criticality") or [])}
     os_filter   = {v.lower() for v in (state.get("_checkmk_os")          or [])}
+    host_scope  = {v.lower() for v in (state.get("_checkmk_host_scope")  or [])}
 
     import re
     _SWITCH_RE = re.compile(r'^ns[asc]\d', re.IGNORECASE)
@@ -109,6 +110,8 @@ async def collect_data(state: dict, db: Any) -> dict:
             continue
 
         if source != "checkmk":
+            if host_scope and host.lower() not in host_scope:
+                continue
             filtered.append(a)
             continue
 
@@ -373,9 +376,15 @@ async def analyze(state: dict, llm_config: Any) -> dict:
             return f"{loc} ({city})"
         return loc or city
 
+    def _alert_host(a: dict) -> str:
+        meta = a.get("metadata") or {}
+        return str(a.get("host") or a.get("agent") or meta.get("host") or meta.get("container_name") or "").strip()
+
+    all_hosts = sorted({h for h in (_alert_host(a) for a in alerts) if h}, key=str.lower)
+
     alerts_text = "\n".join(
         f"[{a.get('severity','?').upper()}] [{a.get('source','?')}] "
-        f"{a.get('host') or a.get('agent') or ''}: "
+        f"{_alert_host(a)}: "
         f"{a.get('title') or a.get('message','')[:200]}"
         + (f" | Standort: {_alert_location(a)}" if _alert_location(a) else "")
         + (f" | Ordner: {(a.get('metadata') or {}).get('location','')}" if (a.get('metadata') or {}).get('location') else "")
@@ -427,6 +436,9 @@ async def analyze(state: dict, llm_config: Any) -> dict:
         log.debug("analyze: blast_radius failed: %s", e)
 
     user_content = f"IT-Ereignisse der letzten Stunde:\n{alerts_text}"
+    if all_hosts:
+        user_content += "\n\nBetroffene Hosts vollständig:\n" + ", ".join(all_hosts)
+        user_content += "\n\nWichtig: Jeder Host aus dieser vollständigen Liste muss im Ergebnis namentlich auftauchen."
     if blast_text:
         user_content += blast_text
     if kb_text:
@@ -603,6 +615,7 @@ async def run_sysadmin_workflow(
     user_checkmk_ve:          list[str] | None = None,
     user_checkmk_criticality: list[str] | None = None,
     user_checkmk_os:          list[str] | None = None,
+    user_checkmk_host_scope:  list[str] | None = None,
     min_age_minutes: int = 10,
     look_back_hours: int = 4,
 ) -> dict:
@@ -639,6 +652,7 @@ async def run_sysadmin_workflow(
         "_checkmk_ve":          user_checkmk_ve          or [],
         "_checkmk_criticality": user_checkmk_criticality or [],
         "_checkmk_os":          user_checkmk_os          or [],
+        "_checkmk_host_scope":  user_checkmk_host_scope  or [],
         # Scoring settings
         "max_alerts_for_llm":  agent_config.max_alerts_for_llm,
         "flap_window_minutes": agent_config.flap_window_minutes,

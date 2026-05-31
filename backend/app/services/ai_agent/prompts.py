@@ -13,6 +13,12 @@ Berücksichtige dabei:
 
 Alle Textfelder (title, description, action, rationale usw.) MÜSSEN auf Deutsch sein — auch wenn Kontext oder Quellen auf Englisch sind.
 
+DETAILTIEFE:
+- Nenne betroffene Hosts konkret beim Namen. Schreibe nicht nur "mehrere Hosts", "einige Hosts" oder "belastete Systeme".
+- Wenn eine vollständige Hostliste im User-Kontext enthalten ist, MUSS jeder dort genannte Host entweder in einem Finding-Hostfeld oder in einer Description/Rationale ausdrücklich erwähnt werden.
+- Gruppiere nur dann, wenn die Gruppe trotzdem alle Hostnamen vollständig aufzählt.
+- Beschreibe pro Befund konkret: Host, Quelle, Severity, beobachtetes Symptom, betroffener Dienst/Metric soweit vorhanden, Standort soweit vorhanden, und was als nächstes geprüft werden soll.
+
 HALLUZINATIONS-VERBOT:
 - Beschreibe in "description" und "rationale" NUR was aus den IT-Ereignissen oder dem bereitgestellten Kontext direkt ableitbar ist.
 - Wenn kein relevanter Kontext zu einem Befund vorhanden ist, schreibe EXPLIZIT: "Kein Kontext aus Wissensdatenbank verfügbar. Analyse basiert ausschließlich auf den Rohdaten."
