@@ -191,37 +191,33 @@ html.cs-theme-lcars button.mat-mdc-raised-button:not(.mat-primary):not([color]) 
 }
 html.cs-theme-lcars button.mat-mdc-raised-button:not(.mat-primary):not([color]) span { color: #ffe8a0 !important; }
 
-/* Dashboard widgets use the Bridge/LCARS panel language by default. */
+/* Dashboard widgets use the Bridge panel language (LCARS theme only).
+   Matches .t-lcars .block / .work-row on the bridge: dark body, a single
+   colored left border, header bar, rounded RIGHT corners (flat left = no
+   clipping of the first header characters). The ::before gold rail used to
+   overlap the header and clip the first letter — removed. */
 cs-dashboard-widget .widget-card.lcars-widget {
-  background: #0a0804 !important;
+  background: #15120c !important;
   border: 0 !important;
-  border-left: 22px solid #e87c3a !important;
-  border-radius: 0 8px 8px 0 !important;
+  border-left: 8px solid #e87c3a !important;
+  border-radius: 0 14px 14px 0 !important;   /* rounded right, flat left */
   box-shadow: none !important;
   position: relative;
   overflow: hidden !important;
   color: #ffe8a0;
 }
-cs-dashboard-widget .widget-card.lcars-widget::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 22px;
-  height: 100%;
-  background: #ffcc66;
-  z-index: 2;
-}
+/* small accent cap on the top-right corner (LCARS detail, does not overlap text) */
 cs-dashboard-widget .widget-card.lcars-widget::after {
   content: '';
   position: absolute;
   right: 0;
   top: 0;
-  width: min(34%, 180px);
-  height: 34px;
+  width: min(28%, 140px);
+  height: 6px;
   background: #7fb3d3;
-  border-radius: 0 8px 0 0;
+  border-radius: 0 14px 0 0;
   pointer-events: none;
+  z-index: 3;
 }
 cs-dashboard-widget .widget-card.lcars-widget.edit-mode {
   border-left-color: #ffcc66 !important;
@@ -232,7 +228,7 @@ cs-dashboard-widget .widget-card.lcars-widget .widget-header {
   min-height: 42px;
   background: #e87c3a;
   color: #000;
-  padding: 7px 14px 7px 22px;
+  padding: 7px 16px;
   border-radius: 0;
   position: relative;
   z-index: 1;
@@ -251,15 +247,14 @@ cs-dashboard-widget .widget-card.lcars-widget .widget-subtitle {
 }
 cs-dashboard-widget .widget-card.lcars-widget .header-actions button { color: #000 !important; }
 cs-dashboard-widget .widget-card.lcars-widget .widget-body {
-  padding-top: 12px;
-  padding-left: 4px;
+  padding: 10px 14px 12px;
   color: #ffe8a0;
-  background: #0a0804;
+  background: #000;
 }
 cs-dashboard-widget .widget-card.lcars-widget .stat-value {
   color: #ffcc66 !important;
   font-family: 'Antonio', 'Eurostile', sans-serif;
-  font-size: clamp(54px, 10vw, 90px);
+  font-size: clamp(40px, 6vw, 66px);   /* fits a 2-row widget without bottom cutoff */
   letter-spacing: 0;
 }
 cs-dashboard-widget .widget-card.lcars-widget .list-item { border-bottom-color: #2a1d0a !important; }
