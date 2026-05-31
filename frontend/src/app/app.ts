@@ -36,9 +36,7 @@ interface NavItem {
             <button mat-icon-button class="nav-toggle" (click)="toggleNav()" title="Navigation ein-/ausklappen">
               <mat-icon>menu</mat-icon>
             </button>
-            <span class="station-mark" aria-hidden="true">
-              <span></span><span></span><span></span><span></span>
-            </span>
+            <mat-icon class="brand-icon">hub</mat-icon>
             <span class="brand-label">CentralStation</span>
           </div>
           <mat-nav-list>
