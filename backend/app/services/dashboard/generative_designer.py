@@ -185,7 +185,7 @@ NUTZE NUR diese Widget-Typen mit exakt diesen config-Schlüsseln:
 - "stat": {"index_pattern":"cs-feed-*","query_string":"<lucene>"}  — eine große Kennzahl
 - "list": {"index_pattern":"cs-feed-*","query_string":"<lucene>","limit":15}  — Alert-Liste
 - "donut": {"index_pattern":"cs-feed-*","query_string":"<lucene>"}  — Severity-Verteilung
-- "bar": {"index_pattern":"cs-feed-*","query_string":"<lucene>","agg_field":"source|severity|host","limit":10}
+- "bar": {"index_pattern":"cs-feed-*","query_string":"<lucene>","agg_field":"source","limit":10}  — agg_field MUSS einer dieser Werte sein: "source", "severity", "host" (kein "|", kein zusammengesetzter Wert)
 - "top_hosts": {"index_pattern":"cs-feed-*","query_string":"<lucene>","limit":8}  — Problem-Hosts
 - "ai_summary": {"agent_type":"sysadmin"}  — KI-Lagebericht
 - "war_room": {"agent_type":"sysadmin"}  — Blast-Radius (NUR bei critical/high sinnvoll)
@@ -300,7 +300,10 @@ def _validate_widgets(raw_widgets: list, situation: dict) -> list[dict]:
             if wtype in ("list", "top_hosts", "bar"):
                 cfg["limit"] = int(cfg.get("limit") or (15 if wtype == "list" else 8))
             if wtype == "bar":
-                cfg.setdefault("agg_field", "source")
+                # Only allow known single-field aggregations (reject "host|severity" etc.)
+                _VALID_AGG = {"source", "severity", "host", "metadata.host", "hostgroup"}
+                raw_agg = str(cfg.get("agg_field") or "source")
+                cfg["agg_field"] = raw_agg if raw_agg in _VALID_AGG else "source"
         elif wtype in ("ai_summary", "war_room"):
             cfg["agent_type"] = cfg.get("agent_type") or "sysadmin"
         elif wtype == "forecast":

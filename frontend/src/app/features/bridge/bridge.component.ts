@@ -11,6 +11,7 @@ interface SectorStatus { name: string; state: string; critical: number; high: nu
 interface LogEntry { severity: string; source: string; title: string; host: string; created_at: string; }
 interface Vital { host: string; metric: string; label: string; value: number; unit: string; }
 interface Forecast { host: string; metric: string; label: string; current: number; threshold: number; eta_hours: number; }
+interface PrimaryIncident { severity: string; source: string; title: string; host: string; location: string; ai_insight: string; created_at: string; }
 interface WorkItem {
   rank: number; external_id: string; severity: string; source: string; title: string;
   host: string; location: string; verdict: string; count: number; oldest: string; score: number;
@@ -26,6 +27,7 @@ interface BridgeStatus {
   worklist: WorkItem[];
   worklist_open_count: number;
   worklist_updated: string | null;
+  primary_incident?: PrimaryIncident | null;
   server_time: string;
 }
 
@@ -82,6 +84,25 @@ interface BridgeStatus {
             <span class="hero-sub">KI-vorsortiert · {{ status()?.worklist_open_count ?? 0 }} offene Probleme · akt. {{ worklistAge() }}</span>
             <button class="pill-btn refresh" (click)="refreshWorklist()" [disabled]="refreshing()">⟳ NEU</button>
           </div>
+
+          @if (status()?.primary_incident) {
+            <div class="incident-panel" [attr.data-sev]="status()!.primary_incident!.severity"
+                 (click)="openItem({external_id:'',rank:0,count:1,score:0,oldest:status()!.primary_incident!.created_at,
+                   source:status()!.primary_incident!.source,severity:status()!.primary_incident!.severity,
+                   title:status()!.primary_incident!.title,host:status()!.primary_incident!.host,
+                   location:status()!.primary_incident!.location,verdict:status()!.primary_incident!.ai_insight})">
+              <div class="ip-head">
+                <span class="ip-label">PRIMÄRER INCIDENT</span>
+                <span class="ip-sev">{{ status()!.primary_incident!.severity | uppercase }}</span>
+                <span class="ip-src">{{ sourceLabel(status()!.primary_incident!.source) }}</span>
+                <span class="ip-time">{{ relTime(status()!.primary_incident!.created_at) }}</span>
+              </div>
+              <div class="ip-title">{{ status()!.primary_incident!.title }}</div>
+              @if (status()!.primary_incident!.ai_insight) {
+                <div class="ip-insight">{{ status()!.primary_incident!.ai_insight }}</div>
+              }
+            </div>
+          }
 
           @if ((status()?.forecasts ?? []).length) {
             <div class="forecast-strip">
@@ -200,6 +221,17 @@ interface BridgeStatus {
     .hero-sub { font-size:12px; opacity:.7; flex:1; }
     .pill-btn.refresh { height:28px; border-radius:14px; }
 
+    /* primary incident panel */
+    .incident-panel { display:flex; flex-direction:column; gap:5px; padding:10px 14px; border-radius:8px; cursor:pointer; flex-shrink:0; }
+    .incident-panel:hover { filter:brightness(1.1); }
+    .ip-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .ip-label { font-size:10px; font-weight:800; letter-spacing:.18em; }
+    .ip-sev { font-size:10px; font-weight:800; padding:2px 8px; border-radius:4px; }
+    .ip-src { font-size:11px; opacity:.75; }
+    .ip-time { font-size:11px; opacity:.55; margin-left:auto; }
+    .ip-title { font-size:14px; font-weight:700; line-height:1.3; }
+    .ip-insight { font-size:12px; line-height:1.45; opacity:.8; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+
     .forecast-strip { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 12px; border-radius:8px; flex-shrink:0; }
     .fc-icon { font-size:12px; font-weight:800; letter-spacing:.1em; }
     .fc-pill { font-size:12px; padding:3px 11px; border-radius:13px; cursor:pointer; }
@@ -269,6 +301,11 @@ interface BridgeStatus {
     .t-classic .rail-pill[data-state="yellow"] { border-left:5px solid #ef6c00; }
     .t-classic .hero-title { color:#1f2933; }
     .t-classic .pill-btn.refresh { background:#1565c0; color:#fff; }
+    .t-classic .incident-panel { background:#fff; border:1px solid #dde6ef; border-left:5px solid #c62828; }
+    .t-classic .incident-panel[data-sev="high"] { border-left-color:#ef6c00; }
+    .t-classic .ip-label { color:#90a4b8; } .t-classic .ip-sev { background:#c62828; color:#fff; }
+    .t-classic .incident-panel[data-sev="high"] .ip-sev { background:#ef6c00; }
+    .t-classic .ip-title { color:#1f2933; } .t-classic .ip-insight { color:#37474f; }
     .t-classic .forecast-strip { background:#fff7e6; border:1px solid #ffc107; }
     .t-classic .fc-icon { color:#ef6c00; } .t-classic .fc-pill { background:#ffecb3; color:#5d4037; }
     .t-classic .work-row { background:#fff; border:1px solid #dde6ef; border-radius:14px; box-shadow:0 2px 6px rgba(0,0,0,.06); }
@@ -318,6 +355,12 @@ interface BridgeStatus {
     .t-lcars .rail-pill[data-state="yellow"] { background:#ffcc00; }
     .t-lcars .hero-title { color:#ff9966; }
     .t-lcars .pill-btn.refresh { background:#7fb3d3; color:#000; }
+    .t-lcars .incident-panel { background:#1f0d0a; border-left:7px solid #ff5544; border-radius:0 8px 8px 0; }
+    .t-lcars .incident-panel[data-sev="high"] { border-left-color:#ffcc00; }
+    .t-lcars .ip-label { color:#ff9966; letter-spacing:.15em; }
+    .t-lcars .ip-sev { background:#ff5544; color:#000; }
+    .t-lcars .incident-panel[data-sev="high"] .ip-sev { background:#ffcc00; }
+    .t-lcars .ip-title { color:#ffcc99; } .t-lcars .ip-insight { color:#e8a060; }
     .t-lcars .forecast-strip { background:#2a1d0a; border:1px solid #ffcc00; }
     .t-lcars .fc-icon { color:#ffcc00; } .t-lcars .fc-pill { background:#ffcc00; color:#000; }
     .t-lcars .work-row { background:#15120c; border-left:7px solid #ffcc66; border-radius:0 8px 8px 0; }
@@ -359,6 +402,11 @@ interface BridgeStatus {
     .t-holo .rail-pill[data-state="yellow"] { border-color:#ffd84a; color:#ffe27a; }
     .t-holo .hero-title { color:#cff6ff; text-shadow:0 0 12px rgba(79,214,255,.4); }
     .t-holo .pill-btn.refresh { background:rgba(79,214,255,.15); color:#9fe8ff; border:1px solid #4fd6ff; }
+    .t-holo .incident-panel { background:rgba(255,91,110,.08); border:1px solid rgba(255,91,110,.4); }
+    .t-holo .incident-panel[data-sev="high"] { border-color:rgba(255,216,74,.4); background:rgba(255,216,74,.06); }
+    .t-holo .ip-label { color:#5fc8ee; } .t-holo .ip-sev { background:rgba(255,91,110,.2); color:#ff8b98; border:1px solid #ff5b6e; }
+    .t-holo .incident-panel[data-sev="high"] .ip-sev { background:rgba(255,216,74,.2); color:#ffe27a; border-color:#ffd84a; }
+    .t-holo .ip-title { color:#cff6ff; } .t-holo .ip-insight { color:#8fb8cf; }
     .t-holo .forecast-strip { background:rgba(255,216,74,.08); border:1px solid rgba(255,216,74,.4); }
     .t-holo .fc-icon { color:#ffe27a; } .t-holo .fc-pill { background:rgba(255,216,74,.15); color:#ffe27a; border:1px solid rgba(255,216,74,.4); }
     .t-holo .work-row { background:rgba(10,28,46,.6); border:1px solid rgba(79,214,255,.22); }

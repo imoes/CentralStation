@@ -301,7 +301,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
     .gen-line { font-size: 14px; }
     .gen-ago { color: var(--mat-sys-on-surface-variant); font-size: 12px; }
     .gen-rationale { margin-top: 4px; font-size: 13px; color: var(--mat-sys-on-surface-variant); line-height: 1.45; }
-    .gen-rationale.collapsed { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+    .gen-rationale.collapsed { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     .gen-why { font-size: 12px; min-height: 28px; line-height: 28px; padding: 0 6px; }
     .grid-stack { min-height: 520px; }
     .grid-stack.config-mode {
@@ -334,7 +334,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   generativeLoading = signal(false);
   generativeRationale = signal<string | null>(null);
   generativeGeneratedAt = signal<string | null>(null);
-  rationaleExpanded = signal(false);
+  rationaleExpanded = signal(true);
   generativeAgo = computed(() => {
     const ts = this.generativeGeneratedAt();
     if (!ts) return '';
