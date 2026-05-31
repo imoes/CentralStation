@@ -39,7 +39,7 @@ import {
     NgxEchartsDirective,
   ],
   template: `
-    <mat-card class="widget-card lcars-widget" [class.edit-mode]="editMode()">
+    <mat-card class="widget-card" [class.lcars-widget]="isLcars()" [class.edit-mode]="editMode()">
       <div class="widget-header">
         <div>
           <div class="widget-title">{{ widget().title }}</div>
@@ -356,88 +356,6 @@ import {
     .host-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* ═══════════════════════════════════════════════════════════
-       LCARS THEME — exactly matches bridge panel style.
-       Reference: .t-lcars .block, .t-lcars .block-head.
-       Flat left edge + colored left border + colored header bar.
-       border-radius: 0 8px 8px 0 — NO left rounding → NO clipping.
-       ═══════════════════════════════════════════════════════════ */
-    :host-context(html.cs-theme-lcars) .widget-card {
-      background: #15120c !important;    /* bridge: #15120c */
-      border: none !important;
-      border-left: 8px solid var(--w-accent, #e87c3a) !important;
-      border-radius: 0 8px 8px 0 !important;   /* flat left, rounded right = no corner clip */
-      box-shadow: none !important;
-      overflow: hidden !important;
-    }
-    :host-context(html.cs-theme-lcars) .widget-card.edit-mode {
-      outline: 2px dashed #ffcc66 !important;
-      outline-offset: 2px;
-      border-left-color: #ffcc66 !important;
-    }
-    :host-context(html.cs-theme-lcars) .widget-header {
-      background: var(--w-accent, #e87c3a);
-      padding: 8px 14px;        /* no special left offset needed — border is outside content */
-      border-radius: 0;
-      flex-shrink: 0;
-    }
-    :host-context(html.cs-theme-lcars) .widget-title {
-      color: #000 !important;
-      font-family: 'Antonio', 'Eurostile', 'Roboto Condensed', sans-serif;
-      text-transform: uppercase;
-      letter-spacing: .1em;
-      font-weight: 900;
-      font-size: 12px;
-    }
-    :host-context(html.cs-theme-lcars) .widget-subtitle {
-      color: rgba(0,0,0,.55) !important;
-      letter-spacing: .1em;
-      font-size: 10px;
-    }
-    :host-context(html.cs-theme-lcars) .header-actions button { color: #000 !important; }
-    :host-context(html.cs-theme-lcars) .widget-body {
-      color: #ffe8a0;
-      background: #000;     /* inner body darker than card edge for contrast */
-      padding: 8px 14px 12px;
-    }
-    :host-context(html.cs-theme-lcars) .stat-value {
-      color: var(--w-accent, #e87c3a) !important;
-      font-family: 'Eurostile', 'Antonio', sans-serif;
-      /* Stat widget is typically 2 rows tall (≈160px). Header takes ~42px.
-         Body padding ~20px. Remaining ≈98px → font max 72px is safe. */
-      font-size: clamp(42px, 6vw, 72px);
-      letter-spacing: -.02em;
-    }
-    :host-context(html.cs-theme-lcars) .list-item {
-      border-bottom-color: #2a1d0a !important;
-    }
-    :host-context(html.cs-theme-lcars) .list-title { color: #ffe8a0 !important; }
-    :host-context(html.cs-theme-lcars) .list-meta { color: #e8a060 !important; }
-    :host-context(html.cs-theme-lcars) .list-host { color: #ffcc66 !important; }
-    :host-context(html.cs-theme-lcars) .empty { color: #5a3a18 !important; }
-    :host-context(html.cs-theme-lcars) .loading mat-spinner { --mdc-circular-progress-active-indicator-color: #e87c3a; }
-    :host-context(html.cs-theme-lcars) .clickable:hover { background: rgba(232,124,58,.12) !important; }
-    :host-context(html.cs-theme-lcars) .host-row {
-      background: #1e1710 !important;
-      border-left: 3px solid var(--w-accent, #e87c3a);
-    }
-    :host-context(html.cs-theme-lcars) .host-name { color: #ffcc66 !important; }
-    :host-context(html.cs-theme-lcars) .host-count { background: var(--w-accent, #e87c3a) !important; color: #000 !important; }
-    :host-context(html.cs-theme-lcars) .host-item { color: #e8a060 !important; }
-    :host-context(html.cs-theme-lcars) .ai-summary p { color: #e8a060 !important; }
-    :host-context(html.cs-theme-lcars) .finding { color: #ffe8a0 !important; }
-    :host-context(html.cs-theme-lcars) .finding:hover { background: rgba(232,124,58,.15) !important; }
-    :host-context(html.cs-theme-lcars) .finding-arrow { color: #e87c3a !important; }
-    :host-context(html.cs-theme-lcars) .wr-finding { background: #1e1710 !important; }
-    :host-context(html.cs-theme-lcars) .wr-finding-title { color: #ffe8a0 !important; }
-    :host-context(html.cs-theme-lcars) .wr-host { color: #e87c3a !important; }
-    :host-context(html.cs-theme-lcars) .wr-section-label { color: #ffcc66 !important; letter-spacing: .15em; }
-    :host-context(html.cs-theme-lcars) .wr-rec-action { color: #ffe8a0 !important; }
-    :host-context(html.cs-theme-lcars) .wr-jira-btn { color: #e87c3a !important; }
-    :host-context(html.cs-theme-lcars) .wr-quiet { color: #66aa66 !important; }
-    :host-context(html.cs-theme-lcars) .forecast-title { color: #ffcc66 !important; }
-    :host-context(html.cs-theme-lcars) .pin-btn { color: #e87c3a !important; }
-
-    /* ═══════════════════════════════════════════════════════════
        HOLO THEME — dark navy + cyan glow
        ═══════════════════════════════════════════════════════════ */
     :host-context(html.cs-theme-holo) .widget-card {
@@ -507,6 +425,10 @@ export class DashboardWidgetComponent {
     };
     return map[this.widget().widget_type] ?? '#e87c3a';
   });
+
+  // The global LCARS widget styling (styles.scss) only applies in LCARS theme,
+  // so Classic/Holo keep their own look.
+  readonly isLcars = computed(() => this.themeSvc.theme() === 'lcars');
 
   // theme-aware chart axis/grid colors
   private get _chartText() { const t = this.themeSvc.theme(); return t === 'lcars' ? '#e8a060' : t === 'holo' ? '#5fc8ee' : '#94a3b8'; }
