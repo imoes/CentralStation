@@ -62,8 +62,8 @@ _DEFAULT_SIZE: dict[str, tuple[int, int]] = {
     "top_hosts":  (4, 4),
     "ai_summary": (6, 4),
     "war_room":   (12, 5),
-    "timeseries": (6, 5),
-    "forecast":   (6, 5),   # extra height: chart shows history + dashed forecast line
+    "timeseries": (6, 6),
+    "forecast":   (6, 6),   # needs room for history + forecast line
 }
 
 # Map a bridge forecast/vital metric id to its CheckMK service description.
