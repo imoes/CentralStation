@@ -373,7 +373,7 @@ const SEVERITY_COLOR: Record<string, string> = {
               <span class="lh-sev" [attr.data-sev]="item.severity">{{ item.severity | uppercase }}</span>
               @if (itemHostLabel(item)) {
                 <span class="lh-dot">·</span>
-                <span class="lh-host">{{ itemHostLabel(item) }}</span>
+                <span class="lh-host host-clickable" (click)="filterByHost($event, itemHostLabel(item))">{{ itemHostLabel(item) }}</span>
               }
               @if (item.location_name) {
                 <span class="lh-dot">·</span>
@@ -411,7 +411,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                     </span>
                   }
                   @if (itemHostLabel(item)) {
-                    <span class="host-tag">
+                    <span class="host-tag host-clickable" (click)="filterByHost($event, itemHostLabel(item))">
                       <mat-icon style="font-size:12px;height:12px;width:12px">dns</mat-icon>
                       {{ itemHostLabel(item) }}
                     </span>
@@ -698,6 +698,8 @@ const SEVERITY_COLOR: Record<string, string> = {
       display: flex; align-items: center; gap: 2px;
       font-family: 'Fira Code', monospace;
     }
+    .host-clickable { cursor: pointer; }
+    .host-clickable:hover { text-decoration: underline; }
     .timestamp { font-size: 12px; color: var(--mat-sys-on-surface-variant); }
     .ack-stamp {
       display: flex; align-items: center; gap: 4px;
@@ -1508,6 +1510,14 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   sourceIcon(src: string)  { return SOURCE_META[src]?.icon  ?? 'info'; }
   sourceLabel(src: string) { return SOURCE_META[src]?.label ?? src; }
   sourceColor(src: string) { return SOURCE_META[src]?.color ?? '#757575'; }
+
+  filterByHost(event: MouseEvent, host: string) {
+    event.stopPropagation();
+    if (!host) return;
+    this.hostFilter = host;
+    this.showFilters.set(true);
+    this.router.navigate(['/feed'], { queryParams: { host } });
+  }
   severityColor(sev: string) { return SEVERITY_COLOR[sev] ?? '#757575'; }
 
   itemHostLabel(item: FeedItem): string {
