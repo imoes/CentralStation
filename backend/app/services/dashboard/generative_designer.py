@@ -28,9 +28,26 @@ from __future__ import annotations
 
 import json
 import logging
+import re as _re
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+# CUE production host detection:
+# Hosts with "cue" in their name are critical for the publishing group.
+# Hosts with "stage" or "test" in their FQDN are non-production and excluded.
+_CUE_PROD_RE = _re.compile(r'cue', _re.IGNORECASE)
+_NON_PROD_RE = _re.compile(r'stage|test', _re.IGNORECASE)
+
+
+def _is_cue_prod(host: str) -> bool:
+    """True if host is a CUE production system (has 'cue' but not 'stage'/'test')."""
+    return bool(_CUE_PROD_RE.search(host)) and not bool(_NON_PROD_RE.search(host))
+
+
+# Disk/RAM threshold above which a vital is shown even without a forecast candidate.
+# Below this threshold AND not trending → stable-high → filter out of LLM context.
+_STABLE_METRIC_ACUTE_PCT = 90.0
 
 COLS = 12  # GridStack columns
 
@@ -221,14 +238,42 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
     except Exception as e:
         log.debug("gather_situation: worklist failed: %s", e)
 
+    # CUE production hosts currently in findings/worklist.
+    # These are publishing-group systems that need special treatment.
+    cue_production_hosts = sorted({
+        h for h in
+        [f.get("host", "") for f in findings] +
+        [w.get("host", "") for w in worklist_items]
+        if h and _is_cue_prod(h)
+    })
+
+    # Filter out stale-high Disk/RAM vitals that are NOT trending toward threshold.
+    # A stable 87 % RAM that hasn't moved in hours is NOT worth a dashboard widget.
+    # Rule: keep a Disk/RAM vital only if it's a forecast candidate (actively trending)
+    #       OR if it's acutely high (>= _STABLE_METRIC_ACUTE_PCT, e.g. 90 %).
+    _fc_keys = {(c["host"], c["metric_id"]) for c in forecast_candidates}
+    filtered_vitals: list[dict] = []
+    for v in vitals:
+        m = v.get("metric_id", "")
+        key = (v["host"], m)
+        val = float(v.get("value") or 0)
+        if m in ("fs_used_percent", "mem_used_percent"):
+            if key in _fc_keys or val >= _STABLE_METRIC_ACUTE_PCT:
+                filtered_vitals.append(v)
+            # else: stable-high but not trending → silently drop
+        else:
+            # CPU and any future metrics always shown
+            filtered_vitals.append(v)
+
     return {
         "severity_counts": sev_counts,
         "severity_summary": severity_summary,
         "host_scope": host_scope,
         "findings": findings,
-        "vitals": vitals,
+        "vitals": filtered_vitals,
         "forecast_candidates": forecast_candidates,
         "worklist": worklist_items,
+        "cue_production_hosts": cue_production_hosts,
     }
 
 
@@ -258,6 +303,14 @@ REGELN:
 - Bei critical/high: ai_summary und/oder war_room prominent oben platzieren.
 - Bei ruhiger Lage: kompakteres Dashboard (Counts + Liste + Donut), keine Forecasts erzwingen.
 - Gruppiere thematisch; nutze die volle Breite (gs_w summiert sich pro Zeile zu 12).
+- CUE-Produktionshosts: Wenn cue_production_hosts gefüllt ist, sind das kritische
+  Produktionssysteme der Verlagsgruppe. Events auf diesen Hosts MÜSSEN im Lagebild
+  prominent erscheinen und werden bevorzugt in list/top_hosts/war_room-Widgets gezeigt.
+  Nenne diese Hosts namentlich in der Rationale.
+- Stabile Metriken ignorieren: Erstelle KEINE timeseries- oder forecast-Widgets für
+  Disk/RAM-Werte die NICHT in forecast_candidates stehen. Nur Hosts die aktiv auf
+  einen Schwellwert zulaufen rechtfertigen Metrik-Widgets — kein Widget für stabile
+  Dauerzustände.
 
 Die "rationale" ist ein LAGE-BRIEFING für den Sysadmin — beschreibe präzise was los ist.
 Pflichtinhalt (sofern Daten vorhanden):
