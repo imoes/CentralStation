@@ -363,7 +363,7 @@ const SEVERITY_COLOR: Record<string, string> = {
           @if (isFirstSeen(item, idx)) {
             <div class="last-seen-divider"><span>Zuletzt gesehen ↑</span></div>
           }
-          <mat-card class="feed-card" [class.card-acknowledged]="item.status === 'acknowledged'" [attr.data-feed-id]="item.id" [attr.data-severity]="item.severity">
+          <mat-card class="feed-card" [class.card-acknowledged]="item.status === 'acknowledged'" [attr.data-feed-id]="item.id" [attr.data-severity]="item.severity" [attr.data-source]="item.source">
 
             <!-- Card header: avatar + meta -->
             <div class="card-top">
@@ -799,25 +799,33 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .feed-card[data-severity="warning"]  { border-left-color: #ffcc00 !important; }
     :host-context(html.cs-theme-lcars) .feed-card[data-severity="low"]      { border-left-color: #7fb3d3 !important; }
     :host-context(html.cs-theme-lcars) .feed-card[data-severity="info"]     { border-left-color: #66cc66 !important; }
-    /* ── card top (header bar) ── */
+    /* ── card header bar — source color, like widget headers ── */
     :host-context(html.cs-theme-lcars) .card-top {
-      background: #1e1710; padding: 6px 14px;
-      border-bottom: 1px solid #2a1d0a;
+      background: #e87c3a;   /* default / checkmk */
+      padding: 7px 14px;
+      border-bottom: none;
+      border-radius: 0 13px 0 0;   /* matches card top-right radius */
     }
+    :host-context(html.cs-theme-lcars) .feed-card[data-source="graylog"] .card-top { background: #ffcc66; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-source="wazuh"]   .card-top { background: #7fb3d3; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-source="o365"]    .card-top { background: #c99aa4; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-source="teams"]   .card-top { background: #c99aa4; }
+    /* All text in the colored header → black */
     :host-context(html.cs-theme-lcars) .source-avatar { display: none; }
     :host-context(html.cs-theme-lcars) .card-meta { flex: 1; min-width: 0; }
     :host-context(html.cs-theme-lcars) .source-label {
-      color: #ffcc66 !important; font-weight: 900; text-transform: uppercase;
+      color: #000 !important; font-weight: 900; text-transform: uppercase;
       letter-spacing: .1em; font-size: 11px;
     }
     :host-context(html.cs-theme-lcars) .severity-badge {
       font-size: 10px; font-weight: 900; border-radius: 3px;
       padding: 2px 7px; letter-spacing: .06em;
+      background: rgba(0,0,0,.25) !important; color: #000 !important;
     }
-    :host-context(html.cs-theme-lcars) .host-tag { color: #e8a060; font-family: 'Fira Code', monospace; font-size: 12px; }
-    :host-context(html.cs-theme-lcars) .location-tag { color: #7fb3d3; }
-    :host-context(html.cs-theme-lcars) .timestamp { color: rgba(255,232,160,.45); }
-    :host-context(html.cs-theme-lcars) .ack-stamp { color: #66cc66; }
+    :host-context(html.cs-theme-lcars) .host-tag { color: rgba(0,0,0,.75) !important; font-family: 'Fira Code', monospace; font-size: 12px; }
+    :host-context(html.cs-theme-lcars) .location-tag { color: rgba(0,0,0,.6) !important; }
+    :host-context(html.cs-theme-lcars) .timestamp { color: rgba(0,0,0,.5) !important; }
+    :host-context(html.cs-theme-lcars) .ack-stamp { color: rgba(0,0,0,.75) !important; }
     /* ── title ── */
     :host-context(html.cs-theme-lcars) .card-title { color: #ffe8a0; padding: 8px 14px 6px; font-size: 14px; }
     :host-context(html.cs-theme-lcars) .card-title-link { color: #ffe8a0; }
@@ -882,12 +890,16 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-holo) .feed-card[data-severity="high"]     { border-left-color: #ffd84a !important; }
     :host-context(html.cs-theme-holo) .feed-card[data-severity="medium"]   { border-left-color: #4fd6ff !important; }
     :host-context(html.cs-theme-holo) .feed-card[data-severity="low"]      { border-left-color: #3dffa8 !important; }
-    :host-context(html.cs-theme-holo) .card-top { background: rgba(79,214,255,.06); border-bottom: 1px solid rgba(79,214,255,.12); padding: 6px 14px; }
+    :host-context(html.cs-theme-holo) .card-top {
+      background: rgba(79,214,255,.18); border-bottom: 1px solid rgba(79,214,255,.2);
+      padding: 7px 14px; border-radius: 0 11px 0 0;
+    }
     :host-context(html.cs-theme-holo) .source-avatar { display: none; }
-    :host-context(html.cs-theme-holo) .source-label { color: #9fe8ff !important; font-weight: 700; text-transform: uppercase; font-size: 11px; }
-    :host-context(html.cs-theme-holo) .host-tag { color: #8fb8cf; }
-    :host-context(html.cs-theme-holo) .location-tag { color: #5fc8ee; }
-    :host-context(html.cs-theme-holo) .timestamp { color: rgba(143,184,207,.5); }
+    :host-context(html.cs-theme-holo) .source-label { color: #cfeeff !important; font-weight: 900; text-transform: uppercase; font-size: 11px; }
+    :host-context(html.cs-theme-holo) .severity-badge { background: rgba(255,255,255,.12) !important; color: #cfeeff !important; }
+    :host-context(html.cs-theme-holo) .host-tag { color: #9fe8ff !important; }
+    :host-context(html.cs-theme-holo) .location-tag { color: #5fc8ee !important; }
+    :host-context(html.cs-theme-holo) .timestamp { color: rgba(143,184,207,.5) !important; }
     :host-context(html.cs-theme-holo) .card-title { color: #cfeeff; padding: 8px 14px 6px; }
     :host-context(html.cs-theme-holo) .card-body-text { color: #8fb8cf; padding: 0 14px 8px; }
     :host-context(html.cs-theme-holo) .ai-insight { background: rgba(79,214,255,.08); border-left: 3px solid #4fd6ff; color: #bfefff; margin: 0 14px 8px; }

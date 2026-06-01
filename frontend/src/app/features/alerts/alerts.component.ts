@@ -137,7 +137,7 @@ const SEVERITY_COLORS: Record<string, string> = {
       } @else {
         <div class="alert-list">
           @for (alert of filteredAlerts(); track alert.id) {
-            <div class="alert-row" [class.alert-new]="alert.status === 'new'" [attr.data-severity]="alert.severity">
+            <div class="alert-row" [class.alert-new]="alert.status === 'new'" [attr.data-severity]="alert.severity" [attr.data-source]="alert.source">
               <div class="severity-bar" [style.background-color]="severityColor(alert.severity)"></div>
               <div class="alert-content">
                 <div class="alert-top">
@@ -251,7 +251,7 @@ const SEVERITY_COLORS: Record<string, string> = {
       box-shadow: none;
       overflow: hidden;
     }
-    /* severity → left border color */
+    /* severity → left border color (same as news feed) */
     :host-context(html.cs-theme-lcars) .alert-row[data-severity="critical"] { border-left-color: #ff5544; }
     :host-context(html.cs-theme-lcars) .alert-row[data-severity="high"]     { border-left-color: #ffcc00; }
     :host-context(html.cs-theme-lcars) .alert-row[data-severity="medium"]   { border-left-color: #ff9966; }
@@ -260,31 +260,44 @@ const SEVERITY_COLORS: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .alert-row[data-severity="info"]     { border-left-color: #66cc66; }
     /* hide the 4px severity-bar (replaced by border-left) */
     :host-context(html.cs-theme-lcars) .severity-bar { display: none; }
-    :host-context(html.cs-theme-lcars) .alert-content { padding: 8px 14px 6px; }
-    :host-context(html.cs-theme-lcars) .alert-title { color: #ffe8a0; font-size: 13px; font-weight: 600; }
-    :host-context(html.cs-theme-lcars) .alert-top { margin-bottom: 5px; }
-    /* chips → LCARS labels */
+    /* alert-top acts as the source-colored header bar — same as widget/feed */
+    :host-context(html.cs-theme-lcars) .alert-content { padding: 0 0 6px; }
+    :host-context(html.cs-theme-lcars) .alert-top {
+      background: #e87c3a;   /* default / checkmk */
+      padding: 7px 14px;
+      margin-bottom: 8px;
+      border-radius: 0 13px 0 0;
+    }
+    :host-context(html.cs-theme-lcars) .alert-row[data-source="graylog"] .alert-top { background: #ffcc66; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-source="wazuh"]   .alert-top { background: #7fb3d3; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-source="o365"]    .alert-top { background: #c99aa4; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-source="teams"]   .alert-top { background: #c99aa4; }
+    /* All text in header → black */
+    :host-context(html.cs-theme-lcars) .alert-title { color: #000 !important; font-size: 12px; font-weight: 900; }
+    /* chips in header → black labels */
     :host-context(html.cs-theme-lcars) mat-chip.chip-source,
     :host-context(html.cs-theme-lcars) mat-chip.chip-severity,
     :host-context(html.cs-theme-lcars) mat-chip.chip-host,
     :host-context(html.cs-theme-lcars) mat-chip.chip-location {
-      --mdc-chip-container-color: #1e1710;
-      --mdc-chip-label-text-color: #e8a060;
-      --mdc-chip-outline-color: #3a2810;
+      --mdc-chip-container-color: rgba(0,0,0,.2);
+      --mdc-chip-label-text-color: #000;
+      --mdc-chip-outline-color: rgba(0,0,0,.3);
       border-radius: 3px !important;
       font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
     }
     :host-context(html.cs-theme-lcars) mat-chip.chip-host {
-      --mdc-chip-label-text-color: #ffcc99;
+      --mdc-chip-label-text-color: rgba(0,0,0,.8);
       font-family: 'Fira Code', monospace; font-size: 11px; text-transform: none;
     }
-    :host-context(html.cs-theme-lcars) .alert-body { color: #e8a060; font-size: 11px; line-height: 1.5; }
+    /* body content below header → dark with gold text */
+    :host-context(html.cs-theme-lcars) .alert-body { color: #e8a060; font-size: 11px; line-height: 1.5; padding: 0 14px 4px; }
     :host-context(html.cs-theme-lcars) .ai-insight {
       background: rgba(232,124,58,.1); border-left: 3px solid #e87c3a;
       color: #ffcc99; margin: 6px 0 4px; border-radius: 0;
     }
     :host-context(html.cs-theme-lcars) .ai-insight-icon { color: #e87c3a; }
-    :host-context(html.cs-theme-lcars) .alert-meta { color: rgba(255,232,160,.45); font-size: 10px; }
+    :host-context(html.cs-theme-lcars) .alert-meta { color: rgba(255,232,160,.45); font-size: 10px; padding: 0 14px 4px; }
+    :host-context(html.cs-theme-lcars) .ai-insight { margin: 0 14px 4px; }
     :host-context(html.cs-theme-lcars) .ki-btn { color: #e87c3a !important; }
     :host-context(html.cs-theme-lcars) .alert-actions { background: #0a0804; border-left: 1px solid #2a1d0a; }
     :host-context(html.cs-theme-lcars) .ack-icon { color: #66cc66; }
@@ -302,8 +315,13 @@ const SEVERITY_COLORS: Record<string, string> = {
     :host-context(html.cs-theme-holo) .alert-row[data-severity="high"]     { border-left-color: #ffd84a; }
     :host-context(html.cs-theme-holo) .alert-row[data-severity="low"]      { border-left-color: #3dffa8; }
     :host-context(html.cs-theme-holo) .severity-bar { display: none; }
-    :host-context(html.cs-theme-holo) .alert-title { color: #cfeeff; }
-    :host-context(html.cs-theme-holo) .alert-body { color: #8fb8cf; }
+    :host-context(html.cs-theme-holo) .alert-content { padding: 0 0 6px; }
+    :host-context(html.cs-theme-holo) .alert-top {
+      background: rgba(79,214,255,.15); padding: 7px 14px;
+      border-bottom: 1px solid rgba(79,214,255,.2); margin-bottom: 8px;
+    }
+    :host-context(html.cs-theme-holo) .alert-title { color: #cfeeff !important; }
+    :host-context(html.cs-theme-holo) .alert-body { color: #8fb8cf; padding: 0 14px 4px; }
     :host-context(html.cs-theme-holo) .ai-insight { background: rgba(79,214,255,.08); border-left: 3px solid #4fd6ff; color: #bfefff; }
     :host-context(html.cs-theme-holo) .ai-insight-icon { color: #4fd6ff; }
     :host-context(html.cs-theme-holo) .alert-meta { color: rgba(143,184,207,.5); }
