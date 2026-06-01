@@ -139,6 +139,22 @@ const SEVERITY_COLORS: Record<string, string> = {
           @for (alert of filteredAlerts(); track alert.id) {
             <div class="alert-row" [class.alert-new]="alert.status === 'new'" [attr.data-severity]="alert.severity" [attr.data-source]="alert.source">
               <div class="severity-bar" [style.background-color]="severityColor(alert.severity)"></div>
+              <!-- LCARS header bar: plain text only, no Material chips -->
+              <div class="lcars-alert-header">
+                <span class="lah-source">{{ alert.source | uppercase }}</span>
+                <span class="lah-dot">·</span>
+                <span class="lah-sev" [attr.data-sev]="alert.severity">{{ alert.severity | uppercase }}</span>
+                @if (alertHost(alert); as host) {
+                  <span class="lah-dot">·</span>
+                  <span class="lah-host">{{ host }}</span>
+                }
+                @if (alert.location_name) {
+                  <span class="lah-dot">·</span>
+                  <span class="lah-loc">{{ alert.location_name }}</span>
+                }
+                <span class="lah-spacer"></span>
+                <span class="lah-time">{{ alert.created_at | date:'dd.MM HH:mm' }}</span>
+              </div>
               <div class="alert-content">
                 <div class="alert-top">
                   <span class="alert-title">{{ alert.title }}</span>
@@ -261,34 +277,35 @@ const SEVERITY_COLORS: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .alert-row[data-severity="low"]      { border-left-color: #7fb3d3; }
     :host-context(html.cs-theme-lcars) .alert-row[data-severity="info"]     { border-left-color: #66cc66; }
     /* hide the 4px severity-bar (replaced by border-left) */
+    /* LCARS header: hidden by default */
+    .lcars-alert-header { display: none; }
+
     :host-context(html.cs-theme-lcars) .severity-bar { display: none; }
-    /* Dark background throughout — colored TEXT (not colored bg) like the bridge */
-    :host-context(html.cs-theme-lcars) .alert-content { padding: 8px 14px 6px; }
-    :host-context(html.cs-theme-lcars) .alert-top { background: transparent; margin-bottom: 4px; }
-    /* Title: gold/cream on dark — always readable */
-    :host-context(html.cs-theme-lcars) .alert-title { color: #ffe8a0 !important; font-size: 13px; font-weight: 600; }
-    /* Chips: dark bg + colored TEXT per source/severity */
-    :host-context(html.cs-theme-lcars) mat-chip.chip-source,
-    :host-context(html.cs-theme-lcars) mat-chip.chip-severity,
-    :host-context(html.cs-theme-lcars) mat-chip.chip-host,
-    :host-context(html.cs-theme-lcars) mat-chip.chip-location {
-      --mdc-chip-container-color: #1e1710 !important;
-      --mdc-chip-outline-color: #2a1d0a !important;
-      border-radius: 3px !important;
-      font-size: 10px; font-weight: 700;
+    /* Show LCARS plain-text header, hide chip-based alert-top */
+    :host-context(html.cs-theme-lcars) .lcars-alert-header {
+      display: flex; align-items: center; gap: 6px;
+      background: #e87c3a;   /* default: checkmk orange */
+      padding: 7px 14px;
+      border-radius: 0 13px 0 0;
+      font-family: 'Antonio','Eurostile','Roboto Condensed',sans-serif;
+      font-size: 11px; font-weight: 900; letter-spacing: .08em;
+      color: #000; flex-shrink: 0;
     }
-    /* Source chip: source color text */
-    :host-context(html.cs-theme-lcars) [data-chip-source="checkmk"] { --mdc-chip-label-text-color: #e87c3a !important; }
-    :host-context(html.cs-theme-lcars) [data-chip-source="graylog"]  { --mdc-chip-label-text-color: #ffcc66 !important; }
-    :host-context(html.cs-theme-lcars) [data-chip-source="wazuh"]    { --mdc-chip-label-text-color: #7fb3d3 !important; }
-    /* Severity chip: severity color text */
-    :host-context(html.cs-theme-lcars) [data-chip-sev="critical"] { --mdc-chip-label-text-color: #ff5544 !important; }
-    :host-context(html.cs-theme-lcars) [data-chip-sev="high"]     { --mdc-chip-label-text-color: #ffcc00 !important; }
-    :host-context(html.cs-theme-lcars) [data-chip-sev="medium"]   { --mdc-chip-label-text-color: #ff9966 !important; }
-    :host-context(html.cs-theme-lcars) [data-chip-sev="low"]      { --mdc-chip-label-text-color: #7fb3d3 !important; }
-    :host-context(html.cs-theme-lcars) [data-chip-sev="info"]     { --mdc-chip-label-text-color: #66cc66 !important; }
-    :host-context(html.cs-theme-lcars) mat-chip.chip-host     { --mdc-chip-label-text-color: #e8a060 !important; font-family: monospace; }
-    :host-context(html.cs-theme-lcars) mat-chip.chip-location { --mdc-chip-label-text-color: #7fb3d3 !important; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-source="graylog"] .lcars-alert-header { background: #ffcc66; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-source="wazuh"]   .lcars-alert-header { background: #7fb3d3; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-source="o365"]    .lcars-alert-header { background: #c99aa4; }
+    :host-context(html.cs-theme-lcars) .lah-source { font-size: 12px; }
+    :host-context(html.cs-theme-lcars) .lah-dot    { opacity: .5; }
+    :host-context(html.cs-theme-lcars) .lah-sev    { font-size: 10px; padding: 1px 6px; border-radius: 2px; background: rgba(0,0,0,.18); }
+    :host-context(html.cs-theme-lcars) .lah-host   { font-family: 'Fira Code',monospace; font-size: 11px; opacity: .85; font-weight: 400; letter-spacing: 0; }
+    :host-context(html.cs-theme-lcars) .lah-loc    { opacity: .65; font-size: 10px; }
+    :host-context(html.cs-theme-lcars) .lah-spacer { flex: 1; }
+    :host-context(html.cs-theme-lcars) .lah-time   { opacity: .55; font-size: 10px; font-weight: 400; }
+    /* Body: dark bg, gold title, hidden chip row */
+    :host-context(html.cs-theme-lcars) .alert-content { padding: 8px 14px 6px; }
+    :host-context(html.cs-theme-lcars) .alert-top { margin-bottom: 4px; }
+    :host-context(html.cs-theme-lcars) .alert-chips { display: none; }  /* shown in lcars-alert-header */
+    :host-context(html.cs-theme-lcars) .alert-title { color: #ffe8a0 !important; font-size: 13px; font-weight: 600; }
     /* body content */
     :host-context(html.cs-theme-lcars) .alert-body { color: #e8a060; font-size: 11px; line-height: 1.5; }
     :host-context(html.cs-theme-lcars) .ai-insight {
