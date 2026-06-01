@@ -403,6 +403,10 @@ def _validate_widgets(raw_widgets: list, situation: dict) -> list[dict]:
                 continue
             cfg["history_hours"] = int(cfg.get("history_hours") or 72)
             cfg["horizon_hours"] = int(cfg.get("horizon_hours") or 24)
+            # Guarantee hostname in title
+            host_short = (cfg.get("host") or "").split(".")[0]
+            if host_short and host_short not in title:
+                title = f"{title} · {host_short}"
         elif wtype == "timeseries":
             cfg["data_source"] = "checkmk"
             key = (cfg.get("host"), cfg.get("service"))
@@ -413,6 +417,10 @@ def _validate_widgets(raw_widgets: list, situation: dict) -> list[dict]:
             # uses CheckMK's metric_id lookup (graph_index alone returns HTTP 400).
             cfg["metric_id"] = vital_metric_by_hs[key]
             cfg["hours"] = int(cfg.get("hours") or 4)
+            # Guarantee hostname in title
+            host_short = (cfg.get("host") or "").split(".")[0]
+            if host_short and host_short not in title:
+                title = f"{title} · {host_short}"
 
         clean.append({"widget_type": wtype, "title": title, "config": cfg})
 
