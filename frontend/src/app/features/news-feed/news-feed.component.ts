@@ -365,7 +365,28 @@ const SEVERITY_COLOR: Record<string, string> = {
           }
           <mat-card class="feed-card" [class.card-acknowledged]="item.status === 'acknowledged'" [attr.data-feed-id]="item.id" [attr.data-severity]="item.severity" [attr.data-source]="item.source">
 
-            <!-- Card header: avatar + meta -->
+            <!-- LCARS header bar: plain text only — no Material components.
+                 Hidden in Classic/Holo, shown in LCARS via CSS. -->
+            <div class="lcars-header">
+              <span class="lh-source">{{ sourceLabel(item.source) }}</span>
+              <span class="lh-dot">·</span>
+              <span class="lh-sev" [attr.data-sev]="item.severity">{{ item.severity | uppercase }}</span>
+              @if (itemHostLabel(item)) {
+                <span class="lh-dot">·</span>
+                <span class="lh-host">{{ itemHostLabel(item) }}</span>
+              }
+              @if (item.location_name) {
+                <span class="lh-dot">·</span>
+                <span class="lh-loc">{{ item.location_name }}</span>
+              }
+              <span class="lh-spacer"></span>
+              <span class="lh-time">{{ relTime(item.created_at) }}</span>
+              @if (item.status === 'acknowledged') {
+                <span class="lh-ack">✓</span>
+              }
+            </div>
+
+            <!-- Classic / Holo card header: avatar + meta -->
             <div class="card-top">
               <div class="source-avatar" [style.background]="sourceColor(item.source)">
                 <mat-icon>{{ sourceIcon(item.source) }}</mat-icon>
@@ -804,37 +825,38 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .feed-card[data-severity="warning"]  { border-left-color: #ffcc00 !important; }
     :host-context(html.cs-theme-lcars) .feed-card[data-severity="low"]      { border-left-color: #7fb3d3 !important; }
     :host-context(html.cs-theme-lcars) .feed-card[data-severity="info"]     { border-left-color: #66cc66 !important; }
-    /* ── card meta row: dark bg, COLORED TEXT for source/severity ── */
-    :host-context(html.cs-theme-lcars) .card-top {
-      background: #0a0804;     /* same dark as body — no colored header bar */
-      padding: 6px 14px;
-      border-bottom: 1px solid #2a1d0a;
+    /* ── LCARS header bar: hidden by default, shown only in LCARS ── */
+    .lcars-header { display: none; }
+
+    /* ── LCARS card overrides ── */
+    :host-context(html.cs-theme-lcars) .card-top { display: none; }  /* replaced by lcars-header */
+    :host-context(html.cs-theme-lcars) .lcars-header {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 14px;
+      background: #e87c3a;   /* default: checkmk orange */
+      border-radius: 0 13px 0 0;
+      min-height: 36px; flex-shrink: 0;
+      font-family: 'Antonio','Eurostile','Roboto Condensed',sans-serif;
+      font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em;
+      color: #000;
     }
-    :host-context(html.cs-theme-lcars) .source-avatar { display: none; }
-    :host-context(html.cs-theme-lcars) .card-meta { flex: 1; min-width: 0; }
-    /* Source label: source color as TEXT (readable on dark bg) */
-    :host-context(html.cs-theme-lcars) [data-source-label] {
-      font-weight: 900; text-transform: uppercase; letter-spacing: .1em; font-size: 11px;
-    }
-    :host-context(html.cs-theme-lcars) [data-source-label="checkmk"] { color: #e87c3a !important; }
-    :host-context(html.cs-theme-lcars) [data-source-label="graylog"]  { color: #ffcc66 !important; }
-    :host-context(html.cs-theme-lcars) [data-source-label="wazuh"]    { color: #7fb3d3 !important; }
-    :host-context(html.cs-theme-lcars) [data-source-label="o365"]     { color: #c99aa4 !important; }
-    :host-context(html.cs-theme-lcars) [data-source-label="teams"]    { color: #c99aa4 !important; }
-    /* Severity badge: colored text + subtle tint bg on dark */
-    :host-context(html.cs-theme-lcars) [data-sev-badge] {
-      font-size: 10px; font-weight: 900; border-radius: 3px; padding: 2px 7px; letter-spacing: .06em;
-    }
-    :host-context(html.cs-theme-lcars) [data-sev-badge="critical"] { color: #ff5544 !important; background: rgba(255,85,68,.15) !important; }
-    :host-context(html.cs-theme-lcars) [data-sev-badge="high"]     { color: #ffcc00 !important; background: rgba(255,204,0,.12) !important; }
-    :host-context(html.cs-theme-lcars) [data-sev-badge="medium"]   { color: #ff9966 !important; background: rgba(255,153,102,.12) !important; }
-    :host-context(html.cs-theme-lcars) [data-sev-badge="warning"]  { color: #ffcc00 !important; background: rgba(255,204,0,.12) !important; }
-    :host-context(html.cs-theme-lcars) [data-sev-badge="low"]      { color: #7fb3d3 !important; background: rgba(127,179,211,.12) !important; }
-    :host-context(html.cs-theme-lcars) [data-sev-badge="info"]     { color: #66cc66 !important; background: rgba(102,204,102,.12) !important; }
-    :host-context(html.cs-theme-lcars) .card-top .host-tag    { color: #e8a060 !important; font-family: 'Fira Code', monospace; }
-    :host-context(html.cs-theme-lcars) .card-top .location-tag { color: #7fb3d3 !important; }
-    :host-context(html.cs-theme-lcars) .timestamp  { color: rgba(255,232,160,.4) !important; }
-    :host-context(html.cs-theme-lcars) .ack-stamp  { color: #66cc66 !important; }
+    /* Source-specific header colors */
+    :host-context(html.cs-theme-lcars) .feed-card[data-source="graylog"] .lcars-header  { background: #ffcc66; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-source="wazuh"]   .lcars-header  { background: #7fb3d3; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-source="o365"]    .lcars-header  { background: #c99aa4; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-source="teams"]   .lcars-header  { background: #c99aa4; }
+    /* Header text elements */
+    :host-context(html.cs-theme-lcars) .lh-source { font-weight: 900; font-size: 12px; }
+    :host-context(html.cs-theme-lcars) .lh-dot    { opacity: .5; }
+    :host-context(html.cs-theme-lcars) .lh-sev    { font-size: 10px; padding: 1px 6px; border-radius: 2px; background: rgba(0,0,0,.18); }
+    :host-context(html.cs-theme-lcars) .lh-host   { font-family: 'Fira Code',monospace; font-size: 11px; opacity: .85; text-transform: none; }
+    :host-context(html.cs-theme-lcars) .lh-loc    { opacity: .7; font-size: 10px; }
+    :host-context(html.cs-theme-lcars) .lh-spacer { flex: 1; }
+    :host-context(html.cs-theme-lcars) .lh-time   { opacity: .55; font-size: 10px; }
+    :host-context(html.cs-theme-lcars) .lh-ack    { opacity: .8; font-size: 12px; }
+    /* Card title in body: larger, gold */
+    :host-context(html.cs-theme-lcars) .card-title { color: #ffe8a0 !important; font-size: 14px; padding: 8px 14px 6px; }
+    :host-context(html.cs-theme-lcars) .timestamp  { display: none; }  /* shown in lcars-header instead */
     /* ── title ── */
     :host-context(html.cs-theme-lcars) .card-title { color: #ffe8a0; padding: 8px 14px 6px; font-size: 14px; }
     :host-context(html.cs-theme-lcars) .card-title-link { color: #ffe8a0; }
