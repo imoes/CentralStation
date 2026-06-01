@@ -1296,6 +1296,12 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   onFilterChange() {
+    // A manual dropdown filter overrides any active saved-search/q= query.
+    // Clearing routeQuery prevents the backend from taking the search_by_query()
+    // path which ignores severity/host/OS filters entirely.
+    this.routeQuery = '';
+    this.routeSearchId = '';
+    this.routeIndex = '';
     this.load(true);
   }
 
