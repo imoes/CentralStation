@@ -139,23 +139,23 @@ const SEVERITY_COLORS: Record<string, string> = {
           @for (alert of filteredAlerts(); track alert.id) {
             <div class="alert-row" [class.alert-new]="alert.status === 'new'" [attr.data-severity]="alert.severity" [attr.data-source]="alert.source">
               <div class="severity-bar" [style.background-color]="severityColor(alert.severity)"></div>
-              <!-- LCARS header bar: plain text only, no Material chips -->
-              <div class="lcars-alert-header">
-                <span class="lah-source">{{ alert.source | uppercase }}</span>
-                <span class="lah-dot">·</span>
-                <span class="lah-sev" [attr.data-sev]="alert.severity">{{ alert.severity | uppercase }}</span>
-                @if (alertHost(alert); as host) {
-                  <span class="lah-dot">·</span>
-                  <span class="lah-host">{{ host }}</span>
-                }
-                @if (alert.location_name) {
-                  <span class="lah-dot">·</span>
-                  <span class="lah-loc">{{ alert.location_name }}</span>
-                }
-                <span class="lah-spacer"></span>
-                <span class="lah-time">{{ alert.created_at | date:'dd.MM HH:mm' }}</span>
-              </div>
               <div class="alert-content">
+                <!-- LCARS header bar (inside alert-content → spans its full width) -->
+                <div class="lcars-alert-header">
+                  <span class="lah-source">{{ alert.source | uppercase }}</span>
+                  <span class="lah-dot">·</span>
+                  <span class="lah-sev" [attr.data-sev]="alert.severity">{{ alert.severity | uppercase }}</span>
+                  @if (alertHost(alert); as host) {
+                    <span class="lah-dot">·</span>
+                    <span class="lah-host">{{ host }}</span>
+                  }
+                  @if (alert.location_name) {
+                    <span class="lah-dot">·</span>
+                    <span class="lah-loc">{{ alert.location_name }}</span>
+                  }
+                  <span class="lah-spacer"></span>
+                  <span class="lah-time">{{ alert.created_at | date:'dd.MM HH:mm' }}</span>
+                </div>
                 <div class="alert-top">
                   <span class="alert-title">{{ alert.title }}</span>
                   <div class="alert-chips">
@@ -195,15 +195,15 @@ const SEVERITY_COLORS: Record<string, string> = {
                     {{ alert.ai_insight ? 'Neu analysieren' : 'KI Analyse' }}
                   </button>
                 </div>
-              </div>
-              <div class="alert-actions">
-                @if (alert.status === 'new') {
-                  <button mat-icon-button matTooltip="Bestätigen" (click)="acknowledge(alert)">
-                    <mat-icon>check_circle</mat-icon>
-                  </button>
-                } @else {
-                  <mat-icon class="ack-icon" matTooltip="Bestätigt">task_alt</mat-icon>
-                }
+                <div class="alert-actions">
+                  @if (alert.status === 'new') {
+                    <button mat-icon-button matTooltip="Bestätigen" (click)="acknowledge(alert)">
+                      <mat-icon>check_circle</mat-icon>
+                    </button>
+                  } @else {
+                    <mat-icon class="ack-icon" matTooltip="Bestätigt">task_alt</mat-icon>
+                  }
+                </div>
               </div>
             </div>
           }
@@ -301,13 +301,20 @@ const SEVERITY_COLORS: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .lah-loc    { opacity: .65; font-size: 10px; }
     :host-context(html.cs-theme-lcars) .lah-spacer { flex: 1; }
     :host-context(html.cs-theme-lcars) .lah-time   { opacity: .55; font-size: 10px; font-weight: 400; }
-    /* Body: dark bg, gold title, hidden chip row */
-    :host-context(html.cs-theme-lcars) .alert-content { padding: 8px 14px 6px; }
-    :host-context(html.cs-theme-lcars) .alert-top { margin-bottom: 4px; }
-    :host-context(html.cs-theme-lcars) .alert-chips { display: none; }  /* shown in lcars-alert-header */
-    :host-context(html.cs-theme-lcars) .alert-title { color: #ffe8a0 !important; font-size: 13px; font-weight: 600; }
-    /* body content */
-    :host-context(html.cs-theme-lcars) .alert-body { color: #e8a060; font-size: 11px; line-height: 1.5; }
+    /* alert-content: no padding (header must span full width) */
+    :host-context(html.cs-theme-lcars) .alert-content { padding: 0; display: flex; flex-direction: column; }
+    :host-context(html.cs-theme-lcars) .alert-top { padding: 8px 14px 2px; margin-bottom: 0; }
+    :host-context(html.cs-theme-lcars) .alert-chips { display: none; }
+    /* Title like feed card-title */
+    :host-context(html.cs-theme-lcars) .alert-title { color: #ffe8a0 !important; font-size: 14px; font-weight: 600; line-height: 1.4; }
+    /* body + meta */
+    :host-context(html.cs-theme-lcars) .alert-body { color: #e8a060; font-size: 13px; line-height: 1.6; padding: 0 14px 6px; }
+    :host-context(html.cs-theme-lcars) .alert-meta { padding: 0 14px 4px; }
+    /* action row like feed card-actions */
+    :host-context(html.cs-theme-lcars) .alert-actions {
+      display: flex; align-items: center; padding: 4px 8px;
+      border-top: 1px solid #2a1d0a; background: #0a0804;
+    }
     :host-context(html.cs-theme-lcars) .ai-insight {
       background: rgba(232,124,58,.1); border-left: 3px solid #e87c3a;
       color: #ffcc99; margin: 6px 0 4px; border-radius: 0;
