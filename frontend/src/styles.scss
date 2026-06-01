@@ -39,6 +39,9 @@ body {
 html, body { height: 100%; }
 body { margin: 0; font-family: Roboto, "Helvetica Neue", sans-serif; }
 
+/* Global: Schrift 1px größer — alle rem-Werte skalieren proportional */
+html { font-size: 17px; }
+
 /* ══════════ Bridge full-screen: hide app chrome while the cockpit is open ══════════ */
 body.bridge-active .sidenav,
 body.bridge-active mat-sidenav { display: none !important; }
