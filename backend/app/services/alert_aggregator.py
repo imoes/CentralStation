@@ -9,7 +9,32 @@ Dedup strategy (per source):
   - Wazuh:    cooldown-based — suppress if same agent:rule_id seen within COOLDOWN window
 """
 import logging
+import re as _re
 from datetime import datetime, timedelta, timezone
+
+# Regex to detect Python/Java application log levels embedded in the message body.
+# Docker GELF assigns syslog level=3 (Error) to ALL container output, masking the
+# real application log level. We parse the body to recover it.
+# Examples matched:
+#   "2026-06-01 17:21:32,020 - INFO - cue.zipline.audit - ..."
+#   "[ERROR] something failed"
+#   "WARN: something"
+#   "DEBUG cue.module something"
+_APP_LEVEL_RE = _re.compile(
+    r'\b(DEBUG|INFO|NOTICE|WARNING|WARN|ERROR|SEVERE|CRITICAL|FATAL)\b',
+    _re.IGNORECASE,
+)
+_APP_LEVEL_SEVERITY = {
+    'debug':    'info',
+    'info':     'info',
+    'notice':   'low',
+    'warning':  'medium',
+    'warn':     'medium',
+    'error':    'high',
+    'severe':   'high',
+    'critical': 'critical',
+    'fatal':    'critical',
+}
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -142,6 +167,21 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
                 title = msg_text[:200]
                 # Only set body if message was truncated (there's more content beyond the title)
                 body = msg_text if len(msg_text) > 200 else None
+
+            # Syslog severity from the mapping (Docker GELF always sends level=3 for all container
+            # output, regardless of actual application log level).
+            syslog_severity = severity_map.get(level, "medium")
+
+            # Override with the actual application log level when detectable in the message body.
+            # E.g. "2026-06-01 17:21 - INFO - ..." masked as syslog level=3 → reclassify as "info".
+            # Only override when the detected app level is LOWER than the syslog-derived severity
+            # (we never downgrade genuine errors, only correct over-escalated INFO/DEBUG lines).
+            _sev_rank = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+            app_match = _APP_LEVEL_RE.search(msg_text[:120])  # check first 120 chars
+            if app_match:
+                app_sev = _APP_LEVEL_SEVERITY.get(app_match.group(1).lower(), "")
+                if app_sev and _sev_rank.get(app_sev, 99) < _sev_rank.get(syslog_severity, 0):
+                    syslog_severity = app_sev  # correct the over-escalated severity
             base = (connector.base_url or "").rstrip("/")
             from urllib.parse import quote
             src_host = m.get("source", "")
@@ -154,7 +194,7 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
                 graylog_url = None
             results.append({
                 "source": "graylog",
-                "severity": severity_map.get(level, "medium"),
+                "severity": syslog_severity,
                 "title": title,
                 "body": body,
                 "external_id": f"glog:{dedup_key or m['id']}",
