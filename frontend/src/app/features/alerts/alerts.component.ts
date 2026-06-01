@@ -143,8 +143,10 @@ const SEVERITY_COLORS: Record<string, string> = {
                 <div class="alert-top">
                   <span class="alert-title">{{ alert.title }}</span>
                   <div class="alert-chips">
-                    <mat-chip class="chip-source">{{ alert.source }}</mat-chip>
-                    <mat-chip class="chip-severity" [style.background-color]="severityColor(alert.severity) + '33'">
+                    <mat-chip class="chip-source" [attr.data-chip-source]="alert.source">{{ alert.source }}</mat-chip>
+                    <mat-chip class="chip-severity"
+                      [style.background-color]="severityColor(alert.severity) + '33'"
+                      [attr.data-chip-sev]="alert.severity">
                       {{ alert.severity }}
                     </mat-chip>
                     @if (alertHost(alert); as host) {
@@ -272,22 +274,26 @@ const SEVERITY_COLORS: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .alert-row[data-source="wazuh"]   .alert-top { background: #7fb3d3; }
     :host-context(html.cs-theme-lcars) .alert-row[data-source="o365"]    .alert-top { background: #c99aa4; }
     :host-context(html.cs-theme-lcars) .alert-row[data-source="teams"]   .alert-top { background: #c99aa4; }
-    /* All text in header → black */
-    :host-context(html.cs-theme-lcars) .alert-title { color: #000 !important; font-size: 12px; font-weight: 900; }
-    /* chips in header → black labels */
-    :host-context(html.cs-theme-lcars) mat-chip.chip-source,
-    :host-context(html.cs-theme-lcars) mat-chip.chip-severity,
-    :host-context(html.cs-theme-lcars) mat-chip.chip-host,
-    :host-context(html.cs-theme-lcars) mat-chip.chip-location {
-      --mdc-chip-container-color: rgba(0,0,0,.2);
-      --mdc-chip-label-text-color: #000;
-      --mdc-chip-outline-color: rgba(0,0,0,.3);
+    /* All text in the colored header → black */
+    :host-context(html.cs-theme-lcars) .alert-title,
+    :host-context(html.cs-theme-lcars) .alert-top .alert-title { color: #000 !important; font-size: 12px; font-weight: 900; }
+    /* Chips: target the data-attr variants and force dark bg + black text.
+       Also use the .mdc-evolution-chip__text-label child to beat Material's inline. */
+    :host-context(html.cs-theme-lcars) .alert-top mat-chip,
+    :host-context(html.cs-theme-lcars) .alert-top [data-chip-source],
+    :host-context(html.cs-theme-lcars) .alert-top [data-chip-sev] {
+      --mdc-chip-container-color: rgba(0,0,0,.22) !important;
+      --mdc-chip-label-text-color: #000 !important;
+      --mdc-chip-outline-color: rgba(0,0,0,.35) !important;
+      background-color: rgba(0,0,0,.22) !important;
       border-radius: 3px !important;
-      font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+      font-size: 10px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase;
     }
-    :host-context(html.cs-theme-lcars) mat-chip.chip-host {
-      --mdc-chip-label-text-color: rgba(0,0,0,.8);
-      font-family: 'Fira Code', monospace; font-size: 11px; text-transform: none;
+    /* Force the inner text span black (Material renders label inside .mdc-evolution-chip__text-label) */
+    :host-context(html.cs-theme-lcars) .alert-top mat-chip .mdc-evolution-chip__text-label,
+    :host-context(html.cs-theme-lcars) .alert-top mat-chip span { color: #000 !important; }
+    :host-context(html.cs-theme-lcars) .alert-top mat-chip.chip-host {
+      font-family: 'Fira Code', monospace; text-transform: none; font-size: 11px;
     }
     /* body content below header → dark with gold text */
     :host-context(html.cs-theme-lcars) .alert-body { color: #e8a060; font-size: 11px; line-height: 1.5; padding: 0 14px 4px; }

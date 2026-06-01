@@ -372,10 +372,15 @@ const SEVERITY_COLOR: Record<string, string> = {
               </div>
               <div class="card-meta">
                 <div class="card-meta-row">
-                  <span class="source-label" [style.color]="sourceColor(item.source)">
+                  <span class="source-label"
+                    [style.color]="sourceColor(item.source)"
+                    [attr.data-source-label]="item.source">
                     {{ sourceLabel(item.source) }}
                   </span>
-                  <span class="severity-badge" [style.background]="severityColor(item.severity) + '22'" [style.color]="severityColor(item.severity)">
+                  <span class="severity-badge"
+                    [style.background]="severityColor(item.severity) + '22'"
+                    [style.color]="severityColor(item.severity)"
+                    [attr.data-sev-badge]="item.severity">
                     {{ item.severity }}
                   </span>
                   @if (item.location_name) {
@@ -810,20 +815,23 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .feed-card[data-source="wazuh"]   .card-top { background: #7fb3d3; }
     :host-context(html.cs-theme-lcars) .feed-card[data-source="o365"]    .card-top { background: #c99aa4; }
     :host-context(html.cs-theme-lcars) .feed-card[data-source="teams"]   .card-top { background: #c99aa4; }
-    /* All text in the colored header → black */
+    /* All text in the colored header → black.
+       Use the data attribute selectors (no inline style) to guarantee override. */
     :host-context(html.cs-theme-lcars) .source-avatar { display: none; }
     :host-context(html.cs-theme-lcars) .card-meta { flex: 1; min-width: 0; }
-    :host-context(html.cs-theme-lcars) .source-label {
+    :host-context(html.cs-theme-lcars) .source-label,
+    :host-context(html.cs-theme-lcars) [data-source-label] {
       color: #000 !important; font-weight: 900; text-transform: uppercase;
       letter-spacing: .1em; font-size: 11px;
     }
-    :host-context(html.cs-theme-lcars) .severity-badge {
+    :host-context(html.cs-theme-lcars) .severity-badge,
+    :host-context(html.cs-theme-lcars) [data-sev-badge] {
       font-size: 10px; font-weight: 900; border-radius: 3px;
       padding: 2px 7px; letter-spacing: .06em;
-      background: rgba(0,0,0,.25) !important; color: #000 !important;
+      background: rgba(0,0,0,.22) !important; color: #000 !important;
     }
-    :host-context(html.cs-theme-lcars) .host-tag { color: rgba(0,0,0,.75) !important; font-family: 'Fira Code', monospace; font-size: 12px; }
-    :host-context(html.cs-theme-lcars) .location-tag { color: rgba(0,0,0,.6) !important; }
+    :host-context(html.cs-theme-lcars) .card-top .host-tag { color: rgba(0,0,0,.75) !important; font-family: 'Fira Code', monospace; font-size: 12px; }
+    :host-context(html.cs-theme-lcars) .card-top .location-tag { color: rgba(0,0,0,.6) !important; }
     :host-context(html.cs-theme-lcars) .timestamp { color: rgba(0,0,0,.5) !important; }
     :host-context(html.cs-theme-lcars) .ack-stamp { color: rgba(0,0,0,.75) !important; }
     /* ── title ── */
