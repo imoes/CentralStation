@@ -262,41 +262,35 @@ const SEVERITY_COLORS: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .alert-row[data-severity="info"]     { border-left-color: #66cc66; }
     /* hide the 4px severity-bar (replaced by border-left) */
     :host-context(html.cs-theme-lcars) .severity-bar { display: none; }
-    /* alert-top acts as the source-colored header bar — same as widget/feed */
-    :host-context(html.cs-theme-lcars) .alert-content { padding: 0 0 6px; }
-    :host-context(html.cs-theme-lcars) .alert-top {
-      background: #e87c3a;   /* default / checkmk */
-      padding: 7px 14px;
-      margin-bottom: 8px;
-      border-radius: 0 13px 0 0;
-    }
-    :host-context(html.cs-theme-lcars) .alert-row[data-source="graylog"] .alert-top { background: #ffcc66; }
-    :host-context(html.cs-theme-lcars) .alert-row[data-source="wazuh"]   .alert-top { background: #7fb3d3; }
-    :host-context(html.cs-theme-lcars) .alert-row[data-source="o365"]    .alert-top { background: #c99aa4; }
-    :host-context(html.cs-theme-lcars) .alert-row[data-source="teams"]   .alert-top { background: #c99aa4; }
-    /* All text in the colored header → black */
-    :host-context(html.cs-theme-lcars) .alert-title,
-    :host-context(html.cs-theme-lcars) .alert-top .alert-title { color: #000 !important; font-size: 12px; font-weight: 900; }
-    /* Chips: target the data-attr variants and force dark bg + black text.
-       Also use the .mdc-evolution-chip__text-label child to beat Material's inline. */
-    :host-context(html.cs-theme-lcars) .alert-top mat-chip,
-    :host-context(html.cs-theme-lcars) .alert-top [data-chip-source],
-    :host-context(html.cs-theme-lcars) .alert-top [data-chip-sev] {
-      --mdc-chip-container-color: rgba(0,0,0,.22) !important;
-      --mdc-chip-label-text-color: #000 !important;
-      --mdc-chip-outline-color: rgba(0,0,0,.35) !important;
-      background-color: rgba(0,0,0,.22) !important;
+    /* Dark background throughout — colored TEXT (not colored bg) like the bridge */
+    :host-context(html.cs-theme-lcars) .alert-content { padding: 8px 14px 6px; }
+    :host-context(html.cs-theme-lcars) .alert-top { background: transparent; margin-bottom: 4px; }
+    /* Title: gold/cream on dark — always readable */
+    :host-context(html.cs-theme-lcars) .alert-title { color: #ffe8a0 !important; font-size: 13px; font-weight: 600; }
+    /* Chips: dark bg + colored TEXT per source/severity */
+    :host-context(html.cs-theme-lcars) mat-chip.chip-source,
+    :host-context(html.cs-theme-lcars) mat-chip.chip-severity,
+    :host-context(html.cs-theme-lcars) mat-chip.chip-host,
+    :host-context(html.cs-theme-lcars) mat-chip.chip-location {
+      --mdc-chip-container-color: #1e1710 !important;
+      --mdc-chip-outline-color: #2a1d0a !important;
       border-radius: 3px !important;
-      font-size: 10px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase;
+      font-size: 10px; font-weight: 700;
     }
-    /* Force the inner text span black (Material renders label inside .mdc-evolution-chip__text-label) */
-    :host-context(html.cs-theme-lcars) .alert-top mat-chip .mdc-evolution-chip__text-label,
-    :host-context(html.cs-theme-lcars) .alert-top mat-chip span { color: #000 !important; }
-    :host-context(html.cs-theme-lcars) .alert-top mat-chip.chip-host {
-      font-family: 'Fira Code', monospace; text-transform: none; font-size: 11px;
-    }
-    /* body content below header → dark with gold text */
-    :host-context(html.cs-theme-lcars) .alert-body { color: #e8a060; font-size: 11px; line-height: 1.5; padding: 0 14px 4px; }
+    /* Source chip: source color text */
+    :host-context(html.cs-theme-lcars) [data-chip-source="checkmk"] { --mdc-chip-label-text-color: #e87c3a !important; }
+    :host-context(html.cs-theme-lcars) [data-chip-source="graylog"]  { --mdc-chip-label-text-color: #ffcc66 !important; }
+    :host-context(html.cs-theme-lcars) [data-chip-source="wazuh"]    { --mdc-chip-label-text-color: #7fb3d3 !important; }
+    /* Severity chip: severity color text */
+    :host-context(html.cs-theme-lcars) [data-chip-sev="critical"] { --mdc-chip-label-text-color: #ff5544 !important; }
+    :host-context(html.cs-theme-lcars) [data-chip-sev="high"]     { --mdc-chip-label-text-color: #ffcc00 !important; }
+    :host-context(html.cs-theme-lcars) [data-chip-sev="medium"]   { --mdc-chip-label-text-color: #ff9966 !important; }
+    :host-context(html.cs-theme-lcars) [data-chip-sev="low"]      { --mdc-chip-label-text-color: #7fb3d3 !important; }
+    :host-context(html.cs-theme-lcars) [data-chip-sev="info"]     { --mdc-chip-label-text-color: #66cc66 !important; }
+    :host-context(html.cs-theme-lcars) mat-chip.chip-host     { --mdc-chip-label-text-color: #e8a060 !important; font-family: monospace; }
+    :host-context(html.cs-theme-lcars) mat-chip.chip-location { --mdc-chip-label-text-color: #7fb3d3 !important; }
+    /* body content */
+    :host-context(html.cs-theme-lcars) .alert-body { color: #e8a060; font-size: 11px; line-height: 1.5; }
     :host-context(html.cs-theme-lcars) .ai-insight {
       background: rgba(232,124,58,.1); border-left: 3px solid #e87c3a;
       color: #ffcc99; margin: 6px 0 4px; border-radius: 0;
@@ -321,13 +315,10 @@ const SEVERITY_COLORS: Record<string, string> = {
     :host-context(html.cs-theme-holo) .alert-row[data-severity="high"]     { border-left-color: #ffd84a; }
     :host-context(html.cs-theme-holo) .alert-row[data-severity="low"]      { border-left-color: #3dffa8; }
     :host-context(html.cs-theme-holo) .severity-bar { display: none; }
-    :host-context(html.cs-theme-holo) .alert-content { padding: 0 0 6px; }
-    :host-context(html.cs-theme-holo) .alert-top {
-      background: rgba(79,214,255,.15); padding: 7px 14px;
-      border-bottom: 1px solid rgba(79,214,255,.2); margin-bottom: 8px;
-    }
+    :host-context(html.cs-theme-holo) .alert-content { padding: 8px 14px 6px; }
+    :host-context(html.cs-theme-holo) .alert-top { background: transparent; }
     :host-context(html.cs-theme-holo) .alert-title { color: #cfeeff !important; }
-    :host-context(html.cs-theme-holo) .alert-body { color: #8fb8cf; padding: 0 14px 4px; }
+    :host-context(html.cs-theme-holo) .alert-body { color: #8fb8cf; }
     :host-context(html.cs-theme-holo) .ai-insight { background: rgba(79,214,255,.08); border-left: 3px solid #4fd6ff; color: #bfefff; }
     :host-context(html.cs-theme-holo) .ai-insight-icon { color: #4fd6ff; }
     :host-context(html.cs-theme-holo) .alert-meta { color: rgba(143,184,207,.5); }

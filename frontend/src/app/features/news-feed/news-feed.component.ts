@@ -804,36 +804,37 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .feed-card[data-severity="warning"]  { border-left-color: #ffcc00 !important; }
     :host-context(html.cs-theme-lcars) .feed-card[data-severity="low"]      { border-left-color: #7fb3d3 !important; }
     :host-context(html.cs-theme-lcars) .feed-card[data-severity="info"]     { border-left-color: #66cc66 !important; }
-    /* ── card header bar — source color, like widget headers ── */
+    /* ── card meta row: dark bg, COLORED TEXT for source/severity ── */
     :host-context(html.cs-theme-lcars) .card-top {
-      background: #e87c3a;   /* default / checkmk */
-      padding: 7px 14px;
-      border-bottom: none;
-      border-radius: 0 13px 0 0;   /* matches card top-right radius */
+      background: #0a0804;     /* same dark as body — no colored header bar */
+      padding: 6px 14px;
+      border-bottom: 1px solid #2a1d0a;
     }
-    :host-context(html.cs-theme-lcars) .feed-card[data-source="graylog"] .card-top { background: #ffcc66; }
-    :host-context(html.cs-theme-lcars) .feed-card[data-source="wazuh"]   .card-top { background: #7fb3d3; }
-    :host-context(html.cs-theme-lcars) .feed-card[data-source="o365"]    .card-top { background: #c99aa4; }
-    :host-context(html.cs-theme-lcars) .feed-card[data-source="teams"]   .card-top { background: #c99aa4; }
-    /* All text in the colored header → black.
-       Use the data attribute selectors (no inline style) to guarantee override. */
     :host-context(html.cs-theme-lcars) .source-avatar { display: none; }
     :host-context(html.cs-theme-lcars) .card-meta { flex: 1; min-width: 0; }
-    :host-context(html.cs-theme-lcars) .source-label,
+    /* Source label: source color as TEXT (readable on dark bg) */
     :host-context(html.cs-theme-lcars) [data-source-label] {
-      color: #000 !important; font-weight: 900; text-transform: uppercase;
-      letter-spacing: .1em; font-size: 11px;
+      font-weight: 900; text-transform: uppercase; letter-spacing: .1em; font-size: 11px;
     }
-    :host-context(html.cs-theme-lcars) .severity-badge,
+    :host-context(html.cs-theme-lcars) [data-source-label="checkmk"] { color: #e87c3a !important; }
+    :host-context(html.cs-theme-lcars) [data-source-label="graylog"]  { color: #ffcc66 !important; }
+    :host-context(html.cs-theme-lcars) [data-source-label="wazuh"]    { color: #7fb3d3 !important; }
+    :host-context(html.cs-theme-lcars) [data-source-label="o365"]     { color: #c99aa4 !important; }
+    :host-context(html.cs-theme-lcars) [data-source-label="teams"]    { color: #c99aa4 !important; }
+    /* Severity badge: colored text + subtle tint bg on dark */
     :host-context(html.cs-theme-lcars) [data-sev-badge] {
-      font-size: 10px; font-weight: 900; border-radius: 3px;
-      padding: 2px 7px; letter-spacing: .06em;
-      background: rgba(0,0,0,.22) !important; color: #000 !important;
+      font-size: 10px; font-weight: 900; border-radius: 3px; padding: 2px 7px; letter-spacing: .06em;
     }
-    :host-context(html.cs-theme-lcars) .card-top .host-tag { color: rgba(0,0,0,.75) !important; font-family: 'Fira Code', monospace; font-size: 12px; }
-    :host-context(html.cs-theme-lcars) .card-top .location-tag { color: rgba(0,0,0,.6) !important; }
-    :host-context(html.cs-theme-lcars) .timestamp { color: rgba(0,0,0,.5) !important; }
-    :host-context(html.cs-theme-lcars) .ack-stamp { color: rgba(0,0,0,.75) !important; }
+    :host-context(html.cs-theme-lcars) [data-sev-badge="critical"] { color: #ff5544 !important; background: rgba(255,85,68,.15) !important; }
+    :host-context(html.cs-theme-lcars) [data-sev-badge="high"]     { color: #ffcc00 !important; background: rgba(255,204,0,.12) !important; }
+    :host-context(html.cs-theme-lcars) [data-sev-badge="medium"]   { color: #ff9966 !important; background: rgba(255,153,102,.12) !important; }
+    :host-context(html.cs-theme-lcars) [data-sev-badge="warning"]  { color: #ffcc00 !important; background: rgba(255,204,0,.12) !important; }
+    :host-context(html.cs-theme-lcars) [data-sev-badge="low"]      { color: #7fb3d3 !important; background: rgba(127,179,211,.12) !important; }
+    :host-context(html.cs-theme-lcars) [data-sev-badge="info"]     { color: #66cc66 !important; background: rgba(102,204,102,.12) !important; }
+    :host-context(html.cs-theme-lcars) .card-top .host-tag    { color: #e8a060 !important; font-family: 'Fira Code', monospace; }
+    :host-context(html.cs-theme-lcars) .card-top .location-tag { color: #7fb3d3 !important; }
+    :host-context(html.cs-theme-lcars) .timestamp  { color: rgba(255,232,160,.4) !important; }
+    :host-context(html.cs-theme-lcars) .ack-stamp  { color: #66cc66 !important; }
     /* ── title ── */
     :host-context(html.cs-theme-lcars) .card-title { color: #ffe8a0; padding: 8px 14px 6px; font-size: 14px; }
     :host-context(html.cs-theme-lcars) .card-title-link { color: #ffe8a0; }
