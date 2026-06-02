@@ -419,12 +419,12 @@ export class DashboardWidgetComponent {
   // gold, blue, salmon — set as --w-accent on the host and used by LCARS CSS.
   readonly accentColor = computed(() => {
     const map: Record<string, string> = {
-      ai_summary: '#e87c3a', list: '#e87c3a',
+      ai_summary: '#FF9933', list: '#FF9933',
       stat: '#ffcc66', top_hosts: '#ffcc66', bar: '#ffcc66',
-      donut: '#7fb3d3', timeseries: '#7fb3d3',
+      donut: '#99CCFF', timeseries: '#99CCFF',
       war_room: '#cc6666', forecast: '#cc6666',
     };
-    return map[this.widget().widget_type] ?? '#e87c3a';
+    return map[this.widget().widget_type] ?? '#FF9933';
   });
 
   // The global LCARS widget styling (styles.scss) only applies in LCARS theme,
@@ -434,7 +434,7 @@ export class DashboardWidgetComponent {
   // theme-aware chart axis/grid colors
   private get _chartText() { const t = this.themeSvc.theme(); return t === 'lcars' ? '#e8a060' : t === 'holo' ? '#5fc8ee' : '#94a3b8'; }
   private get _chartGrid() { const t = this.themeSvc.theme(); return t === 'lcars' ? '#2a1d0a' : t === 'holo' ? '#0e2236' : '#334155'; }
-  private get _chartPrimary() { const t = this.themeSvc.theme(); return t === 'lcars' ? '#e87c3a' : t === 'holo' ? '#4fd6ff' : '#60a5fa'; }
+  private get _chartPrimary() { const t = this.themeSvc.theme(); return t === 'lcars' ? '#FF9933' : t === 'holo' ? '#4fd6ff' : '#60a5fa'; }
 
   // ── derived state (computed = stable reference until deps change) ──────────
 

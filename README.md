@@ -195,21 +195,24 @@ Da OS/Standort/VE/Criticality CheckMK-eigene Konzepte sind, greift der Filter **
 
 | Bereich | Funktionen |
 |---------|------------|
-| **Operations Cockpit** | Dual-Mode Dashboard (Klassisch/Generativ), Widget-Typen: Stat, Liste, Donut, Balken, Zeitreihe, Forecast, KI-Lagebericht, Top-Hosts; klickbare Charts (→ Feed-Filter); Pin/Reset im generativen Modus |
-| **Alert-Aggregation** | CheckMK, Graylog, Wazuh — zentrale Timeline, Acknowledge, Severity-Filter, OS/Standort/VE/Hostgruppen-Filter |
-| **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung (ai_insight pro Alert), KI-Ignorieren (Auto-Ausschluss-Query) |
+| **Operations Cockpit** | Dual-Mode Dashboard (Klassisch/Generativ), Widget-Typen: Stat, Liste, Donut, Balken, Zeitreihe, Forecast, KI-Lagebericht, Top-Hosts, War Room; klickbare Charts; Pin/Reset im generativen Modus; Hostname in Top-Hosts klickbar |
+| **Generatives Dashboard** | KI komponiert situativ ein maßgeschneidertes Dashboard — analysiert Findings, Worklist, Vitals + Forecast-Kandidaten; Rationale als Lage-Briefing; Neu-Generieren-Button + WS-Eskalation-Trigger; CUE-Produktionshosts priorisiert |
+| **Brücke (Bridge)** | Star-Trek-LCARS-Cockpit unter `/bridge`; drei Themes (Classic/Holo/LCARS); Prioritäten-Worklist, Fleet-Vitals, Forecasts, Sektoren, Live-Logs; Primärer-Incident-Panel |
+| **Adaptives Alert-Scoring** | Deterministisches Basis-Scoring (Severity/Novelty/Alter/Flapping/Cross-Source); adaptiver Lern-Feedback-Loop (Jira-Tickets, Acks, Ignorieren → `alert_score_adjustments`); Score-Delta-Verfall |
+| **Alert-Aggregation** | CheckMK, Graylog, Wazuh — zentrale Timeline, Acknowledge, Severity-Filter; Graylog: Python-Loglevel-Erkennung (INFO→low, ERROR→high, verhindert Docker-GELF-Fehleinstufung) |
+| **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung, KI-Ignorieren; Hostname anklickbar → Feed-Filter; Severity-Filter ignoriert aktive Saved-Searches korrekt |
+| **KI-Insights** | Befunde + zugehörige Empfehlungen direkt zusammen (kein getrenntes Panel); Datenquelle-Badge je Befund; Hostname/Feed-Links; Empfehlungen fließen in generatives Dashboard ein |
+| **AI War Room** | Blast-Radius-Analyse bei Critical/High; Ko-VMs, Ko-lokalisierte Hosts; Empfehlungen mit Ein-Klick-Jira |
+| **CheckMK Metriken** | Collector schreibt CPU/RAM/Disk/Agent-Zeit in `cs-metrics-checkmk`; Bridge zeigt Fleet-Vitals + Forecasts (lineare Regression); stabile Metriken (< 90 % ohne Trend) werden aus generativem Kontext gefiltert |
+| **3 App-weite Themes** | **Classic** (hell, blauer Schleier), **Holo** (dunkelblau/cyan), **LCARS** (schwarz/orange — offizielles Neon Carrot + Golden Tanoi + Anakiwa + Lilac Palette); in Einstellungen wählbar |
 | **Kanban-Board** | Drag-Drop, bidirektionaler Jira-/ServiceDesk-Sync, automatische Jira-Importe, AI-erstellte Cards |
-| **Meine Tickets** | Per-User Jira-Sicht, JQL-Filter-Verwaltung, KI-JQL-Generator (Freitext → JQL), Live-Ergebnisse; roter Punkt bei neuer Aktivität, Unread-Badge im Nav |
+| **Meine Tickets** | Per-User Jira-Sicht, JQL-Filter-Verwaltung, KI-JQL-Generator; Unread-Badge; roter Punkt bei Aktivität |
 | **Arbeitsdokumentation** | ITIL Work Sessions: Impact/Urgency/Priorität P1–P4, SLA-Tracking, Arbeitsnotizen |
 | **KI-Kommentare** | Fortschritt, Pending, Eskalation, Übergabe — per KI generiert, direkt in Jira kopierbar |
 | **Abschlussdokumentation** | KI-generierte Lösungsdokumentation mit Root Cause, Maßnahmen, Closure Code |
 | **5-Why-Analyse** | ITIL Problem Management — KI führt 5-Why-Analyse durch, schlägt Kernursache vor |
 | **Lösungssuche** | RAG-Suche in it-aikb Wissensdatenbank + SearXNG Web-Suche, HyDE-Pattern |
-| **Mail-Analyse** | O365 E-Mail → strukturierte Ticket-Informationen per KI |
 | **Netzwerk-Modul** | Switch-Alerts (NSA/NSS/NSC), Standort-Zuordnung (ID-Generator), Vendor-Erkennung |
-| **KI-Insights** | LangGraph Agenten (SysAdmin + Network), alle 10 Min., Jira Auto-Create |
-| **Prometheus-Metriken** | Zeitreihen-Widgets mit PromQL, Lucene→PromQL-Konverter (KI), node_exporter + CheckMK |
-| **Setup-Wizard** | Einrichtungsassistent bei Erstanmeldung (LLM-Check, JQL-Konfiguration) |
 | **RBAC** | Admin / SysAdmin / Network-Technician / Viewer — rollenbasierte UI und API |
 | **Audit-Log** | Protokollierung aller schreibenden Operationen |
 
@@ -983,6 +986,10 @@ Alle Einstellungen werden verschlüsselt in der Datenbank gespeichert und über 
 | `0013` | `feed_searches.is_exclusion` Boolean-Feld |
 | `0014` | `user_preferences.ticket_seen_map` (JSON) — serverseitiges Ticket-Badge-Tracking |
 | `0015` | `dashboards.mode` (`classic`/`generative`), `dashboard_widgets.pinned`, `dashboard_widgets.hidden` — Generativer Modus |
+| `0016` | `alert_score_adjustments` — adaptives Scoring (Feedback-Loop, Deltas mit Verfall) |
+| `0017` | `worklist_snapshots`, `ai_insight_cache` — KI-Worklist-Cache und Alert-Insight-Cache |
+| `0018` | `user_preferences.ui_theme` (`classic`/`holo`/`lcars`) — app-weites Theme |
+| `0019` | `dashboards.rationale`, `dashboards.generated_at` — Generatives Dashboard mit KI-Lagebild |
 
 ---
 
