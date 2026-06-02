@@ -101,7 +101,7 @@ import {
               <div echarts [options]="barOptions()" (chartClick)="onBarClick($event)" class="chart"></div>
             }
             @case ('ai_summary') {
-              @if (aiSummary()) {
+              @if (aiFindings().length > 0) {
                 <div class="ai-summary">
                   <p>{{ aiSummary() }}</p>
                   @for (finding of aiFindings(); track finding.title) {
@@ -113,6 +113,12 @@ import {
                       </div>
                     </div>
                   }
+                </div>
+              } @else if (aiRunAt()) {
+                <div class="empty wr-quiet">
+                  <mat-icon>check_circle_outline</mat-icon>
+                  <span>Alle Systeme nominal</span>
+                  <span style="font-size:10px;opacity:.5">{{ aiRunAt() | date:'HH:mm' }}</span>
                 </div>
               } @else {
                 <div class="empty">Noch kein KI-Lagebericht vorhanden</div>
@@ -482,6 +488,11 @@ export class DashboardWidgetComponent {
   readonly aiSummary = computed(() => {
     const d = this.data() as AiSummaryData | undefined;
     return d?.summary ?? '';
+  });
+
+  readonly aiRunAt = computed(() => {
+    const d = this.data() as AiSummaryData | undefined;
+    return d?.run_at ? new Date(d.run_at) : null;
   });
 
   readonly aiFindings = computed(() => {
