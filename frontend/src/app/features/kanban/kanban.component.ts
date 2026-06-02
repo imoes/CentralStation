@@ -71,34 +71,33 @@ const PRIORITY_COLORS: Record<string, string> = {
                 class="column-drop-zone">
                 @for (card of getColumn(col.id); track card.id) {
                   <div cdkDrag [cdkDragData]="card" class="kanban-card" [class.ai-card]="card.ai_generated"
+                       [attr.data-priority]="card.priority"
+                       [style.--card-color]="priorityColor(card.priority)"
                        (click)="openEdit(card)">
-                    <div class="card-priority-bar"
-                         [style.background-color]="priorityColor(card.priority)">
+                    <!-- LCARS header bar: priority + jira key -->
+                    <div class="card-header-bar">
+                      <span class="card-priority-label">{{ card.priority | uppercase }}</span>
+                      @if (card.jira_key) {
+                        <span class="card-jira-key">{{ card.jira_key }}</span>
+                      }
+                      @if (card.ai_generated) {
+                        <mat-icon class="ai-icon" matTooltip="KI-generiert">smart_toy</mat-icon>
+                      }
+                      <div class="card-actions">
+                        <button mat-icon-button (click)="$event.stopPropagation(); openEdit(card)">
+                          <mat-icon>edit</mat-icon>
+                        </button>
+                        <button mat-icon-button color="warn" (click)="$event.stopPropagation(); deleteCard(card)">
+                          <mat-icon>delete</mat-icon>
+                        </button>
+                      </div>
                     </div>
+                    <!-- Card body -->
                     <div class="card-body">
                       <div class="card-title">{{ card.title }}</div>
                       @if (card.description) {
                         <div class="card-desc">{{ card.description | slice:0:80 }}{{ card.description!.length > 80 ? '…' : '' }}</div>
                       }
-                      <div class="card-footer">
-                        @if (card.jira_key) {
-                          <mat-chip class="jira-chip">{{ card.jira_key }}</mat-chip>
-                        }
-                        @if (card.ai_generated) {
-                          <mat-icon class="ai-icon" matTooltip="KI-generiert">smart_toy</mat-icon>
-                        }
-                        <span class="priority-label" [style.color]="priorityColor(card.priority)">
-                          {{ card.priority }}
-                        </span>
-                        <div class="card-actions">
-                          <button mat-icon-button (click)="$event.stopPropagation(); openEdit(card)">
-                            <mat-icon>edit</mat-icon>
-                          </button>
-                          <button mat-icon-button color="warn" (click)="$event.stopPropagation(); deleteCard(card)">
-                            <mat-icon>delete</mat-icon>
-                          </button>
-                        </div>
-                      </div>
                     </div>
                   </div>
                 }
@@ -118,24 +117,101 @@ const PRIORITY_COLORS: Record<string, string> = {
     .board-header h2 { margin: 0; }
     .board { display: flex; gap: 12px; flex: 1; overflow-x: auto; align-items: flex-start; }
     .column { width: 240px; min-width: 240px; display: flex; flex-direction: column; }
-    .column-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--mat-sys-surface-container); border-top: 3px solid; border-radius: 4px 4px 0 0; }
-    .col-title { font-weight: 600; font-size: 13px; }
-    .col-count { background: var(--mat-sys-surface-variant); border-radius: 10px; padding: 1px 7px; font-size: 11px; }
-    .column-drop-zone { min-height: 200px; padding: 8px; background: var(--mat-sys-surface-container-low); border-radius: 0 0 4px 4px; flex: 1; }
-    .kanban-card { display: flex; background: var(--mat-sys-surface); border-radius: 4px; margin-bottom: 8px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: box-shadow .2s; }
-    .kanban-card:hover { box-shadow: 0 4px 8px rgba(0,0,0,.3); transform: translateY(-1px); }
-    .kanban-card.ai-card { border: 1px solid var(--mat-sys-primary); }
-    .card-priority-bar { width: 4px; border-radius: 4px 0 0 4px; flex-shrink: 0; }
-    .card-body { padding: 8px 10px; flex: 1; min-width: 0; }
-    .card-title { font-size: 13px; font-weight: 500; margin-bottom: 4px; word-break: break-word; }
-    .card-desc { font-size: 11px; color: var(--mat-sys-on-surface-variant); margin-bottom: 6px; }
-    .card-footer { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-    .jira-chip { font-size: 10px; min-height: 18px; background: #0052cc20; color: #0052cc; }
-    .ai-icon { font-size: 14px; width: 14px; height: 14px; color: var(--mat-sys-primary); }
-    .priority-label { font-size: 10px; text-transform: uppercase; font-weight: 600; margin-left: auto; }
+    .column-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px;
+      background: var(--mat-sys-surface-container);
+      border-top: 3px solid;
+      border-radius: 4px 4px 0 0;
+    }
+    :host-context(html.cs-theme-lcars) .column-header {
+      background: #FF9933;
+      color: #000;
+      border-top: none;
+      border-radius: 0 6px 0 0;
+      font-family: 'Antonio', 'Eurostile', sans-serif;
+    }
+    .col-title {
+      font-weight: 900; font-size: 12px; text-transform: uppercase; letter-spacing: .1em;
+    }
+    :host-context(:not(html.cs-theme-lcars)) .col-title { font-weight: 600; font-size: 13px; text-transform: none; letter-spacing: 0; }
+    .col-count {
+      background: rgba(0,0,0,.2); border-radius: 10px; padding: 1px 7px;
+      font-size: 11px; font-weight: 700;
+    }
+    :host-context(:not(html.cs-theme-lcars)) .col-count { background: var(--mat-sys-surface-variant); }
+    .column-drop-zone {
+      min-height: 200px; padding: 8px;
+      background: var(--mat-sys-surface-container-low);
+      border-radius: 0 0 4px 4px; flex: 1;
+    }
+    :host-context(html.cs-theme-lcars) .column-drop-zone {
+      background: #0a0804;
+    }
+    /* ── LCARS Kanban card — same panel language as widgets/feed/alerts ── */
+    .kanban-card {
+      display: flex;
+      flex-direction: column;
+      background: #000;
+      border: none;
+      border-left: 18px solid var(--card-color, #FF9933);
+      border-radius: 18px 6px 6px 18px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      overflow: hidden;
+      box-shadow: none;
+      transition: filter .15s;
+      color: #ffe8a0;
+    }
+    :host-context(:not(html.cs-theme-lcars)) .kanban-card {
+      background: var(--mat-sys-surface);
+      border: none;
+      border-left: 4px solid var(--card-color, var(--mat-sys-primary));
+      border-radius: 4px;
+      color: var(--mat-sys-on-surface);
+      box-shadow: 0 1px 3px rgba(0,0,0,.2);
+    }
+    :host-context(:not(html.cs-theme-lcars)) .kanban-card:hover { box-shadow: 0 4px 8px rgba(0,0,0,.3); transform: translateY(-1px); }
+    .kanban-card:hover { filter: brightness(1.1); }
+    .kanban-card.ai-card { outline: 1px solid #FFCC66; }
+
+    /* LCARS header bar */
+    .card-header-bar {
+      background: var(--card-color, #FF9933);
+      color: #000;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      font-family: 'Antonio', 'Eurostile', sans-serif;
+      min-height: 32px;
+      flex-shrink: 0;
+    }
+    :host-context(:not(html.cs-theme-lcars)) .card-header-bar {
+      background: color-mix(in srgb, var(--card-color, var(--mat-sys-primary)) 15%, var(--mat-sys-surface-container));
+      color: var(--mat-sys-on-surface);
+    }
+    .card-priority-label {
+      font-size: 10px; font-weight: 900; letter-spacing: .08em; flex-shrink: 0;
+    }
+    .card-jira-key {
+      font-size: 10px; font-weight: 700; font-family: 'Fira Code', monospace;
+      background: rgba(0,0,0,.2); padding: 1px 5px; border-radius: 3px; flex-shrink: 0;
+    }
+    :host-context(:not(html.cs-theme-lcars)) .card-jira-key {
+      background: rgba(0,82,204,.15); color: #0052cc;
+    }
+    .ai-icon { font-size: 13px; width: 13px; height: 13px; flex-shrink: 0; }
     .card-actions { display: flex; margin-left: auto; }
-    .card-actions button { width: 24px; height: 24px; line-height: 24px; }
+    .card-actions button { width: 24px; height: 24px; line-height: 24px; color: inherit; }
     .card-actions mat-icon { font-size: 14px; width: 14px; height: 14px; }
+
+    /* Card body */
+    .card-body { padding: 8px 10px; flex: 1; min-width: 0; }
+    .card-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; word-break: break-word; line-height: 1.4; }
+    :host-context(:not(html.cs-theme-lcars)) .card-title { color: var(--mat-sys-on-surface); }
+    .card-desc { font-size: 11px; color: #e8a060; margin-bottom: 2px; }
+    :host-context(:not(html.cs-theme-lcars)) .card-desc { color: var(--mat-sys-on-surface-variant); }
     .empty-column { text-align: center; padding: 16px; color: var(--mat-sys-on-surface-variant); font-size: 12px; }
     .spinner-center { display: flex; justify-content: center; padding: 40px; }
     .cdk-drag-preview { box-shadow: 0 8px 16px rgba(0,0,0,.4); }
