@@ -56,7 +56,23 @@ const SEVERITY_COLORS: Record<string, string> = {
           <mat-card class="analysis-card" [class.highlighted]="analysis.id === highlightId()"
                     [attr.data-analysis-id]="analysis.id"
                     [attr.data-severity]="analysis.severity_summary">
-            <mat-card-header>
+
+            <!-- LCARS header: plain div, no Material component interference -->
+            <div class="analysis-lcars-header">
+              <span class="alh-sev">{{ (analysis.severity_summary || 'none') | uppercase }}</span>
+              <span class="alh-dot">·</span>
+              <span class="alh-agent">{{ analysis.agent_type | uppercase }}</span>
+              <span class="alh-spacer"></span>
+              <span class="alh-counts">{{ analysis.findings_count }} Befunde · {{ analysis.recommendations_count }} Empfehlung{{analysis.recommendations_count !== 1 ? 'en' : ''}}</span>
+              @if (analysis.jira_tickets_created?.length) {
+                <span class="alh-dot">·</span>
+                <span class="alh-jira">{{ analysis.jira_tickets_created.length }} Jira</span>
+              }
+              <span class="alh-time">{{ analysis.run_at | date:'dd.MM HH:mm' }}</span>
+            </div>
+
+            <!-- Classic/Holo header: Material component, hidden in LCARS -->
+            <mat-card-header class="classic-header">
               <div class="analysis-header">
                 <div class="analysis-meta">
                   <span class="severity-badge"
@@ -312,36 +328,32 @@ const SEVERITY_COLORS: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .analysis-card[data-severity="high"]     { border-left-color: #FF9933 !important; }
     :host-context(html.cs-theme-lcars) .analysis-card[data-severity="medium"]   { border-left-color: #FFCC66 !important; }
     :host-context(html.cs-theme-lcars) .analysis-card[data-severity="low"]      { border-left-color: #99CCFF !important; }
-    /* mat-card-header = LCARS colored header bar */
-    :host-context(html.cs-theme-lcars) mat-card-header {
-      background: #FF9933;
+    /* LCARS header: pure div — no Material component issues */
+    .analysis-lcars-header { display: none; }  /* hidden in Classic/Holo */
+    :host-context(html.cs-theme-lcars) .analysis-lcars-header {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      background: #FF9933;       /* default orange */
+      color: #000;               /* guaranteed black — no Material interference */
       padding: 8px 14px;
-      margin: 0;
       border-radius: 0 7px 0 0;
+      font-family: 'Antonio','Eurostile',sans-serif;
+      font-size: 11px; font-weight: 900; letter-spacing: .08em;
+      flex-shrink: 0;
     }
-    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="critical"] mat-card-header { background: #CC4444; }
-    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="medium"]   mat-card-header { background: #FFCC66; }
-    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="low"]      mat-card-header { background: #99CCFF; }
-    /* Force ALL text inside the header to black — inline styles cannot override filter */
-    :host-context(html.cs-theme-lcars) mat-card-header,
-    :host-context(html.cs-theme-lcars) mat-card-header .analysis-header,
-    :host-context(html.cs-theme-lcars) mat-card-header .analysis-meta,
-    :host-context(html.cs-theme-lcars) mat-card-header .analysis-counts,
-    :host-context(html.cs-theme-lcars) mat-card-header span,
-    :host-context(html.cs-theme-lcars) mat-card-header .run-time,
-    :host-context(html.cs-theme-lcars) mat-card-header .jira-count { color: #000 !important; }
-    /* severity-badge: dark pill with black text regardless of inline color */
-    :host-context(html.cs-theme-lcars) .severity-badge {
-      border-radius: 3px; font-size: 11px; font-weight: 900;
-      background: rgba(0,0,0,.22) !important;
-      color: #000 !important;
-      filter: none !important;
-    }
-    :host-context(html.cs-theme-lcars) .agent-chip {
-      --mdc-chip-container-color: #000 !important;
-      --mdc-chip-label-text-color: #FF9933 !important;
-      --mdc-chip-outline-color: #FF9933 !important;
-    }
+    /* Severity-based header colors */
+    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="critical"] .analysis-lcars-header { background: #CC4444; }
+    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="medium"]   .analysis-lcars-header { background: #FFCC66; }
+    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="low"]      .analysis-lcars-header { background: #99CCFF; }
+    /* LCARS header text elements */
+    :host-context(html.cs-theme-lcars) .alh-sev    { font-size: 12px; }
+    :host-context(html.cs-theme-lcars) .alh-agent  { font-size: 10px; opacity: .75; }
+    :host-context(html.cs-theme-lcars) .alh-counts { font-size: 10px; font-weight: 700; }
+    :host-context(html.cs-theme-lcars) .alh-jira   { font-size: 10px; background: rgba(0,0,0,.18); padding: 0 5px; border-radius: 3px; }
+    :host-context(html.cs-theme-lcars) .alh-time   { opacity: .55; font-size: 10px; font-weight: 400; }
+    :host-context(html.cs-theme-lcars) .alh-spacer { flex: 1; }
+    :host-context(html.cs-theme-lcars) .alh-dot    { opacity: .45; }
+    /* Hide Material header in LCARS — use the plain div above instead */
+    :host-context(html.cs-theme-lcars) .classic-header { display: none !important; }
     /* mat-card-content = dark body */
     :host-context(html.cs-theme-lcars) mat-card-content { background: #000; padding: 8px 14px 12px; }
     /* Expansion panels */
