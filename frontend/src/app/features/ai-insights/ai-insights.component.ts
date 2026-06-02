@@ -53,7 +53,8 @@ const SEVERITY_COLORS: Record<string, string> = {
       } @else {
         @for (analysis of analyses(); track analysis.id) {
           <mat-card class="analysis-card" [class.highlighted]="analysis.id === highlightId()"
-                    [attr.data-analysis-id]="analysis.id">
+                    [attr.data-analysis-id]="analysis.id"
+                    [attr.data-severity]="analysis.severity_summary">
             <mat-card-header>
               <div class="analysis-header">
                 <div class="analysis-meta">
@@ -283,6 +284,93 @@ const SEVERITY_COLORS: Record<string, string> = {
     .empty-state { text-align: center; padding: 40px; color: var(--mat-sys-on-surface-variant); }
     .spinner-center { display: flex; justify-content: center; padding: 40px; }
     mat-spinner { display: inline-block; }
+
+    /* ══ LCARS THEME ══════════════════════════════════════════════════════ */
+    :host-context(html.cs-theme-lcars) .page-container {
+      font-family: 'Antonio','Eurostile','Roboto Condensed',sans-serif;
+    }
+    :host-context(html.cs-theme-lcars) .page-header h2 {
+      font-size: 20px; font-weight: 800; letter-spacing: .22em; text-transform: uppercase;
+      color: #FFCC66; background: #000; display: inline-block; padding: 3px 10px 3px 0;
+    }
+    /* Analysis card — LCARS panel */
+    :host-context(html.cs-theme-lcars) .analysis-card {
+      background: #15120c !important;
+      border: none !important;
+      border-left: 22px solid #FF9933 !important;
+      border-radius: 22px 8px 8px 22px !important;
+      box-shadow: none !important;
+    }
+    :host-context(html.cs-theme-lcars) .analysis-card.highlighted {
+      border-left-color: #FFCC66 !important;
+      outline: 2px solid #FFCC66;
+      background: #1e1710 !important;
+    }
+    /* Severity-based card colors (per analysis) */
+    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="critical"] { border-left-color: #CC4444 !important; }
+    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="high"]     { border-left-color: #FF9933 !important; }
+    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="medium"]   { border-left-color: #FFCC66 !important; }
+    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="low"]      { border-left-color: #99CCFF !important; }
+    /* mat-card-header = LCARS colored header bar */
+    :host-context(html.cs-theme-lcars) mat-card-header {
+      background: #FF9933;
+      padding: 8px 14px;
+      margin: 0;
+      border-radius: 0 7px 0 0;
+    }
+    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="critical"] mat-card-header { background: #CC4444; }
+    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="medium"]   mat-card-header { background: #FFCC66; }
+    :host-context(html.cs-theme-lcars) .analysis-card[data-severity="low"]      mat-card-header { background: #99CCFF; }
+    :host-context(html.cs-theme-lcars) .analysis-header { color: #000; }
+    :host-context(html.cs-theme-lcars) .severity-badge { border-radius: 3px; font-size: 11px; background: rgba(0,0,0,.2) !important; color: #000 !important; }
+    :host-context(html.cs-theme-lcars) .run-time { color: rgba(0,0,0,.6); }
+    :host-context(html.cs-theme-lcars) .analysis-counts { color: rgba(0,0,0,.7); font-weight: 700; }
+    :host-context(html.cs-theme-lcars) .jira-count { color: #000; }
+    :host-context(html.cs-theme-lcars) .agent-chip {
+      --mdc-chip-container-color: rgba(0,0,0,.2) !important;
+      --mdc-chip-label-text-color: #000 !important;
+    }
+    /* mat-card-content = dark body */
+    :host-context(html.cs-theme-lcars) mat-card-content { background: #000; padding: 8px 14px 12px; }
+    /* Expansion panels */
+    :host-context(html.cs-theme-lcars) mat-expansion-panel {
+      background: #0a0804 !important;
+      border-left: 3px solid #FF9933;
+      border-radius: 0 6px 6px 0 !important;
+      margin-bottom: 6px;
+    }
+    :host-context(html.cs-theme-lcars) mat-expansion-panel-header {
+      background: #1e1710 !important;
+    }
+    :host-context(html.cs-theme-lcars) mat-panel-title {
+      color: #FFCC66 !important;
+      font-family: 'Antonio','Eurostile',sans-serif;
+      text-transform: uppercase; letter-spacing: .08em;
+      font-size: 11px; font-weight: 900;
+    }
+    /* Findings */
+    :host-context(html.cs-theme-lcars) .finding-item { border-bottom-color: #2a1d0a; }
+    :host-context(html.cs-theme-lcars) .finding-sev { font-size: 11px; }
+    :host-context(html.cs-theme-lcars) .finding-title { color: #ffe8a0; font-weight: 600; }
+    :host-context(html.cs-theme-lcars) .finding-desc { color: #e8a060; }
+    :host-context(html.cs-theme-lcars) .host-link { color: #FF9933; }
+    :host-context(html.cs-theme-lcars) .feed-link-btn mat-icon { color: #FF9933; }
+    /* Inline recommendation */
+    :host-context(html.cs-theme-lcars) .rec-inline {
+      border-left-color: #FF9933;
+      background: rgba(255,153,51,.08);
+    }
+    :host-context(html.cs-theme-lcars) .rec-arrow { color: #FF9933; }
+    :host-context(html.cs-theme-lcars) .rec-action { color: #ffe8a0; }
+    :host-context(html.cs-theme-lcars) .rec-rationale { color: #e8a060; }
+    :host-context(html.cs-theme-lcars) .unmatched-label { color: #FFCC66; }
+    :host-context(html.cs-theme-lcars) .rec-item { border-bottom-color: #2a1d0a; }
+    :host-context(html.cs-theme-lcars) .ref-link { color: #FF9933; }
+    :host-context(html.cs-theme-lcars) .ref-text { color: #e8a060; }
+    :host-context(html.cs-theme-lcars) .rag-query { color: #ffcc99; }
+    :host-context(html.cs-theme-lcars) .rag-results { color: #e8a060; }
+    :host-context(html.cs-theme-lcars) .jira-icon { color: #99CCFF; }
+    :host-context(html.cs-theme-lcars) .empty-state { color: #5a3a18; }
   `],
 })
 export class AiInsightsComponent implements OnInit, OnDestroy {
