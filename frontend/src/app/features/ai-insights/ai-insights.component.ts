@@ -21,7 +21,7 @@ const SOURCE_LABELS: Record<string, string> = {
 };
 const SOURCE_COLORS: Record<string, string> = {
   checkmk: '#FF9933', graylog: '#ffcc66', wazuh: '#99CCFF',
-  o365: '#CC99CC', teams: '#CC99CC',
+  o365: '#FFCC99', teams: '#FFCC99',
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -327,8 +327,9 @@ const SEVERITY_COLORS: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .analysis-counts { color: rgba(0,0,0,.7); font-weight: 700; }
     :host-context(html.cs-theme-lcars) .jira-count { color: #000; }
     :host-context(html.cs-theme-lcars) .agent-chip {
-      --mdc-chip-container-color: rgba(0,0,0,.2) !important;
-      --mdc-chip-label-text-color: #000 !important;
+      --mdc-chip-container-color: #000 !important;
+      --mdc-chip-label-text-color: #FF9933 !important;
+      --mdc-chip-outline-color: #FF9933 !important;
     }
     /* mat-card-content = dark body */
     :host-context(html.cs-theme-lcars) mat-card-content { background: #000; padding: 8px 14px 12px; }

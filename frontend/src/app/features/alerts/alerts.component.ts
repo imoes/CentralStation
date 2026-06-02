@@ -293,7 +293,7 @@ const SEVERITY_COLORS: Record<string, string> = {
     }
     :host-context(html.cs-theme-lcars) .alert-row[data-source="graylog"] .lcars-alert-header { background: #ffcc66; }
     :host-context(html.cs-theme-lcars) .alert-row[data-source="wazuh"]   .lcars-alert-header { background: #99CCFF; }
-    :host-context(html.cs-theme-lcars) .alert-row[data-source="o365"]    .lcars-alert-header { background: #CC99CC; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-source="o365"]    .lcars-alert-header { background: #FFCC99; }
     :host-context(html.cs-theme-lcars) .lah-source { font-size: 12px; }
     :host-context(html.cs-theme-lcars) .lah-dot    { opacity: .5; }
     :host-context(html.cs-theme-lcars) .lah-sev    { font-size: 10px; padding: 1px 6px; border-radius: 2px; background: rgba(0,0,0,.18); }
