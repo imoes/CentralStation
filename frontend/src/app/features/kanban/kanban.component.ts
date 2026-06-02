@@ -27,11 +27,12 @@ const COLUMNS: { id: KanbanStatus; label: string; color: string }[] = [
   { id: 'done',        label: 'Erledigt',    color: '#388e3c' },
 ];
 
+// LCARS-authentic palette — same colors used in Bridge + Dashboard widgets
 const PRIORITY_COLORS: Record<string, string> = {
-  critical: '#d32f2f',
-  high:     '#f57c00',
-  medium:   '#1976d2',
-  low:      '#388e3c',
+  critical: '#CC4444',   // LCARS red
+  high:     '#FF9933',   // Neon Carrot — primary LCARS orange
+  medium:   '#FFCC66',   // Golden Tanoi
+  low:      '#99CCFF',   // Anakiwa blue
 };
 
 @Component({
