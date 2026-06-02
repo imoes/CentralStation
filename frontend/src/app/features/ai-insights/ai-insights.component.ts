@@ -1,7 +1,8 @@
-import { Component, OnInit, OnDestroy, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
+import { ThemeService } from '../../core/services/theme.service';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -59,8 +60,8 @@ const SEVERITY_COLORS: Record<string, string> = {
               <div class="analysis-header">
                 <div class="analysis-meta">
                   <span class="severity-badge"
-                        [style.background-color]="sevColor(analysis.severity_summary) + '22'"
-                        [style.color]="sevColor(analysis.severity_summary)">
+                        [style.background-color]="badgeBg(analysis.severity_summary)"
+                        [style.color]="badgeColor(analysis.severity_summary)">
                     {{ analysis.severity_summary || 'none' }}
                   </span>
                   <span class="run-time">{{ analysis.run_at | date:'dd.MM.yyyy HH:mm' }}</span>
@@ -397,6 +398,7 @@ export class AiInsightsComponent implements OnInit, OnDestroy {
     private snack: MatSnackBar,
     private route: ActivatedRoute,
     private router: Router,
+    private themeSvc: ThemeService,
   ) {}
 
   ngOnInit() {
@@ -443,6 +445,14 @@ export class AiInsightsComponent implements OnInit, OnDestroy {
   sevColor(sev: string): string { return SEVERITY_COLORS[sev] ?? '#9e9e9e'; }
   srcLabel(src: string): string { return SOURCE_LABELS[src] ?? src?.toUpperCase() ?? ''; }
   srcColor(src: string): string { return SOURCE_COLORS[src] ?? '#9e9e9e'; }
+
+  /** In LCARS mode return null so CSS (not inline style) controls the badge color. */
+  badgeBg(sev: string): string | null {
+    return this.themeSvc.theme() === 'lcars' ? null : this.sevColor(sev) + '22';
+  }
+  badgeColor(sev: string): string | null {
+    return this.themeSvc.theme() === 'lcars' ? null : this.sevColor(sev);
+  }
 
   /** Group findings with their matching recommendations.
    *  Matching priority: 1) host appears in rec.action/rationale  2) sequential index fallback */
