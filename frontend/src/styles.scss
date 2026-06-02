@@ -42,6 +42,9 @@ body { margin: 0; font-family: Roboto, "Helvetica Neue", sans-serif; }
 /* Global: Schrift 1px größer — alle rem-Werte skalieren proportional */
 html { font-size: 17px; }
 
+/* LCARS: nochmal 1px größer (Cockpit-Ansicht braucht gut lesbare Schrift) */
+html.cs-theme-lcars { font-size: 18px; }
+
 /* ══════════ Bridge full-screen: hide app chrome while the cockpit is open ══════════ */
 body.bridge-active .sidenav,
 body.bridge-active mat-sidenav { display: none !important; }
