@@ -205,9 +205,10 @@ def _build_ai_summary_text(analysis, findings: list[dict] | None = None, recomme
         parts.append(f"Quellen: {src_text}.")
 
     if hosts:
-        parts.append(f"Betroffene Hosts vollständig: {', '.join(hosts)}.")
-    else:
-        parts.append("Keine passenden Host-Befunde im aktuellen Standort-Scope.")
+        parts.append(f"Betroffene Hosts: {', '.join(hosts[:5])}{'...' if len(hosts) > 5 else ''}.")
+    elif scoped and (analysis.findings or []):
+        # Scope is active AND filtered everything out — tell the user
+        parts.append("Keine Befunde im aktuellen Standort-Scope.")
 
     critical_titles = [
         f.get("title", "").strip()
