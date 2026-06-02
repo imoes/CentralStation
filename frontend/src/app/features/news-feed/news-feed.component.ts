@@ -845,8 +845,8 @@ const SEVERITY_COLOR: Record<string, string> = {
     /* Source-specific header colors */
     :host-context(html.cs-theme-lcars) .feed-card[data-source="graylog"] .lcars-header  { background: #ffcc66; }
     :host-context(html.cs-theme-lcars) .feed-card[data-source="wazuh"]   .lcars-header  { background: #99CCFF; }
-    :host-context(html.cs-theme-lcars) .feed-card[data-source="o365"]    .lcars-header  { background: #CC99CC; }
-    :host-context(html.cs-theme-lcars) .feed-card[data-source="teams"]   .lcars-header  { background: #CC99CC; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-source="o365"]    .lcars-header  { background: #FFCC99; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-source="teams"]   .lcars-header  { background: #FFCC99; }
     /* Header text elements */
     :host-context(html.cs-theme-lcars) .lh-source { font-weight: 900; font-size: 12px; }
     :host-context(html.cs-theme-lcars) .lh-dot    { opacity: .5; }
