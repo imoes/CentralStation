@@ -76,84 +76,101 @@ const SEVERITY_COLORS: Record<string, string> = {
             </mat-card-header>
             <mat-card-content>
               <mat-accordion>
-                @if (analysis.findings?.length) {
+                @if (analysis.findings?.length || analysis.recommendations?.length) {
                   <mat-expansion-panel [expanded]="analysis.id === highlightId()">
                     <mat-expansion-panel-header>
-                      <mat-panel-title>Befunde ({{ analysis.findings.length }})</mat-panel-title>
+                      <mat-panel-title>
+                        Befunde &amp; Empfehlungen
+                        ({{ analysis.findings_count }} / {{ analysis.recommendations_count }})
+                      </mat-panel-title>
                     </mat-expansion-panel-header>
-                    @for (finding of analysis.findings; track $index) {
+
+                    @for (block of buildBlocks(analysis); track $index) {
                       <div class="finding-item">
+                        <!-- ── Finding ── -->
                         <div class="finding-header">
-                          <span class="finding-sev" [style.color]="sevColor(finding.severity)">
-                            [{{ finding.severity | uppercase }}]
+                          <span class="finding-sev" [style.color]="sevColor(block.finding.severity)">
+                            [{{ block.finding.severity | uppercase }}]
                           </span>
-                          @if (finding.source) {
+                          @if (block.finding.source) {
                             <span class="source-badge"
-                              [style.background]="srcColor(finding.source) + '22'"
-                              [style.color]="srcColor(finding.source)">
-                              {{ srcLabel(finding.source) }}
+                              [style.background]="srcColor(block.finding.source) + '22'"
+                              [style.color]="srcColor(block.finding.source)">
+                              {{ srcLabel(block.finding.source) }}
                             </span>
                           }
-                          <span class="finding-title">{{ finding.title }}</span>
-                          @if (finding.location) {
-                            <mat-chip class="location-chip">{{ finding.location }}</mat-chip>
+                          <span class="finding-title">{{ block.finding.title }}</span>
+                          @if (block.finding.location) {
+                            <mat-chip class="location-chip">{{ block.finding.location }}</mat-chip>
                           }
-                          <!-- Link to news feed pre-filtered by source + host -->
                           <button mat-icon-button class="feed-link-btn"
-                            matTooltip="Im News Feed öffnen ({{ srcLabel(finding.source) }}{{ finding.host ? ' · ' + finding.host : '' }})"
-                            (click)="openInFeed(finding)">
+                            matTooltip="Im News Feed öffnen"
+                            (click)="openInFeed(block.finding)">
                             <mat-icon>open_in_new</mat-icon>
                           </button>
                         </div>
-                        @if (finding.host) {
+                        @if (block.finding.host) {
                           <div class="finding-host">
                             <mat-icon class="host-icon">dns</mat-icon>
-                            <button class="host-link" (click)="openInFeedByHost(finding.host)">
-                              {{ finding.host }}
+                            <button class="host-link" (click)="openInFeedByHost(block.finding.host)">
+                              {{ block.finding.host }}
                             </button>
                           </div>
                         }
-                        @if (finding.description) {
-                          <div class="finding-desc">{{ finding.description }}</div>
+                        @if (block.finding.description) {
+                          <div class="finding-desc">{{ block.finding.description }}</div>
                         }
-                      </div>
-                    }
-                  </mat-expansion-panel>
-                }
 
-                @if (analysis.recommendations?.length) {
-                  <mat-expansion-panel>
-                    <mat-expansion-panel-header>
-                      <mat-panel-title>Empfehlungen ({{ analysis.recommendations.length }})</mat-panel-title>
-                    </mat-expansion-panel-header>
-                    @for (rec of analysis.recommendations; track $index) {
-                      <div class="rec-item">
-                        <div class="rec-header">
-                          <span class="rec-prio" [style.color]="sevColor(rec.priority)">
-                            {{ rec.priority }}
-                          </span>
-                          <span class="rec-action">{{ rec.action }}</span>
-                          @if (rec.jira_title) {
-                            <mat-icon class="jira-icon" title="Als Jira-Ticket">link</mat-icon>
-                          }
-                        </div>
-                        <div class="rec-rationale">{{ rec.rationale }}</div>
-                        @if (rec.references?.length) {
-                          <div class="rec-refs">
-                            @for (ref of rec.references; track ref) {
-                              @if (isUrl(ref)) {
-                                <a [href]="ref" target="_blank" rel="noopener" class="ref-link">
-                                  <mat-icon class="ref-icon">open_in_new</mat-icon>{{ refLabel(ref) }}
-                                </a>
-                              } @else {
-                                <span class="ref-text">
-                                  <mat-icon class="ref-icon">menu_book</mat-icon>{{ ref }}
-                                </span>
+                        <!-- ── Matching Recommendations directly below ── -->
+                        @for (rec of block.recs; track $index) {
+                          <div class="rec-inline">
+                            <div class="rec-header">
+                              <mat-icon class="rec-arrow">arrow_forward</mat-icon>
+                              <span class="rec-prio" [style.color]="sevColor(rec.priority)">
+                                {{ rec.priority | uppercase }}
+                              </span>
+                              <span class="rec-action">{{ rec.action }}</span>
+                              @if (rec.jira_title) {
+                                <mat-icon class="jira-icon" title="Als Jira-Ticket">confirmation_number</mat-icon>
                               }
+                            </div>
+                            @if (rec.rationale) {
+                              <div class="rec-rationale">{{ rec.rationale }}</div>
+                            }
+                            @if (rec.references?.length) {
+                              <div class="rec-refs">
+                                @for (ref of rec.references; track ref) {
+                                  @if (isUrl(ref)) {
+                                    <a [href]="ref" target="_blank" rel="noopener" class="ref-link">
+                                      <mat-icon class="ref-icon">open_in_new</mat-icon>{{ refLabel(ref) }}
+                                    </a>
+                                  } @else {
+                                    <span class="ref-text">
+                                      <mat-icon class="ref-icon">menu_book</mat-icon>{{ ref }}
+                                    </span>
+                                  }
+                                }
+                              </div>
                             }
                           </div>
                         }
                       </div>
+                    }
+
+                    <!-- Standalone recommendations with no matching finding -->
+                    @if (unmatchedRecs(analysis).length) {
+                      <div class="unmatched-label">Weitere Empfehlungen</div>
+                      @for (rec of unmatchedRecs(analysis); track $index) {
+                        <div class="rec-item">
+                          <div class="rec-header">
+                            <mat-icon class="rec-arrow">arrow_forward</mat-icon>
+                            <span class="rec-prio" [style.color]="sevColor(rec.priority)">{{ rec.priority | uppercase }}</span>
+                            <span class="rec-action">{{ rec.action }}</span>
+                            @if (rec.jira_title) { <mat-icon class="jira-icon">confirmation_number</mat-icon> }
+                          </div>
+                          @if (rec.rationale) { <div class="rec-rationale">{{ rec.rationale }}</div> }
+                        </div>
+                      }
                     }
                   </mat-expansion-panel>
                 }
@@ -235,14 +252,25 @@ const SEVERITY_COLORS: Record<string, string> = {
       text-decoration: underline dotted;
     }
     .host-link:hover { text-decoration: underline; }
-    .finding-desc { font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-top: 4px; }
-    .rec-item { padding: 10px 0; border-bottom: 1px solid var(--mat-sys-outline-variant); }
-    .rec-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-    .rec-prio { font-weight: 700; font-size: 11px; text-transform: uppercase; min-width: 50px; }
+    .finding-desc { font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-top: 4px; line-height: 1.5; }
+    /* Inline recommendation — visually attached to the finding above */
+    .rec-inline {
+      margin: 8px 0 0 12px;
+      padding: 8px 12px;
+      border-left: 3px solid var(--mat-sys-primary);
+      background: color-mix(in srgb, var(--mat-sys-primary) 6%, transparent);
+      border-radius: 0 6px 6px 0;
+    }
+    .rec-arrow { font-size: 14px; height: 14px; width: 14px; color: var(--mat-sys-primary); flex-shrink: 0; }
+    .unmatched-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--mat-sys-on-surface-variant); padding: 12px 0 4px; }
+    /* Standalone rec (unmatched) */
+    .rec-item { padding: 8px 0; border-bottom: 1px solid var(--mat-sys-outline-variant); }
+    .rec-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+    .rec-prio { font-weight: 700; font-size: 11px; flex-shrink: 0; }
     .rec-action { font-size: 13px; font-weight: 500; flex: 1; }
     .jira-icon { font-size: 14px; width: 14px; height: 14px; color: #0052cc; }
-    .rec-rationale { font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-left: 58px; }
-    .rec-refs { margin-left: 58px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+    .rec-rationale { font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-left: 22px; margin-top: 2px; }
+    .rec-refs { margin-left: 22px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
     .ref-link { font-size: 11px; color: var(--mat-sys-primary); display: flex; align-items: center; gap: 3px; text-decoration: none; }
     .ref-link:hover { text-decoration: underline; }
     .ref-text { font-size: 11px; color: var(--mat-sys-on-surface-variant); display: flex; align-items: center; gap: 3px; }
@@ -316,6 +344,56 @@ export class AiInsightsComponent implements OnInit, OnDestroy {
   sevColor(sev: string): string { return SEVERITY_COLORS[sev] ?? '#9e9e9e'; }
   srcLabel(src: string): string { return SOURCE_LABELS[src] ?? src?.toUpperCase() ?? ''; }
   srcColor(src: string): string { return SOURCE_COLORS[src] ?? '#9e9e9e'; }
+
+  /** Group findings with their matching recommendations.
+   *  Matching priority: 1) host appears in rec.action/rationale  2) sequential index fallback */
+  buildBlocks(analysis: any): Array<{finding: any; recs: any[]}> {
+    const findings: any[] = analysis.findings ?? [];
+    const recs: any[] = analysis.recommendations ?? [];
+    const used = new Set<number>();
+
+    return findings.map((finding, fi) => {
+      const host = (finding.host ?? '').toLowerCase();
+      // 1. Host-match: rec mentions the finding's host
+      let matched: any[] = [];
+      if (host) {
+        recs.forEach((rec, ri) => {
+          if (!used.has(ri)) {
+            const text = ((rec.action ?? '') + ' ' + (rec.rationale ?? '')).toLowerCase();
+            if (text.includes(host)) { matched.push(rec); used.add(ri); }
+          }
+        });
+      }
+      // 2. Index fallback if no host-match: pair rec[fi] with finding[fi]
+      if (!matched.length && fi < recs.length && !used.has(fi)) {
+        matched = [recs[fi]];
+        used.add(fi);
+      }
+      return { finding, recs: matched };
+    });
+  }
+
+  /** Recommendations that were not matched to any finding. */
+  unmatchedRecs(analysis: any): any[] {
+    const findings: any[] = analysis.findings ?? [];
+    const recs: any[] = analysis.recommendations ?? [];
+    const used = new Set<number>();
+    // Re-run the same matching logic to find which are used
+    findings.forEach((finding, fi) => {
+      const host = (finding.host ?? '').toLowerCase();
+      if (host) {
+        recs.forEach((rec, ri) => {
+          if (!used.has(ri)) {
+            const text = ((rec.action ?? '') + ' ' + (rec.rationale ?? '')).toLowerCase();
+            if (text.includes(host)) used.add(ri);
+          }
+        });
+      } else if (fi < recs.length && !used.has(fi)) {
+        used.add(fi);
+      }
+    });
+    return recs.filter((_, ri) => !used.has(ri));
+  }
 
   /** Open news feed filtered by source + severity of this finding. */
   openInFeed(finding: any) {

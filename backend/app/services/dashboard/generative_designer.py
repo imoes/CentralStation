@@ -238,6 +238,26 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
     except Exception as e:
         log.debug("gather_situation: worklist failed: %s", e)
 
+    # Top recommendations from the latest analysis (max 3, sorted by priority).
+    # These were previously invisible to the generative LLM — now passed so the
+    # LLM can align widget selection with the recommended next actions.
+    _SEV_ORDER = ["critical", "high", "medium", "low", "info", "none"]
+    top_recommendations: list[dict] = []
+    try:
+        if analysis and analysis.recommendations:
+            sorted_recs = sorted(
+                analysis.recommendations or [],
+                key=lambda r: _SEV_ORDER.index(r.get("priority", "none"))
+                    if r.get("priority", "none") in _SEV_ORDER else 99
+            )
+            for r in sorted_recs[:3]:
+                top_recommendations.append({
+                    "action": r.get("action", ""),
+                    "priority": r.get("priority", "medium"),
+                })
+    except Exception as e:
+        log.debug("gather_situation: recommendations failed: %s", e)
+
     # CUE production hosts currently in findings/worklist.
     # These are publishing-group systems that need special treatment.
     cue_production_hosts = sorted({
@@ -274,6 +294,7 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
         "forecast_candidates": forecast_candidates,
         "worklist": worklist_items,
         "cue_production_hosts": cue_production_hosts,
+        "top_recommendations": top_recommendations,
     }
 
 
@@ -311,6 +332,9 @@ REGELN:
   Disk/RAM-Werte die NICHT in forecast_candidates stehen. Nur Hosts die aktiv auf
   einen Schwellwert zulaufen rechtfertigen Metrik-Widgets — kein Widget für stabile
   Dauerzustände.
+- top_recommendations sind die aktuell empfohlenen Maßnahmen aus der letzten KI-Analyse.
+  Berücksichtige sie bei der Widget-Wahl: weist eine Empfehlung auf einen spezifischen
+  Host oder Service hin, priorisiere passende list- oder top_hosts-Widgets.
 
 Die "rationale" ist ein LAGE-BRIEFING für den Sysadmin — beschreibe präzise was los ist.
 Pflichtinhalt (sofern Daten vorhanden):
