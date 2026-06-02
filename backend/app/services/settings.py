@@ -15,6 +15,7 @@ class LLMConfig:
     timeout_seconds: int = 120
     api_mode: str = "chat_completions"
     thinking_mode: bool = False
+    thinking_budget: int = 1500
 
     @property
     def is_configured(self) -> bool:

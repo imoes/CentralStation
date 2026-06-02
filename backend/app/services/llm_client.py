@@ -113,7 +113,7 @@ async def generate_text(
             payload["max_tokens"] = max_output_tokens
         if getattr(llm_config, "thinking_mode", False):
             payload["enable_thinking"] = True
-            payload["thinking_budget"] = 512
+            payload["thinking_budget"] = getattr(llm_config, "thinking_budget", 1500)
 
     async with httpx.AsyncClient(timeout=llm_config.timeout_seconds, verify=False) as client:
         response = await client.post(url, headers=headers, json=payload)
