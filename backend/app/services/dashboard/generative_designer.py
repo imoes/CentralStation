@@ -302,56 +302,82 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
 
 _SYSTEM_PROMPT = """Du bist Dashboard-Designer für ein IT-Operations-Cockpit (CentralStation).
 Komponiere ein maßgeschneidertes Dashboard, das die AKTUELLE Lage optimal abbildet.
-Wähle 4–8 Widgets, ihre Anordnung in einem 12-Spalten-Grid und ihre Konfiguration.
+
+GRID-DIMENSIONEN UND FLÄCHENBUDGET:
+Das Dashboard hat 12 Spalten (gs_w 1–12). Jede Höheneinheit (gs_h) = 80px.
+Sichtbarer Viewport ohne Scrollen: ca. 9 Zeilen (720px). Nutze MAXIMAL 18 Zeilen gesamt.
+Gesamt-Flächenbudget: 80–110 Einheiten (gs_w × gs_h summiert über alle Widgets).
+
+Empfohlene Standardgrößen (gs_w × gs_h = Fläche):
+  stat        3×2 =  6   (kleine Zahl, kompakt)
+  donut       4×4 = 16   (Donut-Chart)
+  list        6×5 = 30   (Alert-Liste, braucht Platz)
+  bar         5×4 = 20   (Balkendiagramm)
+  top_hosts   4×4 = 16   (Host-Ranking)
+  ai_summary  6×4 = 24   (KI-Lagebericht)
+  war_room   12×5 = 60   (Blast-Radius, VOLLE BREITE, nur bei critical/high)
+  timeseries  6×6 = 36   (Zeitreihen-Chart, braucht Höhe)
+  forecast    6×6 = 36   (Prognose-Chart, braucht Höhe)
+
+PRÜFUNG vor der Ausgabe:
+✓ Summieren sich gs_w aller Widgets in einer Zeile auf ≤ 12?
+✓ Gesamtfläche aller Widgets ≤ 110 Einheiten?
+✓ Keine Widget-Überlappungen (gs_x + gs_w ≤ 12)?
 
 NUTZE NUR diese Widget-Typen mit exakt diesen config-Schlüsseln:
 - "stat": {"index_pattern":"cs-feed-*","query_string":"<lucene>"}  — eine große Kennzahl
 - "list": {"index_pattern":"cs-feed-*","query_string":"<lucene>","limit":15}  — Alert-Liste
 - "donut": {"index_pattern":"cs-feed-*","query_string":"<lucene>"}  — Severity-Verteilung
-- "bar": {"index_pattern":"cs-feed-*","query_string":"<lucene>","agg_field":"source","limit":10}  — agg_field MUSS einer dieser Werte sein: "source", "severity", "host" (kein "|", kein zusammengesetzter Wert)
+- "bar": {"index_pattern":"cs-feed-*","query_string":"<lucene>","agg_field":"source","limit":10}  — agg_field MUSS einer dieser Werte sein: "source", "severity", "host"
 - "top_hosts": {"index_pattern":"cs-feed-*","query_string":"<lucene>","limit":8}  — Problem-Hosts
 - "ai_summary": {"agent_type":"sysadmin"}  — KI-Lagebericht
-- "war_room": {"agent_type":"sysadmin"}  — Blast-Radius (NUR bei critical/high sinnvoll)
-- "timeseries": {"data_source":"checkmk","host":"<host>","service":"<service>","metric_id":"<metric_id>","hours":4}  — Metrik-Verlauf
+- "war_room": {"agent_type":"sysadmin"}  — Blast-Radius (NUR bei critical/high)
+- "timeseries": {"data_source":"checkmk","host":"<host>","service":"<service>","metric_id":"<metric_id>","hours":4}
 - "forecast": {"host":"<host>","service":"<service>","metric_id":"<metric_id>","history_hours":72,"horizon_hours":24}
 
+DENKPROZESS — überlege VOR der JSON-Ausgabe (kein Output nötig, nur intern):
+1. Was ist das DRINGENDSTE Problem? Welcher Widget-Typ zeigt es am deutlichsten?
+2. Was ERGÄNZT die Hauptaussage sinnvoll? (max. 2 Ergänzungen)
+3. Gibt es forecast_candidates? → forecast-Widget PFLICHT, zähle zur Fläche.
+4. Wieviel Fläche kostet mein Plan? Passe Größen an bis Budget ≤ 110 stimmt.
+5. Prüfe Zeilensummen: jede Zeile darf gs_w-Summe = 12 nicht überschreiten.
+
 REGELN:
-- Lucene query_string: z.B. "severity:critical AND NOT status:resolved". Standard immer "NOT status:resolved" anhängen.
-- WICHTIG: Wenn in forecast_candidates ein Host auf einen Schwellwert zuläuft, MUSST du ein "forecast"-Widget
-  mit EXAKT dessen host/service/metric_id einfügen — kopiere diese Werte unverändert. Erfinde keine metric_ids.
-- Für "timeseries" nur Einträge aus der vitals-Liste verwenden — kopiere host, service UND metric_id unverändert.
-- Bei hohem Ressourcendruck (vitals) ein timeseries-Widget für den Druck-Host.
-- Bei critical/high: ai_summary und/oder war_room prominent oben platzieren.
-- Bei ruhiger Lage: kompakteres Dashboard (Counts + Liste + Donut), keine Forecasts erzwingen.
-- Gruppiere thematisch; nutze die volle Breite (gs_w summiert sich pro Zeile zu 12).
-- CUE-Produktionshosts: Wenn cue_production_hosts gefüllt ist, sind das kritische
-  Produktionssysteme der Verlagsgruppe. Events auf diesen Hosts MÜSSEN im Lagebild
-  prominent erscheinen und werden bevorzugt in list/top_hosts/war_room-Widgets gezeigt.
-  Nenne diese Hosts namentlich in der Rationale.
-- Stabile Metriken ignorieren: Erstelle KEINE timeseries- oder forecast-Widgets für
-  Disk/RAM-Werte die NICHT in forecast_candidates stehen. Nur Hosts die aktiv auf
-  einen Schwellwert zulaufen rechtfertigen Metrik-Widgets — kein Widget für stabile
-  Dauerzustände.
-- top_recommendations sind die aktuell empfohlenen Maßnahmen aus der letzten KI-Analyse.
-  Berücksichtige sie bei der Widget-Wahl: weist eine Empfehlung auf einen spezifischen
-  Host oder Service hin, priorisiere passende list- oder top_hosts-Widgets.
+- Lucene query_string: Standard immer "NOT status:resolved" anhängen.
+- WICHTIG: forecast_candidates → forecast-Widget mit EXAKT deren host/service/metric_id.
+- Für "timeseries" nur vitals-Einträge verwenden — host, service, metric_id unverändert kopieren.
+- Bei critical/high: ai_summary und/oder war_room oben platzieren.
+- Bei ruhiger Lage: kompakteres Dashboard (Counts + Liste + Donut).
+- CUE-Produktionshosts: Wenn cue_production_hosts gefüllt, MÜSSEN diese prominent erscheinen.
+- Stabile Metriken ignorieren: KEINE timeseries/forecast für Disk/RAM außerhalb forecast_candidates.
+- top_recommendations: Empfehlungen auf spezifische Hosts → passende list/top_hosts priorisieren.
 
-Die "rationale" ist ein LAGE-BRIEFING für den Sysadmin — beschreibe präzise was los ist.
-Pflichtinhalt (sofern Daten vorhanden):
-- Konkrete Severity/Anzahl der offenen Alerts (z.B. "2 critical, 5 high")
-- Namentlich die 2-4 wichtigsten betroffenen Hosts mit dem jeweiligen Problem
-- Quantitative Metrik-Werte: RAM/Disk-Auslastung in % + ETA bis Schwellwert für Forecast-Kandidaten
-- CPU-Last auf auffälligen Hosts falls vorhanden
-NICHT beschreiben, welche Widgets gewählt wurden oder wie das Layout aussieht. KEINE Widget-Typnamen.
-Maximal 4 präzise Sätze. Lieber kürzer als ausschweifend — nur die dringenden Facts.
+Die "rationale" ist ein präzises LAGE-BRIEFING:
+- Severity/Anzahl (z.B. "3 critical, 8 high")
+- 2–4 wichtigste Hosts mit Problem
+- Metrik-Werte mit ETA für Forecast-Kandidaten
+KEINE Widget-Namen. Maximal 4 Sätze.
 
-Antworte AUSSCHLIESSLICH mit JSON in genau dieser Form (keine Erklärung außerhalb):
-{"rationale":"<2-3 Sätze Lage-Briefing: was ist los, was ist kritisch, worauf achten>",
+Antworte AUSSCHLIESSLICH mit JSON:
+{"rationale":"<Lage-Briefing>",
  "widgets":[{"type":"...","title":"...","gs_x":0,"gs_y":0,"gs_w":4,"gs_h":3,"config":{...}}]}"""
 
 
+_THINK_RE = _re.compile(r'<think>.*?</think>', _re.DOTALL | _re.IGNORECASE)
+
+
+def _strip_thinking(text: str) -> str:
+    """Remove Qwen3 <think>...</think> blocks before JSON parsing."""
+    return _THINK_RE.sub('', text).strip()
+
+
 async def _ask_llm(db: Any, situation: dict) -> dict | None:
-    """One LLM call → parsed {rationale, widgets}. Returns None on any failure."""
+    """One LLM call → parsed {rationale, widgets}. Returns None on any failure.
+
+    Enables Qwen3 thinking mode (enable_thinking=True, budget=1500) so the model
+    reasons about widget selection before emitting JSON. Thinking output is stripped
+    before parsing so _parse_json only sees clean JSON.
+    """
     from app.services.settings import get_llm_config
     from app.services.llm_client import generate_text, LLMInvocationError
 
@@ -359,6 +385,11 @@ async def _ask_llm(db: Any, situation: dict) -> dict | None:
     if not llm_cfg.is_configured:
         log.info("generative_designer: no LLM configured → fallback")
         return None
+
+    # Enable reasoning: Qwen3 thinking mode for more deliberate widget selection.
+    # thinking_budget=1500 gives enough tokens to reason about grid layout and
+    # widget priority without excessive latency.
+    llm_cfg.thinking_mode = True
 
     user_msg = "Aktuelle Lage:\n" + json.dumps(situation, ensure_ascii=False, indent=0)
     try:
@@ -369,8 +400,7 @@ async def _ask_llm(db: Any, situation: dict) -> dict | None:
                 {"role": "user", "content": user_msg},
             ],
             temperature=0.3,
-            reasoning_effort="low",
-            max_output_tokens=2000,
+            max_output_tokens=3500,   # extra room for thinking tokens + JSON output
         )
     except LLMInvocationError as e:
         log.warning("generative_designer: LLM call failed: %s", e)
@@ -379,9 +409,13 @@ async def _ask_llm(db: Any, situation: dict) -> dict | None:
         log.warning("generative_designer: LLM error: %s", e)
         return None
 
-    parsed = _parse_json(raw)
+    # Strip <think>…</think> blocks before parsing — they're internal reasoning only
+    clean = _strip_thinking(raw)
+    log.debug("generative_designer: raw len=%d clean len=%d", len(raw), len(clean))
+
+    parsed = _parse_json(clean)
     if not parsed or not isinstance(parsed.get("widgets"), list):
-        log.warning("generative_designer: LLM returned no usable widgets")
+        log.warning("generative_designer: LLM returned no usable widgets (raw[:200]=%s)", raw[:200])
         return None
     return parsed
 
@@ -501,7 +535,22 @@ def _validate_widgets(raw_widgets: list, situation: dict) -> list[dict]:
 
         clean.append({"widget_type": wtype, "title": title, "config": cfg})
 
-    return clean[:8]
+    # Enforce area budget: greedily add widgets until budget is exhausted.
+    # war_room (full-width 12×5=60) counts once and sits in its own row.
+    # Budget 110 units fits ~4–6 typical widgets comfortably without overflow.
+    _AREA_BUDGET = 110
+    budgeted: list[dict] = []
+    area_used = 0
+    for spec in clean[:8]:
+        w_size, h_size = _DEFAULT_SIZE.get(spec["widget_type"], (4, 3))
+        area = w_size * h_size
+        if area_used + area <= _AREA_BUDGET + 20:  # +20 slack for last widget
+            budgeted.append(spec)
+            area_used += area
+        else:
+            log.debug("generative_designer: dropping %s (area=%d, used=%d > budget=%d)",
+                      spec["widget_type"], area, area_used, _AREA_BUDGET)
+    return budgeted
 
 
 def _pack_grid(specs: list[dict]) -> list[dict]:
