@@ -321,11 +321,21 @@ const SEVERITY_COLORS: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .analysis-card[data-severity="critical"] mat-card-header { background: #CC4444; }
     :host-context(html.cs-theme-lcars) .analysis-card[data-severity="medium"]   mat-card-header { background: #FFCC66; }
     :host-context(html.cs-theme-lcars) .analysis-card[data-severity="low"]      mat-card-header { background: #99CCFF; }
-    :host-context(html.cs-theme-lcars) .analysis-header { color: #000; }
-    :host-context(html.cs-theme-lcars) .severity-badge { border-radius: 3px; font-size: 11px; background: rgba(0,0,0,.2) !important; color: #000 !important; }
-    :host-context(html.cs-theme-lcars) .run-time { color: rgba(0,0,0,.6); }
-    :host-context(html.cs-theme-lcars) .analysis-counts { color: rgba(0,0,0,.7); font-weight: 700; }
-    :host-context(html.cs-theme-lcars) .jira-count { color: #000; }
+    /* Force ALL text inside the header to black — inline styles cannot override filter */
+    :host-context(html.cs-theme-lcars) mat-card-header,
+    :host-context(html.cs-theme-lcars) mat-card-header .analysis-header,
+    :host-context(html.cs-theme-lcars) mat-card-header .analysis-meta,
+    :host-context(html.cs-theme-lcars) mat-card-header .analysis-counts,
+    :host-context(html.cs-theme-lcars) mat-card-header span,
+    :host-context(html.cs-theme-lcars) mat-card-header .run-time,
+    :host-context(html.cs-theme-lcars) mat-card-header .jira-count { color: #000 !important; }
+    /* severity-badge: dark pill with black text regardless of inline color */
+    :host-context(html.cs-theme-lcars) .severity-badge {
+      border-radius: 3px; font-size: 11px; font-weight: 900;
+      background: rgba(0,0,0,.22) !important;
+      color: #000 !important;
+      filter: none !important;
+    }
     :host-context(html.cs-theme-lcars) .agent-chip {
       --mdc-chip-container-color: #000 !important;
       --mdc-chip-label-text-color: #FF9933 !important;
