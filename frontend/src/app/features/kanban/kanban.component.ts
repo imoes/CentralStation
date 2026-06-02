@@ -136,10 +136,11 @@ const PRIORITY_COLORS: Record<string, string> = {
     }
     :host-context(:not(html.cs-theme-lcars)) .col-title { font-weight: 600; font-size: 13px; text-transform: none; letter-spacing: 0; }
     .col-count {
-      background: rgba(0,0,0,.2); border-radius: 10px; padding: 1px 7px;
-      font-size: 11px; font-weight: 700;
+      background: rgba(0,0,0,.25); color: #000;
+      border-radius: 10px; padding: 1px 7px; font-size: 11px; font-weight: 900;
     }
-    :host-context(:not(html.cs-theme-lcars)) .col-count { background: var(--mat-sys-surface-variant); }
+    :host-context(html.cs-theme-lcars) .col-count { background: #000; color: #FF9933; }
+    :host-context(:not(html.cs-theme-lcars)) .col-count { background: var(--mat-sys-surface-variant); color: var(--mat-sys-on-surface-variant); }
     .column-drop-zone {
       min-height: 200px; padding: 8px;
       background: var(--mat-sys-surface-container-low);
