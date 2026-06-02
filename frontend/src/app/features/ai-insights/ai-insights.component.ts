@@ -20,8 +20,8 @@ const SOURCE_LABELS: Record<string, string> = {
   checkmk: 'CheckMK', graylog: 'Graylog', wazuh: 'Wazuh', o365: 'E-Mail', teams: 'Teams',
 };
 const SOURCE_COLORS: Record<string, string> = {
-  checkmk: '#e87c3a', graylog: '#ffcc66', wazuh: '#7fb3d3',
-  o365: '#c99aa4', teams: '#c99aa4',
+  checkmk: '#FF9933', graylog: '#ffcc66', wazuh: '#99CCFF',
+  o365: '#CC99CC', teams: '#CC99CC',
 };
 
 const SEVERITY_COLORS: Record<string, string> = {

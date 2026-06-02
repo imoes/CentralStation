@@ -90,12 +90,12 @@ html.cs-theme-lcars {
   --mat-sys-surface-variant: #1e1710;
   --mat-sys-on-surface: #ffe8a0;           /* gold/cream text */
   --mat-sys-on-surface-variant: #e8a060;   /* amber text */
-  --mat-sys-primary: #e87c3a;              /* LCARS orange (structural) */
+  --mat-sys-primary: #FF9933;              /* Neon Carrot — official LCARS orange */
   --mat-sys-on-primary: #000000;
   --mat-sys-primary-container: #4a2010;
   --mat-sys-on-primary-container: #ffe8a0;
   --mat-sys-secondary: #ffcc66;            /* gold (buttons/labels) */
-  --mat-sys-tertiary: #7fb3d3;             /* blue accent (very limited) */
+  --mat-sys-tertiary: #99CCFF;             /* blue accent (very limited) */
   --mat-sys-outline: #5a3a18;
   --mat-sys-outline-variant: #3a2810;
   --mat-sys-error: #ff4433;
@@ -137,17 +137,17 @@ html.cs-theme-lcars {
   --mdc-plain-tooltip-supporting-text-color: #000;
   /* ── Buttons (the most-missed token set) ── */
   /* mat-raised-button / mat-flat-button color="primary" */
-  --mdc-protected-button-container-color: #e87c3a;
+  --mdc-protected-button-container-color: #FF9933;
   --mdc-protected-button-label-text-color: #000000;
   --mdc-protected-button-disabled-container-color: #3a2810;
   --mdc-protected-button-disabled-label-text-color: #5a3a18;
-  --mdc-filled-button-container-color: #e87c3a;
+  --mdc-filled-button-container-color: #FF9933;
   --mdc-filled-button-label-text-color: #000000;
   --mdc-filled-button-disabled-container-color: #3a2810;
   --mdc-filled-button-disabled-label-text-color: #5a3a18;
   /* mat-stroked-button / mat-outlined-button */
   --mdc-outlined-button-label-text-color: #e8a060;
-  --mdc-outlined-button-outline-color: #e87c3a;
+  --mdc-outlined-button-outline-color: #FF9933;
   --mdc-outlined-button-disabled-label-text-color: #5a3a18;
   --mdc-outlined-button-disabled-outline-color: #3a2810;
   /* mat-button (text only) */
@@ -155,7 +155,7 @@ html.cs-theme-lcars {
   --mdc-text-button-disabled-label-text-color: #5a3a18;
   /* Default raised button (no color) */
   --mat-protected-button-container-color: #1e1710;
-  --mat-protected-button-state-layer-color: #e87c3a;
+  --mat-protected-button-state-layer-color: #FF9933;
 }
 
 /* Global cascade: any text not covered by tokens gets gold on black */
@@ -178,7 +178,7 @@ html.cs-theme-lcars button.mat-mdc-raised-button.mat-primary,
 html.cs-theme-lcars button.mat-mdc-raised-button[color="primary"],
 html.cs-theme-lcars button.mat-mdc-unelevated-button.mat-primary,
 html.cs-theme-lcars button.mat-mdc-unelevated-button[color="primary"] {
-  background-color: #e87c3a !important;
+  background-color: #FF9933 !important;
 }
 html.cs-theme-lcars button.mat-mdc-raised-button.mat-primary .mdc-button__label,
 html.cs-theme-lcars button.mat-mdc-raised-button[color="primary"] .mdc-button__label,
@@ -203,10 +203,12 @@ html.cs-theme-lcars button.mat-mdc-raised-button:not(.mat-primary):not([color]) 
    clipping of the first header characters). The ::before gold rail used to
    overlap the header and clip the first letter — removed. */
 cs-dashboard-widget .widget-card.lcars-widget {
-  background: #15120c !important;
+  background: #000 !important;
   border: 0 !important;
-  border-left: 8px solid #e87c3a !important;
-  border-radius: 0 14px 14px 0 !important;   /* rounded right, flat left */
+  /* Authentic LCARS elbow: border-left width matches border-radius so the
+     rounded corner arc exactly traces the left edge — no text clipping. */
+  border-left: 22px solid #FF9933 !important;
+  border-radius: 22px 8px 8px 22px !important;
   box-shadow: none !important;
   position: relative;
   overflow: hidden !important;
@@ -220,19 +222,19 @@ cs-dashboard-widget .widget-card.lcars-widget::after {
   top: 0;
   width: min(28%, 140px);
   height: 6px;
-  background: #7fb3d3;
+  background: #99CCFF;
   border-radius: 0 14px 0 0;
   pointer-events: none;
   z-index: 3;
 }
 cs-dashboard-widget .widget-card.lcars-widget.edit-mode {
   border-left-color: #ffcc66 !important;
-  outline: 2px solid #7fb3d3 !important;
+  outline: 2px solid #99CCFF !important;
   outline-offset: 2px;
 }
 cs-dashboard-widget .widget-card.lcars-widget .widget-header {
   min-height: 42px;
-  background: #e87c3a;
+  background: #FF9933;
   color: #000;
   padding: 7px 16px;
   border-radius: 0;
@@ -282,12 +284,12 @@ cs-dashboard-widget .widget-card.lcars-widget .wr-section-label {
   color: #ffcc66 !important;
 }
 cs-dashboard-widget .widget-card.lcars-widget .empty { color: #5a3a18 !important; }
-cs-dashboard-widget .widget-card.lcars-widget .loading mat-spinner { --mdc-circular-progress-active-indicator-color: #e87c3a; }
+cs-dashboard-widget .widget-card.lcars-widget .loading mat-spinner { --mdc-circular-progress-active-indicator-color: #FF9933; }
 cs-dashboard-widget .widget-card.lcars-widget .clickable:hover { background: rgba(232,124,58,.14) !important; }
 cs-dashboard-widget .widget-card.lcars-widget .host-row,
 cs-dashboard-widget .widget-card.lcars-widget .wr-finding {
   background: #1e1710 !important;
-  border-left: 3px solid #e87c3a;
+  border-left: 3px solid #FF9933;
   border-radius: 0 8px 8px 0;
 }
 cs-dashboard-widget .widget-card.lcars-widget .host-count {
@@ -298,7 +300,7 @@ cs-dashboard-widget .widget-card.lcars-widget .finding-arrow,
 cs-dashboard-widget .widget-card.lcars-widget .wr-host,
 cs-dashboard-widget .widget-card.lcars-widget .wr-jira-btn,
 cs-dashboard-widget .widget-card.lcars-widget .pin-btn {
-  color: #e87c3a !important;
+  color: #FF9933 !important;
 }
 cs-dashboard-widget .widget-card.lcars-widget .wr-quiet { color: #66aa66 !important; }
 cs-dashboard-widget .widget-card.lcars-widget .wr-desc,
@@ -312,32 +314,30 @@ cs-dashboard-widget .widget-card.lcars-widget .wr-finding-body span,
 cs-dashboard-widget .widget-card.lcars-widget .wr-blast span {
   text-shadow: none;
 }
+/* Official LCARS palette cycling: Neon Carrot / Golden Tanoi / Anakiwa / Lilac */
 .grid-stack-item:nth-child(4n + 1) cs-dashboard-widget .widget-card.lcars-widget {
-  border-left-color: #ff9966 !important;
+  border-left-color: #FF9933 !important; /* Neon Carrot */
 }
 .grid-stack-item:nth-child(4n + 1) cs-dashboard-widget .widget-card.lcars-widget .widget-header {
-  background: #ff9966 !important;
+  background: #FF9933 !important;
 }
 .grid-stack-item:nth-child(4n + 2) cs-dashboard-widget .widget-card.lcars-widget {
-  border-left-color: #ffcc66 !important;
+  border-left-color: #FFCC66 !important; /* Golden Tanoi */
 }
-.grid-stack-item:nth-child(4n + 2) cs-dashboard-widget .widget-card.lcars-widget .widget-header,
-.grid-stack-item:nth-child(4n + 2) cs-dashboard-widget .widget-card.lcars-widget::before {
-  background: #ffcc66 !important;
+.grid-stack-item:nth-child(4n + 2) cs-dashboard-widget .widget-card.lcars-widget .widget-header {
+  background: #FFCC66 !important;
 }
 .grid-stack-item:nth-child(4n + 3) cs-dashboard-widget .widget-card.lcars-widget {
-  border-left-color: #7fb3d3 !important;
+  border-left-color: #99CCFF !important; /* Anakiwa */
 }
-.grid-stack-item:nth-child(4n + 3) cs-dashboard-widget .widget-card.lcars-widget .widget-header,
-.grid-stack-item:nth-child(4n + 3) cs-dashboard-widget .widget-card.lcars-widget::before {
-  background: #7fb3d3 !important;
+.grid-stack-item:nth-child(4n + 3) cs-dashboard-widget .widget-card.lcars-widget .widget-header {
+  background: #99CCFF !important;
 }
 .grid-stack-item:nth-child(4n) cs-dashboard-widget .widget-card.lcars-widget {
-  border-left-color: #c99aa4 !important;
+  border-left-color: #CC99CC !important; /* Lilac */
 }
-.grid-stack-item:nth-child(4n) cs-dashboard-widget .widget-card.lcars-widget .widget-header,
-.grid-stack-item:nth-child(4n) cs-dashboard-widget .widget-card.lcars-widget::before {
-  background: #c99aa4 !important;
+.grid-stack-item:nth-child(4n) cs-dashboard-widget .widget-card.lcars-widget .widget-header {
+  background: #CC99CC !important;
 }
 
 /* ── Holo: same full token set ── */

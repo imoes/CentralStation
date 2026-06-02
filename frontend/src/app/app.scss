@@ -86,22 +86,22 @@ mat-sidenav-content { background: var(--mat-sys-surface); }
 html.cs-theme-lcars .sidenav {
   background: #000 !important;
   color: #ffcc99;
-  border-right: 6px solid #e87c3a;
+  border-right: 6px solid #FF9933;
 
-  .sidenav-header { background: #000; border-bottom: 6px solid #15120c; color: #ff9966; }
+  .sidenav-header { background: #000; border-bottom: 6px solid #15120c; color: #FF9933; }
   .nav-toggle { color: #ffcc66; }
-  .brand-icon { color: #ff9966; }
+  .brand-icon { color: #FF9933; }
 
   a[mat-list-item] {
     color: #ffcc99 !important;
     --mdc-list-list-item-label-text-color: #ffcc99;
-    --mdc-list-list-item-leading-icon-color: #ff9966;
+    --mdc-list-list-item-leading-icon-color: #FF9933;
   }
   a[mat-list-item]:hover { background: #15120c; }
   a.active {
     background: #5a220f !important;
     color: #ffcc99 !important;
-    border-left: 18px solid #ff9966;
+    border-left: 18px solid #FF9933;
     --mdc-list-list-item-label-text-color: #ffcc99;
     --mdc-list-list-item-leading-icon-color: #ffcc66;
   }

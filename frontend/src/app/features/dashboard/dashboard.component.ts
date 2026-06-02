@@ -242,13 +242,13 @@ import { WebsocketService } from '../../core/services/websocket.service';
     }
     .hero > div:first-child {
       background: #000;
-      color: #ff9966;
+      color: #FF9933;
       border-radius: 44px 0 0 0;
       padding: 18px 24px 12px 74px;
       position: relative;
       min-width: 0;
-      border-top: 18px solid #ff9966;
-      border-left: 36px solid #ff9966;
+      border-top: 18px solid #FF9933;
+      border-left: 36px solid #FF9933;
       border-bottom: 12px solid #ffcc66;
     }
     .hero > div:first-child::before {
@@ -258,7 +258,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
       top: -18px;
       width: 36px;
       height: calc(100% + 30px);
-      background: #ff9966;
+      background: #FF9933;
       border-radius: 44px 0 0 0;
       pointer-events: none;   /* must not intercept clicks below the hero */
     }
@@ -269,13 +269,13 @@ import { WebsocketService } from '../../core/services/websocket.service';
       top: -18px;
       width: 132px;
       height: 18px;
-      background: #ff9966;
+      background: #FF9933;
       border-radius: 0 12px 12px 0;
       pointer-events: none;
     }
     .eyebrow {
       margin: 0 0 6px;
-      color: #ff9966;
+      color: #FF9933;
       font-size: 11px;
       font-weight: 800;
       letter-spacing: .22em;
@@ -313,8 +313,8 @@ import { WebsocketService } from '../../core/services/websocket.service';
       color: #ffcc99;
       padding: 12px 18px;
       min-width: 0;
-      border-top: 18px solid #7fb3d3;
-      border-bottom: 12px solid #7fb3d3;
+      border-top: 18px solid #99CCFF;
+      border-bottom: 12px solid #99CCFF;
     }
     .hero::after {
       content: '';
@@ -326,9 +326,9 @@ import { WebsocketService } from '../../core/services/websocket.service';
       border-radius: 0 44px 0 0;
     }
     .hero-actions button {
-      background: #ff9966 !important;
+      background: #FF9933 !important;
       color: #000 !important;
-      border-color: #ff9966 !important;
+      border-color: #FF9933 !important;
       border-radius: 20px;
       font-weight: 900;
     }
@@ -338,14 +338,14 @@ import { WebsocketService } from '../../core/services/websocket.service';
       --mat-form-field-container-text-color: #ffcc99;
       --mat-form-field-label-text-color: #ffcc66;
       --mat-select-enabled-trigger-text-color: #ffcc99;
-      --mdc-outlined-text-field-outline-color: #ff9966;
+      --mdc-outlined-text-field-outline-color: #FF9933;
       --mdc-outlined-text-field-label-text-color: #ffcc66;
       --mdc-outlined-text-field-input-text-color: #ffcc99;
     }
     /* Generative toggle: gold when active; explicit text for inactive (Classic = dark, LCARS/Holo = theme) */
     .generative-active { background: #ffcc66 !important; color: #000 !important; border-color: #ffcc66 !important; }
     .mode-klassisch { color: var(--mat-sys-on-surface) !important; border-color: var(--mat-sys-outline) !important; }
-    :host-context(html.cs-theme-lcars) .mode-klassisch { color: #e8a060 !important; border-color: #e87c3a !important; }
+    :host-context(html.cs-theme-lcars) .mode-klassisch { color: #e8a060 !important; border-color: #FF9933 !important; }
     :host-context(html.cs-theme-holo) .mode-klassisch { color: #8fb8cf !important; border-color: rgba(79,214,255,.5) !important; }
     /* War Room Overlay */
     .war-room-overlay { position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; padding-top: 80px; animation: fadeIn .25s ease; }
@@ -428,7 +428,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
     .gen-rationale.collapsed { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     .gen-why { font-size: 11px; min-height: 26px; line-height: 26px; padding: 0; color: #ffcc66; margin-top: 4px; display: inline-block; }
     .gen-banner button[color="primary"] {
-      background: #e87c3a !important;
+      background: #FF9933 !important;
       color: #000 !important;
       border-radius: 14px;
       font-size: 12px;

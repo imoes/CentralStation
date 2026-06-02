@@ -264,7 +264,7 @@ const SEVERITY_COLORS: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .alert-row {
       background: #15120c;
       border: none;
-      border-left: 8px solid #e87c3a;
+      border-left: 8px solid #FF9933;
       border-radius: 0 14px 14px 0;
       box-shadow: none;
       overflow: hidden;
@@ -272,9 +272,9 @@ const SEVERITY_COLORS: Record<string, string> = {
     /* severity → left border color (same as news feed) */
     :host-context(html.cs-theme-lcars) .alert-row[data-severity="critical"] { border-left-color: #ff5544; }
     :host-context(html.cs-theme-lcars) .alert-row[data-severity="high"]     { border-left-color: #ffcc00; }
-    :host-context(html.cs-theme-lcars) .alert-row[data-severity="medium"]   { border-left-color: #ff9966; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-severity="medium"]   { border-left-color: #FF9933; }
     :host-context(html.cs-theme-lcars) .alert-row[data-severity="warning"]  { border-left-color: #ffcc00; }
-    :host-context(html.cs-theme-lcars) .alert-row[data-severity="low"]      { border-left-color: #7fb3d3; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-severity="low"]      { border-left-color: #99CCFF; }
     :host-context(html.cs-theme-lcars) .alert-row[data-severity="info"]     { border-left-color: #66cc66; }
     /* hide the 4px severity-bar (replaced by border-left) */
     /* LCARS header: hidden by default */
@@ -284,7 +284,7 @@ const SEVERITY_COLORS: Record<string, string> = {
     /* Show LCARS plain-text header, hide chip-based alert-top */
     :host-context(html.cs-theme-lcars) .lcars-alert-header {
       display: flex; align-items: center; gap: 6px;
-      background: #e87c3a;   /* default: checkmk orange */
+      background: #FF9933;   /* default: checkmk orange */
       padding: 7px 14px;
       border-radius: 0 13px 0 0;
       font-family: 'Antonio','Eurostile','Roboto Condensed',sans-serif;
@@ -292,8 +292,8 @@ const SEVERITY_COLORS: Record<string, string> = {
       color: #000; flex-shrink: 0;
     }
     :host-context(html.cs-theme-lcars) .alert-row[data-source="graylog"] .lcars-alert-header { background: #ffcc66; }
-    :host-context(html.cs-theme-lcars) .alert-row[data-source="wazuh"]   .lcars-alert-header { background: #7fb3d3; }
-    :host-context(html.cs-theme-lcars) .alert-row[data-source="o365"]    .lcars-alert-header { background: #c99aa4; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-source="wazuh"]   .lcars-alert-header { background: #99CCFF; }
+    :host-context(html.cs-theme-lcars) .alert-row[data-source="o365"]    .lcars-alert-header { background: #CC99CC; }
     :host-context(html.cs-theme-lcars) .lah-source { font-size: 12px; }
     :host-context(html.cs-theme-lcars) .lah-dot    { opacity: .5; }
     :host-context(html.cs-theme-lcars) .lah-sev    { font-size: 10px; padding: 1px 6px; border-radius: 2px; background: rgba(0,0,0,.18); }
@@ -316,17 +316,17 @@ const SEVERITY_COLORS: Record<string, string> = {
       border-top: 1px solid #2a1d0a; background: #0a0804;
     }
     :host-context(html.cs-theme-lcars) .ai-insight {
-      background: rgba(232,124,58,.1); border-left: 3px solid #e87c3a;
+      background: rgba(232,124,58,.1); border-left: 3px solid #FF9933;
       color: #ffcc99; margin: 6px 0 4px; border-radius: 0;
     }
-    :host-context(html.cs-theme-lcars) .ai-insight-icon { color: #e87c3a; }
+    :host-context(html.cs-theme-lcars) .ai-insight-icon { color: #FF9933; }
     :host-context(html.cs-theme-lcars) .alert-meta { color: rgba(255,232,160,.45); font-size: 10px; padding: 0 14px 4px; }
     :host-context(html.cs-theme-lcars) .ai-insight { margin: 0 14px 4px; }
-    :host-context(html.cs-theme-lcars) .ki-btn { color: #e87c3a !important; }
+    :host-context(html.cs-theme-lcars) .ki-btn { color: #FF9933 !important; }
     :host-context(html.cs-theme-lcars) .alert-actions { background: #0a0804; border-left: 1px solid #2a1d0a; }
     :host-context(html.cs-theme-lcars) .ack-icon { color: #66cc66; }
     :host-context(html.cs-theme-lcars) .empty-state { color: #5a3a18; }
-    :host-context(html.cs-theme-lcars) .spinner-center mat-spinner { --mdc-circular-progress-active-indicator-color: #e87c3a; }
+    :host-context(html.cs-theme-lcars) .spinner-center mat-spinner { --mdc-circular-progress-active-indicator-color: #FF9933; }
 
     /* ══ HOLO THEME ══════════════════════════════════════════════════════════ */
     :host-context(html.cs-theme-holo) .page-header h2 { color: #9fe8ff; font-size: 18px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
