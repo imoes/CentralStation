@@ -515,6 +515,20 @@ async def run_aggregation(db: AsyncSession) -> int:
         except Exception as exc:
             log.warning("OpenSearch indexing failed (non-fatal): %s", exc)
 
+        # Correlate new alerts into Incidents (best-effort, non-blocking)
+        try:
+            import asyncio as _asyncio
+            from app.core.database import AsyncSessionLocal as _ASL
+            from app.services.incident.correlator import correlate_docs
+
+            async def _do_correlate(d: list[dict]) -> None:
+                async with _ASL() as s:
+                    await correlate_docs(d, s)
+
+            _asyncio.create_task(_do_correlate(docs))
+        except Exception as exc:
+            log.debug("Could not schedule incident correlation: %s", exc)
+
         # Enrich new alerts with AI insight in the background (best-effort, only if auto_enrich=true)
         try:
             import asyncio

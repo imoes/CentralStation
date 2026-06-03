@@ -157,7 +157,24 @@ async def collect_data(state: dict, db: Any) -> dict:
         "collect_data: %d open alerts (look_back=%dh, min_age=%dmin)",
         len(raw_alerts), look_back_hours, min_age_minutes,
     )
-    return {**state, "raw_alerts": raw_alerts}
+
+    # Load past incidents for all unique hosts in this batch
+    past_incidents: list[dict] = []
+    try:
+        from app.services.ai_agent.past_incidents import find_similar_incidents
+        seen_hosts: set[str] = set()
+        for a in raw_alerts:
+            h = a.get("host") or a.get("metadata", {}).get("host", "")
+            if h and h not in seen_hosts:
+                seen_hosts.add(h)
+                inc = await find_similar_incidents(h, db, limit=2)
+                past_incidents.extend(inc)
+                if len(past_incidents) >= 6:
+                    break
+    except Exception as e:
+        log.debug("collect_data: past_incidents lookup failed: %s", e)
+
+    return {**state, "raw_alerts": raw_alerts, "past_incidents": past_incidents}
 
 
 # ─────────────────────────────────────────────────
@@ -435,10 +452,22 @@ async def analyze(state: dict, llm_config: Any) -> dict:
     except Exception as e:
         log.debug("analyze: blast_radius failed: %s", e)
 
+    # ── Past-Incidents context ─────────────────────────────────────────────────
+    past_text = ""
+    try:
+        from app.services.ai_agent.past_incidents import format_past_incidents_for_llm
+        past_incidents = state.get("past_incidents", [])
+        if past_incidents:
+            past_text = "\n\n" + format_past_incidents_for_llm(past_incidents)
+    except Exception as e:
+        log.debug("analyze: past_incidents format failed: %s", e)
+
     user_content = f"IT-Ereignisse der letzten Stunde:\n{alerts_text}"
     if all_hosts:
         user_content += "\n\nBetroffene Hosts vollständig:\n" + ", ".join(all_hosts)
         user_content += "\n\nWichtig: Jeder Host aus dieser vollständigen Liste muss im Ergebnis namentlich auftauchen."
+    if past_text:
+        user_content += past_text
     if blast_text:
         user_content += blast_text
     if kb_text:

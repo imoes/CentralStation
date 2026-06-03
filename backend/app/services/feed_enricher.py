@@ -32,7 +32,11 @@ _EXPLAIN_SYSTEM_PROMPT = (
     "Antworte auf Deutsch. Keine Markdown-Formatierung. Kein Abschneiden mitten im Satz.\n"
     "WICHTIG: Das Feld 'Log-Quelle' gibt an, welches Monitoring-Tool die Meldung gesammelt hat "
     "(z.B. Graylog, CheckMK, Wazuh) — NICHT welche Software das Problem hat. "
-    "Das betroffene System erkennst du aus dem Inhalt der Meldung (Hostname, Fehlermeldung, Prozess)."
+    "Das betroffene System erkennst du aus dem Inhalt der Meldung (Hostname, Fehlermeldung, Prozess).\n"
+    "BEWEISPFLICHT: Wenn die Meldung keine ausreichenden Daten enthält, schreibe explizit: "
+    "'Keine ausreichenden Daten für eine Ursachenanalyse.' "
+    "Erfinde keine Ursachen, Konfigurationsfehler oder Lösungsschritte die nicht aus dem "
+    "Meldungsinhalt direkt ableitbar sind."
 )
 
 

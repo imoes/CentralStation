@@ -267,6 +267,17 @@ async def get_feed(
             )
             count_map = {r.external_id: r.n for r in count_rows.all()}
 
+            # Batch-load incident memberships
+            from app.models.workflow import IncidentMember
+            incident_rows = await db.execute(
+                select(IncidentMember.external_id, IncidentMember.incident_id)
+                .where(IncidentMember.external_id.in_(ext_ids))
+            )
+            incident_map: dict[str, str] = {
+                str(r.external_id): str(r.incident_id)
+                for r in incident_rows.all()
+            }
+
             enriched = []
             for item in items:
                 eid = item.get("external_id")
@@ -276,6 +287,7 @@ async def get_feed(
                     "claimed_at": c.claimed_at.isoformat() if c and c.claimed_at else None,
                     "work_status": c.work_status if c else "new",
                     "comment_count": count_map.get(eid, 0) if eid else 0,
+                    "incident_id": incident_map.get(eid) if eid else None,
                 }
                 enriched.append(item)
             items = enriched
@@ -664,21 +676,25 @@ async def diagnose_alert(
     findings_text = "\n".join(r.to_llm_text() for r in results)
     summary = ""
     try:
-        llm_cfg = await get_llm_config(db)
+        from app.services.settings import get_active_llm_config
+        llm_cfg = await get_active_llm_config(db)
         if llm_cfg.is_configured:
+            system_prompt = (
+                "Du bist ein IT-Operations-Assistent. Fasse die Diagnoseergebnisse "
+                "für einen Sysadmin in 2-3 präzisen deutschen Sätzen zusammen. "
+                "Markiere kritische Punkte mit konkreten Werten (z.B. 'DCX_API_max: 7543ms'). "
+                "BEWEISPFLICHT: Nenne NUR Probleme, die aus den Diagnosedaten direkt hervorgehen — "
+                "keine Vermutungen ohne Datenbeleg. "
+                "Weise darauf hin, dass NUR gelesen wurde (read-only, keine Änderung). "
+                "Das Feld 'Log-Quelle' nennt den Kollektor (Graylog, CheckMK) — NICHT das Problem-System."
+            )
             raw = await generate_text(
                 llm_cfg,
                 [
-                    {"role": "system", "content":
-                     "Du bist ein IT-Operations-Assistent. Fasse die Diagnoseergebnisse "
-                     "für einen Sysadmin in 2-3 präzisen deutschen Sätzen zusammen. "
-                     "Markiere kritische Punkte. Weise darauf hin, dass NUR gelesen wurde "
-                     "(read-only, keine Änderung vorgenommen). KEINE Widget-Namen nennen."},
-                    {"role": "user", "content":
-                     f"Diagnoseergebnisse für {host}:\n{findings_text}"},
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Diagnoseergebnisse für {host}:\n{findings_text}"},
                 ],
                 temperature=0.2,
-                max_output_tokens=300,
             )
             from app.services.dashboard.generative_designer import _strip_thinking
             summary = _strip_thinking(raw).strip()
@@ -702,4 +718,165 @@ async def diagnose_alert(
         "summary": summary,
         "providers": [r.tool for r in results],
         "entry": entry,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Incident endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/incidents")
+async def list_incidents(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    status: str = "open",
+    limit: int = 20,
+):
+    """List open/investigating incidents."""
+    from sqlalchemy import select, desc
+    from app.models.workflow import Incident, IncidentMember
+    from sqlalchemy import func
+
+    stmt = (
+        select(Incident)
+        .where(Incident.status == status)
+        .order_by(desc(Incident.updated_at))
+        .limit(limit)
+    )
+    rows = await db.execute(stmt)
+    incidents = rows.scalars().all()
+
+    result = []
+    for inc in incidents:
+        # Count members
+        cnt = await db.execute(
+            select(func.count()).where(IncidentMember.incident_id == inc.id)
+        )
+        member_count = cnt.scalar() or 0
+        result.append({
+            "id": str(inc.id),
+            "title": inc.title,
+            "primary_host": inc.primary_host,
+            "severity": inc.severity,
+            "status": inc.status,
+            "member_count": member_count,
+            "created_at": inc.created_at.isoformat(),
+            "updated_at": inc.updated_at.isoformat(),
+        })
+    return result
+
+
+@router.get("/incidents/{incident_id}/timeline")
+async def incident_timeline(
+    incident_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Assemble the full timeline for an incident: alerts + comments + AI analyses."""
+    import uuid as _uuid
+    from sqlalchemy import select
+    from app.models.workflow import Incident, IncidentMember, AlertComment
+
+    try:
+        inc_id = _uuid.UUID(incident_id)
+    except ValueError:
+        raise HTTPException(400, "Ungültige Incident-ID")
+
+    inc = await db.get(Incident, inc_id)
+    if not inc:
+        raise HTTPException(404, "Incident nicht gefunden")
+
+    # ── 1. Get all member external_ids ────────────────────────────────────
+    members_r = await db.execute(
+        select(IncidentMember).where(IncidentMember.incident_id == inc_id)
+        .order_by(IncidentMember.added_at)
+    )
+    members = members_r.scalars().all()
+    ext_ids = [m.external_id for m in members]
+
+    timeline: list[dict] = []
+
+    # ── 2. Feed items from OpenSearch ─────────────────────────────────────
+    if ext_ids:
+        try:
+            from app.services.feed_index import search_by_query
+            q = " OR ".join(f'external_id:"{eid}"' for eid in ext_ids[:20])
+            items = await search_by_query("cs-feed-*", q, size=50)
+            for item in items:
+                timeline.append({
+                    "at": item.get("created_at", ""),
+                    "kind": "alert",
+                    "source": item.get("source", ""),
+                    "severity": item.get("severity", ""),
+                    "text": item.get("title", "")[:200],
+                    "external_id": item.get("external_id"),
+                })
+        except Exception as e:
+            log.debug("incident_timeline: feed items failed: %s", e)
+
+    # ── 3. AlertComments (claim/status/AI/comments) ───────────────────────
+    if ext_ids:
+        comments_r = await db.execute(
+            select(AlertComment)
+            .where(AlertComment.external_id.in_(ext_ids))
+            .order_by(AlertComment.created_at)
+        )
+        for c in comments_r.scalars().all():
+            timeline.append({
+                "at": c.created_at.isoformat(),
+                "kind": c.kind,
+                "source": "collaboration",
+                "severity": "",
+                "text": c.body[:300],
+                "user": c.user_name,
+            })
+
+    # ── 4. AI analyses in the incident time window ────────────────────────
+    try:
+        from app.models.ai import AiAnalysis
+        from sqlalchemy import and_
+        from datetime import timedelta
+        window_start = inc.created_at - timedelta(minutes=5)
+        window_end = (inc.resolved_at or inc.updated_at) + timedelta(minutes=10)
+        ai_r = await db.execute(
+            select(AiAnalysis)
+            .where(and_(
+                AiAnalysis.run_at >= window_start,
+                AiAnalysis.run_at <= window_end,
+            ))
+            .order_by(AiAnalysis.run_at)
+            .limit(5)
+        )
+        for a in ai_r.scalars().all():
+            findings = (a.findings or [])[:2]
+            summary = "; ".join(
+                f.get("title", "") for f in findings if f.get("title")
+            ) or "KI-Analyse"
+            timeline.append({
+                "at": a.run_at.isoformat(),
+                "kind": "ai_analysis",
+                "source": "ki_agent",
+                "severity": a.severity_summary or "",
+                "text": summary[:300],
+            })
+    except Exception as e:
+        log.debug("incident_timeline: ai_analyses failed: %s", e)
+
+    # Sort by timestamp
+    def _sort_key(e: dict) -> str:
+        return e.get("at") or ""
+
+    timeline.sort(key=_sort_key)
+
+    return {
+        "incident": {
+            "id": str(inc.id),
+            "title": inc.title,
+            "primary_host": inc.primary_host,
+            "severity": inc.severity,
+            "status": inc.status,
+            "created_at": inc.created_at.isoformat(),
+            "member_count": len(ext_ids),
+        },
+        "timeline": timeline,
     }
