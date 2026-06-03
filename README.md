@@ -204,6 +204,7 @@ Da OS/Standort/VE/Criticality CheckMK-eigene Konzepte sind, greift der Filter **
 | **KI-Insights** | Befunde + zugehörige Empfehlungen direkt zusammen (kein getrenntes Panel); Datenquelle-Badge je Befund; Hostname/Feed-Links; Empfehlungen fließen in generatives Dashboard ein |
 | **AI War Room** | Blast-Radius-Analyse bei Critical/High; Ko-VMs, Ko-lokalisierte Hosts; Empfehlungen mit Ein-Klick-Jira |
 | **CheckMK Metriken** | Collector schreibt CPU/RAM/Disk/Agent-Zeit in `cs-metrics-checkmk`; Bridge zeigt Fleet-Vitals + Forecasts (lineare Regression); stabile Metriken (< 90 % ohne Trend) werden aus generativem Kontext gefiltert |
+| **OpenAI Codex OAuth** | Browser-initiierter Device-Code-Flow (kein CLI nötig); Provider umschaltbar zwischen lokalem LLM und OpenAI Codex (GPT-5.x); Token verschlüsselt in DB, automatischer Refresh |
 | **3 App-weite Themes** | **Classic** (hell, blauer Schleier), **Holo** (dunkelblau/cyan), **LCARS** (schwarz/orange — offizielles Neon Carrot + Golden Tanoi + Anakiwa + Lilac Palette); in Einstellungen wählbar |
 | **Kanban-Board** | Drag-Drop, bidirektionaler Jira-/ServiceDesk-Sync, automatische Jira-Importe, AI-erstellte Cards |
 | **Meine Tickets** | Per-User Jira-Sicht, JQL-Filter-Verwaltung, KI-JQL-Generator; Unread-Badge; roter Punkt bei Aktivität |
@@ -658,12 +659,15 @@ Node 4: act
 
 | Setting-Key | Beschreibung | Default |
 |-------------|-------------|---------|
-| `llm.base_url` | OpenAI-kompatibler Endpunkt | — |
-| `llm.model` | Modell-ID (z.B. `qwen:35b`) | — |
-| `llm.api_key` | API-Key (optional) | — |
+| `llm.provider` | Aktiver LLM-Provider: `custom` (lokaler Endpunkt) oder `openai-codex` (OAuth) | `custom` |
+| `llm.base_url` | OpenAI-kompatibler Endpunkt (nur für `custom`) | — |
+| `llm.model` | Modell-ID für `custom`-Provider (z.B. `qwen3next-79b`) | — |
+| `llm.api_key` | API-Key (optional, nur für `custom`) | — |
+| `llm.codex_model` | Modell-ID für `openai-codex`-Provider (z.B. `gpt-5.5`) | `gpt-4o` |
+| `llm.codex_timeout_seconds` | Timeout für Codex-Anfragen | `60` |
 | `llm.vision_model_url` | Vision-Modell Endpunkt | — |
 | `llm.vision_model` | Vision-Modell-ID | — |
-| `llm.thinking_mode` | Extended Thinking aktivieren | `false` |
+| `llm.thinking_mode` | Extended Thinking aktivieren (nur `custom`) | `false` |
 | `agent.auto_enrich` | KI-Anreicherung automatisch nach Aggregation (aus = On-Demand) | `true` |
 | `agent.rag_enabled` | Wissensdatenbank-Suche (RAG/it-aikb) im KI-Agenten | `true` |
 | `workflow.web_search` | Websuche (SearXNG) bei KI-Analyse von Feed/Alerts | `true` |
@@ -673,6 +677,29 @@ Node 4: act
 | `rag.base_url` | it-aikb RAG API URL | — |
 | `rag.api_token` | it-aikb Bearer Token | — |
 | `searxng.base_url` | SearXNG Web-Suche URL | — |
+
+### OpenAI Codex OAuth-Provider
+
+CentralStation kann optional OpenAI Codex (GPT-5.x) als LLM-Provider nutzen — ohne bezahlten API-Key, nur mit einem normalen ChatGPT-Account.
+
+**Einrichten (einmalig, im Browser):**
+1. Einstellungen → KI → Karte **„OpenAI Codex — Anmeldung"**
+2. Button **„Mit OpenAI anmelden"** → Browser-Code wird angezeigt (z.B. `28UF-4FKHV`)
+3. `https://auth.openai.com/codex/device` im Browser öffnen, Code eingeben, mit ChatGPT-Account einloggen
+4. CentralStation erkennt den erfolgreichen Login automatisch (Polling alle 5 Sekunden)
+5. Token wird Fernet-verschlüsselt in der Datenbank gespeichert und automatisch per Refresh-Token erneuert
+
+**Provider umschalten:**
+- Einstellungen → KI → **LLM Konfiguration** → „LLM Provider" auf `OpenAI Codex (OAuth)` stellen
+- Modell eintragen (z.B. `gpt-5.5`) → Speichern
+- Verbindung testen → zeigt `Verbindung OK — OpenAI Codex / Modell 'gpt-5.5' antwortet`
+
+**Technischer Hintergrund:**
+- Endpoint: `https://chatgpt.com/backend-api/codex/responses` (Responses API, nicht Chat-Completions)
+- Zwingend Streaming (`stream: true`) — Endpunkt akzeptiert keine nicht-streamenden Anfragen
+- `max_output_tokens` wird vom Endpunkt nicht unterstützt
+- OAuth-Flow: Device-Code + PKCE (RFC 8628), kopiert aus Hermes-Quellcode
+- API-Endpunkte: `GET/DELETE /api/oauth/openai-codex/status|logout`, `POST /api/oauth/openai-codex/start|poll/{session_id}`
 
 **KI-Ausgabe-Verhalten:**
 - Der SysAdmin-Agent gibt alle Textfelder (Befunde, Empfehlungen) **auf Deutsch** aus — auch wenn RAG-/Web-Kontext auf Englisch vorliegt
@@ -824,7 +851,9 @@ Persönlicher Konnektor hat immer Vorrang vor dem globalen Admin-Konnektor.
 Alle Einstellungen werden verschlüsselt in der Datenbank gespeichert und über `GET/PATCH /api/settings` verwaltet.
 
 **LLM-Konfiguration:**
-- `llm.base_url`, `llm.model`, `llm.api_key`
+- `llm.provider` — `custom` (lokaler Endpunkt, default) oder `openai-codex` (OAuth, kein API-Key nötig)
+- `llm.base_url`, `llm.model`, `llm.api_key` — für `custom`-Provider
+- `llm.codex_model` — für `openai-codex`-Provider (z.B. `gpt-5.5`)
 - `llm.vision_model_url`, `llm.vision_model`
 - `llm.thinking_mode` (Extended Thinking, default `false`)
 
@@ -990,6 +1019,7 @@ Alle Einstellungen werden verschlüsselt in der Datenbank gespeichert und über 
 | `0017` | `worklist_snapshots`, `ai_insight_cache` — KI-Worklist-Cache und Alert-Insight-Cache |
 | `0018` | `user_preferences.ui_theme` (`classic`/`holo`/`lcars`) — app-weites Theme |
 | `0019` | `dashboards.rationale`, `dashboards.generated_at` — Generatives Dashboard mit KI-Lagebild |
+| `0020` | `alert_collaboration` + `alert_comments` — kollaboratives Alert-Handling (Claim/Status/Timeline) |
 
 ---
 
