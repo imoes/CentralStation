@@ -109,19 +109,12 @@ async def test_setting_group(
     s = await get_all_settings(db)
 
     if group == "llm":
-        url = (s.get("llm.base_url") or "").rstrip("/")
-        if not url:
-            return TestResult(success=False, message="LLM Basis-URL nicht konfiguriert")
-        model = s.get("llm.model") or ""
-        if not model:
-            return TestResult(success=False, message="LLM Modell nicht konfiguriert")
-        llm_config = LLMConfig(
-            base_url=url,
-            model=model,
-            api_key=s.get("llm.api_key"),
-            timeout_seconds=int(s.get("llm.timeout_seconds") or 120),
-            api_mode=s.get("llm.api_mode") or "chat_completions",
-        )
+        from app.services.settings import get_active_llm_config
+        llm_config = await get_active_llm_config(db)
+        if not llm_config.is_configured:
+            return TestResult(success=False, message="LLM nicht konfiguriert (URL oder Modell fehlt)")
+        provider = s.get("llm.provider") or "custom"
+        provider_label = "OpenAI Codex" if provider == "openai-codex" else "Lokal"
         try:
             text = await generate_text(
                 llm_config,
@@ -131,13 +124,13 @@ async def test_setting_group(
             )
             return TestResult(
                 success=True,
-                message=f"Verbindung OK — Modell '{model}' antwortet",
+                message=f"Verbindung OK — {provider_label} / Modell '{llm_config.model}' antwortet",
                 detail=text[:120] or None,
             )
         except httpx.ConnectError as e:
             return TestResult(success=False, message="Verbindung fehlgeschlagen", detail=str(e))
         except httpx.TimeoutException:
-            return TestResult(success=False, message="Timeout (8 s) — Server nicht erreichbar")
+            return TestResult(success=False, message="Timeout — Server nicht erreichbar")
         except Exception as e:
             return TestResult(success=False, message=str(e))
 

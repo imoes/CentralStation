@@ -130,6 +130,28 @@ async def set_setting(db: AsyncSession, key: str, value: str | None) -> None:
         row.value_encrypted = None
 
 
+async def set_secret_setting(db: AsyncSession, key: str, value: str | None) -> None:
+    """Store a setting encrypted regardless of current is_secret flag.
+
+    Use for long or sensitive values (OAuth tokens, API keys) that must not be
+    stored in the VARCHAR(1024) value_plain column.
+    """
+    result = await db.execute(select(GlobalSetting).where(GlobalSetting.key == key))
+    row = result.scalar_one_or_none()
+    if not row:
+        row = GlobalSetting(key=key, is_secret=True)
+        db.add(row)
+    else:
+        row.is_secret = True
+
+    if value is not None:
+        row.value_encrypted = encrypt_credentials({"v": value})
+        row.value_plain = None
+    else:
+        row.value_encrypted = None
+        row.value_plain = None
+
+
 async def get_llm_config(db: AsyncSession) -> LLMConfig:
     s = await get_all_settings(db)
     return LLMConfig(
