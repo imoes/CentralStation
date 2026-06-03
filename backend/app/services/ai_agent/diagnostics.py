@@ -124,7 +124,17 @@ class MetricsProvider:
         try:
             metrics = await query_metrics_for_host(host, hours=2)
             if not metrics:
-                return DiagnosticResult(self.name, host, f"Keine Metriken für {host} in den letzten 2h.")
+                # IMPORTANT: the metrics collector only gathers data for hosts that
+                # have an ACTIVE CheckMK CRIT/HIGH problem (to spare CheckMK). A
+                # healthy host therefore has NO collected metrics — that is the
+                # normal, expected case and NOT a sign of a problem. Make this
+                # explicit so the LLM does not flag it as a finding.
+                return DiagnosticResult(
+                    self.name, host,
+                    f"Keine Performance-Metriken für {host} gespeichert — erwartbar, da "
+                    f"Metriken nur für Hosts mit aktivem CheckMK-Problem gesammelt werden. "
+                    f"Kein aktives Problem = keine Metriken = KEIN Befund.",
+                )
             latest: dict[str, float] = {}
             latest_ts: dict[str, str] = {}
             for m in metrics:
