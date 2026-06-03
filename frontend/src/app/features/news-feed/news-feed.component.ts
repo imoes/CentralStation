@@ -28,6 +28,28 @@ interface FeedItemCollab {
   claimed_at: string | null;
   work_status: 'new' | 'investigating' | 'resolved';
   comment_count: number;
+  incident_id?: string | null;
+}
+
+interface IncidentTimeline {
+  incident: {
+    id: string;
+    title: string;
+    primary_host: string;
+    severity: string;
+    status: string;
+    created_at: string;
+    member_count: number;
+  };
+  timeline: {
+    at: string;
+    kind: string;
+    source: string;
+    severity?: string;
+    text: string;
+    user?: string;
+    external_id?: string;
+  }[];
 }
 
 interface CollabTimeline {
@@ -405,6 +427,15 @@ const SEVERITY_COLOR: Record<string, string> = {
               }
             </div>
 
+            <!-- Incident badge — shown when this alert belongs to an incident group -->
+            @if (item.collab?.incident_id) {
+              <div class="incident-badge" (click)="openIncidentTimeline(item.collab!.incident_id!)">
+                <mat-icon class="incident-badge-icon">hub</mat-icon>
+                <span>Teil eines Incidents</span>
+                <mat-icon class="incident-badge-arrow">chevron_right</mat-icon>
+              </div>
+            }
+
             <!-- Collab ownership badge — visible in all themes when claimed/investigating -->
             @if (item.collab?.claimed_by_name || (item.collab?.work_status && item.collab?.work_status !== 'new')) {
               <div class="collab-badge" [attr.data-status]="item.collab?.work_status">
@@ -658,6 +689,56 @@ const SEVERITY_COLOR: Record<string, string> = {
 
       </div>
     </div>
+
+    <!-- Incident Timeline Drawer -->
+    @if (incidentDrawerOpen()) {
+      <div class="incident-drawer-overlay" (click)="closeIncidentDrawer()"></div>
+      <div class="incident-drawer">
+        <div class="incident-drawer-header">
+          <mat-icon>hub</mat-icon>
+          @if (incidentTimeline()) {
+            <div class="incident-drawer-title">
+              <span class="incident-drawer-host">{{ incidentTimeline()!.incident.primary_host }}</span>
+              <span class="incident-drawer-meta">{{ incidentTimeline()!.incident.member_count }} Alerts · {{ incidentTimeline()!.incident.severity | uppercase }}</span>
+            </div>
+          } @else {
+            <span>Incident Timeline</span>
+          }
+          <button mat-icon-button class="incident-drawer-close" (click)="closeIncidentDrawer()">
+            <mat-icon>close</mat-icon>
+          </button>
+        </div>
+        @if (loadingIncident()) {
+          <div class="incident-drawer-loading"><mat-spinner diameter="32"></mat-spinner></div>
+        } @else if (incidentTimeline()) {
+          <div class="incident-timeline-list">
+            @for (entry of incidentTimeline()!.timeline; track entry.at + entry.text) {
+              <div class="tl-entry" [attr.data-kind]="entry.kind">
+                <div class="tl-icon-col">
+                  <mat-icon class="tl-icon">{{ timelineKindIcon(entry.kind) }}</mat-icon>
+                </div>
+                <div class="tl-content">
+                  <div class="tl-meta">
+                    <span class="tl-kind">{{ timelineKindLabel(entry.kind) }}</span>
+                    @if (entry.source && entry.source !== 'collaboration') {
+                      <span class="tl-source">{{ entry.source }}</span>
+                    }
+                    @if (entry.user) {
+                      <span class="tl-user">{{ entry.user }}</span>
+                    }
+                    <span class="tl-time">{{ entry.at | date:'HH:mm:ss' }}</span>
+                  </div>
+                  @if (entry.severity) {
+                    <span class="tl-sev" [attr.data-sev]="entry.severity">{{ entry.severity | uppercase }}</span>
+                  }
+                  <div class="tl-text">{{ entry.text }}</div>
+                </div>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    }
   `,
   styles: [`
     .scroll-top-btn {
@@ -1133,6 +1214,65 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .collab-status-select { border-color: #2a1d0a; color: #e8a060; }
     .diagnose-btn { color: var(--mat-sys-tertiary) !important; border-color: var(--mat-sys-tertiary) !important; }
     :host-context(html.cs-theme-lcars) .diagnose-btn { color: #99CCFF !important; border-color: #99CCFF !important; }
+
+    /* ── Incident Badge ── */
+    .incident-badge {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 12px; cursor: pointer;
+      background: color-mix(in srgb, var(--mat-sys-tertiary) 8%, var(--mat-sys-surface));
+      border-bottom: 1px solid color-mix(in srgb, var(--mat-sys-tertiary) 20%, transparent);
+      color: var(--mat-sys-tertiary); font-size: 12px; font-weight: 500;
+      transition: background .15s;
+    }
+    .incident-badge:hover { background: color-mix(in srgb, var(--mat-sys-tertiary) 16%, var(--mat-sys-surface)); }
+    .incident-badge-icon { font-size: 14px; height: 14px; width: 14px; }
+    .incident-badge-arrow { font-size: 16px; height: 16px; width: 16px; margin-left: auto; }
+
+    /* ── Incident Drawer ── */
+    .incident-drawer-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 900;
+    }
+    .incident-drawer {
+      position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100vw);
+      background: var(--mat-sys-surface-container); z-index: 901;
+      display: flex; flex-direction: column; box-shadow: -4px 0 24px rgba(0,0,0,.3);
+    }
+    .incident-drawer-header {
+      display: flex; align-items: center; gap: 10px; padding: 16px;
+      background: var(--mat-sys-surface-container-high);
+      border-bottom: 1px solid var(--mat-sys-outline-variant);
+    }
+    .incident-drawer-header > mat-icon { color: var(--mat-sys-tertiary); }
+    .incident-drawer-title { display: flex; flex-direction: column; flex: 1; }
+    .incident-drawer-host { font-weight: 700; font-size: 15px; }
+    .incident-drawer-meta { font-size: 12px; opacity: .7; }
+    .incident-drawer-close { margin-left: auto; }
+    .incident-drawer-loading { display: flex; justify-content: center; padding: 40px; }
+
+    .incident-timeline-list { overflow-y: auto; flex: 1; padding: 8px 0; }
+    .tl-entry {
+      display: flex; gap: 12px; padding: 10px 16px;
+      border-bottom: 1px solid var(--mat-sys-outline-variant);
+    }
+    .tl-icon-col { display: flex; flex-direction: column; align-items: center; }
+    .tl-icon { font-size: 18px; height: 18px; width: 18px; color: var(--mat-sys-on-surface-variant); }
+    .tl-entry[data-kind="alert"] .tl-icon { color: var(--mat-sys-error); }
+    .tl-entry[data-kind="ai_analysis"] .tl-icon, .tl-entry[data-kind="ai"] .tl-icon { color: var(--mat-sys-tertiary); }
+    .tl-entry[data-kind="claim"] .tl-icon { color: var(--mat-sys-primary); }
+    .tl-content { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+    .tl-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; opacity: .7; }
+    .tl-kind { font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+    .tl-time { margin-left: auto; font-family: monospace; }
+    .tl-sev { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 3px; align-self: flex-start; }
+    .tl-sev[data-sev="critical"] { background: #ffebee; color: #b71c1c; }
+    .tl-sev[data-sev="high"]     { background: #fff3e0; color: #e65100; }
+    .tl-sev[data-sev="medium"]   { background: #fffde7; color: #f57f17; }
+    .tl-text { font-size: 13px; line-height: 1.4; word-break: break-word; }
+    :host-context(html.cs-theme-lcars) .incident-badge { background: rgba(153,204,255,.08); border-bottom-color: rgba(153,204,255,.2); color: #99CCFF; }
+    :host-context(html.cs-theme-lcars) .incident-drawer { background: #0a0804; }
+    :host-context(html.cs-theme-lcars) .incident-drawer-header { background: #120e06; border-bottom-color: #2a1d0a; }
+    :host-context(html.cs-theme-lcars) .tl-entry { border-bottom-color: #1a1206; }
+    :host-context(html.cs-theme-lcars) .tl-text { color: #e8a060; }
   `],
 })
 export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
@@ -1899,6 +2039,49 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
         this.snackBar.open(err?.error?.detail ?? 'Diagnose fehlgeschlagen', 'OK', { duration: 4000 });
       },
     });
+  }
+
+  // ── Incident Timeline Drawer ──────────────────────────────────────────────
+  incidentTimeline = signal<IncidentTimeline | null>(null);
+  incidentDrawerOpen = signal(false);
+  loadingIncident = signal(false);
+
+  openIncidentTimeline(incidentId: string) {
+    this.incidentDrawerOpen.set(true);
+    this.loadingIncident.set(true);
+    this.http.get<IncidentTimeline>(`${environment.apiUrl}/feed/incidents/${incidentId}/timeline`)
+      .subscribe({
+        next: data => {
+          this.incidentTimeline.set(data);
+          this.loadingIncident.set(false);
+        },
+        error: () => {
+          this.loadingIncident.set(false);
+          this.snackBar.open('Timeline konnte nicht geladen werden', 'OK', { duration: 3000 });
+        },
+      });
+  }
+
+  closeIncidentDrawer() {
+    this.incidentDrawerOpen.set(false);
+    this.incidentTimeline.set(null);
+  }
+
+  timelineKindIcon(kind: string): string {
+    const icons: Record<string, string> = {
+      alert: 'warning', ai_analysis: 'psychology', claim: 'person',
+      release: 'person_off', status: 'swap_horiz', comment: 'comment',
+      ai: 'computer',
+    };
+    return icons[kind] ?? 'circle';
+  }
+
+  timelineKindLabel(kind: string): string {
+    const labels: Record<string, string> = {
+      alert: 'Alert', ai_analysis: 'KI-Analyse', claim: 'Übernommen',
+      release: 'Freigegeben', status: 'Status', comment: 'Kommentar', ai: 'KI-Diagnose',
+    };
+    return labels[kind] ?? kind;
   }
 
   private authSvc = inject(AuthService);
