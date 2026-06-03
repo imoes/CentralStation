@@ -639,9 +639,21 @@ const SEVERITY_COLOR: Record<string, string> = {
                         </div>
                       } @else if (entry.kind === 'ai') {
                         <mat-icon class="ce-icon ce-ai">smart_toy</mat-icon>
-                        <div class="ce-body">
+                        <div class="ce-body ce-ai-body">
                           <span class="ce-author">Computer</span>
-                          <span class="ce-text">{{ entry.body }}</span>
+                          <span class="ce-text ce-ai-text">{{ aiBodyMain(entry.body) }}</span>
+                          @if (aiBodyEvidence(entry.body).length) {
+                            <div class="ce-evidence">
+                              <span class="ce-ev-label">📎 Belege</span>
+                              @for (ev of aiBodyEvidence(entry.body); track ev.raw) {
+                                <span class="ce-ev-chip" [class.clickable]="ev.clickable"
+                                      (click)="ev.clickable && jumpToEvidence(ev.ref)">
+                                  <span class="ce-ev-type">{{ ev.type }}</span>
+                                  <span class="ce-ev-text">{{ ev.text }}</span>
+                                </span>
+                              }
+                            </div>
+                          }
                           <span class="ce-time">{{ relTime(entry.created_at) }}</span>
                         </div>
                       } @else {
@@ -701,6 +713,17 @@ const SEVERITY_COLOR: Record<string, string> = {
               <span class="incident-drawer-host">{{ incidentTimeline()!.incident.primary_host }}</span>
               <span class="incident-drawer-meta">{{ incidentTimeline()!.incident.member_count }} Alerts · {{ incidentTimeline()!.incident.severity | uppercase }}</span>
             </div>
+            <button mat-stroked-button class="claude-handoff-btn"
+                    [disabled]="copyingPrompt()"
+                    (click)="copyClaudePrompt(incidentTimeline()!.incident.id)"
+                    matTooltip="Belege + Timeline als fertigen AI-Prompt kopieren (z.B. für Claude CLI, Codex, eigenen Agenten)">
+              @if (copyingPrompt()) {
+                <mat-spinner diameter="14"></mat-spinner>
+              } @else {
+                <mat-icon>smart_toy</mat-icon>
+              }
+              {{ promptCopied() ? 'Kopiert!' : 'An AI übergeben' }}
+            </button>
           } @else {
             <span>Incident Timeline</span>
           }
@@ -1209,6 +1232,17 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .collab-thread { border-top-color: #2a1d0a; }
     :host-context(html.cs-theme-lcars) .ce-author { color: #ffe8a0; }
     :host-context(html.cs-theme-lcars) .ce-text { color: #e8a060; }
+    .ce-ai-body { flex-direction: column; align-items: flex-start; gap: 4px; }
+    .ce-ai-text { white-space: pre-line; }
+    .ce-evidence { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; width: 100%; }
+    .ce-ev-label { font-size: 10px; font-weight: 700; letter-spacing: .05em; color: var(--mat-sys-tertiary); opacity: .8; width: 100%; }
+    .ce-ev-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: var(--mat-sys-surface-variant); max-width: 100%; }
+    .ce-ev-chip.clickable { cursor: pointer; border: 1px solid color-mix(in srgb, var(--mat-sys-tertiary) 40%, transparent); }
+    .ce-ev-chip.clickable:hover { background: color-mix(in srgb, var(--mat-sys-tertiary) 14%, var(--mat-sys-surface-variant)); }
+    .ce-ev-type { font-weight: 700; font-size: 9px; text-transform: uppercase; opacity: .6; flex-shrink: 0; }
+    .ce-ev-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    :host-context(html.cs-theme-lcars) .ce-ev-chip { background: #1a1206; color: #e8a060; }
+    :host-context(html.cs-theme-lcars) .ce-ev-label { color: #99CCFF; }
     :host-context(html.cs-theme-lcars) .ce-time { color: rgba(255,232,160,.3); }
     :host-context(html.cs-theme-lcars) .collab-input { background: #0a0804; border-color: #2a1d0a; color: #ffe8a0; }
     :host-context(html.cs-theme-lcars) .collab-status-select { border-color: #2a1d0a; color: #e8a060; }
@@ -1247,6 +1281,10 @@ const SEVERITY_COLOR: Record<string, string> = {
     .incident-drawer-host { font-weight: 700; font-size: 15px; }
     .incident-drawer-meta { font-size: 12px; opacity: .7; }
     .incident-drawer-close { margin-left: auto; }
+    .claude-handoff-btn { font-size: 12px; line-height: 1.2; min-width: 0; padding: 0 12px; color: var(--mat-sys-tertiary); border-color: color-mix(in srgb, var(--mat-sys-tertiary) 45%, transparent); }
+    .claude-handoff-btn mat-icon { font-size: 16px; height: 16px; width: 16px; margin-right: 4px; }
+    .claude-handoff-btn mat-spinner { display: inline-block; margin-right: 4px; }
+    :host-context(html.cs-theme-lcars) .claude-handoff-btn { color: #99CCFF; border-color: rgba(153,204,255,.45); }
     .incident-drawer-loading { display: flex; justify-content: center; padding: 40px; }
 
     .incident-timeline-list { overflow-y: auto; flex: 1; padding: 8px 0; }
@@ -1917,6 +1955,37 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     return m[type] ?? type;
   }
 
+  // ── AI evidence parsing (Beweispflicht) ───────────────────────────────────
+  // The diagnose endpoint appends a "📎 Belege:" block to the AI comment body.
+  // We split it into the human summary and structured, clickable evidence chips.
+
+  aiBodyMain(body: string): string {
+    const idx = body.indexOf('📎 Belege:');
+    return (idx >= 0 ? body.slice(0, idx) : body).trim();
+  }
+
+  aiBodyEvidence(body: string): { raw: string; type: string; ref: string; text: string; clickable: boolean }[] {
+    const idx = body.indexOf('📎 Belege:');
+    if (idx < 0) return [];
+    const block = body.slice(idx + '📎 Belege:'.length);
+    const out: { raw: string; type: string; ref: string; text: string; clickable: boolean }[] = [];
+    for (const line of block.split('\n')) {
+      const m = line.match(/^•\s*\[([^\]]+)\]\s*([^—]*?)\s*—\s*(.*)$/);
+      if (!m) continue;
+      const type = m[1].trim();
+      const ref = m[2].trim();
+      const text = m[3].trim();
+      // log_line refs are OpenSearch doc ids → jump to that feed item
+      const clickable = type === 'log_line' && /^[0-9a-f-]{8,}$/i.test(ref);
+      out.push({ raw: line, type, ref, text, clickable });
+    }
+    return out;
+  }
+
+  jumpToEvidence(ref: string) {
+    this.router.navigate(['/feed'], { queryParams: { highlight: ref } });
+  }
+
   // ── Collaboration ────────────────────────────────────────────────────────
 
   showComments = new Set<string>();
@@ -2047,6 +2116,32 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   incidentTimeline = signal<IncidentTimeline | null>(null);
   incidentDrawerOpen = signal(false);
   loadingIncident = signal(false);
+  copyingPrompt = signal(false);
+  promptCopied = signal(false);
+
+  copyClaudePrompt(incidentId: string) {
+    this.copyingPrompt.set(true);
+    this.promptCopied.set(false);
+    this.http.get<{ prompt: string }>(`${environment.apiUrl}/feed/incidents/${incidentId}/claude-prompt`)
+      .subscribe({
+        next: async data => {
+          this.copyingPrompt.set(false);
+          try {
+            await navigator.clipboard.writeText(data.prompt);
+            this.promptCopied.set(true);
+            setTimeout(() => this.promptCopied.set(false), 2500);
+          } catch {
+            // Clipboard API unavailable (non-HTTPS) — show the prompt to copy manually
+            this.snackBar.open('Prompt erzeugt — Clipboard nicht verfügbar, siehe Konsole', 'OK', { duration: 4000 });
+            console.log(data.prompt);
+          }
+        },
+        error: () => {
+          this.copyingPrompt.set(false);
+          this.snackBar.open('Prompt konnte nicht erzeugt werden', 'OK', { duration: 3000 });
+        },
+      });
+  }
 
   openIncidentTimeline(incidentId: string) {
     this.incidentDrawerOpen.set(true);
