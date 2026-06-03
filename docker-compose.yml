@@ -63,6 +63,9 @@ services:
       OPENSEARCH_URL: https://opensearch:9200
       OPENSEARCH_USER: admin
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
+      HTTP_PROXY: http://proxy.ippen.media:80
+      HTTPS_PROXY: http://proxy.ippen.media:80
+      NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,.ippen.media
     depends_on:
       db:
         condition: service_healthy
