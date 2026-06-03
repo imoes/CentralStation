@@ -1492,6 +1492,8 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (severity) { this.severityFilter = severity; this.showFilters.set(true); }
     const host = params.get('host');
     if (host) { this.hostFilter = host; this.showFilters.set(true); }
+    const incidentId = params.get('incident');
+    if (incidentId) { this.openIncidentTimeline(incidentId); }
   }
 
   private scrollToHighlight() {

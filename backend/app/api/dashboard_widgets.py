@@ -970,4 +970,31 @@ async def get_widget_data(
             "run_at": analysis.run_at.isoformat() if analysis.run_at else None,
         }
 
+    elif w.widget_type == "incidents":
+        from app.models.workflow import Incident, IncidentMember
+        from sqlalchemy import func as sa_func, desc
+        limit = cfg.get("limit", 10)
+        rows = await db.execute(
+            select(Incident)
+            .where(Incident.status.in_(("open", "investigating")))
+            .order_by(desc(Incident.updated_at))
+            .limit(limit)
+        )
+        incidents = []
+        for inc in rows.scalars().all():
+            cnt = await db.execute(
+                select(sa_func.count()).where(IncidentMember.incident_id == inc.id)
+            )
+            incidents.append({
+                "id": str(inc.id),
+                "title": inc.title,
+                "primary_host": inc.primary_host,
+                "severity": inc.severity,
+                "status": inc.status,
+                "member_count": cnt.scalar() or 0,
+                "created_at": inc.created_at.isoformat(),
+                "updated_at": inc.updated_at.isoformat(),
+            })
+        return {"incidents": incidents, "total": len(incidents)}
+
     return {}
