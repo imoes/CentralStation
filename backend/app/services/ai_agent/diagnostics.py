@@ -77,7 +77,11 @@ class CheckMKStatusProvider:
             if not host_problems:
                 summary = f"Keine aktiven Probleme für {host} in CheckMK."
             else:
-                lines = [f"{p['severity'].upper()}: {p['title']}" for p in host_problems[:5]]
+                # get_problems() returns "service" key, not "title"
+                lines = [
+                    f"{p.get('severity','?').upper()}: {p.get('service') or p.get('title','?')}"
+                    for p in host_problems[:5]
+                ]
                 summary = f"{len(host_problems)} aktive(s) Problem(e): " + " | ".join(lines)
             return DiagnosticResult(self.name, host, summary, {"problems": host_problems[:5]})
         except Exception as e:
@@ -185,17 +189,23 @@ DIAGNOSTIC_PROVIDERS: list[Any] = [
 
 
 async def run_diagnostics(host: str, db: Any) -> list[DiagnosticResult]:
-    """Run all available diagnostic providers in parallel and return results."""
-    import asyncio
+    """Run all available diagnostic providers sequentially and return results.
 
-    async def _run(provider: Any) -> DiagnosticResult | None:
+    Sequential execution avoids SQLAlchemy 'concurrent operations not permitted'
+    errors that occur when multiple coroutines share the same AsyncSession.
+    """
+    from app.core.database import AsyncSessionLocal
+
+    results: list[DiagnosticResult] = []
+    for provider in DIAGNOSTIC_PROVIDERS:
+        # Each provider gets its own session to avoid concurrent-access errors
         try:
-            if not await provider.available_for(host, db):
-                return None
-            return await provider.run(host, db)
+            async with AsyncSessionLocal() as session:
+                if not await provider.available_for(host, session):
+                    continue
+                result = await provider.run(host, session)
+                if result is not None:
+                    results.append(result)
         except Exception as e:
             log.warning("diagnostics provider %s failed: %s", provider.name, e)
-            return None
-
-    results = await asyncio.gather(*[_run(p) for p in DIAGNOSTIC_PROVIDERS])
-    return [r for r in results if r is not None]
+    return results
