@@ -43,6 +43,47 @@ from app.core.security import decrypt_credentials
 from app.models.alert import Alert
 from app.models.connector import ConnectorConfig
 
+
+def _app_from_log_path(path: str) -> str:
+    """Derive the application name from a filebeat log_file_path.
+
+    /var/log/named/query.log   -> named   (subdir under .../log = the app)
+    /var/log/nginx/error.log   -> nginx
+    /var/log/syslog            -> syslog  (lone file = name without extension)
+    /var/log/auth.log          -> auth
+    /opt/app/logs/app.log      -> app
+    """
+    p = (path or "").strip().rstrip("/")
+    if not p:
+        return ""
+    parts = [x for x in p.split("/") if x]
+    if not parts:
+        return ""
+    # Anchor on the last "log"/"logs" segment; the app usually follows it.
+    anchor = -1
+    for i, seg in enumerate(parts):
+        if seg in ("log", "logs"):
+            anchor = i
+    if anchor >= 0:
+        rest = parts[anchor + 1:]
+        if len(rest) >= 2:
+            return rest[0]                       # subdirectory = app
+        if len(rest) == 1:
+            return rest[0].rsplit(".", 1)[0]     # lone file → strip extension
+    return parts[-1].rsplit(".", 1)[0]           # fallback: filename stem
+
+
+def _derive_application(container_name: str, log_file_path: str) -> str:
+    """Name the source application of a Graylog message.
+
+    Docker containers are identified by their container_name; filebeat/varlog
+    messages by the path of the log file they came from. Without this, a feed
+    item only shows the host — not WHICH service on it produced the log.
+    """
+    if container_name:
+        return container_name
+    return _app_from_log_path(log_file_path)
+
 log = logging.getLogger(__name__)
 
 SEVERITY_ORDER = ["info", "low", "medium", "high", "critical"]
@@ -157,16 +198,23 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
             dedup_key = m.get("dedup_key", "")
             level = m.get("level", 6)
             msg_text = m.get("message", "")
+            container = m.get("container_name", "")
+            log_file_path = m.get("log_file_path", "")
+            application = _derive_application(container, log_file_path)
+
             # HTTP errors from Docker containers get severity from status code, not syslog level
             http_code = m.get("http_response_code")
             if http_code:
                 level = 4 if int(http_code) >= 500 else 5
-                title = f"HTTP {http_code} — {m.get('container_name') or m.get('source', '')}"
+                title = f"HTTP {http_code} — {application or m.get('source', '')}"
                 body = msg_text
             else:
-                title = msg_text[:200]
+                # Prefix the title with the source application so the feed item
+                # names WHICH service produced the log, not just the host.
+                prefix = f"[{application}] " if application else ""
+                title = (prefix + msg_text)[:200]
                 # Only set body if message was truncated (there's more content beyond the title)
-                body = msg_text if len(msg_text) > 200 else None
+                body = msg_text if len(prefix + msg_text) > 200 else None
 
             # Syslog severity from the mapping (Docker GELF always sends level=3 for all container
             # output, regardless of actual application log level).
@@ -177,6 +225,13 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
             # Only override when the detected app level is LOWER than the syslog-derived severity
             # (we never downgrade genuine errors, only correct over-escalated INFO/DEBUG lines).
             _sev_rank = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+            # Filebeat carries the real textual log_level (info/error/...) — trust it
+            # over the syslog numeric level when present.
+            log_level_text = (m.get("log_level") or "").lower()
+            if log_level_text and log_level_text in _APP_LEVEL_SEVERITY:
+                lvl_sev = _APP_LEVEL_SEVERITY[log_level_text]
+                if _sev_rank.get(lvl_sev, 99) < _sev_rank.get(syslog_severity, 0):
+                    syslog_severity = lvl_sev
             app_match = _APP_LEVEL_RE.search(msg_text[:120])  # check first 120 chars
             if app_match:
                 app_sev = _APP_LEVEL_SEVERITY.get(app_match.group(1).lower(), "")
@@ -185,9 +240,10 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
             base = (connector.base_url or "").rstrip("/")
             from urllib.parse import quote
             src_host = m.get("source", "")
-            container = m.get("container_name", "")
             if container:
                 graylog_url = f"{base}/search?q=container_name%3A{quote(container)}&rangetype=relative&relative=3600"
+            elif log_file_path:
+                graylog_url = f"{base}/search?q=log_file_path%3A%22{quote(log_file_path)}%22&rangetype=relative&relative=3600"
             elif src_host:
                 graylog_url = f"{base}/search?q=source%3A{quote(src_host)}&rangetype=relative&relative=3600"
             else:
@@ -203,6 +259,10 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
                     "host": src_host,
                     "host_candidates": m.get("host_candidates") or ([src_host] if src_host else []),
                     "container_name": container,
+                    "application": application,
+                    "log_file_path": log_file_path,
+                    "log_level": log_level_text,
+                    "source_type": m.get("source_type", ""),
                     "vendor": m.get("vendor", ""),
                     "facility": m.get("facility", ""),
                     "hyde_relevant": m.get("hyde_relevant", False),
