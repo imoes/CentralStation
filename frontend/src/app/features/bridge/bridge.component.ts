@@ -16,6 +16,16 @@ interface WorkItem {
   rank: number; external_id: string; severity: string; source: string; title: string;
   host: string; location: string; verdict: string; count: number; oldest: string; score: number;
 }
+interface OpenIncident {
+  id: string;
+  title: string;
+  host: string;
+  severity: string;
+  status: string;
+  member_count: number;
+  updated_at: string;
+}
+
 interface BridgeStatus {
   alert_state: 'red' | 'yellow' | 'green';
   counts: { critical: number; high: number; medium: number; total: number };
@@ -28,6 +38,7 @@ interface BridgeStatus {
   worklist_open_count: number;
   worklist_updated: string | null;
   primary_incident?: PrimaryIncident | null;
+  open_incidents?: OpenIncident[];
   server_time: string;
 }
 
@@ -118,6 +129,21 @@ interface BridgeStatus {
               <div class="ip-title">{{ status()!.primary_incident!.title }}</div>
               @if (status()!.primary_incident!.ai_insight) {
                 <div class="ip-insight">{{ status()!.primary_incident!.ai_insight }}</div>
+              }
+            </div>
+          }
+
+          <!-- ── Open Incident Groups ── -->
+          @if ((status()?.open_incidents ?? []).length) {
+            <div class="incidents-strip">
+              <span class="inc-strip-label">INCIDENTS</span>
+              @for (inc of status()!.open_incidents!; track inc.id) {
+                <div class="inc-pill" [attr.data-sev]="inc.severity"
+                     (click)="openIncidentTimeline(inc.id)">
+                  <span class="inc-sev">{{ inc.severity | uppercase }}</span>
+                  <span class="inc-host">{{ shortHost(inc.host) }}</span>
+                  <span class="inc-count">{{ inc.member_count }} Alerts</span>
+                </div>
               }
             </div>
           }
@@ -258,6 +284,16 @@ interface BridgeStatus {
     .ip-time { font-size:11px; opacity:.55; margin-left:auto; }
     .ip-title { font-size:14px; font-weight:700; line-height:1.3; }
     .ip-insight { font-size:12px; line-height:1.45; opacity:.8; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+
+    .incidents-strip { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:6px 12px; border-radius:8px; flex-shrink:0; background:rgba(220,38,38,.08); border:1px solid rgba(220,38,38,.25); }
+    .inc-strip-label { font-size:11px; font-weight:800; letter-spacing:.15em; color:#ef4444; margin-right:4px; }
+    .inc-pill { display:flex; align-items:center; gap:5px; padding:3px 10px; border-radius:12px; cursor:pointer; font-size:12px; background:rgba(0,0,0,.3); transition:filter .15s; }
+    .inc-pill:hover { filter:brightness(1.25); }
+    .inc-pill[data-sev="critical"] { border:1px solid rgba(220,38,38,.5); }
+    .inc-pill[data-sev="high"]     { border:1px solid rgba(234,88,12,.5); }
+    .inc-sev { font-weight:700; font-size:10px; opacity:.8; }
+    .inc-host { font-family:'Fira Code',monospace; font-weight:600; }
+    .inc-count { font-size:10px; opacity:.6; }
 
     .forecast-strip { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 12px; border-radius:8px; flex-shrink:0; }
     .fc-icon { font-size:12px; font-weight:800; letter-spacing:.1em; }
@@ -564,6 +600,11 @@ export class BridgeComponent implements OnInit, OnDestroy {
   }
   openHost(h: string) { this.router.navigate(['/feed'], { queryParams: { host: h } }); }
   openFeedWithLocation(loc: string) { this.router.navigate(['/feed'], { queryParams: { q: `metadata.location:${loc}` } }); }
+  shortHost(h: string): string { return (h || '').split('.')[0]; }
+
+  openIncidentTimeline(incidentId: string) {
+    this.router.navigate(['/feed'], { queryParams: { incident: incidentId } });
+  }
 
   etaLabel(h: number): string { if (h < 1) return `${Math.round(h*60)}Min`; if (h < 48) return `~${Math.round(h)}Std`; return `~${Math.round(h/24)}Tg`; }
   vitalPct(v: Vital): number { return v.unit === '%' ? Math.min(100, v.value) : Math.min(100, (v.value/8)*100); }
