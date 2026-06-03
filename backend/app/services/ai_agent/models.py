@@ -1,7 +1,31 @@
 """Pydantic output models for the AI agent."""
 from __future__ import annotations
+from dataclasses import dataclass, field as dc_field
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
+
+
+@dataclass
+class Evidence:
+    """A concrete data point that supports a Finding or DiagnosticResult.
+
+    Every Finding the AI produces must cite at least one Evidence item so the
+    user (and future audits) can verify the claim without trusting the LLM.
+    """
+    type: str         # "log_line" | "metric" | "checkmk_service" | "past_incident"
+    source: str       # "graylog" | "checkmk" | "wazuh" | "ai_analyses" | "metrics"
+    ref: str          # OpenSearch doc_id, CheckMK service name, or ai_analyses UUID
+    text: str         # short quote from the raw data, max 200 chars
+    timestamp: str | None = None  # ISO timestamp of the referenced data point
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "source": self.source,
+            "ref": self.ref,
+            "text": self.text[:200],
+            "timestamp": self.timestamp,
+        }
 
 # Mapping for non-standard severity values the LLM sometimes produces.
 # e.g. syslog "warning" → "medium", "error" → "high", "notice" → "low"
@@ -23,6 +47,7 @@ class Finding(BaseModel):
     host: str | None = None
     affected_service: str | None = None
     location: str | None = None
+    evidence: list[dict] = Field(default_factory=list)  # list of Evidence.to_dict()
 
     @field_validator("severity", mode="before")
     @classmethod
@@ -66,6 +91,7 @@ class AgentState(BaseModel):
     raw_alerts: list[dict] = Field(default_factory=list)
     enriched_alerts: list[dict] = Field(default_factory=list)
     rag_context: list[dict] = Field(default_factory=list)
+    past_incidents: list[dict] = Field(default_factory=list)  # from past_incidents.py
     analysis: AnalysisResult | None = None
     jira_project: str = "IMIT"
     auto_jira: bool = True

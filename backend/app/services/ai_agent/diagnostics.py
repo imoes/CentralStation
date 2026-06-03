@@ -22,10 +22,18 @@ class DiagnosticResult:
     host: str
     summary: str
     data: dict = field(default_factory=dict)
+    evidence: list[dict] = field(default_factory=list)  # list of Evidence.to_dict()
     read_only: bool = True   # INVARIANT — always True; mutation is not allowed
 
     def to_llm_text(self) -> str:
-        return f"[{self.tool}] {self.host}: {self.summary}"
+        base = f"[{self.tool}] {self.host}: {self.summary}"
+        if self.evidence:
+            refs = "; ".join(
+                f"{e['type']}={e['ref']} ({e['text'][:80]})"
+                for e in self.evidence[:3]
+            )
+            return f"{base} | Belege: {refs}"
+        return base
 
 
 class DiagnosticProvider(Protocol):
@@ -70,20 +78,34 @@ class CheckMKStatusProvider:
             return DiagnosticResult(self.name, host, "CheckMK connector not configured.")
 
         try:
+            from app.services.ai_agent.models import Evidence
+            import datetime as _dt
             creds = decrypt_credentials(conn.encrypted_credentials)
             cmk = CheckMKConnector(base_url=conn.base_url, credentials=creds)
             problems = await cmk.get_problems(time_range_minutes=60)
             host_problems = [p for p in problems if host.lower() in (p.get("host") or "").lower()]
             if not host_problems:
                 summary = f"Keine aktiven Probleme für {host} in CheckMK."
-            else:
-                # get_problems() returns "service" key, not "title"
-                lines = [
-                    f"{p.get('severity','?').upper()}: {p.get('service') or p.get('title','?')}"
-                    for p in host_problems[:5]
-                ]
-                summary = f"{len(host_problems)} aktive(s) Problem(e): " + " | ".join(lines)
-            return DiagnosticResult(self.name, host, summary, {"problems": host_problems[:5]})
+                return DiagnosticResult(self.name, host, summary)
+            lines = [
+                f"{p.get('severity','?').upper()}: {p.get('service') or p.get('title','?')}"
+                for p in host_problems[:5]
+            ]
+            summary = f"{len(host_problems)} aktive(s) Problem(e): " + " | ".join(lines)
+            evidence = [
+                Evidence(
+                    type="checkmk_service",
+                    source="checkmk",
+                    ref=p.get("service") or p.get("title") or "?",
+                    text=f"{p.get('severity','?').upper()}: {(p.get('output') or '')[:120]}",
+                    timestamp=(
+                        _dt.datetime.fromtimestamp(p["last_state_change"]).isoformat()
+                        if p.get("last_state_change") else None
+                    ),
+                ).to_dict()
+                for p in host_problems[:5]
+            ]
+            return DiagnosticResult(self.name, host, summary, {"problems": host_problems[:5]}, evidence)
         except Exception as e:
             log.debug("diagnostics checkmk_status failed: %s", e)
             return DiagnosticResult(self.name, host, f"CheckMK-Abfrage fehlgeschlagen: {e}")
@@ -98,14 +120,17 @@ class MetricsProvider:
 
     async def run(self, host: str, db: Any) -> DiagnosticResult:
         from app.services.metrics_collector import query_metrics_for_host
+        from app.services.ai_agent.models import Evidence
         try:
             metrics = await query_metrics_for_host(host, hours=2)
             if not metrics:
                 return DiagnosticResult(self.name, host, f"Keine Metriken für {host} in den letzten 2h.")
             latest: dict[str, float] = {}
+            latest_ts: dict[str, str] = {}
             for m in metrics:
                 mid = m.get("metric") or ""
                 latest[mid] = float(m.get("value") or 0)
+                latest_ts[mid] = m.get("timestamp") or ""
             parts = []
             if "mem_used_percent" in latest:
                 parts.append(f"RAM {latest['mem_used_percent']:.0f}%")
@@ -114,7 +139,18 @@ class MetricsProvider:
             if "load1" in latest:
                 parts.append(f"CPU-Load {latest['load1']:.1f}")
             summary = ", ".join(parts) if parts else "Metriken geladen, keine Standardwerte."
-            return DiagnosticResult(self.name, host, summary, {"latest": latest})
+            evidence = [
+                Evidence(
+                    type="metric",
+                    source="metrics",
+                    ref=mid,
+                    text=f"{mid}={val:.1f}",
+                    timestamp=latest_ts.get(mid),
+                ).to_dict()
+                for mid, val in latest.items()
+                if mid in ("mem_used_percent", "fs_used_percent", "load1", "load5")
+            ]
+            return DiagnosticResult(self.name, host, summary, {"latest": latest}, evidence)
         except Exception as e:
             log.debug("diagnostics metrics failed: %s", e)
             return DiagnosticResult(self.name, host, f"Metriken nicht verfügbar: {e}")
@@ -129,13 +165,24 @@ class RecentLogsProvider:
 
     async def run(self, host: str, db: Any) -> DiagnosticResult:
         from app.services.feed_index import search
+        from app.services.ai_agent.models import Evidence
         try:
             items = await search(host=host, exclude_resolved=False, size=5)
             if not items:
                 return DiagnosticResult(self.name, host, f"Keine Feed-Einträge für {host} gefunden.")
             lines = [f"{i.get('severity','?').upper()}: {i.get('title','')[:80]}" for i in items[:5]]
             summary = f"{len(items)} Feed-Einträge: " + " | ".join(lines[:3])
-            return DiagnosticResult(self.name, host, summary, {"items": lines})
+            evidence = [
+                Evidence(
+                    type="log_line",
+                    source=i.get("source") or "feed",
+                    ref=i.get("id") or i.get("external_id") or "?",
+                    text=f"{i.get('severity','?').upper()}: {(i.get('title') or '')[:120]}",
+                    timestamp=i.get("created_at"),
+                ).to_dict()
+                for i in items[:5]
+            ]
+            return DiagnosticResult(self.name, host, summary, {"items": lines}, evidence)
         except Exception as e:
             log.debug("diagnostics recent_logs failed: %s", e)
             return DiagnosticResult(self.name, host, f"Log-Abfrage fehlgeschlagen: {e}")
@@ -177,6 +224,42 @@ class TopologyProvider:
             return DiagnosticResult(self.name, host, f"Topologie nicht verfügbar: {e}")
 
 
+class PastIncidentsProvider:
+    """Similar past incidents from ai_analyses + workflow_sessions."""
+    name = "past_incidents"
+
+    async def available_for(self, host: str, db: Any) -> bool:
+        return True
+
+    async def run(self, host: str, db: Any) -> DiagnosticResult:
+        from app.services.ai_agent.past_incidents import (
+            find_similar_incidents,
+            format_past_incidents_for_llm,
+        )
+        from app.services.ai_agent.models import Evidence
+        try:
+            incidents = await find_similar_incidents(host, db)
+            if not incidents:
+                return DiagnosticResult(
+                    self.name, host, "Keine ähnlichen früheren Vorfälle gefunden (letzte 30 Tage)."
+                )
+            summary = format_past_incidents_for_llm(incidents)
+            evidence = [
+                Evidence(
+                    type="past_incident",
+                    source=inc.get("source", "?"),
+                    ref=inc.get("run_at", "?"),
+                    text=f"{inc.get('finding_title','?')}: {inc.get('recommendation','')[:80]}",
+                    timestamp=inc.get("run_at"),
+                ).to_dict()
+                for inc in incidents
+            ]
+            return DiagnosticResult(self.name, host, summary, {"incidents": incidents}, evidence)
+        except Exception as e:
+            log.debug("diagnostics past_incidents failed: %s", e)
+            return DiagnosticResult(self.name, host, f"Vergangene Incidents nicht abrufbar: {e}")
+
+
 # ── Provider registry ─────────────────────────────────────────────────────────
 # SSH provider placeholder — add SshReadOnlyProvider() here in Phase 3.
 DIAGNOSTIC_PROVIDERS: list[Any] = [
@@ -184,6 +267,7 @@ DIAGNOSTIC_PROVIDERS: list[Any] = [
     MetricsProvider(),
     RecentLogsProvider(),
     TopologyProvider(),
+    PastIncidentsProvider(),
     # SshReadOnlyProvider(),  # ← Phase 3: command allowlist, Fernet key, full audit
 ]
 
