@@ -285,6 +285,31 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
             # CPU and any future metrics always shown
             filtered_vitals.append(v)
 
+    # Open incidents (cross-source, multi-alert groups)
+    open_incidents: list[dict] = []
+    try:
+        from sqlalchemy import select, desc, func as sa_func
+        from app.models.workflow import Incident, IncidentMember
+        inc_rows = await db.execute(
+            select(Incident)
+            .where(Incident.status.in_(("open", "investigating")))
+            .order_by(desc(Incident.updated_at))
+            .limit(5)
+        )
+        for inc in inc_rows.scalars().all():
+            cnt = await db.execute(
+                select(sa_func.count()).where(IncidentMember.incident_id == inc.id)
+            )
+            open_incidents.append({
+                "id": str(inc.id),
+                "host": inc.primary_host,
+                "severity": inc.severity,
+                "title": inc.title,
+                "member_count": cnt.scalar() or 0,
+            })
+    except Exception as e:
+        log.debug("gather_situation: open_incidents failed: %s", e)
+
     return {
         "severity_counts": sev_counts,
         "severity_summary": severity_summary,
@@ -295,6 +320,7 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
         "worklist": worklist_items,
         "cue_production_hosts": cue_production_hosts,
         "top_recommendations": top_recommendations,
+        "open_incidents": open_incidents,
     }
 
 
@@ -351,6 +377,8 @@ REGELN:
 - CUE-Produktionshosts: Wenn cue_production_hosts gefüllt, MÜSSEN diese prominent erscheinen.
 - Stabile Metriken ignorieren: KEINE timeseries/forecast für Disk/RAM außerhalb forecast_candidates.
 - top_recommendations: Empfehlungen auf spezifische Hosts → passende list/top_hosts priorisieren.
+- open_incidents: Wenn offene Incidents vorhanden, MUSS ein Widget type="incidents" oben erscheinen
+  (gs_w=12, gs_h=3). Incidents sind cross-source-korrelierte Alert-Gruppen — höchste Priorität.
 
 Die "rationale" ist ein präzises LAGE-BRIEFING:
 - Severity/Anzahl (z.B. "3 critical, 8 high")

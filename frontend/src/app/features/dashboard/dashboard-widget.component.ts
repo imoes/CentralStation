@@ -1,5 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { Component, computed, inject, input, output, signal } from '@angular/core';
+import { Router } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { ThemeService } from '../../core/services/theme.service';
 import { MatButtonModule } from '@angular/material/button';
@@ -22,6 +23,7 @@ import {
   TopHostsData,
   ForecastData,
   WarRoomData,
+  IncidentsData,
   WidgetData,
 } from './dashboard-widget.model';
 
@@ -228,6 +230,29 @@ import {
                 <div class="empty">Keine Grafana-URL konfiguriert</div>
               }
             }
+            @case ('incidents') {
+              @if (!incidentsData()?.incidents?.length) {
+                <div class="empty">
+                  <mat-icon>check_circle_outline</mat-icon>
+                  <span>Keine offenen Incidents</span>
+                </div>
+              } @else {
+                <div class="incidents-list">
+                  @for (inc of incidentsData()!.incidents; track inc.id) {
+                    <div class="inc-row" [attr.data-sev]="inc.severity"
+                         (click)="openIncidentTimeline(inc.id, $event)">
+                      <span class="inc-sev-dot" [style.background]="severityColor(inc.severity)"></span>
+                      <div class="inc-body">
+                        <span class="inc-host">{{ (inc.primary_host || '').split('.')[0] }}</span>
+                        <span class="inc-title">{{ inc.title }}</span>
+                      </div>
+                      <span class="inc-badge">{{ inc.member_count }} Alerts</span>
+                      <span class="inc-time">{{ inc.updated_at | date:'HH:mm' }}</span>
+                    </div>
+                  }
+                </div>
+              }
+            }
           }
         }
       </div>
@@ -398,6 +423,20 @@ import {
     :host-context(html.cs-theme-holo) .wr-host { color: #4fd6ff !important; }
     :host-context(html.cs-theme-holo) .wr-section-label { color: #5fc8ee !important; }
     :host-context(html.cs-theme-holo) .forecast-title { color: #8fb8cf !important; }
+
+    /* ── Incidents Widget ── */
+    .incidents-list { display: flex; flex-direction: column; gap: 4px; height: 100%; overflow-y: auto; }
+    .inc-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; cursor: pointer; transition: background .12s; }
+    .inc-row:hover { background: var(--mat-sys-surface-variant); }
+    .inc-row[data-sev="critical"] { border-left: 3px solid #b71c1c; }
+    .inc-row[data-sev="high"]     { border-left: 3px solid #e65100; }
+    .inc-row[data-sev="medium"]   { border-left: 3px solid #f9a825; }
+    .inc-sev-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .inc-body { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .inc-host { font-family: 'Fira Code', monospace; font-size: 12px; font-weight: 700; }
+    .inc-title { font-size: 11px; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .inc-badge { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: var(--mat-sys-surface-variant); white-space: nowrap; }
+    .inc-time { font-size: 11px; opacity: .5; white-space: nowrap; font-family: monospace; }
   `],
 })
 export class DashboardWidgetComponent {
@@ -418,6 +457,7 @@ export class DashboardWidgetComponent {
 
   private sanitizer = inject(DomSanitizer);
   private themeSvc = inject(ThemeService);
+  private router = inject(Router);
 
   expandedFinding = signal<string | null>(null);
 
@@ -668,6 +708,7 @@ export class DashboardWidgetComponent {
   });
 
   readonly warRoomData = computed(() => this.data() as WarRoomData | undefined);
+  readonly incidentsData = computed(() => this.data() as IncidentsData | undefined);
 
   onWarRoomJira(event: MouseEvent, jiraTitle: string) {
     event.stopPropagation();
@@ -737,6 +778,11 @@ export class DashboardWidgetComponent {
     event.stopPropagation();
     const d = this.data() as AiSummaryData | undefined;
     this.insightOpen.emit(d?.analysis_id ?? null);
+  }
+
+  openIncidentTimeline(incidentId: string, event: MouseEvent) {
+    event.stopPropagation();
+    this.router.navigate(['/feed'], { queryParams: { incident: incidentId } });
   }
 
   onFindingClick(event: MouseEvent, finding: { source?: string; severity?: string; host?: string | null }) {

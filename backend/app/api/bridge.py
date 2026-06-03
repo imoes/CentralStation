@@ -398,6 +398,33 @@ async def bridge_status(
         except Exception as _e:
             log.debug("bridge: worklist rebuild failed: %s", _e)
 
+    # ── 6. Open Incidents ──────────────────────────────────────────────────────
+    open_incidents: list[dict] = []
+    try:
+        from sqlalchemy import select as _sel, desc as _desc, func as _func
+        from app.models.workflow import Incident, IncidentMember
+        inc_rows = await db.execute(
+            _sel(Incident)
+            .where(Incident.status.in_(("open", "investigating")))
+            .order_by(_desc(Incident.updated_at))
+            .limit(5)
+        )
+        for inc in inc_rows.scalars().all():
+            cnt = await db.execute(
+                _sel(_func.count()).where(IncidentMember.incident_id == inc.id)
+            )
+            open_incidents.append({
+                "id": str(inc.id),
+                "title": inc.title,
+                "host": inc.primary_host,
+                "severity": inc.severity,
+                "status": inc.status,
+                "member_count": cnt.scalar() or 0,
+                "updated_at": inc.updated_at.isoformat(),
+            })
+    except Exception as e:
+        log.debug("bridge: open_incidents failed: %s", e)
+
     return {
         "alert_state": alert_state,
         "counts": {
@@ -415,6 +442,7 @@ async def bridge_status(
         "worklist": worklist["items"] if worklist else [],
         "worklist_open_count": worklist["open_count"] if worklist else 0,
         "worklist_updated": worklist["created_at"] if worklist else None,
+        "open_incidents": open_incidents,
         "server_time": datetime.now(timezone.utc).isoformat(),
     }
 

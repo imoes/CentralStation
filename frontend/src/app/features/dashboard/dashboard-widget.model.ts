@@ -2,7 +2,7 @@ export interface DashboardWidget {
   id: string;
   user_id: string;
   dashboard_id?: string | null;
-  widget_type: 'stat' | 'list' | 'donut' | 'bar' | 'ai_summary' | 'top_hosts' | 'timeseries' | 'grafana_panel' | 'forecast' | 'war_room';
+  widget_type: 'stat' | 'list' | 'donut' | 'bar' | 'ai_summary' | 'top_hosts' | 'timeseries' | 'grafana_panel' | 'forecast' | 'war_room' | 'incidents';
   title: string;
   gs_x: number;
   gs_y: number;
@@ -55,7 +55,20 @@ export interface FeedItem {
   metadata?: Record<string, unknown> | null;
 }
 
-export type WidgetData = StatData | ListData | DonutData | BarData | AiSummaryData | TopHostsData | TimeseriesData | GrafanaPanelData | ForecastData | WarRoomData;
+export interface IncidentsData {
+  incidents: Array<{
+    id: string;
+    title: string;
+    primary_host: string;
+    severity: string;
+    status: string;
+    member_count: number;
+    updated_at: string;
+  }>;
+  total: number;
+}
+
+export type WidgetData = StatData | ListData | DonutData | BarData | AiSummaryData | TopHostsData | TimeseriesData | GrafanaPanelData | ForecastData | WarRoomData | IncidentsData;
 
 export interface StatData {
   count: number;
