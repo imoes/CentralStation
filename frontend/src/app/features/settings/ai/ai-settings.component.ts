@@ -1,4 +1,4 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../../environments/environment';
@@ -14,22 +14,35 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatChipsModule } from '@angular/material/chips';
 import { ConnectorService } from '../../../core/services/connector.service';
 import { SettingItem } from '../../../core/models/connector.model';
 
 interface TestResult { success: boolean; message: string; detail: string | null; }
+interface CodexStatus {
+  authenticated: boolean;
+  message: string;
+  expires_at?: string;
+  authenticated_at?: string;
+  base_url?: string;
+}
+interface OAuthSession {
+  session_id: string;
+  user_code: string;
+  verification_uri: string;
+  expires_in_minutes: number;
+  poll_interval_seconds: number;
+}
 
-const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; codexSection?: boolean }[] = [
+const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = [
   {
     title: 'LLM Konfiguration',
-    keys: ['llm.base_url', 'llm.model', 'llm.api_mode', 'llm.api_key', 'llm.timeout_seconds', 'llm.thinking_mode'],
+    keys: ['llm.provider', 'llm.base_url', 'llm.model', 'llm.api_mode', 'llm.api_key', 'llm.timeout_seconds', 'llm.thinking_mode'],
     testGroup: 'llm',
   },
   {
-    title: 'OpenAI Codex Fallback (Hermes OAuth)',
-    keys: ['llm.codex_fallback_enabled', 'llm.codex_hermes_provider', 'llm.codex_base_url', 'llm.codex_model', 'llm.codex_timeout_seconds'],
-    testGroup: 'codex',
-    codexSection: true,
+    title: 'OpenAI Codex Modell',
+    keys: ['llm.codex_model', 'llm.codex_timeout_seconds'],
   },
   {
     title: 'Vision Modell',
@@ -66,9 +79,13 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; codex
   },
 ];
 
-const BOOLEAN_KEYS = new Set(['searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled', 'llm.thinking_mode', 'workflow.web_search', 'agent.score_learning_enabled', 'agent.scoring_enabled', 'llm.codex_fallback_enabled']);
+const BOOLEAN_KEYS = new Set([
+  'searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled',
+  'llm.thinking_mode', 'workflow.web_search', 'agent.score_learning_enabled', 'agent.scoring_enabled',
+]);
 const SELECT_KEYS: Record<string, string[]> = {
   'llm.api_mode': ['chat_completions', 'responses'],
+  'llm.provider': ['custom', 'openai-codex'],
   'agent.jira_severity_threshold': ['critical', 'high', 'medium'],
 };
 const SECRET_MASK = '••••••••';
@@ -81,7 +98,7 @@ const SECRET_MASK = '••••••••';
     MatCardModule, MatFormFieldModule, MatInputModule,
     MatButtonModule, MatIconModule, MatSlideToggleModule,
     MatSelectModule, MatProgressSpinnerModule, MatSnackBarModule,
-    MatDividerModule, MatTooltipModule,
+    MatDividerModule, MatTooltipModule, MatChipsModule,
   ],
   template: `
     <div class="page-container">
@@ -95,6 +112,98 @@ const SECRET_MASK = '••••••••';
           }
         </button>
       </div>
+
+      <!-- OpenAI Codex OAuth-Karte -->
+      <mat-card class="settings-card oauth-card">
+        <mat-card-header>
+          <mat-card-title>OpenAI Codex — Anmeldung</mat-card-title>
+          <div class="card-header-actions">
+            <button mat-icon-button (click)="loadCodexStatus()" matTooltip="Status aktualisieren">
+              <mat-icon>refresh</mat-icon>
+            </button>
+          </div>
+        </mat-card-header>
+        <mat-card-content>
+          <!-- Status-Banner -->
+          @if (codexStatus()) {
+            <div class="codex-status-banner" [class.authenticated]="codexStatus()!.authenticated">
+              <mat-icon>{{ codexStatus()!.authenticated ? 'verified_user' : 'no_accounts' }}</mat-icon>
+              <div class="codex-status-text">
+                <strong>{{ codexStatus()!.authenticated ? 'Eingeloggt' : 'Nicht eingeloggt' }}</strong>
+                <span>{{ codexStatus()!.message }}</span>
+                @if (codexStatus()!.authenticated && codexStatus()!.authenticated_at) {
+                  <span class="expires">Eingeloggt: {{ codexStatus()!.authenticated_at | date:'dd.MM.yyyy HH:mm' }}</span>
+                }
+                @if (codexStatus()!.authenticated && codexStatus()!.expires_at) {
+                  <span class="expires">Gültig bis: {{ codexStatus()!.expires_at | date:'dd.MM.yyyy HH:mm' }}</span>
+                }
+              </div>
+            </div>
+          }
+
+          <!-- Device-Code Flow -->
+          @if (!oauthSession()) {
+            <div class="oauth-actions">
+              @if (codexStatus()?.authenticated) {
+                <button mat-stroked-button color="warn" (click)="logoutCodex()">
+                  <mat-icon>logout</mat-icon> Abmelden
+                </button>
+              }
+              <button mat-raised-button color="primary"
+                      [disabled]="startingOAuth()"
+                      (click)="startOAuth()">
+                @if (startingOAuth()) {
+                  <mat-spinner diameter="18"></mat-spinner>
+                } @else {
+                  <mat-icon>login</mat-icon>
+                }
+                {{ codexStatus()?.authenticated ? 'Neu anmelden' : 'Mit OpenAI anmelden' }}
+              </button>
+            </div>
+          } @else {
+            <!-- Laufende OAuth-Session -->
+            <div class="oauth-flow">
+              @if (oauthPollStatus() === 'authorized') {
+                <div class="oauth-success">
+                  <mat-icon>check_circle</mat-icon>
+                  <span>Erfolgreich angemeldet!</span>
+                </div>
+              } @else if (oauthPollStatus() === 'timeout') {
+                <div class="oauth-error">
+                  <mat-icon>timer_off</mat-icon>
+                  <span>Zeitüberschreitung — bitte erneut versuchen.</span>
+                </div>
+                <button mat-stroked-button (click)="cancelOAuth()">Schließen</button>
+              } @else if (oauthPollStatus() === 'error') {
+                <div class="oauth-error">
+                  <mat-icon>error</mat-icon>
+                  <span>Fehler beim Anmeldeprozess.</span>
+                </div>
+                <button mat-stroked-button (click)="cancelOAuth()">Schließen</button>
+              } @else {
+                <!-- Pending: zeige code + link -->
+                <div class="oauth-code-block">
+                  <p class="oauth-instructions">
+                    Öffne den folgenden Link in deinem Browser und gib den Code ein:
+                  </p>
+                  <div class="oauth-code">{{ oauthSession()!.user_code }}</div>
+                  <a [href]="oauthSession()!.verification_uri" target="_blank" rel="noopener">
+                    <button mat-stroked-button>
+                      <mat-icon>open_in_new</mat-icon>
+                      {{ oauthSession()!.verification_uri }}
+                    </button>
+                  </a>
+                  <div class="oauth-waiting">
+                    <mat-spinner diameter="20"></mat-spinner>
+                    <span>Warte auf Bestätigung…</span>
+                  </div>
+                  <button mat-button (click)="cancelOAuth()">Abbrechen</button>
+                </div>
+              }
+            </div>
+          }
+        </mat-card-content>
+      </mat-card>
 
       @if (loading()) {
         <div class="spinner-center"><mat-spinner diameter="40"></mat-spinner></div>
@@ -120,25 +229,6 @@ const SECRET_MASK = '••••••••';
                   </div>
                 }
               </mat-card-header>
-              <!-- Codex OAuth status banner -->
-              @if (group.codexSection && codexStatus()) {
-                <div class="codex-status-banner" [class.authenticated]="codexStatus()!.authenticated">
-                  <mat-icon>{{ codexStatus()!.authenticated ? 'verified_user' : 'no_accounts' }}</mat-icon>
-                  <div class="codex-status-text">
-                    <strong>Hermes OAuth: {{ codexStatus()!.authenticated ? 'Eingeloggt' : 'Nicht eingeloggt' }}</strong>
-                    <span>{{ codexStatus()!.message }}</span>
-                    @if (!codexStatus()!.authenticated) {
-                      <code>hermes auth {{ codexStatus()!.provider }}</code>
-                    }
-                    @if (codexStatus()!.authenticated && codexStatus()!.expires_at) {
-                      <span class="expires">Gültig bis: {{ codexStatus()!.expires_at }}</span>
-                    }
-                  </div>
-                  <button mat-icon-button (click)="loadCodexStatus()" matTooltip="Status neu laden">
-                    <mat-icon>refresh</mat-icon>
-                  </button>
-                </div>
-              }
               <mat-card-content>
                 @for (key of group.keys; track key) {
                   @if (isBooleanKey(key)) {
@@ -151,7 +241,7 @@ const SECRET_MASK = '••••••••';
                       <mat-label>{{ keyLabel(key) }}</mat-label>
                       <mat-select [formControlName]="key">
                         @for (opt of selectOptions(key); track opt) {
-                          <mat-option [value]="opt">{{ opt }}</mat-option>
+                          <mat-option [value]="opt">{{ selectLabel(key, opt) }}</mat-option>
                         }
                       </mat-select>
                     </mat-form-field>
@@ -212,9 +302,12 @@ const SECRET_MASK = '••••••••';
     .test-result-text { display: flex; flex-direction: column; gap: 2px; }
     .test-message { font-weight: 500; }
     .test-detail { font-size: 11px; opacity: 0.85; font-family: monospace; word-break: break-all; }
+
+    /* OAuth Card */
+    .oauth-card { border-left: 4px solid var(--mat-sys-primary); }
     .codex-status-banner {
       display: flex; align-items: flex-start; gap: 10px;
-      margin: 0 16px 8px; padding: 10px 14px;
+      margin-bottom: 16px; padding: 10px 14px;
       border-radius: 8px; border-left: 4px solid #f57c00;
       background: color-mix(in srgb, #f57c00 8%, var(--mat-sys-surface-container));
     }
@@ -224,19 +317,42 @@ const SECRET_MASK = '••••••••';
     .codex-status-banner.authenticated mat-icon { color: #388e3c; }
     .codex-status-text { display: flex; flex-direction: column; gap: 3px; flex: 1; font-size: 13px; }
     .codex-status-text strong { font-weight: 700; }
-    .codex-status-text code { font-family: monospace; font-size: 12px; background: var(--mat-sys-surface-variant); padding: 2px 6px; border-radius: 4px; }
     .codex-status-text .expires { font-size: 11px; opacity: .7; }
+
+    .oauth-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .oauth-actions button mat-icon { margin-right: 6px; }
+
+    .oauth-flow { display: flex; flex-direction: column; gap: 12px; }
+    .oauth-code-block { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+    .oauth-instructions { margin: 0; font-size: 14px; }
+    .oauth-code {
+      font-family: monospace; font-size: 28px; font-weight: 700; letter-spacing: 4px;
+      padding: 12px 24px; border-radius: 8px;
+      background: var(--mat-sys-surface-variant);
+      color: var(--mat-sys-on-surface);
+      border: 2px solid var(--mat-sys-primary);
+      user-select: all;
+    }
+    .oauth-waiting { display: flex; align-items: center; gap: 10px; font-size: 14px; opacity: .8; }
+    .oauth-success { display: flex; align-items: center; gap: 8px; color: #388e3c; font-weight: 600; font-size: 15px; }
+    .oauth-success mat-icon { color: #388e3c; font-size: 24px; height: 24px; width: 24px; }
+    .oauth-error { display: flex; align-items: center; gap: 8px; color: #c62828; font-weight: 500; font-size: 14px; }
+    .oauth-error mat-icon { color: #c62828; font-size: 22px; height: 22px; width: 22px; }
   `],
 })
-export class AiSettingsComponent implements OnInit {
+export class AiSettingsComponent implements OnInit, OnDestroy {
   groups = SETTING_GROUPS;
   loading = signal(true);
   saving = signal(false);
   testingGroup = signal<string | null>(null);
   testResults = signal<Record<string, TestResult>>({});
-  codexStatus = signal<any>(null);
+  codexStatus = signal<CodexStatus | null>(null);
+  oauthSession = signal<OAuthSession | null>(null);
+  oauthPollStatus = signal<'pending' | 'authorized' | 'timeout' | 'error' | null>(null);
+  startingOAuth = signal(false);
   form: FormGroup | null = null;
   private settingsMap = new Map<string, SettingItem>();
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private fb: FormBuilder,
@@ -257,11 +373,87 @@ export class AiSettingsComponent implements OnInit {
     this.loadCodexStatus();
   }
 
+  ngOnDestroy() {
+    this.stopPolling();
+  }
+
   loadCodexStatus() {
-    this.http.get<any>(`${environment.apiUrl}/settings/codex-status`).subscribe({
+    this.http.get<CodexStatus>(`${environment.apiUrl}/oauth/openai-codex/status`).subscribe({
       next: s => this.codexStatus.set(s),
       error: () => {},
     });
+  }
+
+  startOAuth() {
+    this.startingOAuth.set(true);
+    this.http.post<OAuthSession>(`${environment.apiUrl}/oauth/openai-codex/start`, {}).subscribe({
+      next: session => {
+        this.oauthSession.set(session);
+        this.oauthPollStatus.set('pending');
+        this.startingOAuth.set(false);
+        const intervalMs = (session.poll_interval_seconds ?? 5) * 1000;
+        this.pollTimer = setInterval(() => this.pollOAuth(), intervalMs);
+      },
+      error: err => {
+        this.startingOAuth.set(false);
+        this.snack.open(
+          `Fehler: ${err?.error?.detail ?? 'Verbindung zu OpenAI fehlgeschlagen'}`,
+          'OK', { duration: 5000 }
+        );
+      },
+    });
+  }
+
+  private pollOAuth() {
+    const session = this.oauthSession();
+    if (!session) return;
+    this.http.post<{ status: string }>(
+      `${environment.apiUrl}/oauth/openai-codex/poll/${session.session_id}`, {}
+    ).subscribe({
+      next: res => {
+        if (res.status === 'authorized') {
+          this.stopPolling();
+          this.oauthPollStatus.set('authorized');
+          this.loadCodexStatus();
+          setTimeout(() => this.cancelOAuth(), 2000);
+          this.snack.open('Erfolgreich mit OpenAI Codex angemeldet!', 'OK', { duration: 4000 });
+        } else if (res.status === 'timeout') {
+          this.stopPolling();
+          this.oauthPollStatus.set('timeout');
+        } else if (res.status === 'error') {
+          this.stopPolling();
+          this.oauthPollStatus.set('error');
+        }
+        // 'pending' → continue polling
+      },
+      error: () => {
+        this.stopPolling();
+        this.oauthPollStatus.set('error');
+      },
+    });
+  }
+
+  cancelOAuth() {
+    this.stopPolling();
+    this.oauthSession.set(null);
+    this.oauthPollStatus.set(null);
+  }
+
+  logoutCodex() {
+    this.http.delete(`${environment.apiUrl}/oauth/openai-codex/logout`).subscribe({
+      next: () => {
+        this.loadCodexStatus();
+        this.snack.open('Abgemeldet', 'OK', { duration: 3000 });
+      },
+      error: () => this.snack.open('Fehler beim Abmelden', 'OK', { duration: 3000 }),
+    });
+  }
+
+  private stopPolling() {
+    if (this.pollTimer !== null) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
   }
 
   buildForm() {
@@ -288,7 +480,6 @@ export class AiSettingsComponent implements OnInit {
       let val = v[key];
       if (BOOLEAN_KEYS.has(key)) val = val ? 'true' : 'false';
       const item = this.settingsMap.get(key);
-      // Skip empty secret fields (keep existing)
       if (item?.is_secret && !val) return Promise.resolve();
       return this.svc.updateSetting(key, val === '' ? null : String(val)).toPromise();
     });
@@ -305,15 +496,10 @@ export class AiSettingsComponent implements OnInit {
   testGroup(group: string) {
     this.testingGroup.set(group);
     this.testResults.update(r => { const n = { ...r }; delete n[group]; return n; });
-    // codex uses a dedicated endpoint
-    const obs = group === 'codex'
-      ? this.http.post<any>(`${environment.apiUrl}/settings/test/codex`, {})
-      : this.svc.testSettingGroup(group);
-    obs.subscribe({
+    this.svc.testSettingGroup(group).subscribe({
       next: result => {
         this.testResults.update(r => ({ ...r, [group]: result }));
         this.testingGroup.set(null);
-        if (group === 'codex') this.loadCodexStatus();
       },
       error: err => {
         this.testResults.update(r => ({
@@ -330,46 +516,48 @@ export class AiSettingsComponent implements OnInit {
   isSecret(key: string): boolean { return !!this.settingsMap.get(key)?.is_secret; }
   selectOptions(key: string): string[] { return SELECT_KEYS[key] ?? []; }
 
+  selectLabel(key: string, opt: string): string {
+    if (key === 'llm.provider') {
+      return opt === 'custom' ? 'Lokal / Eigener Endpunkt' : 'OpenAI Codex (OAuth)';
+    }
+    return opt;
+  }
+
   keyLabel(key: string): string {
     const labels: Record<string, string> = {
-      'llm.base_url':                   'LLM Basis-URL',
-      'llm.model':                       'LLM Modell',
-      'llm.api_mode':                    'LLM API Modus',
-      'llm.api_key':                     'API Key',
-      'llm.timeout_seconds':             'Timeout (Sekunden)',
-      'llm.vision_base_url':             'Vision LLM URL',
-      'llm.vision_model':                'Vision Modell',
-      'llm.vision_api_key':              'Vision API Key',
-      'searxng.base_url':                'SearXNG URL',
-      'searxng.enabled':                 'SearXNG aktiviert',
-      'searxng.results_count':           'Anzahl Suchergebnisse',
-      'llm.thinking_mode':                    'Thinking Mode (Extended Reasoning)',
-      'llm.codex_fallback_enabled':           'OpenAI Codex Fallback aktivieren',
-      'llm.codex_hermes_provider':            'Hermes Provider Name (z.B. openai-codex)',
-      'llm.codex_base_url':                   'Codex API URL (leer = https://api.openai.com/v1)',
-      'llm.codex_model':                      'Codex Modell (z.B. gpt-4o)',
-      'llm.codex_timeout_seconds':            'Codex Timeout (Sekunden)',
-      'agent.interval_minutes':               'KI-Agent Intervall (Minuten)',
-      'agent.aggregation_interval_minutes':   'Alert-Abruf Intervall (Minuten)',
-      'agent.auto_jira':                      'Automatisch Jira-Tickets erstellen',
-      'agent.auto_enrich':                    'KI-Anreicherung automatisch (aus = On Demand)',
-      'agent.rag_enabled':                    'Wissensdatenbank-Suche (RAG) im KI-Agenten',
-      'workflow.web_search':                  'Websuche bei KI-Analyse (News Feed / Alerts)',
-      'agent.scoring_enabled':                'CPU-Scoring aktiv (aus = alle Alerts ans LLM, für Beta-Vergleich)',
-      'agent.enrich_score_threshold':         'Score-Schwellwert für automatische KI-Anreicherung (0–200, default 80)',
-      'agent.max_alerts_for_llm':             'Max. Alerts pro KI-Agent-Lauf ans LLM (default 30)',
-      'agent.flap_window_minutes':            'Flapping-Erkennungsfenster in Minuten (default 30)',
-      'agent.flap_threshold':                 'Wiederholungen bis Flapping erkannt (default 3)',
-      'agent.score_learning_enabled':         'Adaptives Scoring — lernt aus Jira-Tickets und Nutzerreaktionen',
-      'agent.score_delta_decay_days':         'Score-Delta Verfallszeit in Tagen (default 7)',
-      'agent.worklist_interval_minutes':      'Brücke: Prioritätenliste neu berechnen alle N Minuten (default 15)',
-      'agent.worklist_size':                  'Brücke: Anzahl Einträge in der Prioritätenliste (default 15)',
-      'agent.generative_interval_minutes':    'Generativ-Dashboard: KI komponiert das Lagebild neu alle N Minuten (default 15)',
-      'agent.jira_severity_threshold':        'Mindest-Severity für Jira',
-      'agent.checkmk_locations':              'CheckMK Standort-Filter (Komma-getrennt, z.B. München,Kassel)',
-      'agent.checkmk_ve':                     'CheckMK VE-Filter (Komma-getrennt, z.B. VE1,VE2)',
-      'agent.checkmk_criticality':            'CheckMK Criticality-Filter (Komma-getrennt, z.B. critical,prod)',
-      'agent.checkmk_os':                     'CheckMK OS-Filter (Komma-getrennt, z.B. Linux,Windows)',
+      'llm.provider':                       'LLM Provider',
+      'llm.base_url':                        'LLM Basis-URL (nur für "Lokal")',
+      'llm.model':                           'LLM Modell',
+      'llm.api_mode':                        'LLM API Modus',
+      'llm.api_key':                         'API Key',
+      'llm.timeout_seconds':                 'Timeout (Sekunden)',
+      'llm.codex_model':                     'OpenAI Codex Modell (z.B. gpt-4o)',
+      'llm.codex_timeout_seconds':           'OpenAI Codex Timeout (Sekunden)',
+      'llm.vision_base_url':                 'Vision LLM URL',
+      'llm.vision_model':                    'Vision Modell',
+      'llm.vision_api_key':                  'Vision API Key',
+      'searxng.base_url':                    'SearXNG URL',
+      'searxng.enabled':                     'SearXNG aktiviert',
+      'searxng.results_count':               'Anzahl Suchergebnisse',
+      'llm.thinking_mode':                   'Thinking Mode (Extended Reasoning)',
+      'agent.interval_minutes':              'KI-Agent Intervall (Minuten)',
+      'agent.aggregation_interval_minutes':  'Alert-Abruf Intervall (Minuten)',
+      'agent.auto_jira':                     'Automatisch Jira-Tickets erstellen',
+      'agent.auto_enrich':                   'KI-Anreicherung automatisch (aus = On Demand)',
+      'agent.rag_enabled':                   'Wissensdatenbank-Suche (RAG) im KI-Agenten',
+      'workflow.web_search':                 'Websuche bei KI-Analyse',
+      'agent.scoring_enabled':               'CPU-Scoring aktiv',
+      'agent.enrich_score_threshold':        'Score-Schwellwert für KI-Anreicherung',
+      'agent.max_alerts_for_llm':            'Max. Alerts pro KI-Agent-Lauf ans LLM',
+      'agent.flap_window_minutes':           'Flapping-Erkennungsfenster (Minuten)',
+      'agent.flap_threshold':                'Wiederholungen bis Flapping erkannt',
+      'agent.score_learning_enabled':        'Adaptives Scoring aktiv',
+      'agent.score_delta_decay_days':        'Score-Delta Verfallszeit (Tage)',
+      'agent.worklist_interval_minutes':     'Prioritätenliste Aktualisierung (Minuten)',
+      'agent.worklist_size':                 'Anzahl Einträge in der Prioritätenliste',
+      'agent.generative_interval_minutes':   'Generativ-Dashboard Intervall (Minuten)',
+      'agent.jira_severity_threshold':       'Mindest-Severity für Jira',
+      'agent.checkmk_locations':             'CheckMK Standort-Filter (Komma-getrennt)',
     };
     return labels[key] ?? key;
   }

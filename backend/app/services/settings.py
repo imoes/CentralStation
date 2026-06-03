@@ -142,39 +142,32 @@ async def get_llm_config(db: AsyncSession) -> LLMConfig:
     )
 
 
-async def get_codex_fallback_enabled(db: AsyncSession) -> bool:
-    """Return True if OpenAI Codex (Hermes OAuth) fallback is enabled."""
-    s = await get_all_settings(db)
-    return s.get("llm.codex_fallback_enabled", "false") == "true"
 
+async def get_active_llm_config(db: AsyncSession) -> LLMConfig:
+    """Return the LLMConfig for the currently selected provider.
 
-async def get_codex_config(db: AsyncSession) -> LLMConfig | None:
-    """Return LLMConfig for the Hermes OpenAI Codex fallback, or None.
-
-    The token is read live from ~/.hermes/auth.json — no manual API key needed.
-    The Hermes provider is configurable (default: openai-codex).
+    llm.provider = "custom"  → local llamacpp03 endpoint (default)
+    llm.provider = "openai-codex" → OpenAI Codex via stored OAuth token
     """
-    from app.services.hermes_auth import get_hermes_provider_token
     s = await get_all_settings(db)
+    provider = s.get("llm.provider") or "custom"
 
-    if s.get("llm.codex_fallback_enabled", "false") != "true":
-        return None
+    if provider == "openai-codex":
+        from app.api.oauth_providers import get_codex_access_token
+        token = await get_codex_access_token(db)
+        if token:
+            from app.api.oauth_providers import CODEX_BASE_URL
+            model = s.get("llm.codex_model") or "gpt-4o"
+            return LLMConfig(
+                base_url=CODEX_BASE_URL,
+                model=model,
+                api_key=token,
+                timeout_seconds=int(s.get("llm.codex_timeout_seconds") or 60),
+                api_mode="chat_completions",
+                thinking_mode=False,
+            )
 
-    hermes_provider = s.get("llm.codex_hermes_provider") or "openai-codex"
-    token = get_hermes_provider_token(hermes_provider)
-    if not token:
-        return None
-
-    base_url = s.get("llm.codex_base_url") or "https://api.openai.com/v1"
-    model = s.get("llm.codex_model") or "gpt-4o"
-    return LLMConfig(
-        base_url=base_url,
-        model=model,
-        api_key=token,
-        timeout_seconds=int(s.get("llm.codex_timeout_seconds") or 60),
-        api_mode="chat_completions",
-        thinking_mode=False,
-    )
+    return await get_llm_config(db)
 
 
 async def get_vision_config(db: AsyncSession) -> VisionConfig:
