@@ -185,7 +185,7 @@ async def get_active_llm_config(db: AsyncSession) -> LLMConfig:
                 model=model,
                 api_key=token,
                 timeout_seconds=int(s.get("llm.codex_timeout_seconds") or 60),
-                api_mode="chat_completions",
+                api_mode="codex_responses",
                 thinking_mode=False,
             )
 
