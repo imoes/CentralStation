@@ -85,8 +85,9 @@ def _build_codex_payload(
         "input": input_items,
         "store": False,
     }
-    if temperature is not None:
-        payload["temperature"] = temperature
+    # NOTE: the Codex backend rejects `temperature` and `max_output_tokens`
+    # with HTTP 400 "Unsupported parameter". They are accepted as kwargs for
+    # call-site compatibility but deliberately NOT forwarded.
     if reasoning_effort:
         payload["reasoning"] = {"effort": reasoning_effort}
     return payload
