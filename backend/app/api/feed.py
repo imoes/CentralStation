@@ -687,6 +687,9 @@ async def diagnose_alert(
                 "Markiere kritische Punkte mit konkreten Werten (z.B. 'DCX_API_max: 7543ms'). "
                 "BEWEISPFLICHT: Nenne NUR Probleme, die aus den Diagnosedaten direkt hervorgehen — "
                 "keine Vermutungen ohne Datenbeleg. "
+                "ABWESENHEIT VON DATEN IST KEIN BEFUND: Fehlende Metriken oder leere "
+                "Ergebnisse bedeuten 'gesund/nicht gesammelt', NICHT 'Problem'. Werte sie "
+                "niemals als auffällig — erwähne sie höchstens neutral. "
                 "Weise darauf hin, dass NUR gelesen wurde (read-only, keine Änderung). "
                 "Das Feld 'Log-Quelle' nennt den Kollektor (Graylog, CheckMK) — NICHT das Problem-System."
             )
