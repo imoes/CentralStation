@@ -505,19 +505,6 @@ const SEVERITY_COLOR: Record<string, string> = {
                   }
                   {{ item.ai_insight ? 'Neu analysieren' : 'KI Analyse' }}
                 </button>
-                @if (item.external_id) {
-                  <button mat-stroked-button class="ki-btn diagnose-btn"
-                          (click)="diagnoseAlert(item)"
-                          [disabled]="isDiagnosing(item.id)"
-                          matTooltip="Computer prüft read-only: CheckMK-Status, Metriken, aktuelle Logs">
-                    @if (isDiagnosing(item.id)) {
-                      <mat-spinner diameter="14" class="ki-spinner"></mat-spinner>
-                    } @else {
-                      <mat-icon>manage_search</mat-icon>
-                    }
-                    Computer, prüfe das
-                  </button>
-                }
               </div>
             }
 
@@ -578,6 +565,20 @@ const SEVERITY_COLOR: Record<string, string> = {
                   <mat-icon>comment</mat-icon>
                   Kommentar@if ((item.collab?.comment_count ?? 0) > 0) { ({{ item.collab!.comment_count }}) }
                 </button>
+                <!-- Diagnose button — KI prüft read-only -->
+                @if (item.type === 'alert') {
+                  <button mat-button class="action-btn diagnose-btn"
+                          (click)="diagnoseAlert(item)"
+                          [disabled]="isDiagnosing(item.id)"
+                          matTooltip="KI prüft: CheckMK-Status, Metriken, Logs (read-only)">
+                    @if (isDiagnosing(item.id)) {
+                      <mat-spinner diameter="14" class="ki-spinner"></mat-spinner>
+                    } @else {
+                      <mat-icon>manage_search</mat-icon>
+                    }
+                    Computer, prüfe das
+                  </button>
+                }
               }
               <button mat-button class="action-btn ignore-btn" (click)="ignoreItem(item)"
                       [disabled]="isIgnoring(item.id)"
