@@ -230,3 +230,47 @@ class WorkSession(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class AlertCollaboration(Base):
+    """Tracks claim/ownership and work_status per logical problem (keyed by external_id).
+
+    external_id is the stable dedup key from OpenSearch — same alert source always
+    produces the same external_id so this row stays consistent across re-aggregations.
+    """
+    __tablename__ = "alert_collaboration"
+
+    external_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    claimed_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    claimed_by_name: Mapped[str | None] = mapped_column(String(200))
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    work_status: Mapped[str] = mapped_column(String(20), default="new")  # new|investigating|resolved
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class AlertComment(Base):
+    """Comments and activity timeline entries for an alert (by external_id).
+
+    kind: comment | claim | release | status | ai
+    System events (claim/release/status/ai) are also stored here to build
+    a complete activity timeline in one query.
+    """
+    __tablename__ = "alert_comments"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    external_id: Mapped[str] = mapped_column(String(255), index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    user_name: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(20), default="comment")
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )

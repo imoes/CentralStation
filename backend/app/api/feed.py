@@ -248,6 +248,40 @@ async def get_feed(
             if pinned:
                 items = [pinned] + list(items)
 
+    # ── Enrich with collaboration state ──────────────────────────────────────
+    # Batch-load collab rows + comment counts for all external_ids in this page.
+    ext_ids = [i.get("external_id") for i in items if i.get("external_id")]
+    if ext_ids:
+        try:
+            from app.models.workflow import AlertCollaboration, AlertComment
+            from sqlalchemy import func as sa_func
+            collab_rows = await db.execute(
+                select(AlertCollaboration).where(AlertCollaboration.external_id.in_(ext_ids))
+            )
+            collab_map = {r.external_id: r for r in collab_rows.scalars().all()}
+
+            count_rows = await db.execute(
+                select(AlertComment.external_id, sa_func.count(AlertComment.id).label("n"))
+                .where(AlertComment.external_id.in_(ext_ids))
+                .group_by(AlertComment.external_id)
+            )
+            count_map = {r.external_id: r.n for r in count_rows.all()}
+
+            enriched = []
+            for item in items:
+                eid = item.get("external_id")
+                c = collab_map.get(eid) if eid else None
+                item["collab"] = {
+                    "claimed_by_name": c.claimed_by_name if c else None,
+                    "claimed_at": c.claimed_at.isoformat() if c and c.claimed_at else None,
+                    "work_status": c.work_status if c else "new",
+                    "comment_count": count_map.get(eid, 0) if eid else 0,
+                }
+                enriched.append(item)
+            items = enriched
+        except Exception:
+            pass  # collab enrichment is non-critical
+
     return items
 
 
@@ -404,3 +438,268 @@ async def acknowledge_feed_item(
 
     await update_status(alert_id, source, "acknowledged")
     return {"ok": True}
+
+
+# ── Collaboration: claim / comments / status ──────────────────────────────
+
+async def _get_or_create_collab(
+    external_id: str, db: AsyncSession
+) -> "AlertCollaboration":
+    from app.models.workflow import AlertCollaboration
+    result = await db.execute(
+        select(AlertCollaboration).where(AlertCollaboration.external_id == external_id)
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        row = AlertCollaboration(external_id=external_id)
+        db.add(row)
+        await db.flush()
+    return row
+
+
+async def _add_timeline(
+    external_id: str, user_id, user_name: str,
+    kind: str, body: str, db: AsyncSession
+) -> dict:
+    from app.models.workflow import AlertComment
+    import uuid as _uuid2
+    entry = AlertComment(
+        id=_uuid2.uuid4(),
+        external_id=external_id,
+        user_id=user_id,
+        user_name=user_name,
+        kind=kind,
+        body=body,
+    )
+    db.add(entry)
+    return {"id": str(entry.id), "user_name": user_name, "kind": kind, "body": body}
+
+
+async def _broadcast_collab(external_id: str, kind: str, user_name: str,
+                             work_status: str, body: str) -> None:
+    from app.api.ws import manager
+    try:
+        await manager.broadcast(
+            {
+                "type": "feed_collab",
+                "external_id": external_id,
+                "kind": kind,
+                "user_name": user_name,
+                "work_status": work_status,
+                "body": body,
+            },
+            roles=["admin", "sysadmin", "network_technician"],
+        )
+    except Exception:
+        pass
+
+
+@router.post("/{external_id}/claim")
+async def claim_alert(
+    external_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Claim ownership of an alert — 'I'm working on this'."""
+    from datetime import datetime, timezone
+    collab = await _get_or_create_collab(external_id, db)
+    if collab.claimed_by and collab.claimed_by != user.id:
+        raise HTTPException(409, f"Already claimed by {collab.claimed_by_name}")
+    collab.claimed_by = user.id
+    collab.claimed_by_name = user.full_name or user.email
+    collab.claimed_at = datetime.now(timezone.utc)
+    collab.work_status = "investigating"
+    body = f"{collab.claimed_by_name} übernimmt das Problem."
+    await _add_timeline(external_id, user.id, collab.claimed_by_name, "claim", body, db)
+    await db.commit()
+    await _broadcast_collab(external_id, "claim", collab.claimed_by_name, "investigating", body)
+    return {"ok": True, "claimed_by_name": collab.claimed_by_name, "work_status": "investigating"}
+
+
+@router.post("/{external_id}/release")
+async def release_alert(
+    external_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Release claim on an alert."""
+    collab = await _get_or_create_collab(external_id, db)
+    name = user.full_name or user.email
+    collab.claimed_by = None
+    collab.claimed_by_name = None
+    collab.claimed_at = None
+    collab.work_status = "new"
+    body = f"{name} gibt das Problem frei."
+    await _add_timeline(external_id, user.id, name, "release", body, db)
+    await db.commit()
+    await _broadcast_collab(external_id, "release", name, "new", body)
+    return {"ok": True}
+
+
+@router.patch("/{external_id}/status")
+async def set_alert_status(
+    external_id: str,
+    body: dict,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Set work_status (new|investigating|resolved)."""
+    new_status = body.get("status", "new")
+    if new_status not in ("new", "investigating", "resolved"):
+        raise HTTPException(400, "Invalid status")
+    collab = await _get_or_create_collab(external_id, db)
+    collab.work_status = new_status
+    name = user.full_name or user.email
+    status_labels = {"new": "Neu", "investigating": "In Bearbeitung", "resolved": "Gelöst"}
+    entry_body = f"Status → {status_labels.get(new_status, new_status)}"
+    await _add_timeline(external_id, user.id, name, "status", entry_body, db)
+    await db.commit()
+    await _broadcast_collab(external_id, "status", name, new_status, entry_body)
+    return {"ok": True, "work_status": new_status}
+
+
+@router.post("/{external_id}/comments")
+async def add_comment(
+    external_id: str,
+    body: dict,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Add a user comment to an alert's activity timeline."""
+    text = (body.get("body") or "").strip()
+    if not text:
+        raise HTTPException(400, "Comment body required")
+    name = user.full_name or user.email
+    # ensure collab row exists
+    collab = await _get_or_create_collab(external_id, db)
+    entry = await _add_timeline(external_id, user.id, name, "comment", text, db)
+    await db.commit()
+    await _broadcast_collab(external_id, "comment", name, collab.work_status, text)
+    return {"ok": True, "entry": entry}
+
+
+@router.get("/{external_id}/collab")
+async def get_collab(
+    external_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Get claim state + work_status + full activity timeline for an alert."""
+    from app.models.workflow import AlertCollaboration, AlertComment
+    from sqlalchemy import select as sa_select
+
+    collab_result = await db.execute(
+        sa_select(AlertCollaboration).where(AlertCollaboration.external_id == external_id)
+    )
+    collab = collab_result.scalar_one_or_none()
+
+    comments_result = await db.execute(
+        sa_select(AlertComment)
+        .where(AlertComment.external_id == external_id)
+        .order_by(AlertComment.created_at.asc())
+    )
+    comments = comments_result.scalars().all()
+
+    return {
+        "external_id": external_id,
+        "claimed_by_name": collab.claimed_by_name if collab else None,
+        "claimed_at": collab.claimed_at.isoformat() if collab and collab.claimed_at else None,
+        "work_status": collab.work_status if collab else "new",
+        "timeline": [
+            {
+                "id": str(c.id),
+                "user_name": c.user_name,
+                "kind": c.kind,
+                "body": c.body,
+                "created_at": c.created_at.isoformat(),
+            }
+            for c in comments
+        ],
+    }
+
+
+@router.post("/{external_id}/diagnose")
+async def diagnose_alert(
+    external_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Run read-only diagnostics for the host behind an alert and post result as AI comment.
+
+    Sci-Fi pattern: "Computer, prüfe das" — the AI runs checks autonomously and
+    reports what it found as a completed action, not as a question.
+    All checks are guaranteed read-only (no mutation, full audit).
+    """
+    from app.services.ai_agent.diagnostics import run_diagnostics
+    from app.services.settings import get_llm_config
+    from app.services.llm_client import generate_text
+
+    # ── 1. Find the host for this external_id ─────────────────────────────
+    # Look up via OpenSearch first, fall back to DB Alert
+    host = ""
+    try:
+        from app.services.feed_index import search_by_query
+        items = await search_by_query(
+            index_pattern="cs-feed-*",
+            query_string=f'external_id:"{external_id}"',
+            size=1,
+        )
+        if items:
+            meta = items[0].get("metadata") or {}
+            host = meta.get("host") or meta.get("agent") or meta.get("container_name") or ""
+            if not host:
+                host = items[0].get("title", "")[:60]
+    except Exception:
+        pass
+
+    if not host:
+        raise HTTPException(400, "Host nicht ermittelbar — Diagnose nicht möglich.")
+
+    # ── 2. Run diagnostic providers (all read-only) ───────────────────────
+    results = await run_diagnostics(host, db)
+    if not results:
+        raise HTTPException(503, "Keine Diagnose-Provider verfügbar.")
+
+    # ── 3. Let LLM synthesise a human-readable summary ───────────────────
+    findings_text = "\n".join(r.to_llm_text() for r in results)
+    summary = ""
+    try:
+        llm_cfg = await get_llm_config(db)
+        if llm_cfg.is_configured:
+            raw = await generate_text(
+                llm_cfg,
+                [
+                    {"role": "system", "content":
+                     "Du bist ein IT-Operations-Assistent. Fasse die Diagnoseergebnisse "
+                     "für einen Sysadmin in 2-3 präzisen deutschen Sätzen zusammen. "
+                     "Markiere kritische Punkte. Weise darauf hin, dass NUR gelesen wurde "
+                     "(read-only, keine Änderung vorgenommen). KEINE Widget-Namen nennen."},
+                    {"role": "user", "content":
+                     f"Diagnoseergebnisse für {host}:\n{findings_text}"},
+                ],
+                temperature=0.2,
+                max_output_tokens=300,
+            )
+            from app.services.dashboard.generative_designer import _strip_thinking
+            summary = _strip_thinking(raw).strip()
+    except Exception as e:
+        log.debug("diagnose: LLM synthesis failed: %s", e)
+        summary = findings_text  # fallback: raw results
+
+    # ── 4. Post as AI comment in the collaboration thread ─────────────────
+    collab = await _get_or_create_collab(external_id, db)
+    ai_body = f"🖥 Diagnose (read-only, keine Änderung):\n{summary}"
+    entry = await _add_timeline(
+        external_id, None, "Computer (KI)", "ai", ai_body, db
+    )
+    await db.commit()
+    await _broadcast_collab(external_id, "ai", "Computer (KI)", collab.work_status, ai_body)
+
+    # Also surface in items if comment thread is open
+    return {
+        "ok": True,
+        "host": host,
+        "summary": summary,
+        "providers": [r.tool for r in results],
+        "entry": entry,
+    }

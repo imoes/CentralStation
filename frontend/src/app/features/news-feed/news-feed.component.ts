@@ -20,6 +20,23 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { environment } from '../../../environments/environment';
 import { App } from '../../app';
+import { AuthService } from '../../core/auth/auth.service';
+import { WebsocketService } from '../../core/services/websocket.service';
+
+interface FeedItemCollab {
+  claimed_by_name: string | null;
+  claimed_at: string | null;
+  work_status: 'new' | 'investigating' | 'resolved';
+  comment_count: number;
+}
+
+interface CollabTimeline {
+  id: string;
+  user_name: string;
+  kind: 'comment' | 'claim' | 'release' | 'status' | 'ai';
+  body: string;
+  created_at: string;
+}
 
 interface FeedItem {
   id: string;
@@ -35,6 +52,8 @@ interface FeedItem {
   location_name: string | null;
   location_city: string | null;
   external_url: string | null;
+  external_id?: string | null;
+  collab?: FeedItemCollab;
 }
 
 interface FeedPrefs {
@@ -386,6 +405,23 @@ const SEVERITY_COLOR: Record<string, string> = {
               }
             </div>
 
+            <!-- Collab ownership badge — visible in all themes when claimed/investigating -->
+            @if (item.collab?.claimed_by_name || (item.collab?.work_status && item.collab?.work_status !== 'new')) {
+              <div class="collab-badge" [attr.data-status]="item.collab?.work_status">
+                @if (item.collab?.claimed_by_name) {
+                  <mat-icon class="collab-badge-icon">person</mat-icon>
+                  <span>{{ item.collab!.claimed_by_name }}</span>
+                  <span class="collab-sep">·</span>
+                }
+                <span class="collab-status-label">{{ collabStatusLabel(item.collab?.work_status) }}</span>
+                @if ((item.collab?.comment_count ?? 0) > 0) {
+                  <span class="collab-sep">·</span>
+                  <mat-icon class="collab-badge-icon">comment</mat-icon>
+                  <span>{{ item.collab!.comment_count }}</span>
+                }
+              </div>
+            }
+
             <!-- Classic / Holo card header: avatar + meta -->
             <div class="card-top">
               <div class="source-avatar" [style.background]="sourceColor(item.source)">
@@ -469,6 +505,19 @@ const SEVERITY_COLOR: Record<string, string> = {
                   }
                   {{ item.ai_insight ? 'Neu analysieren' : 'KI Analyse' }}
                 </button>
+                @if (item.external_id) {
+                  <button mat-stroked-button class="ki-btn diagnose-btn"
+                          (click)="diagnoseAlert(item)"
+                          [disabled]="isDiagnosing(item.id)"
+                          matTooltip="Computer prüft read-only: CheckMK-Status, Metriken, aktuelle Logs">
+                    @if (isDiagnosing(item.id)) {
+                      <mat-spinner diameter="14" class="ki-spinner"></mat-spinner>
+                    } @else {
+                      <mat-icon>manage_search</mat-icon>
+                    }
+                    Computer, prüfe das
+                  </button>
+                }
               </div>
             }
 
@@ -498,9 +547,38 @@ const SEVERITY_COLOR: Record<string, string> = {
                 </button>
               }
               <button mat-button class="action-btn" (click)="createTicket(item)">
-                <mat-icon>add_task</mat-icon>
-                Ticket
+                <mat-icon>work</mat-icon>
+                In Bearbeitung
               </button>
+              <!-- Claim / Release -->
+              @if (item.external_id) {
+                @if (!item.collab?.claimed_by_name) {
+                  <button mat-button class="action-btn collab-claim-btn" (click)="claimAlert(item)"
+                          matTooltip="Ich übernehme dieses Problem">
+                    <mat-icon>person_add</mat-icon>
+                    Übernehmen
+                  </button>
+                } @else if (isMyAlert(item)) {
+                  <button mat-button class="action-btn collab-release-btn" (click)="releaseAlert(item)"
+                          matTooltip="Problem freigeben">
+                    <mat-icon>person_remove</mat-icon>
+                    Freigeben
+                  </button>
+                  <!-- Status dropdown when I own it -->
+                  <select class="collab-status-select" [value]="item.collab!.work_status"
+                          (change)="setAlertStatus(item, $any($event.target).value)">
+                    <option value="investigating">In Bearbeitung</option>
+                    <option value="resolved">Gelöst</option>
+                    <option value="new">Zurücksetzen</option>
+                  </select>
+                }
+                <!-- Comment button — always shown when external_id exists -->
+                <button mat-button class="action-btn" (click)="toggleComments(item.id)"
+                        matTooltip="Kommentare & Aktivität">
+                  <mat-icon>comment</mat-icon>
+                  Kommentar@if ((item.collab?.comment_count ?? 0) > 0) { ({{ item.collab!.comment_count }}) }
+                </button>
+              }
               <button mat-button class="action-btn ignore-btn" (click)="ignoreItem(item)"
                       [disabled]="isIgnoring(item.id)"
                       matTooltip="KI erstellt Ausschluss-Filter für ähnliche Meldungen">
@@ -514,6 +592,46 @@ const SEVERITY_COLOR: Record<string, string> = {
               <span class="spacer"></span>
               <span class="item-type-hint">{{ typeLabel(item.type) }}</span>
             </div>
+
+            <!-- Inline comment thread -->
+            @if (showComments.has(item.id) && item.external_id) {
+              <div class="collab-thread">
+                @if (collabTimeline.get(item.id) === undefined) {
+                  <div class="collab-loading"><mat-spinner diameter="20"></mat-spinner></div>
+                } @else {
+                  @for (entry of collabTimeline.get(item.id) ?? []; track entry.id) {
+                    <div class="collab-entry" [attr.data-kind]="entry.kind">
+                      @if (entry.kind === 'comment') {
+                        <mat-icon class="ce-icon">chat_bubble_outline</mat-icon>
+                        <div class="ce-body">
+                          <span class="ce-author">{{ entry.user_name }}</span>
+                          <span class="ce-text">{{ entry.body }}</span>
+                          <span class="ce-time">{{ relTime(entry.created_at) }}</span>
+                        </div>
+                      } @else if (entry.kind === 'ai') {
+                        <mat-icon class="ce-icon ce-ai">smart_toy</mat-icon>
+                        <div class="ce-body">
+                          <span class="ce-author">Computer</span>
+                          <span class="ce-text">{{ entry.body }}</span>
+                          <span class="ce-time">{{ relTime(entry.created_at) }}</span>
+                        </div>
+                      } @else {
+                        <mat-icon class="ce-icon ce-system">info_outline</mat-icon>
+                        <div class="ce-body ce-system-text">{{ entry.body }} · {{ relTime(entry.created_at) }}</div>
+                      }
+                    </div>
+                  }
+                }
+                <div class="collab-input-row">
+                  <input class="collab-input" [id]="'ci-'+item.id"
+                         placeholder="Kommentar schreiben…"
+                         (keydown.enter)="postComment(item, $any($event.target).value); $any($event.target).value=''">
+                  <button mat-icon-button (click)="postCommentFromInput(item, 'ci-'+item.id)">
+                    <mat-icon>send</mat-icon>
+                  </button>
+                </div>
+              </div>
+            }
 
           </mat-card>
         }
@@ -944,6 +1062,63 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-holo) .last-seen-divider::before, :host-context(html.cs-theme-holo) .last-seen-divider::after { background: rgba(79,214,255,.2); }
     :host-context(html.cs-theme-holo) .empty-state { color: rgba(79,214,255,.3); }
     :host-context(html.cs-theme-holo) .settings-card { background: rgba(10,28,46,.85) !important; border: 1px solid rgba(79,214,255,.2) !important; box-shadow: none !important; }
+
+    /* ── Collaboration styles ── */
+    .collab-badge {
+      display: flex; align-items: center; gap: 5px;
+      padding: 3px 12px;
+      font-size: 11px; font-weight: 700;
+      background: color-mix(in srgb, var(--mat-sys-primary) 10%, var(--mat-sys-surface));
+      color: var(--mat-sys-primary);
+      border-bottom: 1px solid color-mix(in srgb, var(--mat-sys-primary) 20%, transparent);
+    }
+    .collab-badge[data-status="investigating"] { background: color-mix(in srgb, #f57c00 10%, var(--mat-sys-surface)); color: #f57c00; }
+    .collab-badge[data-status="resolved"] { background: color-mix(in srgb, #388e3c 10%, var(--mat-sys-surface)); color: #388e3c; }
+    .collab-badge-icon { font-size: 13px; height: 13px; width: 13px; }
+    .collab-sep { opacity: .4; }
+    .collab-status-label { font-weight: 600; }
+    .collab-claim-btn { color: var(--mat-sys-primary) !important; }
+    .collab-release-btn { color: #f57c00 !important; }
+    .collab-status-select {
+      font-size: 11px; border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: 4px; padding: 2px 4px; background: transparent;
+      color: var(--mat-sys-on-surface); cursor: pointer; margin: 0 4px;
+    }
+    /* Inline comment thread */
+    .collab-thread {
+      border-top: 1px solid var(--mat-sys-outline-variant);
+      padding: 8px 14px 10px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .collab-loading { display: flex; justify-content: center; padding: 8px; }
+    .collab-entry { display: flex; align-items: flex-start; gap: 6px; }
+    .ce-icon { font-size: 15px; height: 15px; width: 15px; flex-shrink: 0; margin-top: 2px; color: var(--mat-sys-on-surface-variant); }
+    .ce-ai { color: var(--mat-sys-primary); }
+    .ce-body { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; font-size: 12px; }
+    .ce-author { font-weight: 700; color: var(--mat-sys-on-surface); }
+    .ce-text { color: var(--mat-sys-on-surface-variant); flex: 1; min-width: 120px; }
+    .ce-time { font-size: 10px; color: var(--mat-sys-outline); }
+    .ce-system-text { font-size: 11px; color: var(--mat-sys-on-surface-variant); font-style: italic; }
+    .collab-input-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
+    .collab-input {
+      flex: 1; font-size: 13px; padding: 5px 10px;
+      border: 1px solid var(--mat-sys-outline-variant); border-radius: 6px;
+      background: var(--mat-sys-surface-container); color: var(--mat-sys-on-surface);
+      outline: none;
+    }
+    .collab-input:focus { border-color: var(--mat-sys-primary); }
+    /* LCARS collab overrides */
+    :host-context(html.cs-theme-lcars) .collab-badge { background: #1a1206; color: #FF9933; border-bottom-color: #2a1d0a; }
+    :host-context(html.cs-theme-lcars) .collab-badge[data-status="investigating"] { background: rgba(255,153,51,.1); color: #FF9933; }
+    :host-context(html.cs-theme-lcars) .collab-badge[data-status="resolved"] { background: rgba(102,204,102,.1); color: #66cc66; }
+    :host-context(html.cs-theme-lcars) .collab-thread { border-top-color: #2a1d0a; }
+    :host-context(html.cs-theme-lcars) .ce-author { color: #ffe8a0; }
+    :host-context(html.cs-theme-lcars) .ce-text { color: #e8a060; }
+    :host-context(html.cs-theme-lcars) .ce-time { color: rgba(255,232,160,.3); }
+    :host-context(html.cs-theme-lcars) .collab-input { background: #0a0804; border-color: #2a1d0a; color: #ffe8a0; }
+    :host-context(html.cs-theme-lcars) .collab-status-select { border-color: #2a1d0a; color: #e8a060; }
+    .diagnose-btn { color: var(--mat-sys-tertiary) !important; border-color: var(--mat-sys-tertiary) !important; }
+    :host-context(html.cs-theme-lcars) .diagnose-btn { color: #99CCFF !important; border-color: #99CCFF !important; }
   `],
 })
 export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
@@ -952,6 +1127,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('scrollSentinel') private sentinelRef!: ElementRef<HTMLElement>;
   private observer?: IntersectionObserver;
   private app = inject(App);
+  private ws = inject(WebsocketService);
   private badgeCleared = false;
 
   items = signal<FeedItem[]>([]);
@@ -1050,6 +1226,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.loadPrefs();
     this.loadAutoEnrichSetting();
     this.loadSearches();
+    this.initWs();
     this.refreshTimer = setInterval(() => this.load(true, true), 30_000);
 
     // Deferred re-assert: if hostFilter or severityFilter was set by applyRouteParams(),
@@ -1093,6 +1270,34 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.observer?.disconnect();
     this.scrollContainer?.removeEventListener('scroll', this.scrollListener);
     localStorage.setItem('feed_last_seen', new Date().toISOString());
+    this.wsSub?.unsubscribe();
+  }
+
+  private wsSub?: import('rxjs').Subscription;
+  private initWs() {
+    this.wsSub = this.ws.messages().subscribe((msg: any) => {
+      if (msg?.type !== 'feed_collab') return;
+      const { external_id, kind, user_name, work_status, body } = msg;
+      // Update collab state on the matching feed item in-place
+      this.items.update(items => items.map(item => {
+        if (item.external_id !== external_id) return item;
+        const old = item.collab ?? { claimed_by_name: null, claimed_at: null, work_status: 'new', comment_count: 0 };
+        const newCount = kind === 'comment' ? (old.comment_count ?? 0) + 1 : (old.comment_count ?? 0);
+        return {
+          ...item,
+          collab: {
+            ...old,
+            work_status: work_status ?? old.work_status,
+            comment_count: newCount,
+            claimed_by_name: kind === 'claim' ? user_name : (kind === 'release' ? null : old.claimed_by_name),
+            claimed_at: kind === 'claim' ? new Date().toISOString() : (kind === 'release' ? null : old.claimed_at),
+          },
+        };
+      }));
+      // Refresh open timeline if visible
+      const openItem = this.items().find(i => i.external_id === external_id && this.showComments.has(i.id));
+      if (openItem) this.loadTimeline(openItem);
+    });
   }
 
   loadPrefs() {
@@ -1555,4 +1760,133 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     };
     return m[type] ?? type;
   }
+
+  // ── Collaboration ────────────────────────────────────────────────────────
+
+  showComments = new Set<string>();
+  collabTimeline = new Map<string, CollabTimeline[]>();
+  diagnosingIds = new Set<string>();
+  isDiagnosing(id: string) { return this.diagnosingIds.has(id); }
+
+  collabStatusLabel(status?: string): string {
+    const labels: Record<string, string> = {
+      new: 'Neu', investigating: 'In Bearbeitung', resolved: 'Gelöst',
+    };
+    return labels[status ?? 'new'] ?? 'Neu';
+  }
+
+  isMyAlert(item: FeedItem): boolean {
+    const name = this.auth.user()?.full_name || this.auth.user()?.email;
+    return !!name && item.collab?.claimed_by_name === name;
+  }
+
+  claimAlert(item: FeedItem) {
+    if (!item.external_id) return;
+    this.http.post(`${environment.apiUrl}/feed/${item.external_id}/claim`, {}).subscribe({
+      next: (res: any) => {
+        this.items.update(items => items.map(i =>
+          i.id === item.id
+            ? { ...i, collab: { ...i.collab, claimed_by_name: res.claimed_by_name, work_status: res.work_status, comment_count: i.collab?.comment_count ?? 0, claimed_at: new Date().toISOString() } }
+            : i
+        ));
+        this.loadTimeline(item);
+      },
+      error: err => this.snackBar.open(err?.error?.detail ?? 'Fehler beim Übernehmen', 'OK', { duration: 3000 }),
+    });
+  }
+
+  releaseAlert(item: FeedItem) {
+    if (!item.external_id) return;
+    this.http.post(`${environment.apiUrl}/feed/${item.external_id}/release`, {}).subscribe({
+      next: () => {
+        this.items.update(items => items.map(i =>
+          i.id === item.id
+            ? { ...i, collab: { claimed_by_name: null, claimed_at: null, work_status: 'new', comment_count: i.collab?.comment_count ?? 0 } }
+            : i
+        ));
+        this.loadTimeline(item);
+      },
+    });
+  }
+
+  setAlertStatus(item: FeedItem, status: string) {
+    if (!item.external_id) return;
+    this.http.patch(`${environment.apiUrl}/feed/${item.external_id}/status`, { status }).subscribe({
+      next: (res: any) => {
+        this.items.update(items => items.map(i =>
+          i.id === item.id ? { ...i, collab: { ...i.collab!, work_status: res.work_status } } : i
+        ));
+        this.loadTimeline(item);
+      },
+    });
+  }
+
+  toggleComments(itemId: string) {
+    const item = this.items().find(i => i.id === itemId);
+    if (!item) return;
+    if (this.showComments.has(itemId)) {
+      this.showComments.delete(itemId);
+      this.showComments = new Set(this.showComments);
+    } else {
+      this.showComments.add(itemId);
+      this.showComments = new Set(this.showComments);
+      if (!this.collabTimeline.has(itemId)) this.loadTimeline(item);
+    }
+  }
+
+  loadTimeline(item: FeedItem) {
+    if (!item.external_id) return;
+    this.http.get<any>(`${environment.apiUrl}/feed/${item.external_id}/collab`).subscribe({
+      next: data => {
+        this.collabTimeline.set(item.id, data.timeline ?? []);
+        this.collabTimeline = new Map(this.collabTimeline);
+      },
+    });
+  }
+
+  postComment(item: FeedItem, text: string) {
+    const trimmed = text.trim();
+    if (!trimmed || !item.external_id) return;
+    this.http.post(`${environment.apiUrl}/feed/${item.external_id}/comments`, { body: trimmed }).subscribe({
+      next: () => {
+        this.loadTimeline(item);
+        this.items.update(items => items.map(i =>
+          i.id === item.id ? { ...i, collab: { ...i.collab!, comment_count: (i.collab?.comment_count ?? 0) + 1 } } : i
+        ));
+      },
+    });
+  }
+
+  postCommentFromInput(item: FeedItem, inputId: string) {
+    const el = document.getElementById(inputId) as HTMLInputElement | null;
+    if (!el) return;
+    this.postComment(item, el.value);
+    el.value = '';
+  }
+
+  diagnoseAlert(item: FeedItem) {
+    if (!item.external_id || this.diagnosingIds.has(item.id)) return;
+    this.diagnosingIds.add(item.id);
+    this.diagnosingIds = new Set(this.diagnosingIds);
+    // Open comment thread so user sees the result appear
+    if (!this.showComments.has(item.id)) this.toggleComments(item.id);
+    this.http.post<any>(`${environment.apiUrl}/feed/${item.external_id}/diagnose`, {}).subscribe({
+      next: () => {
+        this.diagnosingIds.delete(item.id);
+        this.diagnosingIds = new Set(this.diagnosingIds);
+        this.loadTimeline(item);
+        this.items.update(items => items.map(i =>
+          i.id === item.id ? { ...i, collab: { ...i.collab!, comment_count: (i.collab?.comment_count ?? 0) + 1 } } : i
+        ));
+      },
+      error: err => {
+        this.diagnosingIds.delete(item.id);
+        this.diagnosingIds = new Set(this.diagnosingIds);
+        this.snackBar.open(err?.error?.detail ?? 'Diagnose fehlgeschlagen', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  private authSvc = inject(AuthService);
+  get auth() { return this.authSvc; }
 }
