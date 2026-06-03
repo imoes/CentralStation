@@ -104,8 +104,11 @@ async def _enrich_one(item: dict, llm, aikb_svc=None, searxng_url: str = "") -> 
     from app.core.opensearch import get_opensearch
     from app.services.feed_index import _index  # type: ignore[attr-defined]
 
-    host = (item.get("metadata") or {}).get("host", "")
-    location = (item.get("metadata") or {}).get("location", "")
+    meta = item.get("metadata") or {}
+    host = meta.get("host", "")
+    location = meta.get("location", "")
+    application = meta.get("application", "")
+    log_file_path = meta.get("log_file_path", "")
     source = item.get("source", "")
     title = item.get("title", "")
     body = (item.get("body") or "")[:300]
@@ -120,6 +123,10 @@ async def _enrich_one(item: dict, llm, aikb_svc=None, searxng_url: str = "") -> 
     user_content = f"Log-Quelle: {source_label}\n"
     if host:
         user_content += f"Betroffener Host: {host}\n"
+    if application:
+        user_content += f"Applikation/Dienst: {application}\n"
+    if log_file_path:
+        user_content += f"Logdatei: {log_file_path}\n"
     if location:
         user_content += f"Standort: {location}\n"
     user_content += f"\nMeldung: {title}"
