@@ -142,6 +142,41 @@ async def get_llm_config(db: AsyncSession) -> LLMConfig:
     )
 
 
+async def get_codex_fallback_enabled(db: AsyncSession) -> bool:
+    """Return True if OpenAI Codex (Hermes OAuth) fallback is enabled."""
+    s = await get_all_settings(db)
+    return s.get("llm.codex_fallback_enabled", "false") == "true"
+
+
+async def get_codex_config(db: AsyncSession) -> LLMConfig | None:
+    """Return LLMConfig for the Hermes OpenAI Codex fallback, or None.
+
+    The token is read live from ~/.hermes/auth.json — no manual API key needed.
+    The Hermes provider is configurable (default: openai-codex).
+    """
+    from app.services.hermes_auth import get_hermes_provider_token
+    s = await get_all_settings(db)
+
+    if s.get("llm.codex_fallback_enabled", "false") != "true":
+        return None
+
+    hermes_provider = s.get("llm.codex_hermes_provider") or "openai-codex"
+    token = get_hermes_provider_token(hermes_provider)
+    if not token:
+        return None
+
+    base_url = s.get("llm.codex_base_url") or "https://api.openai.com/v1"
+    model = s.get("llm.codex_model") or "gpt-4o"
+    return LLMConfig(
+        base_url=base_url,
+        model=model,
+        api_key=token,
+        timeout_seconds=int(s.get("llm.codex_timeout_seconds") or 60),
+        api_mode="chat_completions",
+        thinking_mode=False,
+    )
+
+
 async def get_vision_config(db: AsyncSession) -> VisionConfig:
     s = await get_all_settings(db)
     return VisionConfig(

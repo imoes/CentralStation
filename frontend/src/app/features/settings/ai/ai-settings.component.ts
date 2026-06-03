@@ -1,5 +1,7 @@
 import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
+import { environment } from '../../../../environments/environment';
 import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -17,11 +19,17 @@ import { SettingItem } from '../../../core/models/connector.model';
 
 interface TestResult { success: boolean; message: string; detail: string | null; }
 
-const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = [
+const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; codexSection?: boolean }[] = [
   {
     title: 'LLM Konfiguration',
     keys: ['llm.base_url', 'llm.model', 'llm.api_mode', 'llm.api_key', 'llm.timeout_seconds', 'llm.thinking_mode'],
     testGroup: 'llm',
+  },
+  {
+    title: 'OpenAI Codex Fallback (Hermes OAuth)',
+    keys: ['llm.codex_fallback_enabled', 'llm.codex_hermes_provider', 'llm.codex_base_url', 'llm.codex_model', 'llm.codex_timeout_seconds'],
+    testGroup: 'codex',
+    codexSection: true,
   },
   {
     title: 'Vision Modell',
@@ -58,7 +66,7 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
   },
 ];
 
-const BOOLEAN_KEYS = new Set(['searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled', 'llm.thinking_mode', 'workflow.web_search', 'agent.score_learning_enabled', 'agent.scoring_enabled']);
+const BOOLEAN_KEYS = new Set(['searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled', 'llm.thinking_mode', 'workflow.web_search', 'agent.score_learning_enabled', 'agent.scoring_enabled', 'llm.codex_fallback_enabled']);
 const SELECT_KEYS: Record<string, string[]> = {
   'llm.api_mode': ['chat_completions', 'responses'],
   'agent.jira_severity_threshold': ['critical', 'high', 'medium'],
@@ -112,6 +120,25 @@ const SECRET_MASK = '••••••••';
                   </div>
                 }
               </mat-card-header>
+              <!-- Codex OAuth status banner -->
+              @if (group.codexSection && codexStatus()) {
+                <div class="codex-status-banner" [class.authenticated]="codexStatus()!.authenticated">
+                  <mat-icon>{{ codexStatus()!.authenticated ? 'verified_user' : 'no_accounts' }}</mat-icon>
+                  <div class="codex-status-text">
+                    <strong>Hermes OAuth: {{ codexStatus()!.authenticated ? 'Eingeloggt' : 'Nicht eingeloggt' }}</strong>
+                    <span>{{ codexStatus()!.message }}</span>
+                    @if (!codexStatus()!.authenticated) {
+                      <code>hermes auth {{ codexStatus()!.provider }}</code>
+                    }
+                    @if (codexStatus()!.authenticated && codexStatus()!.expires_at) {
+                      <span class="expires">Gültig bis: {{ codexStatus()!.expires_at }}</span>
+                    }
+                  </div>
+                  <button mat-icon-button (click)="loadCodexStatus()" matTooltip="Status neu laden">
+                    <mat-icon>refresh</mat-icon>
+                  </button>
+                </div>
+              }
               <mat-card-content>
                 @for (key of group.keys; track key) {
                   @if (isBooleanKey(key)) {
@@ -185,6 +212,20 @@ const SECRET_MASK = '••••••••';
     .test-result-text { display: flex; flex-direction: column; gap: 2px; }
     .test-message { font-weight: 500; }
     .test-detail { font-size: 11px; opacity: 0.85; font-family: monospace; word-break: break-all; }
+    .codex-status-banner {
+      display: flex; align-items: flex-start; gap: 10px;
+      margin: 0 16px 8px; padding: 10px 14px;
+      border-radius: 8px; border-left: 4px solid #f57c00;
+      background: color-mix(in srgb, #f57c00 8%, var(--mat-sys-surface-container));
+    }
+    .codex-status-banner.authenticated { border-left-color: #388e3c; background: color-mix(in srgb, #388e3c 8%, var(--mat-sys-surface-container)); }
+    .codex-status-banner mat-icon { font-size: 22px; height: 22px; width: 22px; flex-shrink: 0; margin-top: 2px; }
+    .codex-status-banner:not(.authenticated) mat-icon { color: #f57c00; }
+    .codex-status-banner.authenticated mat-icon { color: #388e3c; }
+    .codex-status-text { display: flex; flex-direction: column; gap: 3px; flex: 1; font-size: 13px; }
+    .codex-status-text strong { font-weight: 700; }
+    .codex-status-text code { font-family: monospace; font-size: 12px; background: var(--mat-sys-surface-variant); padding: 2px 6px; border-radius: 4px; }
+    .codex-status-text .expires { font-size: 11px; opacity: .7; }
   `],
 })
 export class AiSettingsComponent implements OnInit {
@@ -193,6 +234,7 @@ export class AiSettingsComponent implements OnInit {
   saving = signal(false);
   testingGroup = signal<string | null>(null);
   testResults = signal<Record<string, TestResult>>({});
+  codexStatus = signal<any>(null);
   form: FormGroup | null = null;
   private settingsMap = new Map<string, SettingItem>();
 
@@ -200,6 +242,7 @@ export class AiSettingsComponent implements OnInit {
     private fb: FormBuilder,
     private svc: ConnectorService,
     private snack: MatSnackBar,
+    private http: HttpClient,
   ) {}
 
   ngOnInit() {
@@ -210,6 +253,14 @@ export class AiSettingsComponent implements OnInit {
         this.buildForm();
         this.loading.set(false);
       },
+    });
+    this.loadCodexStatus();
+  }
+
+  loadCodexStatus() {
+    this.http.get<any>(`${environment.apiUrl}/settings/codex-status`).subscribe({
+      next: s => this.codexStatus.set(s),
+      error: () => {},
     });
   }
 
@@ -254,10 +305,15 @@ export class AiSettingsComponent implements OnInit {
   testGroup(group: string) {
     this.testingGroup.set(group);
     this.testResults.update(r => { const n = { ...r }; delete n[group]; return n; });
-    this.svc.testSettingGroup(group).subscribe({
+    // codex uses a dedicated endpoint
+    const obs = group === 'codex'
+      ? this.http.post<any>(`${environment.apiUrl}/settings/test/codex`, {})
+      : this.svc.testSettingGroup(group);
+    obs.subscribe({
       next: result => {
         this.testResults.update(r => ({ ...r, [group]: result }));
         this.testingGroup.set(null);
+        if (group === 'codex') this.loadCodexStatus();
       },
       error: err => {
         this.testResults.update(r => ({
@@ -288,6 +344,11 @@ export class AiSettingsComponent implements OnInit {
       'searxng.enabled':                 'SearXNG aktiviert',
       'searxng.results_count':           'Anzahl Suchergebnisse',
       'llm.thinking_mode':                    'Thinking Mode (Extended Reasoning)',
+      'llm.codex_fallback_enabled':           'OpenAI Codex Fallback aktivieren',
+      'llm.codex_hermes_provider':            'Hermes Provider Name (z.B. openai-codex)',
+      'llm.codex_base_url':                   'Codex API URL (leer = https://api.openai.com/v1)',
+      'llm.codex_model':                      'Codex Modell (z.B. gpt-4o)',
+      'llm.codex_timeout_seconds':            'Codex Timeout (Sekunden)',
       'agent.interval_minutes':               'KI-Agent Intervall (Minuten)',
       'agent.aggregation_interval_minutes':   'Alert-Abruf Intervall (Minuten)',
       'agent.auto_jira':                      'Automatisch Jira-Tickets erstellen',
