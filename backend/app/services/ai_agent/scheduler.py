@@ -175,6 +175,20 @@ async def run_feed_housekeeping() -> None:
         logger.info("Feed housekeeping: removed %d old items total", total)
 
 
+async def run_incident_housekeeping() -> None:
+    """Auto-resolve incidents whose alerts are resolved or stale (> 2h idle)."""
+    from app.core.database import AsyncSessionLocal
+    from app.services.incident.correlator import resolve_stale_incidents
+
+    async with AsyncSessionLocal() as db:
+        try:
+            n = await resolve_stale_incidents(db)
+            if n:
+                logger.info("Incident housekeeping: resolved %d incidents", n)
+        except Exception as e:
+            logger.debug("Incident housekeeping failed: %s", e)
+
+
 async def start_scheduler() -> None:
     from app.core.database import AsyncSessionLocal
     from app.services.settings import get_agent_config
@@ -205,6 +219,10 @@ async def start_scheduler() -> None:
                        id="score_housekeeping", replace_existing=True)
     _scheduler.add_job(run_feed_housekeeping, "cron", hour=3, minute=0,
                        id="feed_housekeeping", replace_existing=True)
+    _scheduler.add_job(run_incident_housekeeping, "interval",
+                       minutes=15, id="incident_housekeeping",
+                       replace_existing=True,
+                       next_run_time=datetime.now(timezone.utc) + timedelta(seconds=60))
     _scheduler.start()
     logger.info(
         "APScheduler started — aggregation: %dmin, agent: %dmin, metrics: 5min",
