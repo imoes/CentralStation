@@ -6,6 +6,7 @@ Live sources: O365 mail and Teams messages are fetched on-demand and
 """
 from __future__ import annotations
 
+import logging
 import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -20,6 +21,7 @@ from app.models.audit import AuditLog
 from app.models.workflow import FeedSearch, UserPreference
 
 router = APIRouter(prefix="/feed", tags=["feed"])
+log = logging.getLogger(__name__)
 
 _ALL_SOURCES = ["checkmk", "graylog", "wazuh", "o365", "teams"]
 
