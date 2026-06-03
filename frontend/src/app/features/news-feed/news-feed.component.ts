@@ -829,7 +829,7 @@ const SEVERITY_COLOR: Record<string, string> = {
     /* Title */
     .card-title {
       padding: 0 16px 10px;
-      font-size: 15px; font-weight: 600; line-height: 1.4;
+      font-size: 14px; font-weight: 500; line-height: 1.4;
     }
     .card-title-link {
       display: flex; align-items: center; gap: 6px;
@@ -921,8 +921,20 @@ const SEVERITY_COLOR: Record<string, string> = {
 
     /* ══ LCARS THEME ══════════════════════════════════════════════════════════ */
     :host-context(html.cs-theme-lcars) .feed-page {
-      font-family: 'Antonio','Eurostile','Roboto Condensed',sans-serif;
+      /* Only structural/label elements use the condensed LCARS font.
+         Body text (card-title, card-body-text) uses standard Roboto for readability — same as Alerts. */
       padding: 12px 16px; max-width: 900px;
+    }
+    /* LCARS label elements: condensed font for header badges/labels */
+    :host-context(html.cs-theme-lcars) .lcars-header,
+    :host-context(html.cs-theme-lcars) .feed-topbar h2,
+    :host-context(html.cs-theme-lcars) .lh-source,
+    :host-context(html.cs-theme-lcars) .lh-sev,
+    :host-context(html.cs-theme-lcars) .lh-loc,
+    :host-context(html.cs-theme-lcars) .last-seen-divider,
+    :host-context(html.cs-theme-lcars) .collab-badge,
+    :host-context(html.cs-theme-lcars) .analysis-lcars-header {
+      font-family: 'Antonio','Eurostile','Roboto Condensed',sans-serif;
     }
     :host-context(html.cs-theme-lcars) .feed-topbar h2 {
       font-size: 20px; font-weight: 800; letter-spacing: .22em; text-transform: uppercase;
@@ -975,15 +987,19 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .lh-spacer { flex: 1; }
     :host-context(html.cs-theme-lcars) .lh-time   { opacity: .55; font-size: 10px; }
     :host-context(html.cs-theme-lcars) .lh-ack    { opacity: .8; font-size: 12px; }
-    /* Card title in body: larger, gold */
-    :host-context(html.cs-theme-lcars) .card-title { color: #ffe8a0 !important; font-size: 14px; padding: 8px 14px 6px; }
     :host-context(html.cs-theme-lcars) .timestamp  { display: none; }  /* shown in lcars-header instead */
-    /* ── title ── */
-    :host-context(html.cs-theme-lcars) .card-title { color: #ffe8a0; padding: 8px 14px 6px; font-size: 14px; }
-    :host-context(html.cs-theme-lcars) .card-title-link { color: #ffe8a0; }
+    /* Card title: same font/weight as alerts (readable, not condensed) */
+    :host-context(html.cs-theme-lcars) .card-title {
+      color: #ffe8a0; padding: 8px 14px 6px; font-size: 14px; font-weight: 500;
+      font-family: Roboto, 'Helvetica Neue', sans-serif;
+    }
+    :host-context(html.cs-theme-lcars) .card-title-link { color: #ffe8a0; font-family: Roboto, 'Helvetica Neue', sans-serif; }
     :host-context(html.cs-theme-lcars) .severity-critical { color: #ff7766 !important; }
     /* ── body ── */
-    :host-context(html.cs-theme-lcars) .card-body-text { color: #e8a060; padding: 0 14px 8px; font-size: 12px; }
+    :host-context(html.cs-theme-lcars) .card-body-text {
+      color: #e8a060; padding: 0 14px 8px; font-size: 12px;
+      font-family: Roboto, 'Helvetica Neue', sans-serif;  /* readable — no condensed font for body */
+    }
     :host-context(html.cs-theme-lcars) .card-body-text.collapsed {
       -webkit-mask-image: linear-gradient(to bottom, #ffe8a0 40%, transparent 100%);
     }
