@@ -21,6 +21,7 @@ _MAX_CONCURRENT = 5  # parallel LLM calls
 _HYDE_SYSTEM_PROMPT = (
     "You are a Linux sysadmin. Generate a concise English search query (max 12 words) "
     "to find the cause or solution for this monitoring event. "
+    "Focus on the APPLICATION or SERVICE that is failing (not on the monitoring/log tool). "
     "Reply with ONLY the search query, nothing else."
 )
 
@@ -28,7 +29,10 @@ _EXPLAIN_SYSTEM_PROMPT = (
     "Du bist ein erfahrener Linux-Sysadmin. "
     "Erkläre die folgende Monitoring-Meldung in 3-4 vollständigen Sätzen: Was bedeutet sie, "
     "was ist die wahrscheinliche Ursache, und was ist die erste konkrete Maßnahme? "
-    "Antworte auf Deutsch. Keine Markdown-Formatierung. Kein Abschneiden mitten im Satz."
+    "Antworte auf Deutsch. Keine Markdown-Formatierung. Kein Abschneiden mitten im Satz.\n"
+    "WICHTIG: Das Feld 'Log-Quelle' gibt an, welches Monitoring-Tool die Meldung gesammelt hat "
+    "(z.B. Graylog, CheckMK, Wazuh) — NICHT welche Software das Problem hat. "
+    "Das betroffene System erkennst du aus dem Inhalt der Meldung (Hostname, Fehlermeldung, Prozess)."
 )
 
 
@@ -40,9 +44,12 @@ async def _hyde_rag_lookup(item: dict, llm, aikb_svc) -> str:
 
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
-        hyde_input = f"{source.upper()}: {title}"
+        # For HyDE, give only content — not the collector name
+        hyde_input = title
+        if host:
+            hyde_input = f"Host: {host}\n{hyde_input}"
         if body:
-            hyde_input += f"\n{body}"
+            hyde_input += f"\n{body[:200]}"
         hyde_resp = await llm.ainvoke([
             SystemMessage(content=_HYDE_SYSTEM_PROMPT),
             HumanMessage(content=hyde_input),
@@ -99,11 +106,19 @@ async def _enrich_one(item: dict, llm, aikb_svc=None, searxng_url: str = "") -> 
     title = item.get("title", "")
     body = (item.get("body") or "")[:300]
 
-    user_content = f"{source.upper()}: {title}"
+    # Build human-readable content — label source as collector, not broken system
+    source_label = {
+        "graylog": "Graylog (Log-Aggregator)",
+        "wazuh":   "Wazuh (Security-Monitoring)",
+        "checkmk": "CheckMK (Infrastruktur-Monitoring)",
+    }.get(source.lower(), source.upper())
+
+    user_content = f"Log-Quelle: {source_label}\n"
     if host:
-        user_content += f"\nHost: {host}"
+        user_content += f"Betroffener Host: {host}\n"
     if location:
-        user_content += f"\nStandort: {location}"
+        user_content += f"Standort: {location}\n"
+    user_content += f"\nMeldung: {title}"
     if body:
         user_content += f"\nDetails: {body}"
 
@@ -113,9 +128,10 @@ async def _enrich_one(item: dict, llm, aikb_svc=None, searxng_url: str = "") -> 
         if rag_snippet:
             user_content += f"\n\nRelevante Wissensbasis:\n{rag_snippet}"
 
-    # Web search step
+    # Web search: use host + title keywords, not the raw log source name
     if searxng_url:
-        web_snippet = await _web_search(f"{source} {title}", searxng_url)
+        web_query = f"{host} {title[:80]}" if host else title[:100]
+        web_snippet = await _web_search(web_query, searxng_url)
         if web_snippet:
             user_content += f"\n\nWeb-Suchergebnisse:\n{web_snippet}"
 
