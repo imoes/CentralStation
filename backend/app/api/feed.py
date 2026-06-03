@@ -702,20 +702,35 @@ async def diagnose_alert(
         log.debug("diagnose: LLM synthesis failed: %s", e)
         summary = findings_text  # fallback: raw results
 
-    # ── 4. Post as AI comment in the collaboration thread ─────────────────
+    # ── 4. Collect deterministic evidence from the providers (not the LLM) ─
+    # The LLM summary can drift; the provider evidence is ground truth.
+    evidence: list[dict] = []
+    for r in results:
+        for ev in getattr(r, "evidence", []) or []:
+            evidence.append(ev)
+
+    # ── 5. Post as AI comment with an evidence block appended ─────────────
     collab = await _get_or_create_collab(external_id, db)
     ai_body = f"🖥 Diagnose (read-only, keine Änderung):\n{summary}"
+    if evidence:
+        lines = ["", "📎 Belege:"]
+        for ev in evidence[:8]:
+            etype = ev.get("type", "?")
+            ref = ev.get("ref", "")
+            text = (ev.get("text", "") or "")[:120]
+            lines.append(f"• [{etype}] {ref} — {text}")
+        ai_body += "\n" + "\n".join(lines)
     entry = await _add_timeline(
         external_id, None, "Computer (KI)", "ai", ai_body, db
     )
     await db.commit()
     await _broadcast_collab(external_id, "ai", "Computer (KI)", collab.work_status, ai_body)
 
-    # Also surface in items if comment thread is open
     return {
         "ok": True,
         "host": host,
         "summary": summary,
+        "evidence": evidence,
         "providers": [r.tool for r in results],
         "entry": entry,
     }
@@ -880,3 +895,98 @@ async def incident_timeline(
         },
         "timeline": timeline,
     }
+
+
+@router.get("/incidents/{incident_id}/claude-prompt")
+async def incident_claude_prompt(
+    incident_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Build a ready-to-paste Claude CLI prompt from an incident.
+
+    The handoff point: CentralStation prepares the evidence-rich briefing,
+    the engineer pastes it into Claude CLI (with real shell access + human
+    oversight) to actually investigate and fix. CentralStation does NOT
+    execute — it briefs.
+    """
+    import uuid as _uuid
+    from sqlalchemy import select
+    from app.models.workflow import Incident, IncidentMember, AlertComment
+
+    try:
+        inc_id = _uuid.UUID(incident_id)
+    except ValueError:
+        raise HTTPException(400, "Ungültige Incident-ID")
+
+    inc = await db.get(Incident, inc_id)
+    if not inc:
+        raise HTTPException(404, "Incident nicht gefunden")
+
+    host = inc.primary_host
+    lines: list[str] = []
+    lines.append(f"# Incident-Untersuchung: {host}")
+    lines.append("")
+    lines.append(f"Auf dem Host **{host}** ist ein Incident aufgetreten "
+                 f"(Severity: {inc.severity}, seit {inc.created_at.strftime('%Y-%m-%d %H:%M')} UTC).")
+    lines.append("Bitte untersuche die Ursache und schlage einen konkreten Fix vor. "
+                 "Du hast Shell-Zugriff auf den Host. Arbeite read-only bis der Fix klar ist.")
+    lines.append("")
+
+    # ── Member alerts (from OpenSearch) ────────────────────────────────────
+    mem_r = await db.execute(
+        select(IncidentMember).where(IncidentMember.incident_id == inc_id)
+        .order_by(IncidentMember.added_at)
+    )
+    ext_ids = [m.external_id for m in mem_r.scalars().all()]
+    if ext_ids:
+        lines.append("## Zugehörige Alerts")
+        try:
+            from app.services.feed_index import search_by_query
+            q = " OR ".join(f'external_id:"{e}"' for e in ext_ids[:20])
+            items = await search_by_query("cs-feed-*", q, size=30)
+            for item in sorted(items, key=lambda i: i.get("created_at", "")):
+                ts = (item.get("created_at") or "")[:19].replace("T", " ")
+                sev = (item.get("severity") or "?").upper()
+                src = item.get("source", "")
+                title = (item.get("title") or "")[:160]
+                lines.append(f"- `{ts}` [{sev}/{src}] {title}")
+        except Exception as e:
+            log.debug("claude-prompt: alerts failed: %s", e)
+        lines.append("")
+
+    # ── AI diagnosis evidence (from comment thread) ────────────────────────
+    if ext_ids:
+        com_r = await db.execute(
+            select(AlertComment)
+            .where(AlertComment.external_id.in_(ext_ids), AlertComment.kind == "ai")
+            .order_by(AlertComment.created_at)
+        )
+        ai_comments = com_r.scalars().all()
+        if ai_comments:
+            lines.append("## Bisherige KI-Diagnose (read-only, mit Belegen)")
+            for c in ai_comments[:3]:
+                lines.append(c.body)
+                lines.append("")
+
+    # ── Past incidents for this host ───────────────────────────────────────
+    try:
+        from app.services.ai_agent.past_incidents import (
+            find_similar_incidents, format_past_incidents_for_llm,
+        )
+        past = await find_similar_incidents(host, db, limit=3)
+        if past:
+            lines.append("## Frühere ähnliche Vorfälle")
+            lines.append(format_past_incidents_for_llm(past))
+            lines.append("")
+
+    except Exception as e:
+        log.debug("claude-prompt: past_incidents failed: %s", e)
+
+    lines.append("## Auftrag")
+    lines.append(f"1. Verifiziere die Belege oben auf {host} (Logs, Service-Status, Metriken).")
+    lines.append("2. Nenne die wahrscheinlichste Ursache MIT Beleg — keine Spekulation ohne Daten.")
+    lines.append("3. Schlage einen konkreten, reversiblen Fix vor und warte auf Freigabe, bevor du ihn ausführst.")
+
+    prompt = "\n".join(lines)
+    return {"incident_id": str(inc.id), "host": host, "prompt": prompt}
