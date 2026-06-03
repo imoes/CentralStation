@@ -64,9 +64,9 @@ def _token_needs_refresh(access_token: str) -> bool:
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
 async def _save_codex_tokens(db: AsyncSession, access_token: str, refresh_token: str) -> None:
-    from app.services.settings import set_setting
-    await set_setting(db, "llm.codex_access_token", access_token)
-    await set_setting(db, "llm.codex_refresh_token", refresh_token)
+    from app.services.settings import set_secret_setting, set_setting
+    await set_secret_setting(db, "llm.codex_access_token", access_token)
+    await set_secret_setting(db, "llm.codex_refresh_token", refresh_token)
     await set_setting(db, "llm.codex_authenticated_at", datetime.now(timezone.utc).isoformat())
     await db.commit()
 
@@ -267,9 +267,9 @@ async def codex_logout(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Remove stored Codex tokens."""
-    from app.services.settings import set_setting
-    await set_setting(db, "llm.codex_access_token", None)
-    await set_setting(db, "llm.codex_refresh_token", None)
+    from app.services.settings import set_secret_setting, set_setting
+    await set_secret_setting(db, "llm.codex_access_token", None)
+    await set_secret_setting(db, "llm.codex_refresh_token", None)
     await set_setting(db, "llm.codex_authenticated_at", None)
     await db.commit()
     return {"ok": True}
