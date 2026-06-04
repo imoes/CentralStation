@@ -577,9 +577,15 @@ const SEVERITY_COLOR: Record<string, string> = {
                   <mat-icon>open_in_new</mat-icon> Details
                 </button>
               }
-              <button mat-button class="action-btn" (click)="createTicket(item)">
-                <mat-icon>add_task</mat-icon>
-                Ticket erstellen
+              <button mat-button class="action-btn" (click)="createTicket(item)"
+                      [disabled]="isCreatingTicket(item.id)">
+                @if (isCreatingTicket(item.id)) {
+                  <mat-spinner diameter="16"></mat-spinner>
+                  AI is preparing…
+                } @else {
+                  <mat-icon>add_task</mat-icon>
+                  Create ticket
+                }
               </button>
               <!-- Claim / Release -->
               @if (item.external_id) {
@@ -760,6 +766,48 @@ const SEVERITY_COLOR: Record<string, string> = {
             }
           </div>
         }
+      </div>
+    }
+
+    <!-- AI-prefilled ticket draft dialog -->
+    @if (ticketDraft(); as d) {
+      <div class="ticket-overlay" (click)="cancelTicketDraft()"></div>
+      <div class="ticket-dialog">
+        <div class="ticket-dialog-header">
+          <mat-icon>add_task</mat-icon>
+          <span>Create Jira ticket</span>
+          <span class="ticket-ai-hint">AI-prefilled · review &amp; adjust</span>
+          <button mat-icon-button (click)="cancelTicketDraft()"><mat-icon>close</mat-icon></button>
+        </div>
+        <div class="ticket-dialog-body">
+          <label class="ticket-field">
+            <span>Project</span>
+            <input class="ticket-input" [(ngModel)]="d.project" placeholder="e.g. IMIT" />
+          </label>
+          <div class="ticket-row">
+            <label class="ticket-field" style="flex:1">
+              <span>Priority</span>
+              <select class="ticket-input" [(ngModel)]="d.priority">
+                <option>Kritisch</option><option>Hoch</option><option>Normal</option><option>Niedrig</option>
+              </select>
+            </label>
+          </div>
+          <label class="ticket-field">
+            <span>Summary</span>
+            <input class="ticket-input" [(ngModel)]="d.summary" maxlength="160" />
+          </label>
+          <label class="ticket-field">
+            <span>Description</span>
+            <textarea class="ticket-input ticket-textarea" [(ngModel)]="d.description" rows="9"></textarea>
+          </label>
+        </div>
+        <div class="ticket-dialog-actions">
+          <button mat-button (click)="cancelTicketDraft()">Cancel</button>
+          <button mat-raised-button color="primary" (click)="submitTicket()" [disabled]="submittingTicket()">
+            @if (submittingTicket()) { <mat-spinner diameter="16"></mat-spinner> Creating… }
+            @else { <mat-icon>send</mat-icon> Create ticket }
+          </button>
+        </div>
       </div>
     }
   `,
@@ -1263,6 +1311,39 @@ const SEVERITY_COLOR: Record<string, string> = {
     .incident-badge-arrow { font-size: 16px; height: 16px; width: 16px; margin-left: auto; }
 
     /* ── Incident Drawer ── */
+    /* ── AI Ticket Dialog ── */
+    .ticket-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 950; }
+    .ticket-dialog {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      width: min(640px, 94vw); max-height: 90vh; z-index: 951;
+      background: var(--mat-sys-surface-container); border-radius: 14px;
+      display: flex; flex-direction: column; box-shadow: 0 12px 48px rgba(0,0,0,.4);
+    }
+    .ticket-dialog-header {
+      display: flex; align-items: center; gap: 10px; padding: 14px 16px;
+      border-bottom: 1px solid var(--mat-sys-outline-variant);
+    }
+    .ticket-dialog-header > mat-icon { color: var(--mat-sys-primary); }
+    .ticket-dialog-header > span:first-of-type { font-weight: 700; font-size: 15px; }
+    .ticket-ai-hint { margin-left: auto; font-size: 11px; opacity: .6; }
+    .ticket-dialog-body { padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+    .ticket-field { display: flex; flex-direction: column; gap: 4px; }
+    .ticket-field > span { font-size: 12px; font-weight: 600; opacity: .8; }
+    .ticket-row { display: flex; gap: 12px; }
+    .ticket-input {
+      font: inherit; padding: 8px 10px; border-radius: 8px;
+      border: 1px solid var(--mat-sys-outline-variant);
+      background: var(--mat-sys-surface); color: var(--mat-sys-on-surface);
+    }
+    .ticket-textarea { resize: vertical; min-height: 140px; font-family: 'Roboto', monospace; line-height: 1.4; }
+    .ticket-dialog-actions {
+      display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px;
+      border-top: 1px solid var(--mat-sys-outline-variant);
+    }
+    .ticket-dialog-actions mat-spinner, .action-btn mat-spinner { display: inline-block; margin-right: 6px; }
+    :host-context(html.cs-theme-lcars) .ticket-dialog { background: #0a0804; border: 1px solid #2a1d0a; }
+    :host-context(html.cs-theme-lcars) .ticket-input { background: #120e06; border-color: #2a1d0a; color: #ffe8a0; }
+
     .incident-drawer-overlay {
       position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 900;
     }
@@ -1892,8 +1973,64 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     });
   }
 
+  // ── AI-assisted ticket creation ───────────────────────────────────────────
+  creatingTicketIds = new Set<string>();
+  isCreatingTicket(id: string) { return this.creatingTicketIds.has(id); }
+  ticketDraft = signal<{
+    item: FeedItem; summary: string; description: string;
+    priority: string; project: string;
+  } | null>(null);
+  submittingTicket = signal(false);
+
   createTicket(item: FeedItem) {
-    this.snackBar.open('Ticket-Erstellung wird demnächst verfügbar sein', '', { duration: 2500 });
+    if (!item.external_id || this.creatingTicketIds.has(item.id)) return;
+    this.creatingTicketIds.add(item.id);
+    this.creatingTicketIds = new Set(this.creatingTicketIds);
+    // AI pre-fills the draft (the slow part → spinner on the button)
+    this.http.post<any>(`${environment.apiUrl}/feed/${item.external_id}/ticket-draft`, {}).subscribe({
+      next: draft => {
+        this.creatingTicketIds.delete(item.id);
+        this.creatingTicketIds = new Set(this.creatingTicketIds);
+        this.ticketDraft.set({
+          item,
+          summary: draft.summary || '',
+          description: draft.description || '',
+          priority: draft.priority || 'Normal',
+          project: draft.project || '',
+        });
+      },
+      error: err => {
+        this.creatingTicketIds.delete(item.id);
+        this.creatingTicketIds = new Set(this.creatingTicketIds);
+        this.snackBar.open(err?.error?.detail ?? 'AI preparation failed', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  cancelTicketDraft() { this.ticketDraft.set(null); }
+
+  submitTicket() {
+    const d = this.ticketDraft();
+    if (!d || !d.item.external_id) return;
+    if (!d.project.trim()) {
+      this.snackBar.open('Please provide a Jira project', 'OK', { duration: 3000 });
+      return;
+    }
+    this.submittingTicket.set(true);
+    this.http.post<any>(`${environment.apiUrl}/feed/${d.item.external_id}/create-ticket`, {
+      summary: d.summary, description: d.description, priority: d.priority, project: d.project,
+    }).subscribe({
+      next: res => {
+        this.submittingTicket.set(false);
+        this.ticketDraft.set(null);
+        const ref = this.snackBar.open(`Ticket created: ${res.jira_key}`, res.url ? 'Open' : 'OK', { duration: 6000 });
+        if (res.url) ref.onAction().subscribe(() => window.open(res.url, '_blank', 'noopener'));
+      },
+      error: err => {
+        this.submittingTicket.set(false);
+        this.snackBar.open(err?.error?.detail ?? 'Could not create the ticket', 'OK', { duration: 5000 });
+      },
+    });
   }
 
   openUrl(url: string) {
