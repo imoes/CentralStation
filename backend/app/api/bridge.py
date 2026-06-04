@@ -187,6 +187,32 @@ async def bridge_status(
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     os_client = get_opensearch()
 
+    # ── 0. User CheckMK scope (OS/location/VE/criticality filter) ─────────────
+    # Computed FIRST so every element below (counts, incidents, vitals, logs)
+    # respects it. Empty list = no filter active → show everything.
+    from app.services.feed_index import get_user_checkmk_host_scope
+    host_scope = await get_user_checkmk_host_scope(db, str(user.id))
+
+    def _scope_filter() -> list[dict]:
+        """OpenSearch filter clause restricting to the user's CheckMK host scope.
+
+        Matches the feed's pattern (host / agent / host_candidates) so the Bridge
+        and the News Feed apply the SAME single-source-of-truth scoping.
+        """
+        hosts = [h for h in (host_scope or []) if h]
+        if not hosts:
+            return []
+        return [{
+            "bool": {
+                "should": [
+                    {"terms": {"metadata.host.keyword": hosts}},
+                    {"terms": {"metadata.agent.keyword": hosts}},
+                    {"terms": {"metadata.host_candidates.keyword": hosts}},
+                ],
+                "minimum_should_match": 1,
+            }
+        }]
+
     # ── 1. Aggregations: severity, per-source, per-location ──────────────────
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     sources: dict[str, dict] = {s: {"critical": 0, "high": 0, "total": 0} for s in _SOURCES}
@@ -199,6 +225,7 @@ async def bridge_status(
                 "query": {
                     "bool": {
                         "must": [{"range": {"created_at": {"gte": since}}}],
+                        "filter": _scope_filter(),
                         "must_not": [{"term": {"status": "resolved"}}],
                     }
                 },
@@ -287,6 +314,7 @@ async def bridge_status(
                 "query": {
                     "bool": {
                         "must": [{"range": {"created_at": {"gte": since}}}],
+                        "filter": _scope_filter(),
                         "must_not": [{"term": {"status": "resolved"}}],
                     }
                 },
@@ -326,6 +354,7 @@ async def bridge_status(
                                 {"range": {"created_at": {"gte": since}}},
                                 {"term": {"severity": target_sev}},
                             ],
+                            "filter": _scope_filter(),
                             "must_not": [{"term": {"status": "resolved"}}],
                         }
                     },
@@ -376,8 +405,7 @@ async def bridge_status(
     )[:8]
 
     # ── 4. Fleet vitals + forecast warnings (from cs-metrics-checkmk) ────────
-    from app.services.feed_index import get_user_checkmk_host_scope
-    host_scope = await get_user_checkmk_host_scope(db, str(user.id))
+    # host_scope already computed in section 0 (applied to all elements).
     vitals, forecasts = await _compute_metrics(os_client, host_scope)
 
     # ── 5. AI-prioritised worklist — build fresh for this user's scope ─────────
@@ -398,17 +426,32 @@ async def bridge_status(
         except Exception as _e:
             log.debug("bridge: worklist rebuild failed: %s", _e)
 
-    # ── 6. Open Incidents ──────────────────────────────────────────────────────
+    # The worklist snapshot is shared/cached globally (the scheduler builds it
+    # without a user filter). Post-filter it to the requesting user's host scope
+    # so it matches every other bridge element (no Windows host on a Linux scope).
+    if worklist and host_scope:
+        _scope_set = set(host_scope)
+        worklist = dict(worklist)
+        kept = [w for w in (worklist.get("items") or []) if (w.get("host") or "") in _scope_set]
+        worklist["items"] = kept
+        worklist["open_count"] = len(kept)
+
+    # ── 6. Open Incidents (respect the user's CheckMK host scope) ───────────────
     open_incidents: list[dict] = []
     try:
         from sqlalchemy import select as _sel, desc as _desc, func as _func
         from app.models.workflow import Incident, IncidentMember
-        inc_rows = await db.execute(
+        _inc_q = (
             _sel(Incident)
             .where(Incident.status.in_(("open", "investigating")))
             .order_by(_desc(Incident.updated_at))
-            .limit(5)
         )
+        # When an OS/location filter is active, only show incidents whose host
+        # is in scope (e.g. Linux-only → no Windows incidents on the bridge).
+        if host_scope:
+            _inc_q = _inc_q.where(Incident.primary_host.in_(host_scope))
+        _inc_q = _inc_q.limit(5)
+        inc_rows = await db.execute(_inc_q)
         for inc in inc_rows.scalars().all():
             cnt = await db.execute(
                 _sel(_func.count()).where(IncidentMember.incident_id == inc.id)
