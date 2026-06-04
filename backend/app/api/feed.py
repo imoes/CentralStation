@@ -704,7 +704,7 @@ async def diagnose_alert(
             from app.services.dashboard.generative_designer import _strip_thinking
             summary = _strip_thinking(raw).strip()
     except Exception as e:
-        log.debug("diagnose: LLM synthesis failed: %s", e)
+        log.warning("diagnose: LLM synthesis failed, using raw provider results: %s", e)
         summary = findings_text  # fallback: raw results
 
     # ── 4. Collect deterministic evidence from the providers (not the LLM) ─
@@ -1104,9 +1104,9 @@ async def ticket_draft(
                     summary = (data.get("summary") or "").strip()
                     description = (data.get("description") or "").strip()
                 except Exception:
-                    log.debug("ticket_draft: JSON parse failed, using fallback")
+                    log.warning("ticket_draft: AI returned unparseable JSON, using template fallback")
     except Exception as e:
-        log.debug("ticket_draft: AI prefill failed: %s", e)
+        log.warning("ticket_draft: AI prefill failed, using template fallback: %s", e)
 
     # Fallbacks if AI unavailable
     if not summary:
