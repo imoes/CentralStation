@@ -557,8 +557,9 @@ async def trigger_agent(
         async with AsyncSessionLocal() as new_db:
             await run_network_workflow(new_db)
 
+    from app.core.tasks import run_background
     if agent_type == "sysadmin":
-        asyncio.create_task(_run_sysadmin())
+        run_background(_run_sysadmin(), name="trigger_sysadmin_agent")
     else:
-        asyncio.create_task(_run_network())
+        run_background(_run_network(), name="trigger_network_agent")
     return {"message": f"{agent_type} agent triggered"}
