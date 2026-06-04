@@ -186,7 +186,9 @@ async def get_active_llm_config(db: AsyncSession) -> LLMConfig:
                 api_key=token,
                 timeout_seconds=int(s.get("llm.codex_timeout_seconds") or 60),
                 api_mode="codex_responses",
-                thinking_mode=False,
+                # Follow the configured thinking_mode (default off → low reasoning,
+                # fast). The generative dashboard overrides this to True at call time.
+                thinking_mode=s.get("llm.thinking_mode", "false") == "true",
             )
 
     return await get_llm_config(db)
