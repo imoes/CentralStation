@@ -198,7 +198,12 @@ async def generate_text(
             async with client.stream("POST", url, headers=headers, json=payload) as response:
                 if response.status_code >= 400:
                     detail = await response.aread()
-                    raise LLMInvocationError(f"HTTP {response.status_code}: {detail[:500].decode(errors='replace')}")
+                    msg = f"HTTP {response.status_code}: {detail[:500].decode(errors='replace')}"
+                    # Single chokepoint: log EVERY LLM failure at WARNING so a
+                    # provider/param issue (like Codex rejecting temperature) is
+                    # never hidden by a caller's silent fallback.
+                    log.warning("LLM call failed [codex_responses %s]: %s", llm_config.model, msg)
+                    raise LLMInvocationError(msg)
                 return await _collect_codex_stream(response)
         return ""  # unreachable but satisfies type checkers
 
@@ -235,7 +240,9 @@ async def generate_text(
 
     if response.status_code >= 400:
         detail = response.text[:500].strip()
-        raise LLMInvocationError(f"HTTP {response.status_code}: {detail}")
+        msg = f"HTTP {response.status_code}: {detail}"
+        log.warning("LLM call failed [%s %s]: %s", mode, llm_config.model, msg)
+        raise LLMInvocationError(msg)
 
     data = response.json()
     return extract(data)
