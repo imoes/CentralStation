@@ -1001,13 +1001,16 @@ async def incident_claude_prompt(
 # AI-assisted Jira ticket creation from a feed item
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _resolve_jira_connector(db: AsyncSession, user_id):
-    """Return the user's Jira connector (personal preferred, else global)."""
+async def _resolve_jira_connector(db: AsyncSession, user_id, connector_type: str = "jira"):
+    """Return the user's Jira connector of the given type (personal preferred, else global).
+
+    connector_type: "jira" (regular Jira, e.g. IMSP) or "jira_sd" (ServiceDesk, e.g. IMIT).
+    """
     from app.models.connector import ConnectorConfig
     r = await db.execute(
         select(ConnectorConfig)
         .where(
-            ConnectorConfig.type == "jira",
+            ConnectorConfig.type == connector_type,
             ConnectorConfig.enabled.is_(True),
             ((ConnectorConfig.owner_user_id == user_id) | ConnectorConfig.owner_user_id.is_(None)),
         )
@@ -1053,9 +1056,15 @@ async def ticket_draft(
     source = item.get("source", "")
     ai_insight = item.get("ai_insight") or ""
 
-    # Default project from user preferences
+    # Default ticket project: global setting jira.ticket_project (default IMIT),
+    # then the user's personal jira_project preference as fallback.
+    from app.services.settings import get_setting
     prefs = await _get_prefs(user.id, db)
-    default_project = (getattr(prefs, "jira_project", None) or "").strip()
+    default_project = (
+        (await get_setting(db, "jira.ticket_project"))
+        or (getattr(prefs, "jira_project", None) or "")
+        or "IMIT"
+    ).strip()
 
     # Severity → Jira priority
     prio_map = {"critical": "Kritisch", "high": "Hoch", "medium": "Normal", "low": "Niedrig", "info": "Niedrig"}
@@ -1134,17 +1143,25 @@ async def create_ticket(
     """Create the Jira ticket from the (possibly edited) draft."""
     from app.core.security import decrypt_credentials
     from app.services.connectors.jira import JiraConnector
+    from app.services.settings import get_setting
 
     summary = (body.get("summary") or "").strip()
     description = (body.get("description") or "").strip()
-    project = (body.get("project") or "").strip()
+    project = (body.get("project") or "").strip() or (await get_setting(db, "jira.ticket_project")) or "IMIT"
     priority = (body.get("priority") or "Normal").strip()
     issue_type = (body.get("issue_type") or "Serviceanfrage").strip()
 
     if not summary or not project:
         raise HTTPException(400, "Summary und Projekt sind erforderlich")
 
-    conn = await _resolve_jira_connector(db, user.id)
+    # IMIT lives in the ServiceDesk (jira_sd), IMSP in regular Jira. Use the
+    # configured ticket connector (default jira_sd), fall back to the other type.
+    target_type = (await get_setting(db, "jira.ticket_connector")) or "jira_sd"
+    conn = await _resolve_jira_connector(db, user.id, target_type)
+    if not conn:
+        # fall back to the other Jira type if the configured one isn't set up
+        other = "jira" if target_type == "jira_sd" else "jira_sd"
+        conn = await _resolve_jira_connector(db, user.id, other)
     if not conn:
         raise HTTPException(400, "Kein Jira-Connector konfiguriert")
 
