@@ -407,17 +407,18 @@ async def _ask_llm(db: Any, situation: dict, lang: str) -> dict | None:
     before parsing so _parse_json only sees clean JSON.
     """
     from app.services.ai_language import with_language
-    from app.services.settings import get_llm_config
+    from app.services.settings import get_active_llm_config
     from app.services.llm_client import generate_text, LLMInvocationError
 
-    llm_cfg = await get_llm_config(db)
+    # Use the ACTIVE provider (Codex when selected) so the generative dashboard
+    # benefits from the chosen model.
+    llm_cfg = await get_active_llm_config(db)
     if not llm_cfg.is_configured:
         log.info("generative_designer: no LLM configured → fallback")
         return None
 
-    # Enable reasoning: Qwen3 thinking mode for more deliberate widget selection.
-    # thinking_budget=1500 gives enough tokens to reason about grid layout and
-    # widget priority without excessive latency.
+    # Generative UI: thinking ALWAYS on (deliberate widget selection).
+    # For Qwen this enables thinking mode; for Codex it maps to high reasoning effort.
     llm_cfg.thinking_mode = True
 
     user_msg = "Aktuelle Lage:\n" + json.dumps(situation, ensure_ascii=False, indent=0)

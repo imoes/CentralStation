@@ -176,18 +176,34 @@ async def generate_text(
 
     if mode == "codex_responses":
         url = _build_api_url(llm_config.base_url, "responses")
+        # Map thinking_mode → Codex reasoning effort. gpt-5.x defaults to HIGH
+        # reasoning when no `reasoning` field is sent → slow even for trivial
+        # prompts. We make it explicit so it is fast unless thinking is wanted:
+        #   thinking on  → "high"  (e.g. generative dashboard)
+        #   thinking off → "low"   (fast: diagnose / enrich / agent / chat)
+        _valid = {"minimal", "low", "medium", "high"}
+        _req = (reasoning_effort or "").lower()
+        if _req in _valid:
+            effort = _req
+        else:  # None or "none"/unknown → derive from thinking_mode
+            effort = "high" if getattr(llm_config, "thinking_mode", False) else "low"
         payload = _build_codex_payload(
             llm_config.model, messages,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
-            reasoning_effort=reasoning_effort,
+            reasoning_effort=effort,
         )
         payload["stream"] = True
         async with httpx.AsyncClient(timeout=llm_config.timeout_seconds, verify=False) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as response:
                 if response.status_code >= 400:
                     detail = await response.aread()
-                    raise LLMInvocationError(f"HTTP {response.status_code}: {detail[:500].decode(errors='replace')}")
+                    msg = f"HTTP {response.status_code}: {detail[:500].decode(errors='replace')}"
+                    # Single chokepoint: log EVERY LLM failure at WARNING so a
+                    # provider/param issue (like Codex rejecting temperature) is
+                    # never hidden by a caller's silent fallback.
+                    log.warning("LLM call failed [codex_responses %s]: %s", llm_config.model, msg)
+                    raise LLMInvocationError(msg)
                 return await _collect_codex_stream(response)
         return ""  # unreachable but satisfies type checkers
 
@@ -224,7 +240,9 @@ async def generate_text(
 
     if response.status_code >= 400:
         detail = response.text[:500].strip()
-        raise LLMInvocationError(f"HTTP {response.status_code}: {detail}")
+        msg = f"HTTP {response.status_code}: {detail}"
+        log.warning("LLM call failed [%s %s]: %s", mode, llm_config.model, msg)
+        raise LLMInvocationError(msg)
 
     data = response.json()
     return extract(data)

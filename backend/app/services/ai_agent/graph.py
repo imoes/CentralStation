@@ -656,7 +656,7 @@ async def run_sysadmin_workflow(
 
     user_checkmk_* lists come from the triggering user's preferences.
     """
-    from app.services.settings import get_agent_config, get_llm_config, get_searxng_config
+    from app.services.settings import get_agent_config, get_active_llm_config as get_llm_config, get_searxng_config
 
     llm_config = await get_llm_config(db)
     searxng_config = await get_searxng_config(db)
