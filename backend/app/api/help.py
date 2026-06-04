@@ -25,14 +25,24 @@ class HelpAskRequest(BaseModel):
 @router.post("/ask")
 async def ask_help(
     body: HelpAskRequest,
-    _: CurrentUser,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    from app.services.ai_language import get_response_language_for_user, with_language
+
     llm_cfg = await get_llm_config(db)
     if not llm_cfg.base_url:
-        return {"answer": "LLM nicht konfiguriert. Bitte zuerst in den KI-Einstellungen einen Endpunkt hinterlegen."}
+        lang = await get_response_language_for_user(db, user.id)
+        return {
+            "answer": (
+                "LLM nicht konfiguriert. Bitte zuerst in den KI-Einstellungen einen Endpunkt hinterlegen."
+                if lang == "de"
+                else "The LLM is not configured yet. Please add an endpoint in the AI settings first."
+            )
+        }
 
     content = _README.read_text(encoding="utf-8") if _README.exists() else ""
+    lang = await get_response_language_for_user(db, user.id)
 
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_openai import ChatOpenAI
@@ -45,11 +55,12 @@ async def ask_help(
         max_tokens=900,
     )
     messages = [
-        SystemMessage(content=(
+        SystemMessage(content=with_language(
             "Du bist ein Hilfe-Assistent für CentralStation, ein IT-Operations-Dashboard.\n"
             "Beantworte Fragen präzise auf Basis der Dokumentation.\n"
-            "Antworte immer auf Deutsch. Wenn etwas nicht in der Doku steht, sage es ehrlich.\n\n"
-            f"--- DOKUMENTATION ---\n{content}\n--- ENDE ---"
+            "Wenn etwas nicht in der Doku steht, sage es ehrlich.\n\n"
+            f"--- DOKUMENTATION ---\n{content}\n--- ENDE ---",
+            lang,
         )),
         HumanMessage(content=body.question),
     ]
