@@ -811,6 +811,154 @@ Persönlicher Konnektor hat immer Vorrang vor dem globalen Admin-Konnektor.
 
 ---
 
+## Eigene Konnektoren schreiben (Connector-SDK)
+
+CentralStation ist um eine kleine, klar definierte Connector-Schnittstelle gebaut. Ein neuer
+Konnektor — egal ob Monitoring, Ticketing oder Inventar — braucht nur **4 Schritte**. Dieser
+Abschnitt ist als **LLM-Skill** gedacht: Ein KI-Agent (Claude CLI, Codex, eigener Agent) kann
+ihn als Kontext laden und einen lauffähigen Konnektor in einem Durchgang erzeugen.
+
+### Architektur in einem Bild
+
+```
+ConnectorConfig (DB, Fernet-verschlüsselt: base_url + credentials)
+      │
+      ▼
+get_connector(type, base_url, credentials)      # Factory  (connectors/__init__.py)
+      │
+      ▼
+class MyConnector(BaseConnector)                # deine Klasse (connectors/my.py)
+   ├── test_connection() -> ConnectorTestResult # Pflicht: Erreichbarkeit + Auth
+   └── get_problems() / get_alerts() / ...      # Datenmethode(n)
+      │
+      ▼
+collect_my(connector, time_range_minutes)       # Mapping → Feed-Alert-Dicts (alert_aggregator.py)
+      │
+      ▼
+cs-feed-{source} (OpenSearch)  →  Feed · Brücke · Dashboard · KI-Agent
+```
+
+### Schritt 1 — Connector-Klasse
+
+`backend/app/services/connectors/<type>.py`. Erbt von `BaseConnector` (liefert `self.base_url`,
+`self.credentials`, `self._client()` mit `verify=False` für Self-Signed-Certs).
+
+```python
+from app.schemas.connector import ConnectorTestResult
+from app.services.connectors.base import BaseConnector
+
+
+class MyConnector(BaseConnector):
+    def _headers(self) -> dict:
+        # Auth aus den (entschlüsselten) credentials bauen
+        token = self.credentials.get("api_token", "")
+        return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+    async def test_connection(self) -> ConnectorTestResult:
+        """PFLICHT: prüft Erreichbarkeit + Auth. Wird vom 'Verbindung testen'-Button genutzt."""
+        try:
+            async with self._client() as client:
+                r = await client.get(f"{self.base_url}/api/status", headers=self._headers())
+            r.raise_for_status()
+            return ConnectorTestResult(success=True, message="MySystem erreichbar")
+        except Exception as e:
+            return ConnectorTestResult(success=False, message=str(e))
+
+    async def get_problems(self) -> list[dict]:
+        """Datenmethode: liefert offene Probleme im EINHEITLICHEN Schema (s.u.)."""
+        async with self._client() as client:
+            r = await client.get(f"{self.base_url}/api/problems", headers=self._headers())
+        r.raise_for_status()
+        out = []
+        for p in r.json().get("items", []):
+            out.append({
+                "severity": _map_severity(p["state"]),   # critical|high|medium|low|info
+                "host":     p["host"],
+                "service":  p["service"],
+                "output":   p.get("plugin_output", ""),
+                "acknowledged": bool(p.get("acknowledged")),
+                "last_state_change": p.get("last_state_change"),
+                "host_address": p.get("address", ""),
+                "metadata": {"os": p.get("os", ""), "location": p.get("site", "")},
+            })
+        return out
+```
+
+**Einheitliches Problem-Schema** (so erwartet es der Aggregator):
+
+| Feld | Typ | Pflicht | Bedeutung |
+|------|-----|---------|-----------|
+| `severity` | `critical\|high\|medium\|low\|info` | ✓ | normalisierte Severity |
+| `host` | str | ✓ | Hostname (Korrelations-/Filter-Schlüssel) |
+| `service` | str | ✓ | betroffener Dienst/Check |
+| `output` | str | – | Plugin-/Status-Text |
+| `acknowledged` | bool | – | quittiert? |
+| `last_state_change` | epoch/ISO | – | Zeitpunkt des Statuswechsels |
+| `host_address` | str | – | IP |
+| `metadata` | dict | – | `os`, `location`, `criticality`, `ve` … (CheckMK-Filter greifen darauf) |
+
+### Schritt 2 — In der Factory registrieren
+
+`backend/app/services/connectors/__init__.py` → Import + Mapping-Eintrag:
+
+```python
+from app.services.connectors.my import MyConnector
+mapping = { ..., "my": MyConnector }
+```
+
+`backend/app/api/connectors.py` → `VALID_TYPES` ergänzen (`"my"`). Optional in
+`USER_MANAGED_TYPES`, wenn jeder User (statt nur Admin) den Konnektor anlegen darf.
+
+### Schritt 3 — Collector im Aggregator
+
+`backend/app/services/alert_aggregator.py` — mappt die Connector-Ausgabe auf Feed-Alert-Dicts:
+
+```python
+async def collect_my(connector: ConnectorConfig, time_range_minutes: int = 60) -> list[dict]:
+    from app.services.connectors.my import MyConnector
+    creds = decrypt_credentials(connector.encrypted_credentials)
+    svc = MyConnector(base_url=connector.base_url, credentials=creds)
+    items = await svc.get_problems()
+    return [{
+        "source": "my",
+        "severity": i["severity"],
+        "title": f"{i['host']} — {i['service']}",
+        "body": i.get("output", ""),
+        "external_id": f"my:{i['host']}:{i['service']}",   # STABILER Dedup-Key!
+        "external_url": f"{connector.base_url}/host/{i['host']}",
+        "metadata": {**(i.get("metadata") or {}), "host": i["host"], "service": i["service"]},
+    } for i in items]
+
+# weiter unten in der _COLLECTORS-Map:
+_COLLECTORS = { ..., "my": collect_my }
+```
+
+**`external_id` ist der wichtigste Wert**: stabiler, deterministischer Dedup-Key über alle Läufe
+(z.B. `my:host:service`). Daran hängen Deduplizierung, Incident-Korrelation, Claim/Status und Timeline.
+
+### Schritt 4 — Frontend-Formularfelder (optional)
+
+`frontend/src/app/features/settings/connectors/connector-form/` → `CRED_FIELDS` um die Felder
+des neuen Typs ergänzen (z.B. `api_token`, `username`/`password`). Ohne Eintrag erscheint der
+Konnektor nicht im Anlege-Dialog (lässt sich aber per API/Seed anlegen).
+
+### Checkliste
+
+- [ ] `MyConnector(BaseConnector)` mit `test_connection()` + Datenmethode
+- [ ] In `get_connector()`-Factory + `VALID_TYPES` registriert
+- [ ] `collect_my()` + `_COLLECTORS`-Eintrag im Aggregator
+- [ ] `external_id` ist stabil und deterministisch
+- [ ] Severity auf `critical|high|medium|low|info` normalisiert
+- [ ] (optional) Frontend-`CRED_FIELDS`
+- [ ] `POST /api/connectors/{id}/test` grün
+
+> **Referenz-Implementierungen:** `checkmk.py` (Bearer, Monitoring → `get_problems`),
+> `wazuh.py` (JWT-Login, Security → `get_alerts`), `graylog.py` (Views-API, Logs).
+> Ein vollständiger Beispiel-Konnektor für **Icinga2** liegt im Fork
+> `github.com/imoes/CentralStation` und ist exakt nach dieser Anleitung gebaut.
+
+---
+
 ## Benutzerverwaltung und RBAC
 
 ### Rollen
