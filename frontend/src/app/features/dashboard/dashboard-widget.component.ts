@@ -158,8 +158,10 @@ import {
               @if (forecastError()) {
                 <div class="empty">{{ forecastError() }}</div>
               } @else if (forecastOptions()) {
-                <div class="forecast-title">{{ forecastTitle() }}</div>
-                <div echarts [options]="forecastOptions()!" class="chart forecast-chart"></div>
+                <div class="forecast-wrap">
+                  <div class="forecast-title">{{ forecastTitle() }}</div>
+                  <div echarts [options]="forecastOptions()!" class="chart forecast-chart"></div>
+                </div>
               } @else {
                 <div class="empty">Keine Forecast-Daten verfügbar</div>
               }
@@ -346,7 +348,9 @@ import {
     .pin-btn { opacity: 0.4; transition: opacity .2s, color .2s; }
     .pin-btn:hover { opacity: 1; }
     .pin-btn.pinned { opacity: 1; color: var(--mat-sys-primary) !important; }
-    .forecast-title { font-size: 11px; color: var(--mat-sys-on-surface-variant); padding: 0 4px 2px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .forecast-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
+    .forecast-title { font-size: 11px; color: var(--mat-sys-on-surface-variant); padding: 0 4px 2px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+    .forecast-wrap .forecast-chart { flex: 1; min-height: 0; height: auto; }
     .grafana-frame { width: 100%; height: 100%; border: 0; border-radius: 10px; background: #111827; }
     .ai-summary { height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 7px; }
     .ai-summary p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--mat-sys-on-surface-variant); white-space: pre-line; }
