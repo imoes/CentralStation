@@ -4,6 +4,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatIconModule } from '@angular/material/icon';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../core/auth/auth.service';
+import { I18nService } from '../../core/services/i18n.service';
 
 @Component({
   selector: 'cs-settings-shell',
@@ -13,23 +14,23 @@ import { AuthService } from '../../core/auth/auth.service';
     <div class="settings-container">
       <nav mat-tab-nav-bar [tabPanel]="tabPanel" class="settings-tabs">
         <a mat-tab-link routerLink="connectors" routerLinkActive #connectors="routerLinkActive" [active]="connectors.isActive">
-          <mat-icon>cable</mat-icon>&nbsp;{{ isAdmin() ? 'Connectors' : 'Meine Konnektoren' }}
+          <mat-icon>cable</mat-icon>&nbsp;{{ isAdmin() ? i18n.t('settings.tabs.connectors') : i18n.t('settings.tabs.myConnectors') }}
         </a>
         <a mat-tab-link routerLink="my" routerLinkActive #my="routerLinkActive" [active]="my.isActive">
-          <mat-icon>manage_accounts</mat-icon>&nbsp;Meine Einstellungen
+          <mat-icon>manage_accounts</mat-icon>&nbsp;{{ i18n.t('settings.tabs.mySettings') }}
         </a>
         @if (isAdmin()) {
           <a mat-tab-link routerLink="users" routerLinkActive #users="routerLinkActive" [active]="users.isActive">
-            <mat-icon>group</mat-icon>&nbsp;Benutzer
+            <mat-icon>group</mat-icon>&nbsp;{{ i18n.t('settings.tabs.users') }}
           </a>
           <a mat-tab-link routerLink="ai" routerLinkActive #ai="routerLinkActive" [active]="ai.isActive">
-            <mat-icon>psychology</mat-icon>&nbsp;KI-Konfiguration
+            <mat-icon>psychology</mat-icon>&nbsp;{{ i18n.t('settings.tabs.ai') }}
           </a>
           <a mat-tab-link routerLink="audit" routerLinkActive #audit="routerLinkActive" [active]="audit.isActive">
-            <mat-icon>history</mat-icon>&nbsp;Audit-Log
+            <mat-icon>history</mat-icon>&nbsp;{{ i18n.t('settings.tabs.audit') }}
           </a>
           <a mat-tab-link routerLink="feed" routerLinkActive #feedTab="routerLinkActive" [active]="feedTab.isActive">
-            <mat-icon>feed</mat-icon>&nbsp;Feed
+            <mat-icon>feed</mat-icon>&nbsp;{{ i18n.t('settings.tabs.feed') }}
           </a>
         }
       </nav>
@@ -46,6 +47,9 @@ import { AuthService } from '../../core/auth/auth.service';
 })
 export class SettingsShellComponent {
   isAdmin = computed(() => this.auth.userRole() === 'admin');
+  readonly i18n: I18nService;
 
-  constructor(private auth: AuthService) {}
+  constructor(private auth: AuthService, i18n: I18nService) {
+    this.i18n = i18n;
+  }
 }

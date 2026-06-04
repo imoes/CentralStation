@@ -1,14 +1,16 @@
 """Response-language control for all LLM calls.
 
 The UI is i18n-enabled (English default, German switchable). The AI should
-answer in the SAME language the operator uses. The active language is stored
-in the global setting ``app.language`` and injected into every system prompt
-via ``language_instruction()``.
+answer in the SAME language the operator uses. The active language is resolved
+from the per-user preference ``ui_language`` with the legacy global
+``app.language`` setting as fallback, and injected into system prompts via
+``language_instruction()``.
 
 Add a new language by extending ``LANG_INSTRUCTION`` — no call site changes.
 """
 from __future__ import annotations
 
+from uuid import UUID
 from typing import Any
 
 DEFAULT_LANG = "en"
@@ -39,7 +41,23 @@ def normalize_lang(lang: str | None) -> str:
 
 async def get_response_language(db: Any) -> str:
     """Return the configured response language code (e.g. 'en', 'de')."""
+    return await get_response_language_for_user(db, None)
+
+
+async def get_response_language_for_user(db: Any, user_id: UUID | str | None) -> str:
+    """Resolve per-user language with a global fallback."""
     try:
+        if user_id:
+            from sqlalchemy import select
+            from app.models.workflow import UserPreference
+
+            result = await db.execute(
+                select(UserPreference.ui_language).where(UserPreference.user_id == user_id)
+            )
+            user_lang = result.scalar_one_or_none()
+            if user_lang:
+                return normalize_lang(user_lang)
+
         from app.services.settings import get_setting
         return normalize_lang(await get_setting(db, "app.language"))
     except Exception:

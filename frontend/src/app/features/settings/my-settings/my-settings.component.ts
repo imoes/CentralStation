@@ -14,6 +14,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { forkJoin } from 'rxjs';
 import { environment } from '../../../../environments/environment';
 import { ThemeService } from '../../../core/services/theme.service';
+import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
 
 @Component({
   selector: 'cs-my-settings',
@@ -27,25 +28,32 @@ import { ThemeService } from '../../../core/services/theme.service';
   template: `
     <div class="page-container">
       <div class="page-header">
-        <h2>Meine Einstellungen</h2>
+        <h2>{{ i18n.t('settings.my.title') }}</h2>
         <button mat-raised-button color="primary" [disabled]="saving()" (click)="save()">
           @if (saving()) { <mat-spinner diameter="18"></mat-spinner> }
-          @else { <ng-container><mat-icon>save</mat-icon> Speichern</ng-container> }
+          @else { <ng-container><mat-icon>save</mat-icon> {{ i18n.t('settings.my.save') }}</ng-container> }
         </button>
       </div>
 
       <mat-card class="settings-card">
         <mat-card-header>
-          <mat-card-title>Darstellung</mat-card-title>
-          <mat-card-subtitle>Design der gesamten Anwendung. Wird pro Benutzer gespeichert.</mat-card-subtitle>
+          <mat-card-title>{{ i18n.t('settings.my.appearance.title') }}</mat-card-title>
+          <mat-card-subtitle>{{ i18n.t('settings.my.appearance.subtitle') }}</mat-card-subtitle>
         </mat-card-header>
         <mat-card-content>
+          <mat-form-field appearance="outline" class="full-width">
+            <mat-label>{{ i18n.t('settings.my.language') }}</mat-label>
+            <mat-select [ngModel]="i18n.language()" (ngModelChange)="setLanguage($event)">
+              <mat-option value="en">{{ i18n.t('language.en') }}</mat-option>
+              <mat-option value="de">{{ i18n.t('language.de') }}</mat-option>
+            </mat-select>
+          </mat-form-field>
           <div class="theme-grid">
             @for (t of themes; track t.id) {
               <button class="theme-card" [class.active]="theme.theme() === t.id" (click)="theme.setTheme(t.id)">
                 <span class="theme-swatch" [style.background]="t.swatch"></span>
-                <span class="theme-name">{{ t.label }}</span>
-                <span class="theme-desc">{{ t.desc }}</span>
+                <span class="theme-name">{{ i18n.t(t.labelKey) }}</span>
+                <span class="theme-desc">{{ i18n.t(t.descKey) }}</span>
               </button>
             }
           </div>
@@ -57,32 +65,31 @@ import { ThemeService } from '../../../core/services/theme.service';
       } @else {
         <mat-card class="settings-card">
           <mat-card-header>
-            <mat-card-title>KI-Agent — CheckMK Filter</mat-card-title>
+            <mat-card-title>{{ i18n.t('settings.my.filter.title') }}</mat-card-title>
             <mat-card-subtitle>
-              Bestimmt welche CheckMK-Alerts der KI-Agent und der News Feed anzeigen.
-              Nichts ausgewählt = alle Werte werden berücksichtigt.
+              {{ i18n.t('settings.my.filter.subtitle') }}
             </mat-card-subtitle>
           </mat-card-header>
           <mat-card-content>
 
             <mat-form-field appearance="outline" class="age-field">
-              <mat-label>Mindestalter CheckMK-Meldungen (Minuten)</mat-label>
+              <mat-label>{{ i18n.t('settings.my.minAge') }}</mat-label>
               <input matInput type="number" min="0" max="1440" [(ngModel)]="minAgeMins">
-              <mat-hint>Meldungen die jünger als dieser Wert sind werden ausgeblendet (Standard: 5)</mat-hint>
+              <mat-hint>{{ i18n.t('settings.my.minAgeHint') }}</mat-hint>
             </mat-form-field>
 
             <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Standort (Location / Ordner)</mat-label>
+              <mat-label>{{ i18n.t('settings.my.location') }}</mat-label>
               <mat-select multiple [(ngModel)]="selLocations">
                 @for (v of filterValues.location; track v) {
                   <mat-option [value]="v">{{ v }}</mat-option>
                 }
               </mat-select>
-              <mat-hint>Basiert auf dem CheckMK-Ordner-Pfad des Hosts</mat-hint>
+              <mat-hint>{{ i18n.t('settings.my.locationHint') }}</mat-hint>
             </mat-form-field>
 
             <mat-form-field appearance="outline" class="full-width">
-              <mat-label>VE / Unternehmen</mat-label>
+              <mat-label>{{ i18n.t('settings.my.ve') }}</mat-label>
               <mat-select multiple [(ngModel)]="selVe">
                 @for (v of filterValues.ve; track v) {
                   <mat-option [value]="v">{{ v }}</mat-option>
@@ -91,7 +98,7 @@ import { ThemeService } from '../../../core/services/theme.service';
             </mat-form-field>
 
             <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Kritikalität</mat-label>
+              <mat-label>{{ i18n.t('settings.my.criticality') }}</mat-label>
               <mat-select multiple [(ngModel)]="selCriticality">
                 @for (v of filterValues.criticality; track v) {
                   <mat-option [value]="v">{{ v }}</mat-option>
@@ -100,7 +107,7 @@ import { ThemeService } from '../../../core/services/theme.service';
             </mat-form-field>
 
             <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Betriebssystem</mat-label>
+              <mat-label>{{ i18n.t('settings.my.os') }}</mat-label>
               <mat-select multiple [(ngModel)]="selOs">
                 @for (v of filterValues.os; track v) {
                   <mat-option [value]="v">{{ v }}</mat-option>
@@ -109,18 +116,18 @@ import { ThemeService } from '../../../core/services/theme.service';
             </mat-form-field>
 
             <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Hostgruppe</mat-label>
+              <mat-label>{{ i18n.t('settings.my.hostgroup') }}</mat-label>
               <mat-select multiple [(ngModel)]="selHostgroups">
                 @for (v of filterValues.hostgroups; track v) {
                   <mat-option [value]="v">{{ v }}</mat-option>
                 }
               </mat-select>
-              <mat-hint>CheckMK Hostgruppen-Filter für KI-Agent und Alerts</mat-hint>
+              <mat-hint>{{ i18n.t('settings.my.hostgroupHint') }}</mat-hint>
             </mat-form-field>
 
             @if (selLocations.length || selVe.length || selCriticality.length || selOs.length || selHostgroups.length) {
               <div class="active-filters">
-                <span class="filter-label">Aktive Filter:</span>
+                <span class="filter-label">{{ i18n.t('settings.my.activeFilters') }}</span>
                 @for (v of selLocations; track v) {
                   <mat-chip>
                     <mat-icon matChipAvatar style="font-size:14px">location_on</mat-icon>
@@ -155,7 +162,7 @@ import { ThemeService } from '../../../core/services/theme.service';
             } @else {
               <p class="no-filter-hint">
                 <mat-icon style="vertical-align:middle;font-size:16px">info</mat-icon>
-                Kein Filter aktiv — der KI-Agent analysiert alle CheckMK-Standorte.
+                {{ i18n.t('settings.my.noFilters') }}
               </p>
             }
 
@@ -164,25 +171,25 @@ import { ThemeService } from '../../../core/services/theme.service';
 
         <mat-card class="settings-card">
           <mat-card-header>
-            <mat-card-title>Passwort ändern</mat-card-title>
+            <mat-card-title>{{ i18n.t('settings.my.password.title') }}</mat-card-title>
           </mat-card-header>
           <mat-card-content>
             <mat-form-field appearance="outline" class="pw-field">
-              <mat-label>Aktuelles Passwort</mat-label>
+              <mat-label>{{ i18n.t('settings.my.password.current') }}</mat-label>
               <input matInput [type]="pwShow ? 'text' : 'password'" [(ngModel)]="pwCurrent" autocomplete="current-password">
               <button matSuffix mat-icon-button (click)="pwShow = !pwShow" type="button" tabindex="-1">
                 <mat-icon>{{ pwShow ? 'visibility_off' : 'visibility' }}</mat-icon>
               </button>
             </mat-form-field>
             <mat-form-field appearance="outline" class="pw-field">
-              <mat-label>Neues Passwort</mat-label>
+              <mat-label>{{ i18n.t('settings.my.password.new') }}</mat-label>
               <input matInput [type]="pwShow ? 'text' : 'password'" [(ngModel)]="pwNew" autocomplete="new-password">
             </mat-form-field>
             <mat-form-field appearance="outline" class="pw-field">
-              <mat-label>Neues Passwort bestätigen</mat-label>
+              <mat-label>{{ i18n.t('settings.my.password.confirm') }}</mat-label>
               <input matInput [type]="pwShow ? 'text' : 'password'" [(ngModel)]="pwConfirm" autocomplete="new-password">
               @if (pwNew && pwConfirm && pwNew !== pwConfirm) {
-                <mat-error>Passwörter stimmen nicht überein</mat-error>
+                <mat-error>{{ i18n.t('settings.my.password.mismatch') }}</mat-error>
               }
             </mat-form-field>
             @if (pwError) {
@@ -194,9 +201,9 @@ import { ThemeService } from '../../../core/services/theme.service';
                       (click)="changePassword()">
                 @if (pwSaving()) { <mat-spinner diameter="18"></mat-spinner> }
                 @else { <mat-icon>lock_reset</mat-icon> }
-                Passwort ändern
+                {{ i18n.t('settings.my.password.submit') }}
               </button>
-              <span class="pw-hint">Mindestens 8 Zeichen</span>
+              <span class="pw-hint">{{ i18n.t('settings.my.password.minHint') }}</span>
             </div>
           </mat-card-content>
         </mat-card>
@@ -234,10 +241,10 @@ export class MySettingsComponent implements OnInit {
   loading = signal(true);
   saving  = signal(false);
 
-  readonly themes: { id: 'classic'|'holo'|'lcars'; label: string; desc: string; swatch: string }[] = [
-    { id: 'classic', label: 'Klassisch', desc: 'Hell, aufgeräumt, blauer Schleier', swatch: 'linear-gradient(135deg,#eef4fb,#1565c0)' },
-    { id: 'holo',    label: 'Holo-HUD',  desc: 'Dunkelblau, Cyan-Glow',            swatch: 'linear-gradient(135deg,#050d1a,#4fd6ff)' },
-    { id: 'lcars',   label: 'LCARS',     desc: 'Schwarz/Orange, Star Trek',        swatch: 'linear-gradient(135deg,#000 40%,#e87c3a)' },
+  readonly themes: { id: 'classic'|'holo'|'lcars'; labelKey: string; descKey: string; swatch: string }[] = [
+    { id: 'classic', labelKey: 'theme.classic.label', descKey: 'theme.classic.desc', swatch: 'linear-gradient(135deg,#eef4fb,#1565c0)' },
+    { id: 'holo',    labelKey: 'theme.holo.label',    descKey: 'theme.holo.desc',    swatch: 'linear-gradient(135deg,#050d1a,#4fd6ff)' },
+    { id: 'lcars',   labelKey: 'theme.lcars.label',   descKey: 'theme.lcars.desc',   swatch: 'linear-gradient(135deg,#000 40%,#e87c3a)' },
   ];
 
   pwCurrent = '';
@@ -258,7 +265,12 @@ export class MySettingsComponent implements OnInit {
     location: [], ve: [], criticality: [], os: [], hostgroups: [],
   };
 
-  constructor(private http: HttpClient, private snack: MatSnackBar, public theme: ThemeService) {}
+  constructor(
+    private http: HttpClient,
+    private snack: MatSnackBar,
+    public theme: ThemeService,
+    public i18n: I18nService,
+  ) {}
 
   ngOnInit() {
     forkJoin({
@@ -302,15 +314,19 @@ export class MySettingsComponent implements OnInit {
         this.pwCurrent = '';
         this.pwNew     = '';
         this.pwConfirm = '';
-        this.snack.open('Passwort erfolgreich geändert', 'OK', { duration: 3000 });
+        this.snack.open(this.i18n.t('settings.my.password.changed'), 'OK', { duration: 3000 });
       },
       error: (err) => {
         this.pwSaving.set(false);
         this.pwError = err?.error?.detail === 'Current password wrong'
-          ? 'Aktuelles Passwort falsch'
-          : (err?.error?.detail ?? 'Fehler beim Ändern des Passworts');
+          ? this.i18n.t('settings.my.password.currentWrong')
+          : (err?.error?.detail ?? this.i18n.t('settings.my.password.error'));
       },
     });
+  }
+
+  setLanguage(lang: AppLanguage) {
+    this.i18n.setLanguage(lang);
   }
 
   save() {
@@ -325,11 +341,11 @@ export class MySettingsComponent implements OnInit {
     }).subscribe({
       next: () => {
         this.saving.set(false);
-        this.snack.open('Einstellungen gespeichert', 'OK', { duration: 3000 });
+        this.snack.open(this.i18n.t('settings.my.saved'), 'OK', { duration: 3000 });
       },
       error: () => {
         this.saving.set(false);
-        this.snack.open('Fehler beim Speichern', 'OK', { duration: 3000 });
+        this.snack.open(this.i18n.t('settings.my.saveError'), 'OK', { duration: 3000 });
       },
     });
   }
