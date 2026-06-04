@@ -26,17 +26,17 @@ _HYDE_SYSTEM_PROMPT = (
 )
 
 _EXPLAIN_SYSTEM_PROMPT = (
-    "Du bist ein erfahrener Linux-Sysadmin. "
-    "Erkläre die folgende Monitoring-Meldung in 3-4 vollständigen Sätzen: Was bedeutet sie, "
-    "was ist die wahrscheinliche Ursache, und was ist die erste konkrete Maßnahme? "
-    "Antworte auf Deutsch. Keine Markdown-Formatierung. Kein Abschneiden mitten im Satz.\n"
-    "WICHTIG: Das Feld 'Log-Quelle' gibt an, welches Monitoring-Tool die Meldung gesammelt hat "
-    "(z.B. Graylog, CheckMK, Wazuh) — NICHT welche Software das Problem hat. "
-    "Das betroffene System erkennst du aus dem Inhalt der Meldung (Hostname, Fehlermeldung, Prozess).\n"
-    "BEWEISPFLICHT: Wenn die Meldung keine ausreichenden Daten enthält, schreibe explizit: "
-    "'Keine ausreichenden Daten für eine Ursachenanalyse.' "
-    "Erfinde keine Ursachen, Konfigurationsfehler oder Lösungsschritte die nicht aus dem "
-    "Meldungsinhalt direkt ableitbar sind."
+    "You are an experienced Linux sysadmin. "
+    "Explain the following monitoring message in 3-4 complete sentences: what it means, "
+    "the likely cause, and the first concrete action. "
+    "No Markdown formatting. Do not cut off mid-sentence.\n"
+    "IMPORTANT: the 'log source' field indicates which monitoring tool COLLECTED the message "
+    "(e.g. Graylog, CheckMK, Wazuh) — NOT which software has the problem. "
+    "Identify the affected system from the message content (hostname, error text, process).\n"
+    "EVIDENCE REQUIRED: if the message lacks sufficient data, state explicitly "
+    "'Insufficient data for a root-cause analysis.' "
+    "Do not invent causes, misconfigurations or remediation steps that do not follow "
+    "directly from the message content."
 )
 
 
@@ -148,8 +148,12 @@ async def _enrich_one(item: dict, llm, aikb_svc=None, searxng_url: str = "") -> 
 
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
+        # Respond in the operator's configured UI language (default English).
+        from app.services.ai_language import language_instruction, DEFAULT_LANG
+        lang = item.get("_response_lang") or DEFAULT_LANG
+        system_content = f"{_EXPLAIN_SYSTEM_PROMPT}\n{language_instruction(lang)}"
         response = await llm.ainvoke([
-            SystemMessage(content=_EXPLAIN_SYSTEM_PROMPT),
+            SystemMessage(content=system_content),
             HumanMessage(content=user_content),
         ])
         insight = (response.content or "").strip()[:1200]
@@ -196,6 +200,15 @@ async def enrich_single(item: dict, llm_config, searxng_url: str = "") -> str | 
     except Exception as e:
         log.warning("Could not initialise LLM for on-demand enrichment: %s", e)
         return None
+    # Stamp the configured response language so the insight matches the UI language.
+    if "_response_lang" not in item:
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.services.ai_language import get_response_language
+            async with AsyncSessionLocal() as _db:
+                item = {**item, "_response_lang": await get_response_language(_db)}
+        except Exception:
+            pass
     aikb_svc = await _load_aikb_svc()
     return await _enrich_one(item, llm, aikb_svc, searxng_url=searxng_url)
 

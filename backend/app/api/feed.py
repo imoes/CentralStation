@@ -679,25 +679,28 @@ async def diagnose_alert(
     summary = ""
     try:
         from app.services.settings import get_active_llm_config
+        from app.services.ai_language import with_language, get_response_language
         llm_cfg = await get_active_llm_config(db)
         if llm_cfg.is_configured:
-            system_prompt = (
-                "Du bist ein IT-Operations-Assistent. Fasse die Diagnoseergebnisse "
-                "für einen Sysadmin in 2-3 präzisen deutschen Sätzen zusammen. "
-                "Markiere kritische Punkte mit konkreten Werten (z.B. 'DCX_API_max: 7543ms'). "
-                "BEWEISPFLICHT: Nenne NUR Probleme, die aus den Diagnosedaten direkt hervorgehen — "
-                "keine Vermutungen ohne Datenbeleg. "
-                "ABWESENHEIT VON DATEN IST KEIN BEFUND: Fehlende Metriken oder leere "
-                "Ergebnisse bedeuten 'gesund/nicht gesammelt', NICHT 'Problem'. Werte sie "
-                "niemals als auffällig — erwähne sie höchstens neutral. "
-                "Weise darauf hin, dass NUR gelesen wurde (read-only, keine Änderung). "
-                "Das Feld 'Log-Quelle' nennt den Kollektor (Graylog, CheckMK) — NICHT das Problem-System."
+            lang = await get_response_language(db)
+            system_prompt = with_language(
+                "You are an IT operations assistant. Summarise the diagnostic results "
+                "for a sysadmin in 2-3 precise sentences. "
+                "Highlight critical points with concrete values (e.g. 'DCX_API_max: 7543ms'). "
+                "EVIDENCE REQUIRED: name ONLY problems that follow directly from the diagnostic "
+                "data — no speculation without a data reference. "
+                "ABSENCE OF DATA IS NOT A FINDING: missing metrics or empty results mean "
+                "'healthy / not collected', NOT 'problem'. Never flag them as notable — mention "
+                "them at most neutrally. "
+                "State that everything was READ-ONLY (no change made). "
+                "The 'log source' field names the collector (Graylog, CheckMK) — NOT the failing system.",
+                lang,
             )
             raw = await generate_text(
                 llm_cfg,
                 [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Diagnoseergebnisse für {host}:\n{findings_text}"},
+                    {"role": "user", "content": f"Diagnostic results for {host}:\n{findings_text}"},
                 ],
                 temperature=0.2,
             )
