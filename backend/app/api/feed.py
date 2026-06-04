@@ -995,3 +995,188 @@ async def incident_claude_prompt(
 
     prompt = "\n".join(lines)
     return {"incident_id": str(inc.id), "host": host, "prompt": prompt}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI-assisted Jira ticket creation from a feed item
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _resolve_jira_connector(db: AsyncSession, user_id):
+    """Return the user's Jira connector (personal preferred, else global)."""
+    from app.models.connector import ConnectorConfig
+    r = await db.execute(
+        select(ConnectorConfig)
+        .where(
+            ConnectorConfig.type == "jira",
+            ConnectorConfig.enabled.is_(True),
+            ((ConnectorConfig.owner_user_id == user_id) | ConnectorConfig.owner_user_id.is_(None)),
+        )
+        .order_by(ConnectorConfig.owner_user_id.is_(None), ConnectorConfig.updated_at.desc())
+        .limit(1)
+    )
+    return r.scalar_one_or_none()
+
+
+async def _feed_item_by_external_id(external_id: str) -> dict | None:
+    from app.services.feed_index import search_by_query
+    try:
+        items = await search_by_query(
+            index_pattern="cs-feed-*",
+            query_string=f'external_id:"{external_id}"',
+            size=1,
+        )
+        return items[0] if items else None
+    except Exception:
+        return None
+
+
+@router.post("/{external_id}/ticket-draft")
+async def ticket_draft(
+    external_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """AI pre-fills a Jira ticket draft for a feed item (the slow part → spinner).
+
+    Returns {summary, description, priority, project} — NOT yet created in Jira.
+    """
+    item = await _feed_item_by_external_id(external_id)
+    if not item:
+        raise HTTPException(404, "Feed-Eintrag nicht gefunden")
+
+    meta = item.get("metadata") or {}
+    host = meta.get("host") or meta.get("agent") or meta.get("container_name") or ""
+    application = meta.get("application") or ""
+    severity = item.get("severity", "info")
+    title = item.get("title", "")
+    body = (item.get("body") or "")[:600]
+    source = item.get("source", "")
+    ai_insight = item.get("ai_insight") or ""
+
+    # Default project from user preferences
+    prefs = await _get_prefs(user.id, db)
+    default_project = (getattr(prefs, "jira_project", None) or "").strip()
+
+    # Severity → Jira priority
+    prio_map = {"critical": "Kritisch", "high": "Hoch", "medium": "Normal", "low": "Niedrig", "info": "Niedrig"}
+    priority = prio_map.get(severity, "Normal")
+
+    summary = ""
+    description = ""
+    try:
+        from app.services.settings import get_active_llm_config
+        from app.services.ai_language import with_language, get_response_language_for_user
+        from app.services.llm_client import generate_text
+        from app.services.dashboard.generative_designer import _strip_thinking
+        import json as _json
+
+        llm_cfg = await get_active_llm_config(db)
+        if llm_cfg.is_configured:
+            lang = await get_response_language_for_user(db, user.id)
+            system_prompt = with_language(
+                "You are an IT operations engineer creating a Jira ticket from a monitoring alert. "
+                "Produce a concise, professional ticket. Return STRICT JSON only: "
+                '{"summary": "<one line, max 120 chars>", "description": "<structured: Problem, '
+                'Affected system, Likely cause if derivable, First steps. Use Jira wiki markup '
+                '(*bold*, ---- separators). No invented facts.>"}. '
+                "The 'log source' field names the collector (Graylog/CheckMK), NOT the failing system.",
+                lang,
+            )
+            ctx = f"Source: {source}\nSeverity: {severity}\nHost: {host}\n"
+            if application:
+                ctx += f"Application: {application}\n"
+            ctx += f"Alert: {title}\n"
+            if body:
+                ctx += f"Details: {body}\n"
+            if ai_insight:
+                ctx += f"Prior AI insight: {ai_insight}\n"
+            raw = await generate_text(
+                llm_cfg,
+                [{"role": "system", "content": system_prompt},
+                 {"role": "user", "content": ctx}],
+            )
+            clean = _strip_thinking(raw)
+            # Robustly extract the JSON object (ignores markdown fences / prose)
+            lo, hi = clean.find("{"), clean.rfind("}")
+            if lo >= 0 and hi > lo:
+                try:
+                    data = _json.loads(clean[lo:hi + 1])
+                    summary = (data.get("summary") or "").strip()
+                    description = (data.get("description") or "").strip()
+                except Exception:
+                    log.debug("ticket_draft: JSON parse failed, using fallback")
+    except Exception as e:
+        log.debug("ticket_draft: AI prefill failed: %s", e)
+
+    # Fallbacks if AI unavailable
+    if not summary:
+        host_part = f"{host} — " if host else ""
+        summary = f"{severity.upper()}: {host_part}{title}"[:120]
+    if not description:
+        description = f"*Source:* {source}\n*Host:* {host}\n*Alert:* {title}\n\n{body}"
+
+    return {
+        "summary": summary,
+        "description": description,
+        "priority": priority,
+        "project": default_project,
+        "host": host,
+    }
+
+
+@router.post("/{external_id}/create-ticket")
+async def create_ticket(
+    external_id: str,
+    body: dict,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Create the Jira ticket from the (possibly edited) draft."""
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
+    summary = (body.get("summary") or "").strip()
+    description = (body.get("description") or "").strip()
+    project = (body.get("project") or "").strip()
+    priority = (body.get("priority") or "Normal").strip()
+    issue_type = (body.get("issue_type") or "Serviceanfrage").strip()
+
+    if not summary or not project:
+        raise HTTPException(400, "Summary und Projekt sind erforderlich")
+
+    conn = await _resolve_jira_connector(db, user.id)
+    if not conn:
+        raise HTTPException(400, "Kein Jira-Connector konfiguriert")
+
+    creds = decrypt_credentials(conn.encrypted_credentials)
+    jira = JiraConnector(base_url=conn.base_url, credentials=creds)
+    try:
+        result = await jira.create_issue(
+            project=project,
+            summary=summary,
+            description=description,
+            issue_type=issue_type,
+            priority=priority,
+            labels=["centralstation"],
+        )
+    except Exception as e:
+        raise HTTPException(502, f"Jira-Ticket konnte nicht erstellt werden: {str(e)[:200]}")
+
+    jira_key = result.get("key", "")
+    base = (conn.base_url or "").rstrip("/")
+    url = f"{base}/browse/{jira_key}" if jira_key and base else None
+
+    # Record in the collaboration timeline
+    try:
+        collab = await _get_or_create_collab(external_id, db)
+        await _add_timeline(
+            external_id, user.id, user.full_name or user.email, "comment",
+            f"🎫 Jira-Ticket erstellt: {jira_key}", db,
+        )
+        await db.commit()
+        await _broadcast_collab(external_id, "comment", user.full_name or user.email,
+                                collab.work_status, f"Jira-Ticket erstellt: {jira_key}")
+    except Exception as e:
+        log.debug("create_ticket: timeline record failed: %s", e)
+
+    return {"ok": True, "jira_key": jira_key, "url": url}

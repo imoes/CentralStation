@@ -62,7 +62,7 @@ def _fallback_search_assistant(message: str) -> dict:
 
 async def _llm_search_assistant(body: SearchAssistantRequest, db: AsyncSession) -> dict:
     from app.services.llm_client import generate_text
-    from app.services.settings import get_llm_config
+    from app.services.settings import get_active_llm_config as get_llm_config
 
     llm = await get_llm_config(db)
     if not llm.is_configured:
@@ -290,7 +290,7 @@ async def promql_assistant(
 ):
     """Convert natural language or Lucene-style search terms to PromQL."""
     from app.services.llm_client import generate_text
-    from app.services.settings import get_llm_config
+    from app.services.settings import get_active_llm_config as get_llm_config
 
     llm = await get_llm_config(db)
     if not llm.is_configured:
@@ -353,7 +353,7 @@ async def dashboard_assistant(
     use_thinking=True: extended reasoning for ambiguous/complex layouts.
     """
     from app.services.llm_client import generate_text
-    from app.services.settings import get_llm_config
+    from app.services.settings import get_active_llm_config as get_llm_config
     from app.services import feed_index
 
     llm = await get_llm_config(db)
