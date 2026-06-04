@@ -27,7 +27,7 @@ class SearchAssistantRequest(BaseModel):
     dashboard_id: uuid.UUID | None = None
 
 
-def _fallback_search_assistant(message: str) -> dict:
+def _fallback_search_assistant(message: str, lang: str = "en") -> dict:
     text = message.lower()
     index_pattern = "cs-feed-*"
     if "wazuh" in text:
@@ -53,22 +53,31 @@ def _fallback_search_assistant(message: str) -> dict:
 
     query_string = " AND ".join(query_parts)
     return {
-        "reply": "Ich habe daraus eine OpenSearch-Query vorbereitet.",
+        "reply": (
+            "Ich habe daraus eine OpenSearch-Query vorbereitet."
+            if lang == "de"
+            else "I prepared an OpenSearch query from that."
+        ),
         "index_pattern": index_pattern,
         "query_string": query_string,
         "actions": [],
     }
 
 
-async def _llm_search_assistant(body: SearchAssistantRequest, db: AsyncSession) -> dict:
+async def _llm_search_assistant(
+    body: SearchAssistantRequest,
+    db: AsyncSession,
+    lang: str,
+) -> dict:
+    from app.services.ai_language import with_language
     from app.services.llm_client import generate_text
     from app.services.settings import get_llm_config
 
     llm = await get_llm_config(db)
     if not llm.is_configured:
-        return _fallback_search_assistant(body.message)
+        return _fallback_search_assistant(body.message, lang)
 
-    system = (
+    system = with_language(
         "Du bist ein Konfigurations-Assistent fuer CentralStation. "
         "Erzeuge OpenSearch Lucene Query-Strings fuer die Indices cs-feed-checkmk, "
         "cs-feed-graylog, cs-feed-wazuh oder cs-feed-*. "
@@ -97,7 +106,8 @@ async def _llm_search_assistant(body: SearchAssistantRequest, db: AsyncSession) 
         "  source:wazuh AND severity:high AND NOT status:resolved\n\n"
         "WICHTIG: Wenn der Kontext eine bestehende Query enthaelt (z.B. 'Bestehende Query: ...'), "
         "dann ERWEITERE diese Query mit AND-Bedingungen. Ersetze sie NICHT komplett. "
-        "Gib in query_string die vollstaendige erweiterte Query zurueck.\n"
+        "Gib in query_string die vollstaendige erweiterte Query zurueck.\n",
+        lang,
     )
     user = f"Kontext: {body.context or '-'}\nAnfrage: {body.message}"
     raw = await generate_text(
@@ -112,14 +122,14 @@ async def _llm_search_assistant(body: SearchAssistantRequest, db: AsyncSession) 
         if not isinstance(data, dict):
             raise ValueError("LLM returned non-object JSON")
         return {
-            "reply": str(data.get("reply") or "Query vorbereitet."),
+            "reply": str(data.get("reply") or ("Query vorbereitet." if lang == "de" else "Query prepared.")),
             "index_pattern": str(data.get("index_pattern") or "cs-feed-*"),
             "query_string": str(data.get("query_string") or ""),
             "suggested_name": str(data.get("suggested_name") or ""),
             "actions": [],
         }
     except Exception:
-        return _fallback_search_assistant(body.message)
+        return _fallback_search_assistant(body.message, lang)
 
 
 @router.get("/analyses")
@@ -160,11 +170,14 @@ async def search_assistant(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Generate OpenSearch queries and optionally persist searches/widgets."""
-    result = await _llm_search_assistant(body, db)
+    from app.services.ai_language import get_response_language_for_user
+
+    lang = await get_response_language_for_user(db, current_user.id)
+    result = await _llm_search_assistant(body, db, lang)
     actions: list[dict] = []
 
     if body.create_search:
-        search_name = body.name or result.get("suggested_name") or "Suche"
+        search_name = body.name or result.get("suggested_name") or ("Suche" if lang == "de" else "Search")
         search = FeedSearch(
             user_id=current_user.id,
             name=search_name,
@@ -189,7 +202,7 @@ async def search_assistant(
             if not dashboard_result.scalar_one_or_none():
                 raise HTTPException(404, "Dashboard not found")
         widget_type = body.widget_type or "list"
-        title = body.name or "KI-Widget"
+        title = body.name or ("KI-Widget" if lang == "de" else "AI widget")
         config = {
             "index_pattern": result["index_pattern"],
             "query_string": result["query_string"],
@@ -242,7 +255,7 @@ class PromqlRequest(BaseModel):
     message: str
 
 
-def _fallback_promql(message: str) -> dict:
+def _fallback_promql(message: str, lang: str = "en") -> dict:
     """Heuristic Lucene-style → PromQL conversion without LLM."""
     text = message.lower()
     labels: list[str] = []
@@ -262,22 +275,22 @@ def _fallback_promql(message: str) -> dict:
             promql = f'100 - (avg(rate(node_cpu_seconds_total{{instance="{host_match.group(1)}:9100",mode="idle"}}[5m])) * 100)'
         else:
             promql = '100 - (avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)'
-        explanation = "CPU-Auslastung in Prozent (1 - idle rate)"
+        explanation = "CPU-Auslastung in Prozent (1 - idle rate)" if lang == "de" else "CPU usage in percent (1 - idle rate)"
     elif any(k in text for k in ("memory", "speicher", "ram")):
         promql = f'100 * (1 - node_memory_MemAvailable_bytes{label_str} / node_memory_MemTotal_bytes{label_str})'
-        explanation = "RAM-Auslastung in Prozent"
+        explanation = "RAM-Auslastung in Prozent" if lang == "de" else "RAM usage in percent"
     elif any(k in text for k in ("disk", "festplatte", "filesystem", "storage")):
         promql = f'100 * (1 - node_filesystem_free_bytes{label_str} / node_filesystem_size_bytes{label_str})'
-        explanation = "Dateisystem-Auslastung in Prozent"
+        explanation = "Dateisystem-Auslastung in Prozent" if lang == "de" else "Filesystem usage in percent"
     elif any(k in text for k in ("network", "netzwerk", "traffic", "bytes")):
         promql = f'rate(node_network_receive_bytes_total{label_str}[5m])'
-        explanation = "Netzwerk-Empfangsrate in Bytes/s"
+        explanation = "Netzwerk-Empfangsrate in Bytes/s" if lang == "de" else "Network receive rate in bytes/s"
     elif any(k in text for k in ("load", "last")):
         promql = f'node_load1{label_str}'
-        explanation = "System-Load (1-Minuten-Durchschnitt)"
+        explanation = "System-Load (1-Minuten-Durchschnitt)" if lang == "de" else "System load (1-minute average)"
     else:
         promql = f'up{label_str}'
-        explanation = "Host-Verfügbarkeit (1 = erreichbar)"
+        explanation = "Host-Verfügbarkeit (1 = erreichbar)" if lang == "de" else "Host availability (1 = reachable)"
 
     return {"promql": promql, "explanation": explanation}
 
@@ -289,14 +302,16 @@ async def promql_assistant(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Convert natural language or Lucene-style search terms to PromQL."""
+    from app.services.ai_language import get_response_language_for_user, with_language
     from app.services.llm_client import generate_text
     from app.services.settings import get_llm_config
 
     llm = await get_llm_config(db)
+    lang = await get_response_language_for_user(db, current_user.id)
     if not llm.is_configured:
-        return _fallback_promql(body.message)
+        return _fallback_promql(body.message, lang)
 
-    system = (
+    system = with_language(
         "Du bist ein Prometheus-Experte. Konvertiere natuerlichsprachliche Beschreibungen "
         "oder Lucene-aehnliche Suchterme in valide PromQL-Queries.\n\n"
         "Verfuegbare node_exporter Metriken (Auswahl):\n"
@@ -312,7 +327,8 @@ async def promql_assistant(
         "- host:docker086 oder hostname:docker086 -> {instance='docker086:9100'}\n"
         "- metric:cpu -> node_cpu_seconds_total\n"
         "- NOT mode:idle -> {mode!='idle'}\n\n"
-        "Antworte ausschliesslich als JSON: {\"promql\": \"<query>\", \"explanation\": \"<kurze Erklaerung>\"}"
+        "Antworte ausschliesslich als JSON: {\"promql\": \"<query>\", \"explanation\": \"<kurze Erklaerung>\"}",
+        lang,
     )
 
     raw = await generate_text(
@@ -329,7 +345,7 @@ async def promql_assistant(
             "explanation": str(data.get("explanation") or ""),
         }
     except Exception:
-        return _fallback_promql(body.message)
+        return _fallback_promql(body.message, lang)
 
 
 class DashboardAssistantRequest(BaseModel):
@@ -352,6 +368,7 @@ async def dashboard_assistant(
     use_thinking=False (default): fast, sufficient for clear requests.
     use_thinking=True: extended reasoning for ambiguous/complex layouts.
     """
+    from app.services.ai_language import get_response_language_for_user, with_language
     from app.services.llm_client import generate_text
     from app.services.settings import get_llm_config
     from app.services import feed_index
@@ -359,6 +376,7 @@ async def dashboard_assistant(
     llm = await get_llm_config(db)
     if not llm.is_configured:
         raise HTTPException(503, "LLM not configured")
+    lang = await get_response_language_for_user(db, current_user.id)
 
     # ── Gather context from OpenSearch ──────────────────────────────────────
     # Available hostgroups
@@ -399,7 +417,7 @@ async def dashboard_assistant(
             f"Hosts in hostgroup '{mentioned_hg}' (from CheckMK): {', '.join(hg_hosts)}"
         )
 
-    system = (
+    system = with_language(
         "Du bist ein Dashboard-Konfigurations-Assistent fuer CentralStation.\n"
         "Erstelle ein vollstaendiges Dashboard-Layout basierend auf der Benutzeranfrage.\n\n"
         "Antworte AUSSCHLIESSLICH als JSON-Objekt (kein Markdown, kein Text davor/danach):\n"
@@ -426,7 +444,8 @@ async def dashboard_assistant(
         "- gs_x + gs_w <= 12 (12 Spalten gesamt)\n"
         "- Zeile 0 (gs_y=0): Stat-Kacheln (gs_w=2, gs_h=2), groessere Widgets daneben\n"
         "- Mehrere Timeseries: vertikal stapeln (gs_y jeweils +3)\n\n"
-        f"Kontext:\n" + "\n".join(context_lines)
+        f"Kontext:\n" + "\n".join(context_lines),
+        lang,
     )
 
     reasoning_effort = "low" if body.use_thinking else "none"
@@ -470,7 +489,7 @@ async def dashboard_assistant(
         dashboard = Dashboard(
             id=uuid.uuid4(),
             user_id=current_user.id,
-            name=plan.get("dashboard_name", "KI-Dashboard"),
+            name=plan.get("dashboard_name", "KI-Dashboard" if lang == "de" else "AI dashboard"),
             description=plan.get("dashboard_description", ""),
             is_default=False,
             position=99,

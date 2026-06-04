@@ -399,13 +399,14 @@ def _strip_thinking(text: str) -> str:
     return _THINK_RE.sub('', text).strip()
 
 
-async def _ask_llm(db: Any, situation: dict) -> dict | None:
+async def _ask_llm(db: Any, situation: dict, lang: str) -> dict | None:
     """One LLM call → parsed {rationale, widgets}. Returns None on any failure.
 
     Enables Qwen3 thinking mode (enable_thinking=True, budget=1500) so the model
     reasons about widget selection before emitting JSON. Thinking output is stripped
     before parsing so _parse_json only sees clean JSON.
     """
+    from app.services.ai_language import with_language
     from app.services.settings import get_llm_config
     from app.services.llm_client import generate_text, LLMInvocationError
 
@@ -424,7 +425,7 @@ async def _ask_llm(db: Any, situation: dict) -> dict | None:
         raw = await generate_text(
             llm_cfg,
             [
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": with_language(_SYSTEM_PROMPT, lang)},
                 {"role": "user", "content": user_msg},
             ],
             temperature=0.3,
@@ -604,23 +605,23 @@ def _pack_grid(specs: list[dict]) -> list[dict]:
 
 # ── 4. Fallback ─────────────────────────────────────────────────────────────
 
-def _fallback_widgets(situation: dict) -> tuple[list[dict], str]:
+def _fallback_widgets(situation: dict, lang: str) -> tuple[list[dict], str]:
     """Deterministic dashboard when the LLM is unavailable / unusable.
 
     Always includes the acute forecast widgets so the metrics still drive the
     composition even without an LLM."""
     specs: list[dict] = [
-        {"widget_type": "stat", "title": "Kritisch",
+        {"widget_type": "stat", "title": "Kritisch" if lang == "de" else "Critical",
          "config": {"index_pattern": "cs-feed-*", "query_string": "severity:critical AND NOT status:resolved"}},
-        {"widget_type": "stat", "title": "Hoch",
+        {"widget_type": "stat", "title": "Hoch" if lang == "de" else "High",
          "config": {"index_pattern": "cs-feed-*", "query_string": "severity:high AND NOT status:resolved"}},
-        {"widget_type": "stat", "title": "Gesamt",
+        {"widget_type": "stat", "title": "Gesamt" if lang == "de" else "Total",
          "config": {"index_pattern": "cs-feed-*", "query_string": "NOT status:resolved"}},
-        {"widget_type": "ai_summary", "title": "KI-Lagebericht",
+        {"widget_type": "ai_summary", "title": "KI-Lagebericht" if lang == "de" else "AI situation report",
          "config": {"agent_type": "sysadmin"}},
-        {"widget_type": "list", "title": "Aktive Alerts",
+        {"widget_type": "list", "title": "Aktive Alerts" if lang == "de" else "Active alerts",
          "config": {"index_pattern": "cs-feed-*", "query_string": "NOT status:resolved", "limit": 15}},
-        {"widget_type": "top_hosts", "title": "Top Problem-Hosts",
+        {"widget_type": "top_hosts", "title": "Top Problem-Hosts" if lang == "de" else "Top problem hosts",
          "config": {"index_pattern": "cs-feed-*", "query_string": "NOT status:resolved", "limit": 8}},
     ]
     sev = situation.get("severity_summary", "none")
@@ -631,7 +632,11 @@ def _fallback_widgets(situation: dict) -> tuple[list[dict], str]:
     for c in situation.get("forecast_candidates", [])[:2]:
         specs.append({
             "widget_type": "forecast",
-            "title": f"Prognose {c.get('label','')} · {c['host'].split('.')[0]}",
+            "title": (
+                f"Prognose {c.get('label','')} · {c['host'].split('.')[0]}"
+                if lang == "de"
+                else f"Forecast {c.get('label','')} · {c['host'].split('.')[0]}"
+            ),
             "config": {
                 "host": c["host"], "service": c["service"], "metric_id": c["metric_id"],
                 "history_hours": 72, "horizon_hours": 24,
@@ -640,10 +645,20 @@ def _fallback_widgets(situation: dict) -> tuple[list[dict], str]:
     n_fc = len(situation.get("forecast_candidates", [])[:2])
     if n_fc:
         host_list = ", ".join(c["host"] for c in situation.get("forecast_candidates", [])[:2])
-        rationale = (f"Automatisches Lagebild: {sev}-Lage, {n_fc} Host(s) laufen laut "
-                     f"Metrik-Prognose auf einen Schwellwert zu ({host_list}) — Prognose-Widgets ergänzt.")
+        rationale = (
+            f"Automatisches Lagebild: {sev}-Lage, {n_fc} Host(s) laufen laut "
+            f"Metrik-Prognose auf einen Schwellwert zu ({host_list}) — Prognose-Widgets ergänzt."
+            if lang == "de"
+            else
+            f"Automatic situation view: {sev} state, {n_fc} host(s) are trending toward a threshold "
+            f"according to the metric forecast ({host_list}) — forecast widgets added."
+        )
     else:
-        rationale = f"Automatisches Lagebild ({sev}-Lage) — KI-Komposition nicht verfügbar, Standardauswahl."
+        rationale = (
+            f"Automatisches Lagebild ({sev}-Lage) — KI-Komposition nicht verfügbar, Standardauswahl."
+            if lang == "de"
+            else f"Automatic situation view ({sev} state) — AI composition unavailable, using the default selection."
+        )
     return specs, rationale
 
 
@@ -675,9 +690,12 @@ async def design_dashboard(db: Any, user_id: str) -> dict:
 
     Returns {"widgets": [{widget_type,title,gs_*,config}], "rationale": str}.
     Always returns a usable set (LLM result or deterministic fallback)."""
+    from app.services.ai_language import get_response_language_for_user
+
+    lang = await get_response_language_for_user(db, user_id)
     situation = await gather_situation(db, user_id)
 
-    llm_result = await _ask_llm(db, situation)
+    llm_result = await _ask_llm(db, situation, lang)
     rationale = ""
     specs: list[dict] = []
     if llm_result:
@@ -685,7 +703,7 @@ async def design_dashboard(db: Any, user_id: str) -> dict:
         rationale = _clean_rationale(str(llm_result.get("rationale") or ""))
 
     if not specs:
-        specs, fb_rationale = _fallback_widgets(situation)
+        specs, fb_rationale = _fallback_widgets(situation, lang)
         if not rationale:
             rationale = fb_rationale
     # NB: the rationale is a SITUATION briefing only — no full host dump
@@ -695,13 +713,13 @@ async def design_dashboard(db: Any, user_id: str) -> dict:
     # candidate MUST appear as a forecast widget. If the LLM omitted one
     # (it often just mentions it in prose), inject it — this is the whole
     # point of collecting the metrics in the first place.
-    specs = _ensure_forecast_widgets(specs, situation)
+    specs = _ensure_forecast_widgets(specs, situation, lang)
 
     placed = _pack_grid(specs)
     return {"widgets": placed, "rationale": rationale}
 
 
-def _ensure_forecast_widgets(specs: list[dict], situation: dict) -> list[dict]:
+def _ensure_forecast_widgets(specs: list[dict], situation: dict, lang: str) -> list[dict]:
     """Append a forecast widget for any acute candidate the LLM left out."""
     candidates = situation.get("forecast_candidates", [])[:2]
     if not candidates:
@@ -715,7 +733,11 @@ def _ensure_forecast_widgets(specs: list[dict], situation: dict) -> list[dict]:
             continue
         specs.append({
             "widget_type": "forecast",
-            "title": f"Prognose {c.get('label','')} · {c['host'].split('.')[0]}",
+            "title": (
+                f"Prognose {c.get('label','')} · {c['host'].split('.')[0]}"
+                if lang == "de"
+                else f"Forecast {c.get('label','')} · {c['host'].split('.')[0]}"
+            ),
             "config": {
                 "host": c["host"], "service": c["service"], "metric_id": c["metric_id"],
                 "history_hours": 72, "horizon_hours": 24,

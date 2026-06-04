@@ -54,6 +54,7 @@ class PreferenceUpdate(BaseModel):
     feed_disabled_search_ids:   list | None = None
     ticket_seen_map:            dict | None = None
     ui_theme:                   str | None = None
+    ui_language:                str | None = None
 
 
 class JQLQueryCreate(BaseModel):
@@ -121,6 +122,7 @@ async def get_preferences(user: CurrentUser, db: Annotated[AsyncSession, Depends
         "feed_disabled_search_ids": prefs.feed_disabled_search_ids or [],
         "ticket_seen_map": prefs.ticket_seen_map or {},
         "ui_theme": getattr(prefs, "ui_theme", None) or "classic",
+        "ui_language": getattr(prefs, "ui_language", None) or "en",
     }
 
 
@@ -191,13 +193,15 @@ async def generate_jql_query(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Use LLM to generate a Jira JQL query from natural language."""
+    from app.services.ai_language import get_response_language_for_user
     from app.services.settings import get_llm_config
     from app.services.workflow_ai import generate_jql
 
     llm = await get_llm_config(db)
     if not llm.is_configured:
         raise HTTPException(503, "LLM not configured")
-    return await generate_jql(llm, body.description)
+    lang = await get_response_language_for_user(db, user.id)
+    return await generate_jql(llm, body.description, lang=lang)
 
 
 @router.patch("/jira-queries/{query_id}")

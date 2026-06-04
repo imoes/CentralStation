@@ -5,7 +5,7 @@ Aggregates alerts from Wazuh, Graylog and CheckMK, synchronises Jira tickets and
 assists with the entire ITIL-compliant work documentation using AI.
 
 > **Language:** the UI defaults to **English** and can be switched to German at runtime.
-> The AI answers in the operator's selected language (setting `app.language`).
+> The AI answers in the operator's selected language (user preference `ui_language`).
 
 ---
 
@@ -662,7 +662,7 @@ Node 4: act
 
 | Setting key | Description | Default |
 |-------------|-------------|---------|
-| `app.language` | Response language of the AI (`en`, `de`) — follows the UI language | `en` |
+| `ui_language` | Per-user UI and AI response language (`en`, `de`) | `en` |
 | `llm.provider` | active LLM provider: `custom` (local endpoint) or `openai-codex` (OAuth) | `custom` |
 | `llm.base_url` | OpenAI-compatible endpoint (only for `custom`) | — |
 | `llm.model` | model ID for the `custom` provider (e.g. `qwen3next-79b`) | — |
@@ -706,7 +706,7 @@ CentralStation can optionally use OpenAI Codex (GPT-5.x) as the LLM provider —
 - API endpoints: `GET/DELETE /api/oauth/openai-codex/status|logout`, `POST /api/oauth/openai-codex/start|poll/{session_id}`
 
 **AI output behaviour:**
-- The SysAdmin agent emits all text fields (findings, recommendations) **in the operator's language** (setting `app.language`) — even when RAG/web context is in another language
+- The SysAdmin agent emits all text fields (findings, recommendations) **in the operator's language** (`ui_language`) — even when RAG/web context is in another language
 - **No hallucinations**: if context is missing, the AI says so explicitly (`"No context available from the knowledge base…"`) instead of inventing causes
 - it-aikb calls (standard + DeepSearch) have a timeout of **300 s** (DeepSearch takes ~2 min)
 
@@ -1004,7 +1004,7 @@ does not appear in the creation dialog (but can still be created via the API/see
 All settings are stored encrypted in the database and managed via `GET/PATCH /api/settings`.
 
 **Language:**
-- `app.language` — UI and AI response language (`en` default, `de`)
+- `ui_language` — per-user UI and AI response language (`en` default, `de`)
 
 **LLM configuration:**
 - `llm.provider` — `custom` (local endpoint, default) or `openai-codex` (OAuth, no API key needed)

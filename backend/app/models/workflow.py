@@ -37,6 +37,8 @@ class UserPreference(Base):
     ticket_seen_map: Mapped[dict | None] = mapped_column(JSON)
     # UI theme: "classic" | "holo" | "lcars"
     ui_theme: Mapped[str | None] = mapped_column(String(20), default="classic")
+    # UI language: "en" | "de"
+    ui_language: Mapped[str | None] = mapped_column(String(8), default="en")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

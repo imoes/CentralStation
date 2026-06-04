@@ -378,6 +378,7 @@ async def ignore_feed_item(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Use AI to generate an OpenSearch exclusion query and save it as a system FeedSearch."""
+    from app.services.ai_language import get_response_language_for_user
     from app.services import feed_index
     from app.services.settings import get_llm_config
     from app.services.workflow_ai import generate_exclusion_query
@@ -391,7 +392,8 @@ async def ignore_feed_item(
     if not llm_config.is_configured:
         raise HTTPException(503, "LLM nicht konfiguriert")
 
-    result = await generate_exclusion_query(llm_config, item)
+    lang = await get_response_language_for_user(db, user.id)
+    result = await generate_exclusion_query(llm_config, item, lang=lang)
     query_string = result["query"]
     name = result["name"]
 
@@ -679,10 +681,10 @@ async def diagnose_alert(
     summary = ""
     try:
         from app.services.settings import get_active_llm_config
-        from app.services.ai_language import with_language, get_response_language
+        from app.services.ai_language import with_language, get_response_language_for_user
         llm_cfg = await get_active_llm_config(db)
         if llm_cfg.is_configured:
-            lang = await get_response_language(db)
+            lang = await get_response_language_for_user(db, user.id)
             system_prompt = with_language(
                 "You are an IT operations assistant. Summarise the diagnostic results "
                 "for a sysadmin in 2-3 precise sentences. "
