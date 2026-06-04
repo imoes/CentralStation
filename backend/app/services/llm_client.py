@@ -176,11 +176,22 @@ async def generate_text(
 
     if mode == "codex_responses":
         url = _build_api_url(llm_config.base_url, "responses")
+        # Map thinking_mode → Codex reasoning effort. gpt-5.x defaults to HIGH
+        # reasoning when no `reasoning` field is sent → slow even for trivial
+        # prompts. We make it explicit so it is fast unless thinking is wanted:
+        #   thinking on  → "high"  (e.g. generative dashboard)
+        #   thinking off → "low"   (fast: diagnose / enrich / agent / chat)
+        _valid = {"minimal", "low", "medium", "high"}
+        _req = (reasoning_effort or "").lower()
+        if _req in _valid:
+            effort = _req
+        else:  # None or "none"/unknown → derive from thinking_mode
+            effort = "high" if getattr(llm_config, "thinking_mode", False) else "low"
         payload = _build_codex_payload(
             llm_config.model, messages,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
-            reasoning_effort=reasoning_effort,
+            reasoning_effort=effort,
         )
         payload["stream"] = True
         async with httpx.AsyncClient(timeout=llm_config.timeout_seconds, verify=False) as client:
