@@ -55,6 +55,10 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
     testGroup: 'searxng',
   },
   {
+    title: 'Jira / Tickets',
+    keys: ['jira.ticket_project'],
+  },
+  {
     title: 'Agent Einstellungen',
     keys: [
       'agent.interval_minutes',
@@ -231,7 +235,17 @@ const SECRET_MASK = '••••••••';
               </mat-card-header>
               <mat-card-content>
                 @for (key of group.keys; track key) {
-                  @if (isBooleanKey(key)) {
+                  @if (key === 'jira.ticket_project') {
+                    <mat-form-field appearance="outline" class="setting-field">
+                      <mat-label>{{ keyLabel(key) }}</mat-label>
+                      <mat-select [formControlName]="key" (selectionChange)="onJiraProjectChange($event.value)">
+                        @for (p of jiraProjects(); track p.key) {
+                          <mat-option [value]="p.key">{{ p.key }} — {{ p.name }} ({{ p.connector === 'jira_sd' ? 'ServiceDesk' : 'Jira' }})</mat-option>
+                        }
+                      </mat-select>
+                      <mat-hint>{{ jiraProjects().length ? 'Ziel-Projekt für erstellte Tickets' : 'Keine Projekte geladen — Jira/ServiceDesk-Connector prüfen' }}</mat-hint>
+                    </mat-form-field>
+                  } @else if (isBooleanKey(key)) {
                     <div class="toggle-row">
                       <span class="key-label">{{ keyLabel(key) }}</span>
                       <mat-slide-toggle [formControlName]="key"></mat-slide-toggle>
@@ -347,6 +361,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
   testingGroup = signal<string | null>(null);
   testResults = signal<Record<string, TestResult>>({});
   codexStatus = signal<CodexStatus | null>(null);
+  jiraProjects = signal<{ key: string; name: string; connector: string }[]>([]);
   oauthSession = signal<OAuthSession | null>(null);
   oauthPollStatus = signal<'pending' | 'authorized' | 'timeout' | 'error' | null>(null);
   startingOAuth = signal(false);
@@ -371,6 +386,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       },
     });
     this.loadCodexStatus();
+    this.loadJiraProjects();
   }
 
   ngOnDestroy() {
@@ -382,6 +398,23 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       next: s => this.codexStatus.set(s),
       error: () => {},
     });
+  }
+
+  loadJiraProjects() {
+    this.http.get<{ projects: { key: string; name: string; connector: string }[] }>(
+      `${environment.apiUrl}/settings/jira-projects`,
+    ).subscribe({
+      next: r => this.jiraProjects.set(r.projects || []),
+      error: () => {},
+    });
+  }
+
+  /** When a project is picked, also store which connector hosts it (IMIT → jira_sd). */
+  onJiraProjectChange(key: string) {
+    const p = this.jiraProjects().find(x => x.key === key);
+    if (p) {
+      this.svc.updateSetting('jira.ticket_connector', p.connector).subscribe({ next: () => {}, error: () => {} });
+    }
   }
 
   startOAuth() {
@@ -558,6 +591,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       'agent.generative_interval_minutes':   'Generativ-Dashboard Intervall (Minuten)',
       'agent.jira_severity_threshold':       'Mindest-Severity für Jira',
       'agent.checkmk_locations':             'CheckMK Standort-Filter (Komma-getrennt)',
+      'jira.ticket_project':                 'Ticket-Projekt (Ziel für erstellte Tickets)',
     };
     return labels[key] ?? key;
   }
