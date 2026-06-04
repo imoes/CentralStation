@@ -71,7 +71,7 @@ async def _llm_search_assistant(
 ) -> dict:
     from app.services.ai_language import with_language
     from app.services.llm_client import generate_text
-    from app.services.settings import get_llm_config
+    from app.services.settings import get_active_llm_config as get_llm_config
 
     llm = await get_llm_config(db)
     if not llm.is_configured:
@@ -304,7 +304,7 @@ async def promql_assistant(
     """Convert natural language or Lucene-style search terms to PromQL."""
     from app.services.ai_language import get_response_language_for_user, with_language
     from app.services.llm_client import generate_text
-    from app.services.settings import get_llm_config
+    from app.services.settings import get_active_llm_config as get_llm_config
 
     llm = await get_llm_config(db)
     lang = await get_response_language_for_user(db, current_user.id)
@@ -370,7 +370,7 @@ async def dashboard_assistant(
     """
     from app.services.ai_language import get_response_language_for_user, with_language
     from app.services.llm_client import generate_text
-    from app.services.settings import get_llm_config
+    from app.services.settings import get_active_llm_config as get_llm_config
     from app.services import feed_index
 
     llm = await get_llm_config(db)
