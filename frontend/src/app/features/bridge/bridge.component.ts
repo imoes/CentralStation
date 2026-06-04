@@ -534,7 +534,6 @@ export class BridgeComponent implements OnInit, OnDestroy {
     { path: '/alerts', label: 'Alerts', icon: '!' },
     { path: '/my-tickets', label: 'Meine Tickets', icon: '✓' },
     { path: '/kanban', label: 'Kanban', icon: '▤' },
-    { path: '/network', label: 'Netzwerk', icon: '⌁' },
     { path: '/ai-insights', label: 'KI-Insights', icon: '◎' },
     { path: '/settings', label: 'Einstellungen', icon: '⚙' },
   ];
