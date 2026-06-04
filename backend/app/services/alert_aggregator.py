@@ -308,10 +308,49 @@ async def collect_wazuh(connector: ConnectorConfig, time_range_minutes: int = 60
         return []
 
 
+async def collect_icinga2(connector: ConnectorConfig, time_range_minutes: int = 60) -> list[dict]:
+    """Collect open service problems from Icinga2 → feed alerts.
+
+    Mirrors collect_checkmk: the Icinga2Connector returns the unified problem
+    schema, which is mapped to feed-alert dicts with a stable external_id.
+    """
+    from urllib.parse import quote
+    from app.services.connectors.icinga2 import Icinga2Connector
+    creds = decrypt_credentials(connector.encrypted_credentials)
+    svc = Icinga2Connector(base_url=connector.base_url, credentials=creds)
+    base = (connector.base_url or "").rstrip("/")
+    try:
+        items = await svc.get_problems()
+        return [
+            {
+                "source": "icinga2",
+                "severity": i["severity"],
+                "title": f"{i['host']} — {i['service']}",
+                "body": i.get("output", ""),
+                "external_id": f"icinga2:{i['host']}:{i['service']}",
+                "external_url": (
+                    f"{base}/icingaweb2/monitoring/service/show"
+                    f"?host={quote(i['host'])}&service={quote(i['service'])}"
+                ) if base else None,
+                "metadata": {
+                    **(i.get("metadata") or {}),
+                    "host": i["host"],
+                    "service": i["service"],
+                    "host_address": i.get("host_address", ""),
+                },
+            }
+            for i in items
+        ]
+    except Exception as e:
+        log.warning("Icinga2 collection failed: %s", e)
+        return []
+
+
 COLLECTORS = {
     "checkmk": collect_checkmk,
     "graylog": collect_graylog,
     "wazuh": collect_wazuh,
+    "icinga2": collect_icinga2,
 }
 
 
