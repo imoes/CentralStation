@@ -428,6 +428,10 @@ async def _ask_llm(db: Any, situation: dict) -> dict | None:
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},
             ],
+            # Codex high reasoning takes ~70s (over the gateway timeout); medium
+            # gives a deliberate dashboard in ~35s. For Qwen, thinking_mode (set
+            # above) drives reasoning instead.
+            reasoning_effort="medium",
             temperature=0.3,
             max_output_tokens=3500,   # extra room for thinking tokens + JSON output
         )

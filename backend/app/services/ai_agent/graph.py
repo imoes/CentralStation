@@ -181,6 +181,7 @@ async def collect_data(state: dict, db: Any) -> dict:
 # Node 2: enrich
 # ─────────────────────────────────────────────────
 async def enrich(state: dict, db: Any) -> dict:
+    log.info("agent node: enrich (%d alerts)", len(state.get("raw_alerts", [])))
     from sqlalchemy import select
     from app.core.security import decrypt_credentials
     from app.models.connector import ConnectorConfig
@@ -222,6 +223,7 @@ async def enrich(state: dict, db: Any) -> dict:
 # Node 3: rag_lookup
 # ─────────────────────────────────────────────────
 async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any) -> dict:
+    log.info("agent node: rag_lookup (%d enriched alerts)", len(state.get("enriched_alerts", [])))
     alerts = state.get("enriched_alerts", [])
     if not alerts:
         return {**state, "rag_context": []}
@@ -380,6 +382,7 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
 # Node 4: analyze
 # ─────────────────────────────────────────────────
 async def analyze(state: dict, llm_config: Any) -> dict:
+    log.info("agent node: analyze (model=%s)", getattr(llm_config, "model", "?"))
     alerts = state.get("enriched_alerts", [])
     if not alerts:
         result = AnalysisResult(severity_summary="none")
@@ -516,6 +519,7 @@ async def analyze(state: dict, llm_config: Any) -> dict:
 # Node 5: act
 # ─────────────────────────────────────────────────
 async def act(state: dict, db: Any) -> dict:
+    log.info("agent node: act")
     analysis_data = state.get("analysis", {})
     if not analysis_data:
         return state

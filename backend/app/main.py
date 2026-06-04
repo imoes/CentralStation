@@ -1,3 +1,5 @@
+import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -6,6 +8,40 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+
+
+def _configure_logging() -> None:
+    """Configure application logging so app.* loggers reliably reach stdout.
+
+    Without this, uvicorn only configures its own loggers and the application
+    loggers (app.services.*, app.api.*) fall back to the root logger which has
+    no handler under uvicorn → warnings/errors silently vanished (this is why
+    'nothing showed in the logs'). Level via LOG_LEVEL env (default INFO).
+    """
+    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+
+    handler = logging.StreamHandler()  # → stdout/stderr (captured by docker)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+
+    app_logger = logging.getLogger("app")
+    app_logger.setLevel(level)
+    app_logger.propagate = False
+    # Avoid duplicate handlers on reload
+    app_logger.handlers = [handler]
+
+    # Root: keep WARNING for third-party noise, but ensure a handler exists.
+    root = logging.getLogger()
+    if not root.handlers:
+        root.addHandler(handler)
+        root.setLevel(logging.WARNING)
+
+
+_configure_logging()
+logger = logging.getLogger("app.main")
 
 from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, audit, preferences, jira_view, workflow, feed, feed_searches, dashboard_widgets, bridge, help as help_router
 from app.api import settings as settings_router
