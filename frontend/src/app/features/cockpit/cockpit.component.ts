@@ -266,7 +266,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
       min-height: 100vh;
       background: #000;
       color: #ffe8a0;
-      font-family: 'Antonio', 'Eurostile', 'Share Tech Mono', monospace;
+      font-family: Roboto, 'Helvetica Neue', sans-serif;
       padding-bottom: 44px;
     }
 
@@ -473,7 +473,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
       flex: 1;
       font-size: 11px;
       color: #e8a060;
-      font-family: 'Share Tech Mono', monospace;
+      font-family: inherit;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
