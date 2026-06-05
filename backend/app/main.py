@@ -43,7 +43,7 @@ def _configure_logging() -> None:
 _configure_logging()
 logger = logging.getLogger("app.main")
 
-from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, audit, preferences, jira_view, workflow, feed, feed_searches, dashboard_widgets, bridge, help as help_router
+from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, audit, preferences, jira_view, workflow, feed, feed_searches, dashboard_widgets, bridge, help as help_router, hosts
 from app.api import settings as settings_router
 from app.api import oauth_providers
 from app.core.config import settings
@@ -108,6 +108,7 @@ app.include_router(feed_searches.router, prefix="/api")
 app.include_router(dashboard_widgets.router, prefix="/api")
 app.include_router(bridge.router, prefix="/api")
 app.include_router(help_router.router, prefix="/api")
+app.include_router(hosts.router, prefix="/api")
 app.include_router(oauth_providers.router, prefix="/api")
 app.include_router(ws.router)
 
