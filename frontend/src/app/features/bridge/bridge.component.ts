@@ -230,7 +230,7 @@ interface BridgeStatus {
   styles: [`
     :host { display:block; }
     .bridge { position:fixed; inset:0; z-index:100; display:flex; flex-direction:column; gap:6px; padding:8px;
-      font-family:'Eurostile','Antonio','Michroma','Segoe UI',sans-serif; overflow:hidden; box-sizing:border-box; }
+      font-family: Roboto, 'Helvetica Neue', sans-serif; overflow:hidden; box-sizing:border-box; }
     .bridge *, .bridge *::before { box-sizing:border-box; }
 
     /* ════ shared layout ════ */
