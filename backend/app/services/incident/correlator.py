@@ -34,13 +34,11 @@ _SEV_ORDER = ["critical", "high", "medium", "low", "info"]
 
 def _extract_host(doc: dict) -> str:
     meta = doc.get("metadata") or {}
-    return (
-        doc.get("host")
-        or meta.get("host")
-        or meta.get("agent")
-        or meta.get("container_name")
-        or ""
-    ).strip()
+    candidate = (doc.get("host") or meta.get("host") or "").strip()
+    # Only accept real FQDNs — reject Docker container short-IDs, bare IPs, etc.
+    if candidate and "." in candidate:
+        return candidate
+    return ""
 
 
 def _max_severity(severities: set[str]) -> str:
@@ -86,15 +84,17 @@ async def _correlate_host(
     max_severity = _max_severity({d.get("severity", "info") for d in docs})
     cross_source = len(sources) >= 2
 
-    # Reuse an OPEN incident for this host regardless of age — an ongoing
-    # problem stays one incident until resolved (no 30-min duplication).
+    # Reuse an OPEN incident only if it had activity within the window.
+    # If the last update was > 30 min ago the incident is closed for new
+    # additions — a fresh cluster starts a new incident.
     existing = await db.execute(
         select(Incident).where(
             and_(
                 Incident.primary_host == host,
                 Incident.status.in_(("open", "investigating")),
+                Incident.updated_at >= window_start,
             )
-        ).order_by(Incident.created_at.desc()).limit(1)
+        ).order_by(Incident.updated_at.desc()).limit(1)
     )
     incident = existing.scalar_one_or_none()
 
