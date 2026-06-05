@@ -128,7 +128,7 @@ async def logout(
         result = await db.execute(
             select(RefreshToken).where(RefreshToken.token_hash == token_hash)
         )
-        stored = result.scalar_one_or_none()
+        stored = result.scalars().first()
         if stored:
             stored.revoked = True
             await db.commit()

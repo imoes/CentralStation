@@ -95,5 +95,10 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./features/help/help.component').then(m => m.HelpComponent),
   },
+  {
+    path: 'cockpit/:hostname',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/cockpit/cockpit.component').then(m => m.CockpitComponent),
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];
