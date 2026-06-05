@@ -72,7 +72,7 @@ const SVC_STATE_COLORS: Record<string, string> = {
   UNKNOWN: '#99CCFF',
 };
 
-const SVC_STATES = ['all', 'CRIT', 'WARN', 'OK', 'UNKNOWN'];
+const SVC_STATES = ['all', 'errors', 'CRIT', 'WARN', 'UNKNOWN'];
 
 const SEV_COLORS: Record<string, string> = {
   critical: '#ff4433',
@@ -155,12 +155,12 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
           <span class="count-pill ok">{{ serviceCounts().ok }} OK</span>
           <div class="block-filters">
             @for (st of svcStates; track st) {
-              @if (st === 'all' || stateCount(st) > 0) {
+              @if (st === 'all' || st === 'errors' || stateCount(st) > 0) {
                 <button
                   class="filter-chip"
                   [class.active]="stateFilter() === st"
                   (click)="setStateFilter(st)"
-                >{{ st === 'all' ? 'ALLE' : st }}</button>
+                >{{ st === 'all' ? 'ALLE' : st === 'errors' ? 'FEHLER' : st }}</button>
               }
             }
           </div>
@@ -620,7 +620,7 @@ export class CockpitComponent implements OnInit, OnDestroy {
   services = signal<Service[]>([]);
   serviceCounts = signal<ServicesResponse['counts']>({ crit: 0, warn: 0, unknown: 0, ok: 0, total: 0 });
   servicesLoading = signal(true);
-  stateFilter = signal('all');
+  stateFilter = signal('errors');
   expandedService = signal<string | null>(null);
   serviceGraph = signal<GraphResponse | null>(null);
   graphLoading = signal(false);
@@ -632,6 +632,7 @@ export class CockpitComponent implements OnInit, OnDestroy {
     const st = this.stateFilter();
     const svcs = this.services();
     if (st === 'all') return svcs;
+    if (st === 'errors') return svcs.filter(s => s.state_label !== 'OK');
     return svcs.filter(s => s.state_label === st);
   });
 
@@ -712,11 +713,11 @@ export class CockpitComponent implements OnInit, OnDestroy {
   stateCount(st: string): number {
     const c = this.serviceCounts();
     switch (st) {
-      case 'CRIT': return c.crit;
-      case 'WARN': return c.warn;
-      case 'OK': return c.ok;
+      case 'CRIT':   return c.crit;
+      case 'WARN':   return c.warn;
       case 'UNKNOWN': return c.unknown;
-      default: return c.total;
+      case 'errors': return c.crit + c.warn + c.unknown;
+      default:       return c.total;
     }
   }
 
