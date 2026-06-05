@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     encryption_key: str
 
     # JWT
-    access_token_expire_minutes: int = 15
+    access_token_expire_minutes: int = 480  # 8 hours
     refresh_token_expire_days: int = 7
     algorithm: str = "HS256"
 
