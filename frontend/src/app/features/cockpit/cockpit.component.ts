@@ -631,8 +631,10 @@ export class CockpitComponent implements OnInit, OnDestroy {
   readonly filteredServices = computed(() => {
     const st = this.stateFilter();
     const svcs = this.services();
-    if (st === 'all') return svcs;
+    if (st === 'all')    return svcs;
     if (st === 'errors') return svcs.filter(s => s.state_label !== 'OK');
+    if (st === 'WARN')   return svcs.filter(s => s.state_label === 'CRIT' || s.state_label === 'WARN');
+    if (st === 'CRIT')   return svcs.filter(s => s.state_label === 'CRIT');
     return svcs.filter(s => s.state_label === st);
   });
 
@@ -713,10 +715,10 @@ export class CockpitComponent implements OnInit, OnDestroy {
   stateCount(st: string): number {
     const c = this.serviceCounts();
     switch (st) {
-      case 'CRIT':   return c.crit;
-      case 'WARN':   return c.warn;
+      case 'CRIT':    return c.crit;
+      case 'WARN':    return c.crit + c.warn;
       case 'UNKNOWN': return c.unknown;
-      case 'errors': return c.crit + c.warn + c.unknown;
+      case 'errors':  return c.crit + c.warn + c.unknown;
       default:       return c.total;
     }
   }
