@@ -127,6 +127,19 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
           </div>
         </div>
 
+        @if (availableSources().length > 2) {
+          <div class="source-filters">
+            <span class="source-label">QUELLE</span>
+            @for (src of availableSources(); track src) {
+              <button
+                class="filter-chip src"
+                [class.active]="sourceFilter() === src"
+                (click)="setSource(src)"
+              >{{ src.toUpperCase() }}</button>
+            }
+          </div>
+        }
+
         <div class="alert-list">
           @if (filteredMessages().length === 0) {
             <div class="alert-empty">
@@ -333,6 +346,34 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
     }
     .filter-chip.active, .filter-chip:hover { opacity: 1; background: rgba(0,0,0,.2); }
 
+    /* Source filter row (below the block head) */
+    .source-filters {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+      padding: 6px 14px;
+      background: #0f0c08;
+      border-bottom: 1px solid #2a1d0a;
+    }
+    .source-label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      color: #FFCC99;
+      margin-right: 4px;
+    }
+    .filter-chip.src {
+      border-color: #FFCC99;
+      color: #FFCC99;
+      opacity: .55;
+    }
+    .filter-chip.src.active, .filter-chip.src:hover {
+      opacity: 1;
+      background: #FFCC99;
+      color: #000;
+    }
+
     .alert-list {
       max-height: 42vh;
       overflow-y: auto;
@@ -403,14 +444,26 @@ export class CockpitComponent implements OnInit {
   loading = signal(true);
   liveRefreshed = signal(false);
   severityFilter = signal('all');
+  sourceFilter = signal('all');
 
   readonly severities = SEVERITIES;
 
+  /** Distinct sources present in the loaded messages, for the source filter chips. */
+  readonly availableSources = computed(() => {
+    const set = new Set<string>();
+    for (const m of this.allMessages()) {
+      if (m.source) set.add(m.source);
+    }
+    return ['all', ...Array.from(set).sort()];
+  });
+
   readonly filteredMessages = computed(() => {
     const sev = this.severityFilter();
-    const msgs = this.allMessages();
-    if (sev === 'all') return msgs;
-    return msgs.filter(m => m.severity === sev);
+    const src = this.sourceFilter();
+    return this.allMessages().filter(m =>
+      (sev === 'all' || m.severity === sev) &&
+      (src === 'all' || m.source === src),
+    );
   });
 
   ngOnInit() {
@@ -441,6 +494,10 @@ export class CockpitComponent implements OnInit {
 
   setSeverity(sev: string) {
     this.severityFilter.set(sev);
+  }
+
+  setSource(src: string) {
+    this.sourceFilter.set(src);
   }
 
   sevColor(severity: string): string {
