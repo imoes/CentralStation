@@ -13,18 +13,20 @@ unterstützt mit KI bei der gesamten ITIL-konformen Arbeitsdokumentation.
 3. [CheckMK als Single Source of Truth](#checkmk-als-single-source-of-truth)
 4. [Features im Überblick](#features-im-überblick)
 5. [Operations Cockpit (Dashboard)](#operations-cockpit-dashboard)
-6. [News Feed](#news-feed)
-7. [OpenSearch-Suchen (FeedSearches)](#opensearch-suchen-feedsearches)
-8. [Alert-Aggregation und Enrichment](#alert-aggregation-und-enrichment)
-9. [Kanban und Jira](#kanban-und-jira)
-10. [KI-Funktionen](#ki-funktionen)
-11. [Prometheus-Metriken & PromQL](#prometheus-metriken--promql)
-12. [Konnektoren](#konnektoren)
-13. [Benutzerverwaltung und RBAC](#benutzerverwaltung-und-rbac)
-14. [Einstellungen und Präferenzen](#einstellungen-und-präferenzen)
-15. [API-Referenz](#api-referenz)
-16. [Datenbankmigrationen](#datenbankmigrationen)
-17. [Deployment](#deployment)
+6. [Server Cockpit (Host-Detail-Fenster)](#server-cockpit-host-detail-fenster)
+7. [News Feed](#news-feed)
+8. [OpenSearch-Suchen (FeedSearches)](#opensearch-suchen-feedsearches)
+9. [Alert-Aggregation und Enrichment](#alert-aggregation-und-enrichment)
+10. [Incident-Korrelation](#incident-korrelation)
+11. [Kanban und Jira](#kanban-und-jira)
+12. [KI-Funktionen](#ki-funktionen)
+13. [Prometheus-Metriken & PromQL](#prometheus-metriken--promql)
+14. [Konnektoren](#konnektoren)
+15. [Benutzerverwaltung und RBAC](#benutzerverwaltung-und-rbac)
+16. [Einstellungen und Präferenzen](#einstellungen-und-präferenzen)
+17. [API-Referenz](#api-referenz)
+18. [Datenbankmigrationen](#datenbankmigrationen)
+19. [Deployment](#deployment)
 
 ---
 
@@ -197,8 +199,10 @@ Da OS/Standort/VE/Criticality CheckMK-eigene Konzepte sind, greift der Filter **
 |---------|------------|
 | **Operations Cockpit** | Dual-Mode Dashboard (Klassisch/Generativ), Widget-Typen: Stat, Liste, Donut, Balken, Zeitreihe, Forecast, KI-Lagebericht, Top-Hosts, War Room; klickbare Charts; Pin/Reset im generativen Modus; Hostname in Top-Hosts klickbar |
 | **Generatives Dashboard** | KI komponiert situativ ein maßgeschneidertes Dashboard — analysiert Findings, Worklist, Vitals + Forecast-Kandidaten; Rationale als Lage-Briefing; Neu-Generieren-Button + WS-Eskalation-Trigger; CUE-Produktionshosts priorisiert |
-| **Brücke (Bridge)** | Star-Trek-LCARS-Cockpit unter `/bridge`; drei Themes (Classic/Holo/LCARS); Prioritäten-Worklist, Fleet-Vitals, Forecasts, Sektoren, Live-Logs; Primärer-Incident-Panel |
+| **Server Cockpit** | Klick auf Hostnamen im News Feed öffnet `/cockpit/:hostname` in neuem Fenster; LCARS-Design; Hero-Gauges (CPU/RAM/Disk) + Sparklines; **Voll-Service-Liste** aller CheckMK-Checks mit Status + Summary; hierarchische Filter-Chips (FEHLER/WARN/CRIT/UNKNOWN); Klick auf Service → on-demand 24h-Graph; Font Roboto; Navbar wird ausgeblendet |
+| **Brücke (Bridge)** | Star-Trek-LCARS-Cockpit unter `/bridge`; drei Themes (Classic/Holo/LCARS); Prioritäten-Worklist, Fleet-Vitals, Forecasts, Sektoren, Live-Logs; Primärer-Incident-Panel; Font Roboto |
 | **Adaptives Alert-Scoring** | Deterministisches Basis-Scoring (Severity/Novelty/Alter/Flapping/Cross-Source); adaptiver Lern-Feedback-Loop (Jira-Tickets, Acks, Ignorieren → `alert_score_adjustments`); Score-Delta-Verfall |
+| **Incident-Korrelation** | Automatische Gruppierung zusammengehöriger Alerts zu Incidents; nur FQDNs als Hosts (Docker-Container-IDs werden abgelehnt); 30-Minuten-Zeitfenster für Incident-Wiederverwendung; Minimum 2 Alerts oder Cross-Source für neuen Incident |
 | **Alert-Aggregation** | CheckMK, Graylog, Wazuh — zentrale Timeline, Acknowledge, Severity-Filter; Graylog: Python-Loglevel-Erkennung (INFO→low, ERROR→high, verhindert Docker-GELF-Fehleinstufung) |
 | **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung, KI-Ignorieren; Hostname anklickbar → Feed-Filter; Severity-Filter ignoriert aktive Saved-Searches korrekt |
 | **KI-Insights** | Befunde + zugehörige Empfehlungen direkt zusammen (kein getrenntes Panel); Datenquelle-Badge je Befund; Hostname/Feed-Links; Empfehlungen fließen in generatives Dashboard ein |
@@ -322,6 +326,84 @@ Toggle-Button im Dashboard-Header wechselt zwischen zwei Modi:
 | Neueste Alerts | `list` | 5,2 (4×3) | Alle Quellen, limit=8 |
 | KI-Lagebericht | `ai_summary` | 0,5 (5×4) | — |
 | Top-Hosts | `top_hosts` | 5,5 (4×4) | Alle Quellen |
+
+---
+
+## Server Cockpit (Host-Detail-Fenster)
+
+Ein Klick auf einen Servernamen im **News Feed** öffnet das Server Cockpit in einem eigenständigen Browser-Fenster (`window.open`, Route `/cockpit/:hostname`). Das Fenster hat kein Navigationsmenü — es ist ein vollbildiges LCARS-Dashboard für genau einen Host.
+
+### Layout
+
+```
+┌─────────────────────────────────────────────────────┐
+│ ████ COCKPIT — hostname  ██████  [LIVE ●]  [✕]      │  ← orange Cap-Bar
+├─────────────────────────────────────────────────────┤
+│ ██ PERFORMANCE ██████████████████  [cached|live]    │
+│   [CPU Gauge + Sparkline]  [RAM]  [Disk]            │
+├─────────────────────────────────────────────────────┤
+│ ██ SERVICES (N) ██  [ALLE] [FEHLER] [CRIT] [WARN]  │
+│   ● CRIT  Filesystem /var         87% used (...)    │
+│   ● WARN  CPU load                load 3.4 (...)    │
+│   ● OK    Memory                  12.3% used        │
+│   → Klick auf Zeile → 24h-Graph erscheint inline    │
+├─────────────────────────────────────────────────────┤
+│ ██ ALERTS ██  [Severity▼] [Source▼]                 │
+│   sev●  title  host  source  time                   │
+└─────────────────────────────────────────────────────┘
+```
+
+### Performance-Block
+
+- **Hero-Gauges**: CPU / RAM / Disk als ECharts-Gauge-Charts (140px), Farbe nach Level: crit `#ff4433` / high `#ffcc00` / ok `#66cc66`
+- **Sparklines**: Kompakte 52px-Liniencharts direkt unterhalb der Gauges (24h-Historie)
+- **Zweistufiges Laden**: Zuerst gecachte Werte aus `cs-metrics-checkmk` (sofort), dann Live-Refresh via CheckMK RRD (`?live=true`, ~1-2s)
+- **LIVE-Badge**: wechselt von `cached` auf `LIVE ●` sobald die aktuellen Werte eintreffen
+
+### Service-Liste
+
+Zeigt alle CheckMK-Services des Hosts mit aktuellem Status und `plugin_output` (menschenlesbare Zusammenfassung, z.B. „15.2% used (3.04 GB of 20.0 GB)").
+
+**Service-Farben:**
+
+| Status | Farbe |
+|--------|-------|
+| CRIT | `#ff4433` (rot) |
+| WARN | `#ffcc00` (gelb) |
+| UNKNOWN | `#99ccff` (hellblau) |
+| OK | `#66cc66` (grün) |
+
+**Hierarchische Filter-Chips:**
+
+| Chip | Zeigt |
+|------|-------|
+| ALLE | alle Services |
+| FEHLER | CRIT + WARN + UNKNOWN (Standard-Ansicht beim Öffnen) |
+| WARN | CRIT + WARN |
+| CRIT | nur CRIT |
+| UNKNOWN | nur UNKNOWN |
+
+Filter-Chips mit 0 Treffern bleiben immer sichtbar, werden aber ausgegraut (`opacity: 0.25`, nicht klickbar).
+
+**On-Demand Graph:**
+- Klick auf eine Service-Zeile → `GET /api/hosts/{host}/graph?service=<name>&metric=<id>`
+- Metric-Inferenz aus Service-Name: `Filesystem*` → `fs_used_percent`, `Memory` → `mem_used_percent`, `CPU*` → `load1`
+- 24h-Linienchart erscheint inline unter der Zeile; erneuter Klick schließt ihn
+
+### API-Endpunkte (Backend)
+
+| Endpunkt | Beschreibung |
+|----------|-------------|
+| `GET /api/hosts/{hostname}/health` | Performance-Vitals (gecacht + `?live=true`) + Host-Alerts |
+| `GET /api/hosts/{hostname}/services` | Alle CheckMK-Services mit `state_label` + `summary`; sortiert CRIT→WARN→UNKNOWN→OK |
+| `GET /api/hosts/{hostname}/graph` | 24h-Zeitreihe: `?service=<name>&metric=<id>` → `{series, title, unit}` |
+
+### Technische Details
+
+- **Navbar-Ausblendung**: `ngOnInit` setzt `document.body.classList.add('cockpit-active')`; `styles.scss` versteckt `.sidenav` und entfernt `mat-sidenav-content`-Margin (analog zu `bridge-active`)
+- **Font**: Roboto (identisch mit News Feed und Alerts)
+- **Auth**: Verwendet denselben `cs_access_token` aus `localStorage` — kein erneuter Login nötig
+- **Mehrere Tabs**: `window.open` mit `target='cockpit-{hostname}'` — pro Host ein Fenster, kein Duplikat
 
 ---
 
@@ -534,6 +616,50 @@ Nach der Indizierung werden neue Alerts mit Severity `critical`, `high` oder `wa
 - **Input:** `{source}: {title}\n{body}\nHost: {host}\nLocation: {location}`
 - **Ergebnis:** Plain-Text (max. 400 Zeichen), gespeichert als `ai_insight` im OpenSearch-Dokument
 - **Konfiguration:** `agent.auto_enrich` (default `true`) — in Einstellungen → KI deaktivierbar
+
+---
+
+## Incident-Korrelation
+
+CentralStation gruppiert zusammengehörige Alerts automatisch zu **Incidents** (`incidents` + `incident_members`-Tabellen).
+
+### Korrelationsregeln
+
+Ein neuer Incident wird nur angelegt wenn **alle** Bedingungen erfüllt sind:
+
+1. **Severity-Schwelle**: Nur `critical`/`high` Alerts können einen Incident auslösen oder erweitern — `low`/`info` werden ignoriert
+2. **Mindestgröße**: Neuer Incident erfordert ≥ 2 korrelierte Alerts (gleicher Host, 30-Min-Fenster) **oder** Cross-Source-Evidenz (gleicher Host, ≥ 2 Quellen)
+3. **Host-Validierung**: Nur FQDNs werden als Hosts akzeptiert (muss mindestens einen Punkt enthalten). Docker-Container-Short-IDs (z.B. `5086bbde056b`) und Container-Namen werden abgelehnt
+
+### Zeitfenster
+
+Offene Incidents werden nur wiederverwendet, wenn `updated_at >= jetzt - 30 Minuten`. Ein älterer Incident wird **nicht** verlängert — stattdessen wird ein neuer Incident angelegt. Das verhindert, dass zeitlich weit auseinanderliegende Alerts fälschlicherweise in denselben Incident gepackt werden.
+
+### Incident-Lifecycle
+
+```
+Neuer Alert (critical/high) mit FQDN
+    │
+    ├── Offener Incident für diesen Host? (updated_at < 30 Min alt)
+    │       → Ja: Incident erweitern (Member hinzufügen, Severity eskalieren, updated_at aktualisieren)
+    │       → Nein: neuen Incident anlegen (wenn ≥ 2 Alerts oder Cross-Source)
+    │
+    └── Housekeeping-Job (alle 2h): Incidents ohne neue Member → resolved
+```
+
+### Datenmodell
+
+| Tabelle | Felder |
+|---------|--------|
+| `incidents` | `id`, `title` (z.B. „host.example.com: 4 Alerts [checkmk/graylog]"), `primary_host`, `severity`, `status` (open/investigating/resolved), `created_at`, `updated_at`, `resolved_at` |
+| `incident_members` | `incident_id`, `external_id`, `source`, `added_at` |
+
+### API-Endpunkte
+
+| Endpunkt | Beschreibung |
+|----------|-------------|
+| `GET /api/feed/incidents` | Offene Incidents (status: open/investigating) |
+| `GET /api/feed/incidents/{id}/timeline` | Chronologische Timeline (Alerts + Kommentare + KI-Diagnosen) |
 
 ---
 
@@ -1030,6 +1156,22 @@ Alle Einstellungen werden verschlüsselt in der Datenbank gespeichert und über 
 | `/api/auth/login` | POST | Login; gibt `access_token` + setzt `refresh_token` HttpOnly-Cookie |
 | `/api/auth/refresh` | POST | Access Token erneuern via Cookie |
 | `/api/auth/logout` | POST | Refresh Token revoken |
+| `/api/auth/me` | GET | Eigenes User-Profil (prüft Token-Gültigkeit) |
+
+**Token-Lebensdauer und Persistenz:**
+- Access Token ist **8 Stunden** gültig (konfigurierbar via `access_token_expire_minutes`)
+- Token wird im Browser unter `localStorage['cs_access_token']` gespeichert — überlebt Seiten-Reload und Browser-Neustart ohne erneutes Login
+- `AuthService` liest Token beim Angular-Start aus `localStorage` → `isLoggedIn()` ist sofort `true`
+- Fehlt das User-Profil (z.B. neuer Tab), wird es via `GET /auth/me` nachgeladen; schlägt das fehl, wird Cookie-basierter Silent-Refresh versucht
+- Logout löscht Token aus `localStorage` und revoked das Refresh-Cookie
+
+### Hosts
+
+| Pfad | Methode | Beschreibung |
+|------|---------|-------------|
+| `/api/hosts/{hostname}/health` | GET | Performance-Vitals (gecacht); `?live=true` für CheckMK-RRD-Refresh |
+| `/api/hosts/{hostname}/services` | GET | Alle CheckMK-Services mit `state_label` + `summary`; sortiert nach Schweregrad |
+| `/api/hosts/{hostname}/graph` | GET | 24h-Zeitreihe: `?service=<name>&metric=<id>` → `{series, title, unit}` |
 
 ### Feed
 
@@ -1041,6 +1183,8 @@ Alle Einstellungen werden verschlüsselt in der Datenbank gespeichert und über 
 | `/api/feed/{item_id}/acknowledge` | POST | Alert als bestätigt markieren |
 | `/api/feed/{item_id}/enrich` | POST | KI-Anreicherung (it-aikb RAG + optional SearXNG) für einzelnes Item |
 | `/api/feed/{item_id}/ignore` | POST | KI generiert OpenSearch-Ausschluss-Query → als System-Exclusion-Suche speichern |
+| `/api/feed/incidents` | GET | Offene Incidents (status: open/investigating) |
+| `/api/feed/incidents/{id}/timeline` | GET | Chronologische Timeline eines Incidents (Alerts + Kommentare + KI-Diagnosen) |
 
 ### FeedSearches
 
@@ -1168,6 +1312,7 @@ Alle Einstellungen werden verschlüsselt in der Datenbank gespeichert und über 
 | `0018` | `user_preferences.ui_theme` (`classic`/`holo`/`lcars`) — app-weites Theme |
 | `0019` | `dashboards.rationale`, `dashboards.generated_at` — Generatives Dashboard mit KI-Lagebild |
 | `0020` | `alert_collaboration` + `alert_comments` — kollaboratives Alert-Handling (Claim/Status/Timeline) |
+| `0021` | `incidents` + `incident_members` — automatische Incident-Korrelation (FQDN-only, 30-Min-Zeitfenster, Cross-Source) |
 
 ---
 
