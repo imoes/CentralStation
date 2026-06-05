@@ -15,11 +15,13 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/hosts", tags=["hosts"])
 
-# Reuse bridge.py label/unit/level mapping
+# Reuse bridge.py label/unit/level mapping + CheckMK service per metric
+# (service names mirror metrics_collector._STANDARD_METRICS so the live path
+#  can query CheckMK even when the metrics cache is empty/stale).
 _VITAL_METRICS = {
-    "fs_used_percent":  {"label": "Disk", "unit": "%"},
-    "mem_used_percent": {"label": "RAM",  "unit": "%"},
-    "load1":            {"label": "CPU",  "unit": ""},
+    "fs_used_percent":  {"label": "Disk", "unit": "%", "service": "Filesystem /"},
+    "mem_used_percent": {"label": "RAM",  "unit": "%", "service": "Memory"},
+    "load1":            {"label": "CPU",  "unit": "",  "service": "CPU load"},
 }
 
 # Display order for the cockpit
@@ -82,7 +84,27 @@ async def host_health(
         })
 
     # ── 2. Live refresh (optional) ──────────────────────────────────────────
-    if live and vitals:
+    # When live=true we always query CheckMK — even if the cache is empty/stale.
+    # Cached vitals are refreshed in place; if the cache is empty we build stubs
+    # from the known metric→service map so the cockpit fills from CheckMK directly.
+    if live:
+        # Determine which vitals to query: cached ones, or fallback stubs.
+        if vitals:
+            targets = vitals
+        else:
+            targets = [
+                {
+                    "metric": metric,
+                    "label": _VITAL_METRICS[metric]["label"],
+                    "value": 0.0,
+                    "unit": _VITAL_METRICS[metric]["unit"],
+                    "level": "ok",
+                    "service": _VITAL_METRICS[metric]["service"],
+                    "series": [],
+                }
+                for metric in _VITAL_ORDER
+            ]
+
         try:
             from app.core.security import decrypt_credentials
             from app.models.connector import ConnectorConfig as ConnectorModel
@@ -101,25 +123,34 @@ async def host_health(
                 connector = get_connector("checkmk", cmk_conn.base_url, credentials)
                 import asyncio
 
-                async def _refresh_vital(v: dict) -> dict:
+                async def _refresh_vital(v: dict) -> dict | None:
+                    service = v.get("service") or _VITAL_METRICS.get(v["metric"], {}).get("service", "")
                     try:
                         result = await connector.get_graph_data(
-                            hostname, v["service"], 0, 2, metric_id=v["metric"]
+                            hostname, service, 0, 2, metric_id=v["metric"]
                         )
                         series = result.get("series", [])
                         if series:
                             current_val = round(float(series[-1]["value"]), 1)
                             return {
                                 **v,
+                                "service": service,
                                 "value": current_val,
                                 "level": _level(v["metric"], current_val),
                                 "series": [{"time": p["time"], "value": p["value"]} for p in series[-30:]],
                             }
                     except Exception as e:
                         log.debug("host_health live refresh %s/%s: %s", hostname, v["metric"], e)
-                    return v
+                    # No live data: keep cached vital if it had data, else drop the stub
+                    return v if v.get("series") else None
 
-                vitals = list(await asyncio.gather(*[_refresh_vital(v) for v in vitals]))
+                refreshed = await asyncio.gather(*[_refresh_vital(v) for v in targets])
+                live_vitals = [v for v in refreshed if v is not None]
+                # Preserve display order
+                order = {m: i for i, m in enumerate(_VITAL_ORDER)}
+                live_vitals.sort(key=lambda v: order.get(v["metric"], 99))
+                if live_vitals:
+                    vitals = live_vitals
         except Exception as e:
             log.warning("host_health live refresh failed for %s: %s", hostname, e)
 
