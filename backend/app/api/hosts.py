@@ -38,6 +38,26 @@ def _level(metric: str, value: float) -> str:
     return "ok"
 
 
+async def _get_checkmk_connector(db: AsyncSession):
+    """Resolve an enabled CheckMK connector, or None. Shared by the live paths."""
+    from app.core.security import decrypt_credentials
+    from app.models.connector import ConnectorConfig as ConnectorModel
+    from app.services.connectors import get_connector
+    from sqlalchemy import select as sa_select
+
+    result = await db.execute(
+        sa_select(ConnectorModel)
+        .where(ConnectorModel.type == "checkmk")
+        .where(ConnectorModel.enabled == True)  # noqa: E712
+        .limit(1)
+    )
+    conn = result.scalar_one_or_none()
+    if not conn:
+        return None
+    credentials = decrypt_credentials(conn.encrypted_credentials)
+    return get_connector("checkmk", conn.base_url, credentials)
+
+
 @router.get("/{hostname}/health")
 async def host_health(
     hostname: str,
@@ -106,21 +126,8 @@ async def host_health(
             ]
 
         try:
-            from app.core.security import decrypt_credentials
-            from app.models.connector import ConnectorConfig as ConnectorModel
-            from app.services.connectors import get_connector
-            from sqlalchemy import select as sa_select
-
-            cmk_result = await db.execute(
-                sa_select(ConnectorModel)
-                .where(ConnectorModel.type == "checkmk")
-                .where(ConnectorModel.enabled == True)  # noqa: E712
-                .limit(1)
-            )
-            cmk_conn = cmk_result.scalar_one_or_none()
-            if cmk_conn:
-                credentials = decrypt_credentials(cmk_conn.encrypted_credentials)
-                connector = get_connector("checkmk", cmk_conn.base_url, credentials)
+            connector = await _get_checkmk_connector(db)
+            if connector:
                 import asyncio
 
                 async def _refresh_vital(v: dict) -> dict | None:
@@ -185,3 +192,77 @@ async def host_health(
         "messages": messages,
         "live": live,
     }
+
+
+# Sort priority: CRIT first, then WARN, UNKNOWN, OK
+_STATE_SORT = {2: 0, 1: 1, 3: 2, 0: 3}
+
+
+@router.get("/{hostname}/services")
+async def host_services(
+    hostname: str,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return all CheckMK services for a host (name, state, summary) + counts.
+
+    One cheap CheckMK call gives the full health picture across every check.
+    Empty list when the host is not monitored by CheckMK.
+    """
+    counts = {"crit": 0, "warn": 0, "unknown": 0, "ok": 0, "total": 0}
+    services: list[dict] = []
+    try:
+        connector = await _get_checkmk_connector(db)
+        if connector:
+            raw = await connector.list_services(hostname)
+            for svc in raw:
+                state = svc.get("state", 0)
+                if state == 2:
+                    counts["crit"] += 1
+                elif state == 1:
+                    counts["warn"] += 1
+                elif state == 3:
+                    counts["unknown"] += 1
+                else:
+                    counts["ok"] += 1
+            counts["total"] = len(raw)
+            # CRIT → WARN → UNKNOWN → OK, then alphabetical
+            services = sorted(
+                raw,
+                key=lambda s: (_STATE_SORT.get(s.get("state", 0), 9), s.get("name", "").lower()),
+            )
+    except Exception as e:
+        log.warning("host_services for %s: %s", hostname, e)
+
+    return {"host": hostname, "services": services, "counts": counts}
+
+
+@router.get("/{hostname}/graph")
+async def host_service_graph(
+    hostname: str,
+    service: str,
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    metric: str = "",
+    hours: int = 24,
+):
+    """Return a time series for a single host service metric (on-demand graph).
+
+    `metric` is optional — when empty, CheckMK resolves the service's first metric.
+    """
+    try:
+        connector = await _get_checkmk_connector(db)
+        if not connector:
+            return {"series": [], "error": "No CheckMK connector configured"}
+        result = await connector.get_graph_data(
+            hostname, service, 0, hours, metric_id=metric
+        )
+        return {
+            "series": result.get("series", []),
+            "title": result.get("title", service),
+            "unit": result.get("unit", ""),
+            "error": result.get("error", ""),
+        }
+    except Exception as e:
+        log.warning("host_service_graph %s/%s: %s", hostname, service, e)
+        return {"series": [], "error": str(e)}
