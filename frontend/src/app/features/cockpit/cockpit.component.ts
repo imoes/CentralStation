@@ -155,13 +155,12 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
           <span class="count-pill ok">{{ serviceCounts().ok }} OK</span>
           <div class="block-filters">
             @for (st of svcStates; track st) {
-              @if (st === 'all' || st === 'errors' || stateCount(st) > 0) {
-                <button
-                  class="filter-chip"
-                  [class.active]="stateFilter() === st"
-                  (click)="setStateFilter(st)"
-                >{{ st === 'all' ? 'ALLE' : st === 'errors' ? 'FEHLER' : st }}</button>
-              }
+              <button
+                class="filter-chip"
+                [class.active]="stateFilter() === st"
+                [class.zero]="stateCount(st) === 0 && st !== 'all' && st !== 'errors'"
+                (click)="setStateFilter(st)"
+              >{{ st === 'all' ? 'ALLE' : st === 'errors' ? 'FEHLER' : st }}</button>
             }
           </div>
         </div>
@@ -515,6 +514,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
       transition: opacity .15s;
     }
     .filter-chip.active, .filter-chip:hover { opacity: 1; background: rgba(0,0,0,.2); }
+    .filter-chip.zero { opacity: .25; cursor: default; pointer-events: none; }
 
     /* Source filter row (below the block head) */
     .source-filters {
@@ -738,8 +738,10 @@ export class CockpitComponent implements OnInit, OnDestroy {
     this.serviceGraph.set(null);
     this.graphLoading.set(true);
     const host = this.hostname();
+    const metric = this.inferMetric(svc.name);
     const url = `${environment.apiUrl}/hosts/${encodeURIComponent(host)}/graph`
-      + `?service=${encodeURIComponent(svc.name)}`;
+      + `?service=${encodeURIComponent(svc.name)}`
+      + (metric ? `&metric=${encodeURIComponent(metric)}` : '');
     this.http.get<GraphResponse>(url).subscribe({
       next: data => {
         // Ignore if the user already collapsed/switched while loading
@@ -755,6 +757,14 @@ export class CockpitComponent implements OnInit, OnDestroy {
         }
       },
     });
+  }
+
+  private inferMetric(serviceName: string): string {
+    const n = serviceName.toLowerCase();
+    if (n.startsWith('filesystem') || n.startsWith('fs ') || n.includes('disk')) return 'fs_used_percent';
+    if (n.includes('memory') || n === 'mem') return 'mem_used_percent';
+    if (n.includes('cpu') || n.includes('load')) return 'load1';
+    return '';
   }
 
   sevColor(severity: string): string {
