@@ -1,6 +1,6 @@
 import { Component } from '@angular/core';
 import { FormBuilder, Validators, ReactiveFormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, ActivatedRoute } from '@angular/router';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
@@ -75,6 +75,7 @@ export class LoginComponent {
     private fb: FormBuilder,
     private auth: AuthService,
     private router: Router,
+    private route: ActivatedRoute,
     private http: HttpClient,
   ) {
     this.form = this.fb.group({
@@ -89,8 +90,15 @@ export class LoginComponent {
     this.error = '';
     const { email, password } = this.form.value;
 
+    const returnUrl = this.route.snapshot.queryParamMap.get('returnUrl');
+
     this.auth.login(email!, password!).subscribe({
       next: () => {
+        // Honour returnUrl (e.g. a cockpit window that lost its session) over the default.
+        if (returnUrl) {
+          this.router.navigateByUrl(returnUrl);
+          return;
+        }
         this.http.get<any>(`${environment.apiUrl}/preferences`).subscribe({
           next: prefs => this.router.navigate([prefs?.setup_completed === false ? '/setup' : '/dashboard']),
           error: () => this.router.navigate(['/dashboard']),
