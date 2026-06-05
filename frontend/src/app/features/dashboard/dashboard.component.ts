@@ -35,6 +35,7 @@ import {
   Dashboard,
   WidgetData,
   GenerativePayload,
+  RationaleSegment,
 } from './dashboard-widget.model';
 import { WebsocketService } from '../../core/services/websocket.service';
 
@@ -163,6 +164,26 @@ import { WebsocketService } from '../../core/services/websocket.service';
       }
 
       @if (generativeMode()) {
+        @if (kiInsight()) {
+          <div class="ki-strip" [attr.data-sev]="kiInsight()!.severity_summary">
+            <span class="ki-strip-icon">
+              <mat-icon style="font-size:16px;height:16px;width:16px;vertical-align:middle">psychology</mat-icon>
+            </span>
+            <span class="ki-strip-sev">{{ (kiInsight()!.severity_summary ?? 'info').toUpperCase() }}</span>
+            <span class="ki-strip-text">{{ kiInsight()!.summary_text }}</span>
+            <span class="ki-strip-hosts">
+              @for (f of kiInsight()!.findings; track $index) {
+                @if (f.host) {
+                  <span class="ki-strip-host" (click)="openFeedHost(f.host)">{{ f.host }}</span>
+                }
+              }
+            </span>
+            <span class="ki-strip-ago">{{ kiInsightAgo() }}</span>
+            <button mat-icon-button class="ki-strip-btn" (click)="openInsight(kiInsight()!.analysis_id)" matTooltip="KI-Insights öffnen">
+              <mat-icon style="font-size:16px;height:16px;width:16px">open_in_new</mat-icon>
+            </button>
+          </div>
+        }
         <div class="gen-banner">
           <!-- Header bar — same visual weight as a widget header -->
           <div class="gen-header">
@@ -178,7 +199,15 @@ import { WebsocketService } from '../../core/services/websocket.service';
           <!-- Body — dark background like widget body -->
           @if (generativeRationale()) {
             <div class="gen-body">
-              <p class="gen-rationale" [class.collapsed]="!rationaleExpanded()">{{ generativeRationale() }}</p>
+              <p class="gen-rationale" [class.collapsed]="!rationaleExpanded()">
+                @for (seg of rationaleSegments(); track $index) {
+                  @if (seg.host) {
+                    <span class="gen-host-link" (click)="openFeedHost(seg.host); $event.stopPropagation()">{{ seg.text }}</span>
+                  } @else {
+                    {{ seg.text }}
+                  }
+                }
+              </p>
               <button mat-button class="gen-why" (click)="rationaleExpanded.set(!rationaleExpanded())">
                 {{ rationaleExpanded() ? '▲ Weniger' : '▼ Mehr' }}
               </button>
@@ -427,6 +456,38 @@ import { WebsocketService } from '../../core/services/websocket.service';
     .gen-rationale { font-size: 13px; color: #ffcc99; line-height: 1.55; margin: 0; }
     .gen-rationale.collapsed { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     .gen-why { font-size: 11px; min-height: 26px; line-height: 26px; padding: 0; color: #ffcc66; margin-top: 4px; display: inline-block; }
+    .gen-host-link { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; border-radius: 3px; padding: 0 1px; transition: background .1s; }
+    .gen-host-link:hover { background: rgba(255,204,153,.18); }
+
+    /* KI-Insight strip — only visible in generativeMode */
+    .ki-strip {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 6px 14px; margin-bottom: 8px;
+      background: rgba(180,20,20,.12); border-left: 4px solid #b71c1c;
+      border-radius: 0 6px 6px 0; font-size: 12px;
+    }
+    .ki-strip[data-sev="high"]     { background: rgba(230,81,0,.1); border-left-color: #e65100; }
+    .ki-strip[data-sev="medium"]   { background: rgba(245,124,0,.08); border-left-color: #f57c00; }
+    .ki-strip[data-sev="info"], .ki-strip[data-sev="ok"] { background: rgba(46,125,50,.08); border-left-color: #2e7d32; }
+    .ki-strip-icon { color: var(--mat-sys-on-surface-variant); flex-shrink: 0; }
+    .ki-strip-sev { font-weight: 700; font-size: 11px; letter-spacing: .06em; min-width: 52px; flex-shrink: 0; }
+    .ki-strip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ki-strip-hosts { display: flex; gap: 4px; flex-wrap: wrap; }
+    .ki-strip-host { cursor: pointer; background: rgba(0,0,0,.12); border-radius: 3px;
+                     padding: 1px 6px; font-size: 10px; color: var(--mat-sys-primary); }
+    .ki-strip-host:hover { text-decoration: underline; }
+    .ki-strip-ago { font-size: 10px; color: var(--mat-sys-on-surface-variant); white-space: nowrap; flex-shrink: 0; }
+    .ki-strip-btn { width: 24px; height: 24px; line-height: 24px; flex-shrink: 0; }
+
+    :host-context(html.cs-theme-lcars) .ki-strip { background: rgba(255,68,51,.1); border-left-color: #ff4433; }
+    :host-context(html.cs-theme-lcars) .ki-strip[data-sev="high"] { border-left-color: #ffcc00; background: rgba(255,204,0,.08); }
+    :host-context(html.cs-theme-lcars) .ki-strip-sev { color: #FF9933; }
+    :host-context(html.cs-theme-lcars) .ki-strip-text { color: #ffe8a0; }
+    :host-context(html.cs-theme-lcars) .ki-strip-host { color: #FFCC99; background: rgba(255,153,51,.1); }
+    :host-context(html.cs-theme-holo)  .ki-strip { background: rgba(79,214,255,.07); border-left-color: #4fd6ff; }
+    :host-context(html.cs-theme-holo)  .ki-strip[data-sev="critical"] { border-left-color: #ff5b6e; background: rgba(255,91,110,.08); }
+    :host-context(html.cs-theme-holo)  .ki-strip-sev { color: #4fd6ff; }
+    :host-context(html.cs-theme-holo)  .ki-strip-host { color: #4fd6ff; }
     .gen-banner button[color="primary"] {
       background: #FF9933 !important;
       color: #000 !important;
@@ -491,6 +552,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-body { background: var(--mat-sys-surface-container); }
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-rationale { color: var(--mat-sys-on-surface-variant); }
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-why { color: var(--mat-sys-primary); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-host-link { color: var(--mat-sys-primary); }
     :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-banner button[color="primary"] {
       background: var(--mat-sys-primary) !important; color: var(--mat-sys-on-primary) !important;
     }
@@ -505,6 +567,8 @@ import { WebsocketService } from '../../core/services/websocket.service';
     :host-context(html.cs-theme-holo) .gen-body { background: rgba(5,20,35,.9); }
     :host-context(html.cs-theme-holo) .gen-rationale { color: #8fb8cf !important; }
     :host-context(html.cs-theme-holo) .gen-why { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-holo) .gen-host-link { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-lcars) .gen-host-link { color: #FFCC99 !important; }
     :host-context(html.cs-theme-holo) .gen-banner button[color="primary"] {
       background: #4fd6ff !important; color: #00131f !important;
     }
@@ -545,6 +609,46 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   generativeRationale = signal<string | null>(null);
   generativeGeneratedAt = signal<string | null>(null);
   rationaleExpanded = signal(true);
+  generativeHosts = signal<string[]>([]);
+  kiInsight = signal<{ analysis_id: string; severity_summary: string; run_at: string; findings: { title: string; severity: string; host: string }[]; summary_text: string } | null>(null);
+
+  readonly kiInsightAgo = computed(() => {
+    const ts = this.kiInsight()?.run_at;
+    if (!ts) return '';
+    const diff = Date.now() - new Date(ts).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'gerade';
+    if (mins < 60) return `vor ${mins} Min.`;
+    const hrs = Math.floor(mins / 60);
+    return hrs < 24 ? `vor ${hrs} Std.` : `vor ${Math.floor(hrs / 24)} T.`;
+  });
+
+  readonly rationaleSegments = computed((): RationaleSegment[] => {
+    const text = this.generativeRationale();
+    if (!text) return [];
+    const hosts = [...this.generativeHosts()].sort((a, b) => b.length - a.length);
+    if (hosts.length === 0) {
+      // Fallback: FQDN regex
+      const fqdnRe = /\b[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?)+\b/g;
+      const segs: RationaleSegment[] = [];
+      let last = 0;
+      let m: RegExpExecArray | null;
+      while ((m = fqdnRe.exec(text)) !== null) {
+        if (m.index > last) segs.push({ text: text.slice(last, m.index), host: null });
+        segs.push({ text: m[0], host: m[0] });
+        last = m.index + m[0].length;
+      }
+      if (last < text.length) segs.push({ text: text.slice(last), host: null });
+      return segs;
+    }
+    // Split by known hosts (longest first to avoid partial matches)
+    const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(${hosts.map(escape).join('|')})`, 'g');
+    const parts = text.split(pattern);
+    const hostSet = new Set(hosts);
+    return parts.map(p => ({ text: p, host: hostSet.has(p) ? p : null }));
+  });
+
   generativeAgo = computed(() => {
     const ts = this.generativeGeneratedAt();
     if (!ts) return '';
@@ -574,11 +678,13 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
 
   ngAfterViewInit() {
     this.loadDashboards();
+    this.loadKiInsight();
     // Always listen for critical AI insights to show War Room overlay
     this.wsSubscription = this.ws.messages().subscribe((msg: any) => {
       if (msg?.type === 'ai_insight' && (msg.severity === 'critical' || msg.severity === 'high')) {
         this.warRoomActive.set(true);
         this.refreshWarRoomWidgets();
+        this.loadKiInsight();
         // Escalation → recompose the generative dashboard (debounced so a wave
         // of critical insights triggers a single regeneration, not many).
         if (this.generativeMode()) {
@@ -586,6 +692,13 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
           this.wsRegenTimer = setTimeout(() => this.regenerate(), 8000);
         }
       }
+    });
+  }
+
+  loadKiInsight() {
+    this.http.get<any>(`${environment.apiUrl}/ai/latest-summary`).subscribe({
+      next: data => this.kiInsight.set(data),
+      error: () => {},
     });
   }
 
@@ -934,6 +1047,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   private _applyGenerative(payload: GenerativePayload) {
     this.generativeRationale.set(payload.rationale ?? null);
     this.generativeGeneratedAt.set(payload.generated_at ?? null);
+    this.generativeHosts.set(payload.hosts ?? []);
     this.widgetData.set({});
     this.widgets.set(payload.widgets ?? []);
     this.loading.set(false);
