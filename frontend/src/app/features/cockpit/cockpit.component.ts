@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   OnInit,
+  OnDestroy,
   computed,
   inject,
   signal,
@@ -43,6 +44,35 @@ interface HealthResponse {
   messages: Message[];
   live: boolean;
 }
+
+interface Service {
+  name: string;
+  state: number;
+  state_label: 'OK' | 'WARN' | 'CRIT' | 'UNKNOWN';
+  summary: string;
+}
+
+interface ServicesResponse {
+  host: string;
+  services: Service[];
+  counts: { crit: number; warn: number; unknown: number; ok: number; total: number };
+}
+
+interface GraphResponse {
+  series: { time: string; value: number }[];
+  title: string;
+  unit: string;
+  error: string;
+}
+
+const SVC_STATE_COLORS: Record<string, string> = {
+  CRIT:    '#ff4433',
+  WARN:    '#ffcc00',
+  OK:      '#66cc66',
+  UNKNOWN: '#99CCFF',
+};
+
+const SVC_STATES = ['all', 'CRIT', 'WARN', 'OK', 'UNKNOWN'];
 
 const SEV_COLORS: Record<string, string> = {
   critical: '#ff4433',
@@ -109,6 +139,67 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
         } @else if (loading()) {
           <div class="block-loading">METRIKEN WERDEN GELADEN…</div>
         }
+      </div>
+
+      <!-- ── SERVICES BLOCK ── -->
+      <div class="block">
+        <div class="block-head">
+          <span>SERVICES</span>
+          <span class="block-count">{{ serviceCounts().total }}</span>
+          @if (serviceCounts().crit > 0) {
+            <span class="count-pill crit">{{ serviceCounts().crit }} CRIT</span>
+          }
+          @if (serviceCounts().warn > 0) {
+            <span class="count-pill warn">{{ serviceCounts().warn }} WARN</span>
+          }
+          <span class="count-pill ok">{{ serviceCounts().ok }} OK</span>
+          <div class="block-filters">
+            @for (st of svcStates; track st) {
+              @if (st === 'all' || stateCount(st) > 0) {
+                <button
+                  class="filter-chip"
+                  [class.active]="stateFilter() === st"
+                  (click)="setStateFilter(st)"
+                >{{ st === 'all' ? 'ALLE' : st }}</button>
+              }
+            }
+          </div>
+        </div>
+
+        <div class="services-area">
+          @if (servicesLoading()) {
+            <div class="block-loading">SERVICES WERDEN GELADEN…</div>
+          } @else if (filteredServices().length === 0) {
+            <div class="alert-empty">
+              @if (serviceCounts().total === 0) { Keine CheckMK-Services für diesen Host. }
+              @else { Keine Services in dieser Auswahl. }
+            </div>
+          } @else {
+            <div class="services-grid">
+              @for (svc of filteredServices(); track svc.name) {
+                <div class="svc-cell" [class.expanded]="expandedService() === svc.name">
+                  <div class="svc-row" (click)="toggleService(svc)">
+                    <span class="svc-dot" [style.background]="svcColor(svc.state_label)"></span>
+                    <span class="svc-state" [style.color]="svcColor(svc.state_label)">{{ svc.state_label }}</span>
+                    <span class="svc-name">{{ svc.name }}</span>
+                    <span class="svc-summary">{{ svc.summary }}</span>
+                  </div>
+                  @if (expandedService() === svc.name) {
+                    <div class="svc-graph">
+                      @if (graphLoading()) {
+                        <div class="svc-graph-msg">GRAPH WIRD GELADEN…</div>
+                      } @else if (serviceGraph() && serviceGraph()!.series.length > 0) {
+                        <div echarts [options]="graphOptions()" class="svc-graph-chart"></div>
+                      } @else {
+                        <div class="svc-graph-msg">Keine Graph-Daten verfügbar.</div>
+                      }
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          }
+        </div>
       </div>
 
       <!-- ── ALERTS BLOCK ── -->
@@ -323,6 +414,85 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
     .gauge-level[data-level="high"] { color: #ffcc00; border: 1px solid #ffcc00; }
     .gauge-level[data-level="ok"]   { color: #66cc66; border: 1px solid #66cc66; }
 
+    /* ── Services ── */
+    .count-pill {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 8px;
+      border-radius: 99px;
+      background: #000;
+      letter-spacing: .04em;
+    }
+    .count-pill.crit { color: #ff4433; }
+    .count-pill.warn { color: #ffcc00; }
+    .count-pill.ok   { color: #66cc66; }
+
+    .services-area { max-height: 46vh; overflow-y: auto; }
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 1px;
+      padding: 6px;
+    }
+    .svc-cell {
+      background: #0f0c08;
+      border: 1px solid #1e1710;
+    }
+    .svc-cell.expanded { grid-column: 1 / -1; border-color: #3a2810; }
+    .svc-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      transition: background .1s;
+    }
+    .svc-row:hover { background: #1a1208; }
+    .svc-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .svc-state {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      width: 48px;
+      flex-shrink: 0;
+    }
+    .svc-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: #ffe8a0;
+      flex-shrink: 0;
+      max-width: 38%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .svc-summary {
+      flex: 1;
+      font-size: 11px;
+      color: #e8a060;
+      font-family: 'Share Tech Mono', monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .svc-graph {
+      border-top: 1px solid #2a1d0a;
+      padding: 6px 10px 8px;
+      background: #0a0804;
+    }
+    .svc-graph-chart { width: 100%; height: 130px; }
+    .svc-graph-msg {
+      padding: 16px;
+      text-align: center;
+      font-size: 11px;
+      color: #e8a060;
+      letter-spacing: .06em;
+    }
+
     /* ── Alerts ── */
     .block-filters {
       display: flex;
@@ -432,7 +602,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
     }
   `],
 })
-export class CockpitComponent implements OnInit {
+export class CockpitComponent implements OnInit, OnDestroy {
   private http = inject(HttpClient);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
@@ -446,7 +616,24 @@ export class CockpitComponent implements OnInit {
   severityFilter = signal('all');
   sourceFilter = signal('all');
 
+  // Services
+  services = signal<Service[]>([]);
+  serviceCounts = signal<ServicesResponse['counts']>({ crit: 0, warn: 0, unknown: 0, ok: 0, total: 0 });
+  servicesLoading = signal(true);
+  stateFilter = signal('all');
+  expandedService = signal<string | null>(null);
+  serviceGraph = signal<GraphResponse | null>(null);
+  graphLoading = signal(false);
+
   readonly severities = SEVERITIES;
+  readonly svcStates = SVC_STATES;
+
+  readonly filteredServices = computed(() => {
+    const st = this.stateFilter();
+    const svcs = this.services();
+    if (st === 'all') return svcs;
+    return svcs.filter(s => s.state_label === st);
+  });
 
   /** Distinct sources present in the loaded messages, for the source filter chips. */
   readonly availableSources = computed(() => {
@@ -467,6 +654,9 @@ export class CockpitComponent implements OnInit {
   });
 
   ngOnInit() {
+    // Standalone full-screen window: hide the app navigation (same pattern as the bridge).
+    document.body.classList.add('cockpit-active');
+
     const host = this.route.snapshot.paramMap.get('hostname') ?? '';
     this.hostname.set(host);
 
@@ -490,6 +680,21 @@ export class CockpitComponent implements OnInit {
         },
         error: () => this.loading.set(false),
       });
+
+    // Load the full CheckMK services list in parallel
+    this.http.get<ServicesResponse>(`${environment.apiUrl}/hosts/${encodeURIComponent(host)}/services`)
+      .subscribe({
+        next: data => {
+          this.services.set(data.services);
+          this.serviceCounts.set(data.counts);
+          this.servicesLoading.set(false);
+        },
+        error: () => this.servicesLoading.set(false),
+      });
+  }
+
+  ngOnDestroy() {
+    document.body.classList.remove('cockpit-active');
   }
 
   setSeverity(sev: string) {
@@ -498,6 +703,55 @@ export class CockpitComponent implements OnInit {
 
   setSource(src: string) {
     this.sourceFilter.set(src);
+  }
+
+  setStateFilter(st: string) {
+    this.stateFilter.set(st);
+  }
+
+  stateCount(st: string): number {
+    const c = this.serviceCounts();
+    switch (st) {
+      case 'CRIT': return c.crit;
+      case 'WARN': return c.warn;
+      case 'OK': return c.ok;
+      case 'UNKNOWN': return c.unknown;
+      default: return c.total;
+    }
+  }
+
+  svcColor(stateLabel: string): string {
+    return SVC_STATE_COLORS[stateLabel] ?? '#888';
+  }
+
+  /** Toggle the inline graph for a service, loading its time series on demand. */
+  toggleService(svc: Service) {
+    if (this.expandedService() === svc.name) {
+      this.expandedService.set(null);
+      this.serviceGraph.set(null);
+      return;
+    }
+    this.expandedService.set(svc.name);
+    this.serviceGraph.set(null);
+    this.graphLoading.set(true);
+    const host = this.hostname();
+    const url = `${environment.apiUrl}/hosts/${encodeURIComponent(host)}/graph`
+      + `?service=${encodeURIComponent(svc.name)}`;
+    this.http.get<GraphResponse>(url).subscribe({
+      next: data => {
+        // Ignore if the user already collapsed/switched while loading
+        if (this.expandedService() === svc.name) {
+          this.serviceGraph.set(data);
+          this.graphLoading.set(false);
+        }
+      },
+      error: () => {
+        if (this.expandedService() === svc.name) {
+          this.serviceGraph.set({ series: [], title: svc.name, unit: '', error: 'load failed' });
+          this.graphLoading.set(false);
+        }
+      },
+    });
   }
 
   sevColor(severity: string): string {
@@ -588,6 +842,51 @@ export class CockpitComponent implements OnInit {
         lineStyle: { width: 1.5, color },
         areaStyle: { color, opacity: 0.12 },
         data: vital.series.map(p => p.value),
+      }],
+    };
+  }
+
+  /** ECharts options for the on-demand service graph (24h time series). */
+  graphOptions() {
+    const g = this.serviceGraph();
+    const series = g?.series ?? [];
+    const color = '#FFCC99';
+    return {
+      backgroundColor: 'transparent',
+      grid: { left: 44, right: 12, top: 10, bottom: 22 },
+      tooltip: {
+        trigger: 'axis' as const,
+        backgroundColor: '#1a1208',
+        borderColor: '#3a2810',
+        textStyle: { color: '#ffe8a0', fontSize: 11 },
+      },
+      xAxis: {
+        type: 'category' as const,
+        data: series.map(p => p.time),
+        boundaryGap: false,
+        axisLine: { lineStyle: { color: '#3a2810' } },
+        axisLabel: {
+          color: '#e8a060',
+          fontSize: 9,
+          formatter: (v: string) => {
+            const d = new Date(v);
+            return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+          },
+        },
+      },
+      yAxis: {
+        type: 'value' as const,
+        axisLine: { show: false },
+        axisLabel: { color: '#e8a060', fontSize: 9 },
+        splitLine: { lineStyle: { color: '#1e1710' } },
+      },
+      series: [{
+        type: 'line' as const,
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 1.5, color },
+        areaStyle: { color, opacity: 0.1 },
+        data: series.map(p => p.value),
       }],
     };
   }

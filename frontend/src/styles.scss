@@ -50,6 +50,11 @@ body.bridge-active .sidenav,
 body.bridge-active mat-sidenav { display: none !important; }
 body.bridge-active mat-sidenav-content { margin: 0 !important; }
 
+/* ══════════ Server Cockpit window: standalone full-screen, no app navigation ══════════ */
+body.cockpit-active .sidenav,
+body.cockpit-active mat-sidenav { display: none !important; }
+body.cockpit-active mat-sidenav-content { margin: 0 !important; }
+
 /* ══════════ App-wide themes (color reskin via Material system variables) ══════════
    classic = default (untouched). holo + lcars override --mat-sys-* tokens so all
    Material components and custom views re-skin globally. */
