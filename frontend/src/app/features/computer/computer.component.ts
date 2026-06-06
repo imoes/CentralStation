@@ -48,6 +48,9 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
   standalone: true,
   imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule],
   template: `
+    @if (isOpen()) {
+      <div class="computer-backdrop" (click)="close()"></div>
+    }
     <div class="computer-panel t-lcars" [class.open]="isOpen()">
 
       <!-- LCARS Topbar -->
