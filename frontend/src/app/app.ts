@@ -1,4 +1,4 @@
-import { Component, computed, effect, inject, OnDestroy, OnInit, signal } from '@angular/core';
+import { Component, computed, effect, inject, OnDestroy, OnInit, signal, ViewChild } from '@angular/core';
 import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
@@ -12,6 +12,7 @@ import { AuthService } from './core/auth/auth.service';
 import { WebsocketService } from './core/services/websocket.service';
 import { ThemeService } from './core/services/theme.service';
 import { environment } from '../environments/environment';
+import { ComputerComponent } from './features/computer/computer.component';
 
 interface NavItem {
   path: string;
@@ -27,6 +28,7 @@ interface NavItem {
     CommonModule, RouterOutlet, RouterLink, RouterLinkActive,
     MatSidenavModule, MatToolbarModule, MatListModule,
     MatIconModule, MatButtonModule, MatBadgeModule,
+    ComputerComponent,
   ],
   template: `
     @if (auth.isLoggedIn()) {
@@ -72,6 +74,11 @@ interface NavItem {
           </mat-nav-list>
           <div class="sidenav-footer">
             <span class="role-chip">{{ auth.userRole() }}</span>
+            @if (computerEnabled()) {
+              <button mat-icon-button (click)="computer?.toggle()" title="Computer Console (Ctrl+K)">
+                <mat-icon>smart_toy</mat-icon>
+              </button>
+            }
             <button mat-icon-button (click)="auth.logout()" title="Abmelden">
               <mat-icon>logout</mat-icon>
             </button>
@@ -81,6 +88,9 @@ interface NavItem {
           <router-outlet></router-outlet>
         </mat-sidenav-content>
       </mat-sidenav-container>
+      @if (computerEnabled()) {
+        <app-computer #computer></app-computer>
+      }
     } @else {
       <router-outlet></router-outlet>
     }
@@ -88,6 +98,10 @@ interface NavItem {
   styleUrl: './app.scss',
 })
 export class App implements OnInit, OnDestroy {
+  @ViewChild('computer') computer?: ComputerComponent;
+
+  computerEnabled = computed(() => this.auth.user()?.computer_console_enabled ?? false);
+
   private readonly navItems: NavItem[] = [
     { path: '/dashboard',    label: 'Dashboard',        icon: 'dashboard',    roles: ['admin','sysadmin','network_technician','viewer'] },
     { path: '/bridge',       label: 'Brücke',           icon: 'rocket_launch',roles: ['admin','sysadmin','network_technician','viewer'] },

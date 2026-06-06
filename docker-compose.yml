@@ -90,6 +90,38 @@ services:
     ports:
       - "127.0.0.1:4200:80"
 
+  centralcore:
+    build:
+      context: ./centralcore
+      args:
+        HTTP_PROXY: http://proxy.ippen.media:80
+        HTTPS_PROXY: http://proxy.ippen.media:80
+        NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
+    restart: unless-stopped
+    environment:
+      HERMES_PATH: /hermes
+      PYTHONPATH: /hermes
+      CENTRALCORE_URL: http://centralcore:8001
+      HTTP_PROXY: http://proxy.ippen.media:80
+      HTTPS_PROXY: http://proxy.ippen.media:80
+      NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
+    volumes:
+      - /home/mutkluge/.hermes:/root/.hermes
+      - /home/mutkluge/Dev/code/hermes-agent:/hermes:ro
+      - ./centralcore/hermes_config.yaml:/root/.hermes/config.yaml:ro
+    ports:
+      - "127.0.0.1:8001:8001"
+    cap_add:
+      - NET_RAW
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   nginx:
     image: nginx:alpine
     restart: unless-stopped

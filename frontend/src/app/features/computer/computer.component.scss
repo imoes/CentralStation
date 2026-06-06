@@ -1,0 +1,434 @@
+:host {
+  display: contents;
+}
+
+.computer-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 440px;
+  z-index: 1000;
+  background: #000;
+  border-left: 4px solid #ff9933;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.7);
+
+  &.open {
+    transform: translateX(0);
+  }
+}
+
+// ── LCARS Top Bar ─────────────────────────────────────────────────
+
+.panel-top {
+  display: flex;
+  align-items: center;
+  background: #ff9933;
+  padding: 0 8px;
+  height: 44px;
+  flex-shrink: 0;
+  gap: 8px;
+
+  .cap-tl {
+    width: 24px;
+    height: 24px;
+    background: #000;
+    border-radius: 0 0 0 24px;
+    flex-shrink: 0;
+  }
+
+  .panel-title {
+    flex: 1;
+    font-family: 'Antonio', sans-serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: #000;
+    padding: 0 4px;
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    color: #000;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    line-height: 1;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.15);
+    }
+  }
+
+  .cap-tr {
+    width: 24px;
+    height: 24px;
+    background: #000;
+    border-radius: 0 0 24px 0;
+    flex-shrink: 0;
+  }
+}
+
+// ── Body layout ───────────────────────────────────────────────────
+
+.panel-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+// ── Session Rail (LCARS pills) ────────────────────────────────────
+
+.session-rail {
+  width: 120px;
+  flex-shrink: 0;
+  background: #0a0804;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
+  border-right: 2px solid #2a1a08;
+  overflow-y: auto;
+
+  &::-webkit-scrollbar {
+    width: 3px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: #3a2810;
+  }
+}
+
+.rail-head {
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  color: #5a3a18;
+  padding: 0 10px 6px;
+  border-bottom: 1px solid #2a1a08;
+  margin-bottom: 4px;
+}
+
+.rail-pill {
+  background: #ff9933;
+  color: #000;
+  border: none;
+  cursor: pointer;
+  border-radius: 0 18px 18px 0;
+  padding: 6px 10px 6px 12px;
+  margin-right: 6px;
+  text-align: left;
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  line-height: 1.2;
+  position: relative;
+  transition: background 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 114px;
+
+  &:hover:not(.active) {
+    background: #ffb366;
+  }
+
+  &.active {
+    background: #ffcc66;
+  }
+
+  &.new-pill {
+    background: #99ccff;
+    margin-top: 8px;
+
+    &:hover {
+      background: #bbdeff;
+    }
+  }
+
+  &.del-pill {
+    background: #cc4433;
+    color: #fff;
+    margin-top: 2px;
+
+    &:hover {
+      background: #ee5544;
+    }
+  }
+}
+
+.msg-badge {
+  font-size: 0.6rem;
+  opacity: 0.65;
+  margin-left: 4px;
+}
+
+// ── Conversation area ─────────────────────────────────────────────
+
+.conversation {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #050403;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 8px;
+  opacity: 0.4;
+
+  .empty-icon {
+    font-size: 2rem;
+    color: #ff9933;
+  }
+
+  .empty-text {
+    font-family: 'Antonio', sans-serif;
+    font-size: 1rem;
+    letter-spacing: 0.2em;
+    color: #ff9933;
+  }
+
+  .empty-sub {
+    font-size: 0.72rem;
+    color: #5a3a18;
+    text-align: center;
+    padding: 0 20px;
+  }
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: #3a2810;
+    border-radius: 2px;
+  }
+}
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+
+  &.user {
+    align-items: flex-end;
+
+    .msg-label {
+      color: #ffcc66;
+    }
+
+    .msg-text {
+      background: #1a1200;
+      border: 1px solid #3a2810;
+      border-radius: 10px 10px 2px 10px;
+    }
+  }
+
+  &.agent {
+    align-items: flex-start;
+
+    .msg-label {
+      color: #ff9933;
+    }
+
+    .msg-text {
+      background: #0d0d00;
+      border: 1px solid #2a1a08;
+      border-radius: 2px 10px 10px 10px;
+    }
+  }
+}
+
+.msg-label {
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+}
+
+.msg-text {
+  color: #ffe8a0;
+  font-size: 0.83rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 7px 10px;
+  max-width: 95%;
+}
+
+.thinking {
+  color: #ff9933;
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  padding: 6px 0;
+
+  .cursor {
+    animation: blink 1s step-end infinite;
+  }
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+// ── Input Row ─────────────────────────────────────────────────────
+
+.input-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 2px solid #2a1a08;
+  background: #0a0804;
+  flex-shrink: 0;
+}
+
+.lcars-input {
+  flex: 1;
+  background: #141008;
+  color: #ffe8a0;
+  border: 1px solid #3a2810;
+  border-radius: 4px;
+  padding: 7px 10px;
+  font-size: 0.83rem;
+  font-family: 'Antonio', sans-serif;
+  letter-spacing: 0.04em;
+  outline: none;
+  transition: border-color 0.15s;
+
+  &::placeholder {
+    color: #4a3010;
+  }
+
+  &:focus {
+    border-color: #ff9933;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+  }
+}
+
+.icon-btn {
+  background: #1a1208;
+  color: #ff9933;
+  border: 1px solid #3a2810;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 4px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+
+  mat-icon {
+    font-size: 1.1rem;
+    width: 1.1rem;
+    height: 1.1rem;
+  }
+
+  &:hover {
+    border-color: #ff9933;
+    background: #201808;
+  }
+
+  &.active {
+    color: #ff4433;
+    border-color: #ff4433;
+    background: #200a08;
+    animation: pulse 1s ease-in-out infinite;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.send-btn {
+  background: #ff9933;
+  color: #000;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: background 0.15s;
+
+  &:hover:not(:disabled) {
+    background: #ffb366;
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+}
+
+// ── LCARS Bottom Bar ──────────────────────────────────────────────
+
+.panel-bottom {
+  display: flex;
+  align-items: center;
+  background: #ff9933;
+  padding: 4px 8px;
+  gap: 8px;
+  flex-shrink: 0;
+  height: 32px;
+
+  .cap-bl {
+    width: 20px;
+    height: 20px;
+    background: #000;
+    border-radius: 0 20px 0 0;
+    flex-shrink: 0;
+  }
+
+  .cap-br {
+    width: 20px;
+    height: 20px;
+    background: #000;
+    border-radius: 20px 0 0 0;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+}
+
+.num-cell {
+  background: #000;
+  color: #ff9933;
+  padding: 2px 10px;
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  border-radius: 3px;
+  font-weight: 700;
+}
+
+.listening-cell {
+  color: #ff4433;
+  animation: pulse 1s ease-in-out infinite;
+}
