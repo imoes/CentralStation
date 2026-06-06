@@ -69,6 +69,7 @@ interface FeedItem {
   body: string | null;
   ai_insight: string | null;
   metadata: Record<string, any> | null;
+  host?: string | null;
   created_at: string;
   status: 'new' | 'acknowledged';
   location_name: string | null;
@@ -414,7 +415,7 @@ const SEVERITY_COLOR: Record<string, string> = {
               <span class="lh-sev" [attr.data-sev]="item.severity">{{ item.severity | uppercase }}</span>
               @if (itemHostLabel(item)) {
                 <span class="lh-dot">·</span>
-                <span class="lh-host host-clickable" (click)="filterByHost($event, itemHostLabel(item))">{{ itemHostLabel(item) }}</span>
+                <span class="lh-host host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Open Server Cockpit'">{{ itemHostLabel(item) }}</span>
               }
               @if (item.location_name) {
                 <span class="lh-dot">·</span>
@@ -478,7 +479,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                     </span>
                   }
                   @if (itemHostLabel(item)) {
-                    <span class="host-tag host-clickable" (click)="filterByHost($event, itemHostLabel(item))">
+                    <span class="host-tag host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Open Server Cockpit'">
                       <mat-icon style="font-size:12px;height:12px;width:12px">dns</mat-icon>
                       {{ itemHostLabel(item) }}
                     </span>
@@ -1513,6 +1514,8 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.route.queryParamMap.pipe(skip(1)).subscribe(params => {
       this.severityFilter = params.get('severity') ?? '';
       this.hostFilter     = params.get('host')     ?? '';
+      const highlight     = params.get('highlight');
+      if (highlight) this.highlightId = highlight;
       const source        = params.get('source');
       if (source) {
         this.routeSourceSet = true;
@@ -2060,6 +2063,17 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.showFilters.set(true);
     this.router.navigate(['/feed'], { queryParams: { host } });
   }
+
+  openHostCockpit(event: MouseEvent, host: string) {
+    event.stopPropagation();
+    if (!host) return;
+    window.open(
+      '/cockpit/' + encodeURIComponent(host),
+      'cockpit-' + host,
+      'width=1300,height=820,menubar=no,toolbar=no,location=no,status=no',
+    );
+  }
+
   severityColor(sev: string) { return SEVERITY_COLOR[sev] ?? '#757575'; }
 
   itemHostLabel(item: FeedItem): string {
@@ -2080,6 +2094,9 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     }
     if (item.source === 'wazuh') {
       return (m['agent'] as string) || (m['host'] as string) || '';
+    }
+    if (item.source === 'checkmk') {
+      return (m['host'] as string) || (item.host as string) || '';
     }
     return '';
   }

@@ -445,6 +445,9 @@ async def _get_or_create_generative_dashboard(user_id: uuid.UUID, db: AsyncSessi
     return dashboard
 
 
+_FQDN_RE = __import__("re").compile(r"\b[a-z](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?)+\b")
+
+
 async def _generative_payload(dashboard: Dashboard, db: AsyncSession) -> dict:
     result = await db.execute(
         select(DashboardWidget)
@@ -452,11 +455,27 @@ async def _generative_payload(dashboard: Dashboard, db: AsyncSession) -> dict:
         .order_by(DashboardWidget.gs_y, DashboardWidget.gs_x)
     )
     widgets = result.scalars().all()
+
+    # Collect known hosts from widget configs (forecast/timeseries carry host/hosts)
+    known_hosts: set[str] = set()
+    for w in widgets:
+        cfg = w.config or {}
+        if cfg.get("host"):
+            known_hosts.add(cfg["host"])
+        for h in (cfg.get("hosts") or []):
+            if h:
+                known_hosts.add(h)
+    # Also extract FQDNs from rationale text as fallback
+    if dashboard.rationale:
+        for match in _FQDN_RE.finditer(dashboard.rationale):
+            known_hosts.add(match.group(0))
+
     return {
         "dashboard": _dashboard_to_dict(dashboard),
         "widgets": [_to_dict(w) for w in widgets],
         "rationale": dashboard.rationale,
         "generated_at": dashboard.generated_at.isoformat() if dashboard.generated_at else None,
+        "hosts": sorted(known_hosts),
     }
 
 

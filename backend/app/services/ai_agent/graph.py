@@ -181,6 +181,7 @@ async def collect_data(state: dict, db: Any) -> dict:
 # Node 2: enrich
 # ─────────────────────────────────────────────────
 async def enrich(state: dict, db: Any) -> dict:
+    log.info("agent node: enrich (%d alerts)", len(state.get("raw_alerts", [])))
     from sqlalchemy import select
     from app.core.security import decrypt_credentials
     from app.models.connector import ConnectorConfig
@@ -222,6 +223,7 @@ async def enrich(state: dict, db: Any) -> dict:
 # Node 3: rag_lookup
 # ─────────────────────────────────────────────────
 async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any) -> dict:
+    log.info("agent node: rag_lookup (%d enriched alerts)", len(state.get("enriched_alerts", [])))
     alerts = state.get("enriched_alerts", [])
     if not alerts:
         return {**state, "rag_context": []}
@@ -380,6 +382,7 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
 # Node 4: analyze
 # ─────────────────────────────────────────────────
 async def analyze(state: dict, llm_config: Any) -> dict:
+    log.info("agent node: analyze (model=%s)", getattr(llm_config, "model", "?"))
     alerts = state.get("enriched_alerts", [])
     if not alerts:
         result = AnalysisResult(severity_summary="none")
@@ -516,6 +519,7 @@ async def analyze(state: dict, llm_config: Any) -> dict:
 # Node 5: act
 # ─────────────────────────────────────────────────
 async def act(state: dict, db: Any) -> dict:
+    log.info("agent node: act")
     analysis_data = state.get("analysis", {})
     if not analysis_data:
         return state
@@ -548,20 +552,29 @@ async def act(state: dict, db: Any) -> dict:
         from app.core.security import decrypt_credentials
         from app.models.connector import ConnectorConfig
 
-        result = await db.execute(
-            sa_select(ConnectorConfig).where(
-                ConnectorConfig.type.in_(["jira", "jira_sd"]),
-                ConnectorConfig.enabled.is_(True),
+        # Use the configured ticket project + connector (IMIT lives in jira_sd).
+        from app.services.settings import get_setting
+        jira_project = (await get_setting(db, "jira.ticket_project")) or jira_project
+        target_type = (await get_setting(db, "jira.ticket_connector")) or "jira_sd"
+        # Prefer the configured type, fall back to the other one.
+        jira_conn = None
+        for ctype in (target_type, "jira" if target_type == "jira_sd" else "jira_sd"):
+            result = await db.execute(
+                sa_select(ConnectorConfig).where(
+                    ConnectorConfig.type == ctype,
+                    ConnectorConfig.enabled.is_(True),
+                )
             )
-        )
-        jira_conn = result.scalars().first()
+            jira_conn = result.scalars().first()
+            if jira_conn:
+                break
         if jira_conn:
             from app.services.connectors.jira import JiraConnector
             creds = decrypt_credentials(jira_conn.encrypted_credentials)
-            jira_project = creds.get("project", jira_project)
             jira_svc = JiraConnector(base_url=jira_conn.base_url, credentials=creds)
 
-            priority_map = {"critical": "Critical", "high": "High", "medium": "Medium", "low": "Low"}
+            # ServiceDesk (IMIT) uses German priority names + Serviceanfrage type.
+            priority_map = {"critical": "Kritisch", "high": "Hoch", "medium": "Normal", "low": "Niedrig"}
             for rec in analysis.recommendations:
                 rec_level = threshold_levels.get(rec.priority, 3)
                 if rec_level > min_level:
@@ -576,8 +589,8 @@ async def act(state: dict, db: Any) -> dict:
                         project=jira_project,
                         summary=title,
                         description=f"{rec.rationale}\n\nAction: {rec.action}",
-                        issue_type="Bug",
-                        priority=priority_map.get(rec.priority, "High"),
+                        issue_type="Serviceanfrage",
+                        priority=priority_map.get(rec.priority, "Hoch"),
                         labels=["CentralStation", "AI-generated"],
                     )
                     tickets_created.append(issue.get("key", "?"))
