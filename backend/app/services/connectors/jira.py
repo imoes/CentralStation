@@ -124,9 +124,13 @@ class JiraConnector(BaseConnector):
                 "summary": summary,
                 "description": description,
                 "issuetype": {"name": issue_type},
-                "priority": {"name": priority},
             }
         }
+        # Priority is instance-specific (names differ per Jira config). Only send
+        # it when explicitly provided so a wrong/unknown name can't reject the
+        # whole create — callers may retry without priority.
+        if priority:
+            payload["fields"]["priority"] = {"name": priority}
         if labels:
             payload["fields"]["labels"] = labels
         async with self._client(timeout=30.0) as client:
