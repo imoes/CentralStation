@@ -53,7 +53,7 @@ services:
       args:
         HTTP_PROXY: http://proxy.ippen.media:80
         HTTPS_PROXY: http://proxy.ippen.media:80
-        NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,.ippen.media
+        NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,centralcore,.ippen.media
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://centralstation:${POSTGRES_PASSWORD}@db:5432/centralstation
@@ -63,9 +63,10 @@ services:
       OPENSEARCH_URL: https://opensearch:9200
       OPENSEARCH_USER: admin
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
+      CENTRALCORE_URL: http://centralcore:8001
       HTTP_PROXY: http://proxy.ippen.media:80
       HTTPS_PROXY: http://proxy.ippen.media:80
-      NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,.ippen.media
+      NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,centralcore,.ippen.media
     depends_on:
       db:
         condition: service_healthy
