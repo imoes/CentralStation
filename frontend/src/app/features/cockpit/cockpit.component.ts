@@ -446,6 +446,8 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
     .svc-cell {
       background: #0f0c08;
       border: 1px solid #1e1710;
+      min-width: 0;
+      overflow: hidden;
     }
     .svc-cell.expanded { grid-column: 1 / -1; border-color: #3a2810; }
     .svc-row {
