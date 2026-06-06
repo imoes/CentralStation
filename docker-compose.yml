@@ -106,11 +106,11 @@ services:
       HTTPS_PROXY: http://proxy.ippen.media:80
       NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
     volumes:
-      # Hermes auth tokens + session state (NOT the source code — that's baked in)
+      # ~/.hermes enthält Auth-Tokens, Session-State UND eigene Skills
+      # Eigene Skills → /home/mutkluge/.hermes/skills/<name>/SKILL.md
+      # Built-in Hermes-Skills bleiben unberührt in /opt/hermes/skills/ (baked in)
       - /home/mutkluge/.hermes:/root/.hermes
       - ./centralcore/hermes_config.yaml:/root/.hermes/config.yaml:ro
-      # Skills live-mount: edit skills on the host without rebuilding the image
-      - /home/mutkluge/Dev/code/hermes-agent/skills:/opt/hermes/skills
     ports:
       - "127.0.0.1:8001:8001"
     cap_add:
