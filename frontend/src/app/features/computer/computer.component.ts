@@ -12,15 +12,9 @@ import { AuthService } from '../../core/auth/auth.service';
 import { ComputerService } from '../../core/services/computer.service';
 import { environment } from '../../../environments/environment';
 
-interface FeedAction {
-  label: string;
-  params: Record<string, string>;
-}
-
 interface HermesMessage {
   role: 'user' | 'assistant';
   text: string;
-  feedActions?: FeedAction[];
 }
 
 interface HermesSession {
@@ -30,29 +24,23 @@ interface HermesSession {
   messages: HermesMessage[];
 }
 
-/** Parse [FEED:key=val&key2=val2] markers at end of assistant responses. */
-function parseFeedActions(text: string): { cleanText: string; actions: FeedAction[] } {
-  const actions: FeedAction[] = [];
-  const FEED_RE = /\[FEED:([^\]]+)\]/g;
-  let match: RegExpExecArray | null;
-  while ((match = FEED_RE.exec(text)) !== null) {
-    const raw = match[1];
-    const params: Record<string, string> = {};
-    raw.split('&').forEach(part => {
-      const [k, ...rest] = part.split('=');
-      if (k) params[k.trim()] = rest.join('=').trim();
-    });
-    if (Object.keys(params).length > 0) {
-      const label = params['host']
-        ? `Feed: ${params['host']}${params['severity'] ? ' · ' + params['severity'] : ''}`
-        : params['severity']
-          ? `Feed: ${params['severity']}`
-          : 'Feed öffnen';
-      actions.push({ label, params });
-    }
-  }
+/**
+ * Parse [FEED:key=val&key2=val2] markers from an assistant response.
+ * Returns the cleaned text (markers stripped) and the first set of params
+ * found (used to auto-navigate the feed).
+ */
+function parseFeedMarker(text: string): { cleanText: string; params: Record<string, string> | null } {
+  const match = /\[FEED:([^\]]+)\]/.exec(text);
+  if (!match) return { cleanText: text, params: null };
+
+  const params: Record<string, string> = {};
+  match[1].split('&').forEach(part => {
+    const [k, ...rest] = part.split('=');
+    if (k) params[k.trim()] = rest.join('=').trim();
+  });
+
   const cleanText = text.replace(/\[FEED:[^\]]+\]/g, '').trimEnd();
-  return { cleanText, actions };
+  return { cleanText, params: Object.keys(params).length > 0 ? params : null };
 }
 
 @Component({
@@ -130,18 +118,6 @@ function parseFeedActions(text: string): { cleanText: string; actions: FeedActio
                   {{ msg.role === 'user' ? '▶ NUTZER' : '◎ COMPUTER' }}
                 </span>
                 <div class="msg-text">{{ msg.text }}</div>
-
-                <!-- Feed action buttons (only on completed assistant messages) -->
-                @if (msg.role === 'assistant' && msg.feedActions?.length) {
-                  <div class="feed-actions">
-                    @for (action of msg.feedActions!; track action.label) {
-                      <button class="feed-action-btn" (click)="openFeed(action.params)">
-                        <mat-icon>open_in_browser</mat-icon>
-                        {{ action.label }}
-                      </button>
-                    }
-                  </div>
-                }
               </div>
             }
             @if (loading()) {
@@ -510,13 +486,6 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }
   }
 
-  // ── Feed navigation ───────────────────────────────────────────────
-
-  openFeed(params: Record<string, string>): void {
-    this.router.navigate(['/feed'], { queryParams: params });
-    this.close();
-  }
-
   // ── Voice input ───────────────────────────────────────────────────
 
   toggleVoice(): void {
@@ -641,18 +610,26 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }));
   }
 
-  /** Called once streaming is complete: parse FEED markers and attach as actions. */
+  /**
+   * Called once streaming is complete.
+   * Strips [FEED:...] markers from the displayed text and, if any were found,
+   * automatically navigates to the feed with the matching query params.
+   * The Computer panel stays open on top.
+   */
   private _finishAssistantMessage(sid: string, fullText: string): void {
-    const { cleanText, actions } = parseFeedActions(fullText);
+    const { cleanText, params } = parseFeedMarker(fullText);
     this.sessions.update(ss => ss.map(s => {
       if (s.session_id !== sid) return s;
       const msgs = [...s.messages];
       const last = msgs[msgs.length - 1];
       if (last?.role === 'assistant') {
-        msgs[msgs.length - 1] = { ...last, text: cleanText, feedActions: actions };
+        msgs[msgs.length - 1] = { ...last, text: cleanText };
       }
       return { ...s, messages: msgs };
     }));
+    if (params) {
+      this.router.navigate(['/feed'], { queryParams: params });
+    }
   }
 
   private _updateMsgCount(sid: string): void {
