@@ -6,13 +6,21 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
-import { HttpClient } from '@angular/common/http';
+import { Router } from '@angular/router';
+import { Subscription } from 'rxjs';
 import { AuthService } from '../../core/auth/auth.service';
+import { ComputerService } from '../../core/services/computer.service';
 import { environment } from '../../../environments/environment';
+
+interface FeedAction {
+  label: string;
+  params: Record<string, string>;
+}
 
 interface HermesMessage {
   role: 'user' | 'assistant';
   text: string;
+  feedActions?: FeedAction[];
 }
 
 interface HermesSession {
@@ -20,6 +28,31 @@ interface HermesSession {
   label: string;
   msg_count: number;
   messages: HermesMessage[];
+}
+
+/** Parse [FEED:key=val&key2=val2] markers at end of assistant responses. */
+function parseFeedActions(text: string): { cleanText: string; actions: FeedAction[] } {
+  const actions: FeedAction[] = [];
+  const FEED_RE = /\[FEED:([^\]]+)\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = FEED_RE.exec(text)) !== null) {
+    const raw = match[1];
+    const params: Record<string, string> = {};
+    raw.split('&').forEach(part => {
+      const [k, ...rest] = part.split('=');
+      if (k) params[k.trim()] = rest.join('=').trim();
+    });
+    if (Object.keys(params).length > 0) {
+      const label = params['host']
+        ? `Feed: ${params['host']}${params['severity'] ? ' · ' + params['severity'] : ''}`
+        : params['severity']
+          ? `Feed: ${params['severity']}`
+          : 'Feed öffnen';
+      actions.push({ label, params });
+    }
+  }
+  const cleanText = text.replace(/\[FEED:[^\]]+\]/g, '').trimEnd();
+  return { cleanText, actions };
 }
 
 @Component({
@@ -33,6 +66,13 @@ interface HermesSession {
       <div class="panel-top">
         <div class="cap-tl"></div>
         <span class="panel-title">COMPUTER</span>
+
+        <!-- Stop button (only while streaming) -->
+        @if (loading()) {
+          <button class="stop-btn" (click)="stopGeneration()" title="Antwort abbrechen">
+            <mat-icon>stop</mat-icon>
+          </button>
+        }
 
         <!-- TTS mute toggle -->
         <button class="tts-btn" [class.muted]="muted()" (click)="toggleMute()"
@@ -78,7 +118,7 @@ interface HermesSession {
               <div class="empty-icon">◉</div>
               <div class="empty-text">BEREIT</div>
               <div class="empty-sub">Neue Session starten oder Befehl eingeben</div>
-              <div class="empty-hint">⌨ Strg+K öffnen/schließen · Leertaste = Mikrofon · 🔊 oben stummschalten</div>
+              <div class="empty-hint">⌨ Strg+K öffnen/schließen · Leertaste = Mikrofon</div>
             </div>
           }
 
@@ -90,6 +130,18 @@ interface HermesSession {
                   {{ msg.role === 'user' ? '▶ NUTZER' : '◎ COMPUTER' }}
                 </span>
                 <div class="msg-text">{{ msg.text }}</div>
+
+                <!-- Feed action buttons (only on completed assistant messages) -->
+                @if (msg.role === 'assistant' && msg.feedActions?.length) {
+                  <div class="feed-actions">
+                    @for (action of msg.feedActions!; track action.label) {
+                      <button class="feed-action-btn" (click)="openFeed(action.params)">
+                        <mat-icon>open_in_browser</mat-icon>
+                        {{ action.label }}
+                      </button>
+                    }
+                  </div>
+                }
               </div>
             }
             @if (loading()) {
@@ -121,9 +173,15 @@ interface HermesSession {
                     title="Spracheingabe (Leertaste)">
               <mat-icon>{{ listening() ? 'mic' : 'mic_none' }}</mat-icon>
             </button>
-            <button class="send-btn"
-                    (click)="send()"
-                    [disabled]="loading() || !inputText.trim()">→</button>
+            @if (loading()) {
+              <button class="stop-inline-btn" (click)="stopGeneration()" title="Abbrechen">
+                <mat-icon>stop_circle</mat-icon>
+              </button>
+            } @else {
+              <button class="send-btn"
+                      (click)="send()"
+                      [disabled]="!inputText.trim()">→</button>
+            }
           </div>
         </div>
 
@@ -136,6 +194,9 @@ interface HermesSession {
         <span class="num-cell">{{ totalMessages() }} MSG</span>
         @if (listening()) {
           <span class="num-cell listening-cell">● REC</span>
+        }
+        @if (loading()) {
+          <span class="num-cell loading-cell">■ AKTIV</span>
         }
         @if (!muted()) {
           <span class="num-cell tts-cell">♪ TTS</span>
@@ -151,8 +212,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
   @ViewChild('msgContainer') private msgContainer?: ElementRef<HTMLDivElement>;
   @ViewChild('inputEl') private inputEl?: ElementRef<HTMLInputElement>;
 
-  private http = inject(HttpClient);
   private auth = inject(AuthService);
+  private router = inject(Router);
+  private computerService = inject(ComputerService);
   private apiBase = `${environment.apiUrl}/computer`;
 
   isOpen = signal(false);
@@ -169,6 +231,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
   private ttsUtterance?: SpeechSynthesisUtterance;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _recognition?: any;
+  private _abortController?: AbortController;
+  private _handoffSub?: Subscription;
 
   activeMessages = computed<HermesMessage[]>(() => {
     const sid = this.activeTabId();
@@ -183,14 +247,11 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   @HostListener('document:keydown', ['$event'])
   onKeydown(e: KeyboardEvent): void {
-    // Ctrl+K — toggle panel
     if (e.ctrlKey && e.key === 'k') {
       e.preventDefault();
       this.toggle();
       return;
     }
-
-    // Space — toggle voice when panel is open and no input is focused
     if (e.key === ' ' && this.isOpen()) {
       const active = document.activeElement;
       const isTyping = active instanceof HTMLInputElement
@@ -203,18 +264,23 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }
   }
 
-  ngOnInit(): void {}
+  ngOnInit(): void {
+    // Subscribe to incident handoffs from the News Feed
+    this._handoffSub = this.computerService.handoff$.subscribe(({ prompt, label }) => {
+      this._handleHandoff(prompt, label);
+    });
+  }
 
   ngOnDestroy(): void {
     this._recognition?.abort();
     this.mediaRecorder?.stop();
     window.speechSynthesis?.cancel();
+    this._abortController?.abort();
+    this._handoffSub?.unsubscribe();
   }
 
   // ── Panel controls ────────────────────────────────────────────────
 
-  // Note: we do NOT auto-focus the input on open so that the Space
-  // key shortcut works without typing spaces into the field.
   toggle(): void { this.isOpen.update(v => !v); }
   open(): void   { this.isOpen.set(true); }
   close(): void  { this.isOpen.set(false); window.speechSynthesis?.cancel(); }
@@ -234,34 +300,27 @@ export class ComputerComponent implements OnInit, OnDestroy {
     });
   }
 
-  /**
-   * Strip code blocks, terminal output and markdown so the TTS engine reads
-   * only the prose — not a wall of `ping` output or a service table.
-   */
   private cleanForSpeech(text: string): string {
     let t = text;
-    t = t.replace(/```[\s\S]*?```/g, ' . ');          // fenced code blocks
-    t = t.replace(/`[^`]*`/g, '');                      // inline code
-    t = t.replace(/^\s*[#>\-*]+\s?/gm, '');             // md headings/quotes/bullets
-    t = t.replace(/\*\*([^*]+)\*\*/g, '$1');            // bold
-    t = t.replace(/\*([^*]+)\*/g, '$1');                // italic
-    t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');      // links → text
-    // Drop lines that look like raw terminal/tabular output (IPs, lots of digits,
-    // ascii tables, ping/traceroute rows)
+    t = t.replace(/```[\s\S]*?```/g, ' . ');
+    t = t.replace(/`[^`]*`/g, '');
+    t = t.replace(/^\s*[#>\-*]+\s?/gm, '');
+    t = t.replace(/\*\*([^*]+)\*\*/g, '$1');
+    t = t.replace(/\*([^*]+)\*/g, '$1');
+    t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
     t = t.split('\n')
       .filter(line => {
         const l = line.trim();
         if (!l) return false;
-        if (/^[\s|+\-=_]+$/.test(l)) return false;                  // table borders
-        if (/\d+\.\d+\.\d+\.\d+/.test(l)) return false;             // IP-heavy lines
-        if (/^\d+\s+(ms|bytes|packets)/i.test(l)) return false;     // ping/trace rows
+        if (/^[\s|+\-=_]+$/.test(l)) return false;
+        if (/\d+\.\d+\.\d+\.\d+/.test(l)) return false;
+        if (/^\d+\s+(ms|bytes|packets)/i.test(l)) return false;
         const digits = (l.match(/\d/g) || []).length;
-        if (digits > l.length * 0.4) return false;                 // mostly numbers
+        if (digits > l.length * 0.4) return false;
         return true;
       })
       .join(' ');
     t = t.replace(/\s+/g, ' ').trim();
-    // Cap length so it never reads minutes of text aloud
     return t.length > 600 ? t.slice(0, 600) + ' …' : t;
   }
 
@@ -273,20 +332,28 @@ export class ComputerComponent implements OnInit, OnDestroy {
     utter.lang = 'de-DE';
     utter.rate = 1.05;
     utter.pitch = 0.9;
-
-    // Prefer a German voice if available
     const voices = window.speechSynthesis.getVoices();
     const deVoice = voices.find(v => v.lang.startsWith('de') && !v.name.includes('eSpeak'))
                  ?? voices.find(v => v.lang.startsWith('de'));
     if (deVoice) utter.voice = deVoice;
-
     this.ttsUtterance = utter;
     window.speechSynthesis.speak(utter);
   }
 
+  // ── Incident handoff ──────────────────────────────────────────────
+
+  private async _handleHandoff(prompt: string, label?: string): Promise<void> {
+    this.open();
+    await this.newSession(label);
+    const sid = this.activeTabId();
+    if (!sid) return;
+    this.inputText = prompt;
+    await this.send();
+  }
+
   // ── Session management ────────────────────────────────────────────
 
-  async newSession(): Promise<void> {
+  async newSession(label?: string): Promise<void> {
     const token = this.auth.getAccessToken();
     try {
       const r = await fetch(`${this.apiBase}/sessions`, {
@@ -299,10 +366,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
       });
       if (!r.ok) { console.error('Session creation failed:', r.status); return; }
       const session: { session_id: string; label: string } = await r.json();
-      this.sessions.update(ss => [...ss, { ...session, msg_count: 0, messages: [] }]);
+      const displayLabel = label ?? session.label;
+      this.sessions.update(ss => [...ss, { ...session, label: displayLabel, msg_count: 0, messages: [] }]);
       this.activeTabId.set(session.session_id);
       this.open();
-      this.focusInput();
     } catch (err) {
       console.error('Failed to create session:', err);
     }
@@ -328,6 +395,13 @@ export class ComputerComponent implements OnInit, OnDestroy {
     this.activeTabId.set(remaining.length > 0 ? remaining[remaining.length - 1].session_id : null);
   }
 
+  // ── Stop generation ───────────────────────────────────────────────
+
+  stopGeneration(): void {
+    this._abortController?.abort();
+    this.loading.set(false);
+  }
+
   // ── Send message → SSE stream ─────────────────────────────────────
 
   async send(): Promise<void> {
@@ -350,6 +424,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
     const token = this.auth.getAccessToken();
     let fullAssistantText = '';
+    this._abortController = new AbortController();
 
     try {
       const resp = await fetch(`${this.apiBase}/sessions/${sid}/message`, {
@@ -359,6 +434,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ content: text }),
+        signal: this._abortController.signal,
       });
 
       if (!resp.ok) {
@@ -388,24 +464,36 @@ export class ComputerComponent implements OnInit, OnDestroy {
               this._appendToLast(sid, data.text);
             }
             if (data.type === 'done') {
+              this._finishAssistantMessage(sid, fullAssistantText);
               this.loading.set(false);
               this.speak(fullAssistantText);
             }
             if (data.type === 'error') {
-              const errMsg = `\n[Fehler: ${data.text}]`;
-              this._appendToLast(sid, errMsg);
+              this._appendToLast(sid, `\n[Fehler: ${data.text}]`);
               this.loading.set(false);
             }
           } catch { /* skip malformed */ }
         }
         this.scrollToBottom();
       }
-    } catch (err) {
-      this._appendToLast(sid, `[Verbindungsfehler: ${err}]`);
+    } catch (err: unknown) {
+      // AbortError = user stopped the stream — not an error worth showing
+      if (err instanceof Error && err.name === 'AbortError') {
+        this._appendToLast(sid, ' [gestoppt]');
+      } else {
+        this._appendToLast(sid, `[Verbindungsfehler: ${err}]`);
+      }
     } finally {
       this.loading.set(false);
       this.scrollToBottom();
     }
+  }
+
+  // ── Feed navigation ───────────────────────────────────────────────
+
+  openFeed(params: Record<string, string>): void {
+    this.router.navigate(['/feed'], { queryParams: params });
+    this.close();
   }
 
   // ── Voice input ───────────────────────────────────────────────────
@@ -420,7 +508,6 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
     this.voiceError.set(null);
 
-    // Primary: browser-native SpeechRecognition (Chrome/Edge, no backend needed)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (SR) {
@@ -460,7 +547,6 @@ export class ComputerComponent implements OnInit, OnDestroy {
       }
     }
 
-    // Fallback: record audio → Whisper (requires HTTPS or localhost)
     if (!navigator.mediaDevices?.getUserMedia) {
       this.voiceError.set('Mikrofon nicht verfügbar – HTTPS oder localhost erforderlich');
       return;
@@ -529,6 +615,20 @@ export class ComputerComponent implements OnInit, OnDestroy {
       const msgs = [...s.messages];
       if (msgs.length > 0 && msgs[msgs.length - 1].role === 'assistant') {
         msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], text: msgs[msgs.length - 1].text + text };
+      }
+      return { ...s, messages: msgs };
+    }));
+  }
+
+  /** Called once streaming is complete: parse FEED markers and attach as actions. */
+  private _finishAssistantMessage(sid: string, fullText: string): void {
+    const { cleanText, actions } = parseFeedActions(fullText);
+    this.sessions.update(ss => ss.map(s => {
+      if (s.session_id !== sid) return s;
+      const msgs = [...s.messages];
+      const last = msgs[msgs.length - 1];
+      if (last?.role === 'assistant') {
+        msgs[msgs.length - 1] = { ...last, text: cleanText, feedActions: actions };
       }
       return { ...s, messages: msgs };
     }));
