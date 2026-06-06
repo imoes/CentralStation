@@ -232,6 +232,15 @@
     text-align: center;
     padding: 0 20px;
   }
+
+  .empty-hint {
+    font-size: 0.62rem;
+    color: #6a4a20;
+    text-align: center;
+    padding: 8px 24px 0;
+    line-height: 1.6;
+    letter-spacing: 0.03em;
+  }
 }
 
 .messages {

@@ -218,24 +218,34 @@ async def get_checkmk_host(hostname: str) -> dict:
     from app.core.security import decrypt_credentials
 
     async with (await _get_db_session()) as db:
-        result = await db.execute(
+        configs = (await db.execute(
             select(ConnectorConfig).where(
                 ConnectorConfig.type == "checkmk",
                 ConnectorConfig.enabled.is_(True),
-            ).limit(1)
-        )
-        cfg = result.scalar_one_or_none()
-        if not cfg:
-            return {"error": "Kein CheckMK-Connector konfiguriert"}
+            )
+        )).scalars().all()
 
+    if not configs:
+        return {"error": "Kein CheckMK-Connector konfiguriert"}
+
+    # Multi-location: try every enabled CheckMK site until the host is found.
+    errors: list[str] = []
+    for cfg in configs:
         creds = decrypt_credentials(cfg.encrypted_credentials)
         connector = CheckMKConnector(base_url=cfg.base_url, credentials=creds)
         try:
             services = await connector.list_services(hostname)
-            return {"hostname": hostname, "services": services}
+            if services:
+                return {"hostname": hostname, "site": cfg.name, "services": services}
         except Exception as exc:
-            log.warning("get_checkmk_host %s: %s", hostname, exc)
-            return {"hostname": hostname, "error": str(exc)}
+            log.warning("get_checkmk_host %s on '%s': %s", hostname, cfg.name, exc)
+            errors.append(f"{cfg.name}: {exc}")
+
+    return {
+        "hostname": hostname,
+        "error": "Host auf keinem CheckMK-Standort gefunden",
+        "details": errors or None,
+    }
 
 
 # ── Tool 6: Create Jira Ticket ─────────────────────────────────────
@@ -250,14 +260,12 @@ async def create_jira_ticket(title: str, description: str, priority: str = "medi
     - priority: Priorität (critical/high/medium/low, Standard: medium)
 
     Nutze dieses Tool wenn der Nutzer ein Ticket oder eine Aufgabe erstellen möchte."""
+    import json as _json
     from sqlalchemy import select
     from app.models.connector import ConnectorConfig
     from app.services.connectors.jira import JiraConnector
     from app.models.settings import GlobalSetting
     from app.core.security import decrypt_credentials
-
-    prio_map = {"critical": "Kritisch", "high": "Hoch", "medium": "Mittel", "low": "Niedrig"}
-    jira_priority = prio_map.get(priority, "Mittel")
 
     async with (await _get_db_session()) as db:
         cfg_result = await db.execute(
@@ -270,12 +278,25 @@ async def create_jira_ticket(title: str, description: str, priority: str = "medi
         if not cfg:
             return {"ok": False, "error": "Kein Jira-Connector konfiguriert"}
 
-        # Get default project from global settings
-        proj_setting = await db.execute(
+        # Default project from global settings
+        proj_row = (await db.execute(
             select(GlobalSetting).where(GlobalSetting.key == "jira.default_project")
-        )
-        proj_row = proj_setting.scalar_one_or_none()
+        )).scalar_one_or_none()
         project = proj_row.value_plain if proj_row else "IMIT"
+
+        # Priority names are instance-specific. Default to the standard Jira
+        # priority names (Highest/High/Medium/Low); override per instance via the
+        # global setting jira.priority_map = {"critical": "Kritisch", ...}.
+        prio_map = {"critical": "Highest", "high": "High", "medium": "Medium", "low": "Low"}
+        map_row = (await db.execute(
+            select(GlobalSetting).where(GlobalSetting.key == "jira.priority_map")
+        )).scalar_one_or_none()
+        if map_row and map_row.value_plain:
+            try:
+                prio_map.update(_json.loads(map_row.value_plain))
+            except Exception:
+                log.warning("jira.priority_map is not valid JSON, using defaults")
+        jira_priority = prio_map.get(priority, prio_map.get("medium", ""))
 
         creds = decrypt_credentials(cfg.encrypted_credentials)
         connector = JiraConnector(base_url=cfg.base_url, credentials=creds)
@@ -288,8 +309,21 @@ async def create_jira_ticket(title: str, description: str, priority: str = "medi
             )
             return {"ok": True, "jira_key": issue.get("key", ""), "url": issue.get("url", "")}
         except Exception as exc:
-            log.warning("create_jira_ticket: %s", exc)
-            return {"ok": False, "error": str(exc)}
+            # A wrong/unknown priority name rejects the whole create → retry once
+            # without priority so the ticket still gets created.
+            log.warning("create_jira_ticket failed (%s) — retrying without priority", exc)
+            try:
+                issue = await connector.create_issue(
+                    project=project,
+                    summary=title[:200],
+                    description=description,
+                    priority="",
+                )
+                return {"ok": True, "jira_key": issue.get("key", ""),
+                        "url": issue.get("url", ""), "note": "ohne Priorität erstellt"}
+            except Exception as exc2:
+                log.warning("create_jira_ticket retry failed: %s", exc2)
+                return {"ok": False, "error": str(exc2)}
 
 
 # ── DB session helper ──────────────────────────────────────────────
