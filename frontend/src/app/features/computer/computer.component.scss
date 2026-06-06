@@ -51,6 +51,31 @@
     padding: 0 4px;
   }
 
+  .tts-btn {
+    background: none;
+    border: none;
+    color: #000;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+
+    mat-icon {
+      font-size: 1.1rem;
+      width: 1.1rem;
+      height: 1.1rem;
+    }
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.15);
+    }
+
+    &.muted {
+      opacity: 0.45;
+    }
+  }
+
   .close-btn {
     background: none;
     border: none;
@@ -431,4 +456,8 @@
 .listening-cell {
   color: #ff4433;
   animation: pulse 1s ease-in-out infinite;
+}
+
+.tts-cell {
+  color: #99ccff;
 }
