@@ -87,25 +87,26 @@ _whisper_model = None
 async def _startup_mcp_discovery() -> None:
     """Pre-discover MCP tools at startup so they are ready before the first session.
 
-    Background: Hermes starts MCP discovery in a thread with only a 0.75s wait.
-    For a network SSE connection (centralstation backend) that's not enough.
-    Triggering discovery here at startup gives it plenty of time to complete
-    before any agent is created.
+    Hermes's background discovery thread only waits 0.75s. For a network SSE
+    connection that's not enough. Running discovery at startup gives it time to
+    complete before any agent is created.
+    Requires the 'mcp' SDK package to be installed (added to requirements.txt).
     """
     def _discover() -> None:
-        import time
         try:
             from tools.mcp_tool import discover_mcp_tools
             log.info("Pre-discovering MCP tools (centralstation SSE)…")
             discover_mcp_tools()
-            log.info("MCP tool discovery complete.")
+            from tools.mcp_tool import get_mcp_status
+            status = get_mcp_status()
+            total_tools = sum(s.get("tools", 0) for s in status)
+            log.info("MCP discovery done: %d tool(s) from %d server(s)", total_tools, len(status))
         except Exception as exc:
-            log.warning("MCP pre-discovery failed (tools may not be available): %s", exc)
+            log.warning("MCP pre-discovery failed: %s", exc)
 
     import threading
     t = threading.Thread(target=_discover, daemon=True, name="mcp-prediscovery")
     t.start()
-    # Give it a few seconds in the background — don't block startup
     await asyncio.sleep(0)
 
 
