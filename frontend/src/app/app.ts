@@ -106,6 +106,13 @@ export class App implements OnInit, OnDestroy {
   private badgeInterval: ReturnType<typeof setInterval> | null = null;
   private http = inject(HttpClient);
   private themeService = inject(ThemeService);
+  private router = inject(Router);
+  private _cockpitMsgHandler = (e: MessageEvent) => {
+    if (e.origin !== window.location.origin) return;
+    if (e.data?.type !== 'cockpit:focus-alert') return;
+    const { id, host } = e.data as { id: string; host: string };
+    this.router.navigate(['/feed'], { queryParams: { host, highlight: id } });
+  };
 
   visibleNavItems = computed(() => {
     const role = this.auth.userRole();
@@ -132,10 +139,13 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
-  ngOnInit() {}
+  ngOnInit() {
+    window.addEventListener('message', this._cockpitMsgHandler);
+  }
 
   ngOnDestroy() {
     if (this.badgeInterval) clearInterval(this.badgeInterval);
+    window.removeEventListener('message', this._cockpitMsgHandler);
   }
 
   startBadgePolling() {
