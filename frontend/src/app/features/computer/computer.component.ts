@@ -78,6 +78,7 @@ interface HermesSession {
               <div class="empty-icon">◉</div>
               <div class="empty-text">BEREIT</div>
               <div class="empty-sub">Neue Session starten oder Befehl eingeben</div>
+              <div class="empty-hint">⌨ Strg+K öffnen/schließen · Leertaste = Mikrofon · 🔊 oben stummschalten</div>
             </div>
           }
 
@@ -220,10 +221,42 @@ export class ComputerComponent implements OnInit, OnDestroy {
     });
   }
 
+  /**
+   * Strip code blocks, terminal output and markdown so the TTS engine reads
+   * only the prose — not a wall of `ping` output or a service table.
+   */
+  private cleanForSpeech(text: string): string {
+    let t = text;
+    t = t.replace(/```[\s\S]*?```/g, ' . ');          // fenced code blocks
+    t = t.replace(/`[^`]*`/g, '');                      // inline code
+    t = t.replace(/^\s*[#>\-*]+\s?/gm, '');             // md headings/quotes/bullets
+    t = t.replace(/\*\*([^*]+)\*\*/g, '$1');            // bold
+    t = t.replace(/\*([^*]+)\*/g, '$1');                // italic
+    t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');      // links → text
+    // Drop lines that look like raw terminal/tabular output (IPs, lots of digits,
+    // ascii tables, ping/traceroute rows)
+    t = t.split('\n')
+      .filter(line => {
+        const l = line.trim();
+        if (!l) return false;
+        if (/^[\s|+\-=_]+$/.test(l)) return false;                  // table borders
+        if (/\d+\.\d+\.\d+\.\d+/.test(l)) return false;             // IP-heavy lines
+        if (/^\d+\s+(ms|bytes|packets)/i.test(l)) return false;     // ping/trace rows
+        const digits = (l.match(/\d/g) || []).length;
+        if (digits > l.length * 0.4) return false;                 // mostly numbers
+        return true;
+      })
+      .join(' ');
+    t = t.replace(/\s+/g, ' ').trim();
+    // Cap length so it never reads minutes of text aloud
+    return t.length > 600 ? t.slice(0, 600) + ' …' : t;
+  }
+
   private speak(text: string): void {
-    if (this.muted() || !text.trim() || !('speechSynthesis' in window)) return;
+    const clean = this.cleanForSpeech(text);
+    if (this.muted() || !clean.trim() || !('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
+    const utter = new SpeechSynthesisUtterance(clean);
     utter.lang = 'de-DE';
     utter.rate = 1.05;
     utter.pitch = 0.9;
