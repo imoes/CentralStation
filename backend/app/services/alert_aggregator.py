@@ -624,13 +624,13 @@ async def run_aggregation(db: AsyncSession) -> int:
                 async with _ASL() as s:
                     await correlate_docs(d, s)
 
-            _asyncio.create_task(_do_correlate(docs))
+            from app.core.tasks import run_background
+            run_background(_do_correlate(docs), name="incident_correlation")
         except Exception as exc:
-            log.debug("Could not schedule incident correlation: %s", exc)
+            log.warning("Could not schedule incident correlation: %s", exc)
 
         # Enrich new alerts with AI insight in the background (best-effort, only if auto_enrich=true)
         try:
-            import asyncio
             from app.core.database import AsyncSessionLocal
             from app.services.settings import get_llm_config, get_agent_config
 
@@ -646,16 +646,18 @@ async def run_aggregation(db: AsyncSession) -> int:
                     searxng_url = searxng.base_url if (agent_cfg.workflow_web_search and searxng.is_configured) else ""
                     relevant = await _filter_enrichable_docs(docs_to_enrich, s)
                 if relevant:
-                    asyncio.create_task(enrich_batch(
+                    from app.core.tasks import run_background
+                    run_background(enrich_batch(
                         relevant, llm_cfg,
                         searxng_url=searxng_url,
                         agent_cfg=agent_cfg,
                         db=None,  # background task — open fresh session in scorer
-                    ))
+                    ), name="feed_enrich_batch")
 
-            asyncio.create_task(_do_enrich(docs))
+            from app.core.tasks import run_background
+            run_background(_do_enrich(docs), name="feed_enrich_schedule")
         except Exception as exc:
-            log.debug("Could not schedule feed enrichment: %s", exc)
+            log.warning("Could not schedule feed enrichment: %s", exc)
 
     # Freshness: resolve CheckMK alerts whose problems no longer appear in CheckMK
     if checkmk_had_successful_poll:

@@ -11,12 +11,11 @@ import { MatBadgeModule } from '@angular/material/badge';
 import { AuthService } from './core/auth/auth.service';
 import { WebsocketService } from './core/services/websocket.service';
 import { ThemeService } from './core/services/theme.service';
-import { I18nService } from './core/services/i18n.service';
 import { environment } from '../environments/environment';
 
 interface NavItem {
   path: string;
-  labelKey: string;
+  label: string;
   icon: string;
   roles: string[];
 }
@@ -34,7 +33,7 @@ interface NavItem {
       <mat-sidenav-container class="app-container">
         <mat-sidenav mode="side" opened class="sidenav" [class.collapsed]="navCollapsed()">
           <div class="sidenav-header">
-            <button mat-icon-button class="nav-toggle" (click)="toggleNav()" [title]="i18n.t('app.nav.toggle')">
+            <button mat-icon-button class="nav-toggle" (click)="toggleNav()" title="Navigation ein-/ausklappen">
               <mat-icon>menu</mat-icon>
             </button>
             <mat-icon class="brand-icon">hub</mat-icon>
@@ -44,36 +43,36 @@ interface NavItem {
             @for (item of visibleNavItems(); track item.path) {
               @if (item.path === '/feed') {
                 <a mat-list-item [routerLink]="item.path" routerLinkActive="active"
-                   (click)="onFeedClick()" [title]="i18n.t(item.labelKey)">
+                   (click)="onFeedClick()" [title]="item.label">
                   <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
                   <span matListItemTitle class="nav-label">
-                    {{ i18n.t(item.labelKey) }}
+                    {{ item.label }}
                     @if (unreadFeedCount() > 0) {
                       <span class="feed-badge">{{ unreadFeedCount() > 99 ? '99+' : unreadFeedCount() }}</span>
                     }
                   </span>
                 </a>
               } @else if (item.path === '/my-tickets') {
-                <a mat-list-item [routerLink]="item.path" routerLinkActive="active" [title]="i18n.t(item.labelKey)">
+                <a mat-list-item [routerLink]="item.path" routerLinkActive="active" [title]="item.label">
                   <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
                   <span matListItemTitle class="nav-label">
-                    {{ i18n.t(item.labelKey) }}
+                    {{ item.label }}
                     @if (unreadTicketCount() > 0) {
                       <span class="feed-badge">{{ unreadTicketCount() > 99 ? '99+' : unreadTicketCount() }}</span>
                     }
                   </span>
                 </a>
               } @else {
-                <a mat-list-item [routerLink]="item.path" routerLinkActive="active" [title]="i18n.t(item.labelKey)">
+                <a mat-list-item [routerLink]="item.path" routerLinkActive="active" [title]="item.label">
                   <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                  <span matListItemTitle class="nav-label">{{ i18n.t(item.labelKey) }}</span>
+                  <span matListItemTitle class="nav-label">{{ item.label }}</span>
                 </a>
               }
             }
           </mat-nav-list>
           <div class="sidenav-footer">
             <span class="role-chip">{{ auth.userRole() }}</span>
-            <button mat-icon-button (click)="auth.logout()" [title]="i18n.t('app.nav.logout')">
+            <button mat-icon-button (click)="auth.logout()" title="Abmelden">
               <mat-icon>logout</mat-icon>
             </button>
           </div>
@@ -90,15 +89,15 @@ interface NavItem {
 })
 export class App implements OnInit, OnDestroy {
   private readonly navItems: NavItem[] = [
-    { path: '/dashboard',    labelKey: 'app.nav.dashboard',  icon: 'dashboard',    roles: ['admin','sysadmin','network_technician','viewer'] },
-    { path: '/bridge',       labelKey: 'app.nav.bridge',     icon: 'rocket_launch',roles: ['admin','sysadmin','network_technician','viewer'] },
-    { path: '/feed',         labelKey: 'app.nav.feed',       icon: 'feed',         roles: ['admin','sysadmin','network_technician'] },
-    { path: '/alerts',       labelKey: 'app.nav.alerts',     icon: 'notifications',roles: ['admin','sysadmin'] },
-    { path: '/my-tickets',   labelKey: 'app.nav.myTickets',  icon: 'assignment',   roles: ['admin','sysadmin'] },
-    { path: '/kanban',       labelKey: 'app.nav.kanban',     icon: 'view_kanban',  roles: ['admin','sysadmin','network_technician'] },
-    { path: '/ai-insights',  labelKey: 'app.nav.aiInsights', icon: 'psychology',   roles: ['admin','sysadmin'] },
-    { path: '/settings',     labelKey: 'app.nav.settings',   icon: 'settings',     roles: ['admin','sysadmin','network_technician','viewer'] },
-    { path: '/help',         labelKey: 'app.nav.help',       icon: 'help',         roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/dashboard',    label: 'Dashboard',        icon: 'dashboard',    roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/bridge',       label: 'Brücke',           icon: 'rocket_launch',roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/feed',         label: 'News Feed',        icon: 'feed',         roles: ['admin','sysadmin','network_technician'] },
+    { path: '/alerts',       label: 'Alerts',           icon: 'notifications',roles: ['admin','sysadmin'] },
+    { path: '/my-tickets',   label: 'Meine Tickets',    icon: 'assignment',   roles: ['admin','sysadmin'] },
+    { path: '/kanban',       label: 'Kanban',           icon: 'view_kanban',  roles: ['admin','sysadmin','network_technician'] },
+    { path: '/ai-insights',  label: 'KI-Insights',      icon: 'psychology',   roles: ['admin','sysadmin'] },
+    { path: '/settings',     label: 'Einstellungen',    icon: 'settings',     roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/help',         label: 'Hilfe',            icon: 'help',         roles: ['admin','sysadmin','network_technician','viewer'] },
   ];
 
   unreadFeedCount = signal<number>(0);
@@ -107,7 +106,13 @@ export class App implements OnInit, OnDestroy {
   private badgeInterval: ReturnType<typeof setInterval> | null = null;
   private http = inject(HttpClient);
   private themeService = inject(ThemeService);
-  readonly i18n = inject(I18nService);
+  private router = inject(Router);
+  private _cockpitMsgHandler = (e: MessageEvent) => {
+    if (e.origin !== window.location.origin) return;
+    if (e.data?.type !== 'cockpit:focus-alert') return;
+    const { id, host } = e.data as { id: string; host: string };
+    this.router.navigate(['/feed'], { queryParams: { host, highlight: id } });
+  };
 
   visibleNavItems = computed(() => {
     const role = this.auth.userRole();
@@ -117,12 +122,10 @@ export class App implements OnInit, OnDestroy {
   constructor(public auth: AuthService, private ws: WebsocketService) {
     // Apply the locally-stored theme immediately (before login / first paint)
     this.themeService.initFromStorage();
-    this.i18n.initFromStorage();
     effect(() => {
       if (this.auth.isLoggedIn()) {
         this.auth.fetchMe();
         this.themeService.loadFromPreference();
-        this.i18n.loadFromPreference();
         this.ws.connect();
         if (!this.badgeInterval) this.startBadgePolling();
       } else {
@@ -136,10 +139,13 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
-  ngOnInit() {}
+  ngOnInit() {
+    window.addEventListener('message', this._cockpitMsgHandler);
+  }
 
   ngOnDestroy() {
     if (this.badgeInterval) clearInterval(this.badgeInterval);
+    window.removeEventListener('message', this._cockpitMsgHandler);
   }
 
   startBadgePolling() {
