@@ -1,0 +1,6 @@
+# Hermes CentralCore configuration
+# MCP server: CentralStation exposes IT-Ops tools for Hermes
+mcp_servers:
+  centralstation:
+    transport: http
+    url: http://backend:8000/api/mcp/sse
