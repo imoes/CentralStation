@@ -335,10 +335,111 @@
   color: #ffe8a0;
   font-size: 0.83rem;
   line-height: 1.55;
-  white-space: pre-wrap;
   word-break: break-word;
   padding: 7px 10px;
   max-width: 95%;
+
+  // Plain user messages: keep whitespace
+  &:not(.md) {
+    white-space: pre-wrap;
+  }
+
+  // Rendered markdown (assistant messages)
+  &.md {
+    // Paragraphs
+    p { margin: 0 0 6px; }
+    p:last-child { margin-bottom: 0; }
+
+    // Headings
+    h1, h2, h3 {
+      font-family: 'Antonio', sans-serif;
+      letter-spacing: 0.1em;
+      color: #ff9933;
+      margin: 10px 0 4px;
+    }
+    h1 { font-size: 1rem; }
+    h2 { font-size: 0.92rem; }
+    h3 { font-size: 0.84rem; }
+
+    // Bold / italic
+    strong { color: #ffcc66; font-weight: 700; }
+    em     { color: #ffdd99; font-style: italic; }
+
+    // Lists
+    ul, ol {
+      margin: 4px 0 6px 16px;
+      padding: 0;
+    }
+    li { margin-bottom: 2px; }
+
+    // Inline code
+    code {
+      background: #1a1400;
+      color: #99ccff;
+      border: 1px solid #2a2010;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 0.8rem;
+      font-family: 'Courier New', monospace;
+    }
+
+    // Fenced code blocks
+    pre {
+      background: #0d0d00;
+      border: 1px solid #2a2010;
+      border-left: 3px solid #ff9933;
+      border-radius: 4px;
+      padding: 8px 10px;
+      overflow-x: auto;
+      margin: 6px 0;
+      code {
+        background: none;
+        border: none;
+        padding: 0;
+        color: #ffe8a0;
+        font-size: 0.78rem;
+      }
+    }
+
+    // Horizontal rule
+    hr {
+      border: none;
+      border-top: 1px solid #2a1a08;
+      margin: 8px 0;
+    }
+
+    // Tables
+    table {
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      margin: 6px 0;
+      width: 100%;
+    }
+    th {
+      background: #1a1000;
+      color: #ff9933;
+      padding: 4px 8px;
+      text-align: left;
+      border: 1px solid #2a1a08;
+      font-family: 'Antonio', sans-serif;
+      letter-spacing: 0.06em;
+    }
+    td {
+      padding: 3px 8px;
+      border: 1px solid #2a1a08;
+      color: #ffe8a0;
+    }
+    tr:nth-child(even) td { background: #0a0800; }
+
+    // Blockquote
+    blockquote {
+      border-left: 3px solid #5a3a18;
+      margin: 4px 0;
+      padding: 4px 10px;
+      color: #c8a060;
+      font-style: italic;
+    }
+  }
 }
 
 .thinking {

@@ -6,11 +6,16 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
+import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
+import { marked } from 'marked';
 import { AuthService } from '../../core/auth/auth.service';
 import { ComputerService } from '../../core/services/computer.service';
 import { environment } from '../../../environments/environment';
+
+// Configure marked: no wrapping <p> for simple one-liners, GFM tables + breaks
+marked.setOptions({ gfm: true, breaks: true });
 
 interface HermesMessage {
   role: 'user' | 'assistant';
@@ -120,7 +125,9 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                 <span class="msg-label">
                   {{ msg.role === 'user' ? '▶ NUTZER' : '◎ COMPUTER' }}
                 </span>
-                <div class="msg-text">{{ msg.text }}</div>
+                <div class="msg-text"
+                     [class.md]="msg.role === 'assistant'"
+                     [innerHTML]="msg.role === 'assistant' ? renderMarkdown(msg.text) : msg.text"></div>
               </div>
             }
             @if (loading()) {
@@ -193,8 +200,14 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   private auth = inject(AuthService);
   private router = inject(Router);
+  private sanitizer = inject(DomSanitizer);
   private computerService = inject(ComputerService);
   private apiBase = `${environment.apiUrl}/computer`;
+
+  renderMarkdown(text: string): SafeHtml {
+    const html = marked.parse(text) as string;
+    return this.sanitizer.bypassSecurityTrustHtml(html);
+  }
 
   isOpen = signal(false);
   sessions = signal<HermesSession[]>([]);
@@ -399,7 +412,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
     this._addMessage(sid, 'user', text);
     this._addMessage(sid, 'assistant', '');
     this._updateMsgCount(sid);
-    this.scrollToBottom();
+    this.scrollToBottom(true); // force: immer zur neuen Nachricht scrollen
 
     const token = this.auth.getAccessToken();
     let fullAssistantText = '';
@@ -641,10 +654,16 @@ export class ComputerComponent implements OnInit, OnDestroy {
     ));
   }
 
-  private scrollToBottom(): void {
+  /** Scroll to bottom only if the user is already near the end (within 120px).
+   *  Pass force=true when the user sends a new message (always scroll). */
+  private scrollToBottom(force = false): void {
     setTimeout(() => {
       const el = this.msgContainer?.nativeElement;
-      if (el) el.scrollTop = el.scrollHeight;
+      if (!el) return;
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      if (force || nearBottom) {
+        el.scrollTop = el.scrollHeight;
+      }
     }, 10);
   }
 }
