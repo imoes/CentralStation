@@ -113,7 +113,7 @@ app.include_router(hosts.router, prefix="/api")
 app.include_router(oauth_providers.router, prefix="/api")
 app.include_router(centralcore_proxy.router, prefix="/api")
 app.include_router(ws.router)
-app.mount("/api/mcp", mcp.get_asgi_app())
+app.mount("/api/mcp", mcp.sse_app())
 
 
 @app.get("/api/health")
