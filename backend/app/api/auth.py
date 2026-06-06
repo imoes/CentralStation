@@ -138,8 +138,16 @@ async def logout(
 
 
 @router.get("/me", response_model=UserResponse)
-async def me(user: CurrentUser):
-    return user
+async def me(user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]):
+    # computer_console_enabled lives on UserPreference (separate table) —
+    # merge it in like list_users/update_user do, otherwise it defaults to False.
+    from app.models.workflow import UserPreference
+    prefs = (
+        await db.execute(select(UserPreference).where(UserPreference.user_id == user.id))
+    ).scalar_one_or_none()
+    row = UserResponse.model_validate(user)
+    row.computer_console_enabled = prefs.computer_console_enabled if prefs else False
+    return row
 
 
 @router.post("/change-password")
