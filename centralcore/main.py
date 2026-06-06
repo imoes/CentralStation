@@ -15,7 +15,6 @@ import asyncio
 import json
 import logging
 import os
-import sys
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -26,8 +25,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-# Hermes source code is volume-mounted at /hermes
-sys.path.insert(0, os.environ.get("HERMES_PATH", "/hermes"))
+# Hermes is installed at /opt/hermes via 'pip install /opt/hermes' in the Dockerfile.
+# run_agent.py and other top-level Hermes modules are importable via PYTHONPATH=/opt/hermes.
 
 
 def _configure_logging() -> None:

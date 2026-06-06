@@ -93,21 +93,23 @@ services:
   centralcore:
     build:
       context: ./centralcore
+      # Hermes source is baked into the image at build time (pip install /opt/hermes).
+      # Rebuild the image when hermes-agent changes: docker compose build centralcore
+      additional_contexts:
+        hermes: /home/mutkluge/Dev/code/hermes-agent
       args:
         HTTP_PROXY: http://proxy.ippen.media:80
         HTTPS_PROXY: http://proxy.ippen.media:80
         NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
     restart: unless-stopped
     environment:
-      HERMES_PATH: /hermes
-      PYTHONPATH: /hermes
       CENTRALCORE_URL: http://centralcore:8001
       HTTP_PROXY: http://proxy.ippen.media:80
       HTTPS_PROXY: http://proxy.ippen.media:80
       NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
     volumes:
+      # Hermes auth tokens + session state (NOT the source code — that's baked in)
       - /home/mutkluge/.hermes:/root/.hermes
-      - /home/mutkluge/Dev/code/hermes-agent:/hermes:ro
       - ./centralcore/hermes_config.yaml:/root/.hermes/config.yaml:ro
     ports:
       - "127.0.0.1:8001:8001"
