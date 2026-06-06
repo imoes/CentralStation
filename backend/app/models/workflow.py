@@ -108,7 +108,7 @@ class Dashboard(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     position: Mapped[int] = mapped_column(Integer, default=0)
     # "classic" | "generative"
-    mode: Mapped[str] = mapped_column(String(20), default="classic")
+    mode: Mapped[str] = mapped_column(String(20), default="generative")
     # Generative dashboard only: the LLM's explanation for the chosen layout
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Generative dashboard only: when the AI last composed this layout
