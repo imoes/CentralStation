@@ -273,11 +273,11 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
   styles: [`
     :host {
       display: block;
-      min-height: 100vh;
+      height: 100vh;
+      overflow: hidden;
       background: #000;
       color: #ffe8a0;
       font-family: Roboto, 'Helvetica Neue', sans-serif;
-      padding-bottom: 44px;
     }
 
     /* ── Cap Bars ── */
@@ -334,7 +334,9 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
 
     /* ── Body ── */
     .cockpit-body {
-      padding: 12px 16px 12px;
+      height: calc(100vh - 32px);
+      overflow-y: auto;
+      padding: 12px 16px 40px;
       display: flex;
       flex-direction: column;
       gap: 12px;

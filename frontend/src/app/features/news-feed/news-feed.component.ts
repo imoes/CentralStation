@@ -69,6 +69,7 @@ interface FeedItem {
   body: string | null;
   ai_insight: string | null;
   metadata: Record<string, any> | null;
+  host?: string | null;
   created_at: string;
   status: 'new' | 'acknowledged';
   location_name: string | null;
@@ -1513,6 +1514,8 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.route.queryParamMap.pipe(skip(1)).subscribe(params => {
       this.severityFilter = params.get('severity') ?? '';
       this.hostFilter     = params.get('host')     ?? '';
+      const highlight     = params.get('highlight');
+      if (highlight) this.highlightId = highlight;
       const source        = params.get('source');
       if (source) {
         this.routeSourceSet = true;
@@ -2090,6 +2093,9 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     }
     if (item.source === 'wazuh') {
       return (m['agent'] as string) || (m['host'] as string) || '';
+    }
+    if (item.source === 'checkmk') {
+      return (m['host'] as string) || (item.host as string) || '';
     }
     return '';
   }

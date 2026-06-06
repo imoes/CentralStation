@@ -629,7 +629,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     const hosts = [...this.generativeHosts()].sort((a, b) => b.length - a.length);
     if (hosts.length === 0) {
       // Fallback: FQDN regex
-      const fqdnRe = /\b[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?)+\b/g;
+      const fqdnRe = /\b[a-z](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?)+\b/g;
       const segs: RationaleSegment[] = [];
       let last = 0;
       let m: RegExpExecArray | null;
