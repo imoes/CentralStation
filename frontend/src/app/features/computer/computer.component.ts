@@ -33,6 +33,13 @@ interface HermesSession {
       <div class="panel-top">
         <div class="cap-tl"></div>
         <span class="panel-title">COMPUTER</span>
+
+        <!-- TTS mute toggle -->
+        <button class="tts-btn" [class.muted]="muted()" (click)="toggleMute()"
+                [title]="muted() ? 'Sprachausgabe aktivieren' : 'Sprachausgabe stummschalten'">
+          <mat-icon>{{ muted() ? 'volume_off' : 'volume_up' }}</mat-icon>
+        </button>
+
         <button class="close-btn" (click)="close()" title="Schließen (Esc)">✕</button>
         <div class="cap-tr"></div>
       </div>
@@ -96,15 +103,15 @@ interface HermesSession {
             <input #inputEl
                    class="lcars-input"
                    [(ngModel)]="inputText"
-                   placeholder="Computer, ..."
+                   placeholder="Computer, ...  (Leertaste = Mikrofon)"
                    [disabled]="loading()"
                    (keydown.enter)="send()"
                    (keydown.escape)="close()" />
             <button class="icon-btn"
                     [class.active]="listening()"
                     (click)="toggleVoice()"
-                    title="Spracheingabe">
-              <mat-icon>mic</mat-icon>
+                    title="Spracheingabe (Leertaste)">
+              <mat-icon>{{ listening() ? 'mic' : 'mic_none' }}</mat-icon>
             </button>
             <button class="send-btn"
                     (click)="send()"
@@ -121,6 +128,9 @@ interface HermesSession {
         <span class="num-cell">{{ totalMessages() }} MSG</span>
         @if (listening()) {
           <span class="num-cell listening-cell">● REC</span>
+        }
+        @if (!muted()) {
+          <span class="num-cell tts-cell">♪ TTS</span>
         }
         <div class="cap-br"></div>
       </div>
@@ -143,9 +153,11 @@ export class ComputerComponent implements OnInit, OnDestroy {
   inputText = '';
   loading = signal(false);
   listening = signal(false);
+  muted = signal(localStorage.getItem('cs_computer_muted') === '1');
 
   private mediaRecorder?: MediaRecorder;
   private audioChunks: Blob[] = [];
+  private ttsUtterance?: SpeechSynthesisUtterance;
 
   activeMessages = computed<HermesMessage[]>(() => {
     const sid = this.activeTabId();
@@ -156,39 +168,91 @@ export class ComputerComponent implements OnInit, OnDestroy {
     this.sessions().reduce((sum, s) => sum + s.msg_count, 0)
   );
 
-  // ── Keyboard shortcut ─────────────────────────────────────────────
+  // ── Keyboard shortcuts ────────────────────────────────────────────
 
   @HostListener('document:keydown', ['$event'])
   onKeydown(e: KeyboardEvent): void {
+    // Ctrl+K — toggle panel
     if (e.ctrlKey && e.key === 'k') {
       e.preventDefault();
       this.toggle();
+      return;
+    }
+
+    // Space — toggle voice when panel is open and no input is focused
+    if (e.key === ' ' && this.isOpen()) {
+      const active = document.activeElement;
+      const isTyping = active instanceof HTMLInputElement
+                    || active instanceof HTMLTextAreaElement
+                    || (active instanceof HTMLElement && active.isContentEditable);
+      if (!isTyping) {
+        e.preventDefault();
+        this.toggleVoice();
+      }
     }
   }
 
   ngOnInit(): void {}
+
   ngOnDestroy(): void {
     this.mediaRecorder?.stop();
+    window.speechSynthesis?.cancel();
   }
 
   // ── Panel controls ────────────────────────────────────────────────
 
   toggle(): void { this.isOpen.update(v => !v); this.focusInput(); }
   open(): void   { this.isOpen.set(true);  this.focusInput(); }
-  close(): void  { this.isOpen.set(false); }
+  close(): void  { this.isOpen.set(false); window.speechSynthesis?.cancel(); }
 
   private focusInput(): void {
     setTimeout(() => this.inputEl?.nativeElement.focus(), 50);
   }
 
+  // ── TTS controls ──────────────────────────────────────────────────
+
+  toggleMute(): void {
+    this.muted.update(v => {
+      const next = !v;
+      localStorage.setItem('cs_computer_muted', next ? '1' : '0');
+      if (next) window.speechSynthesis?.cancel();
+      return next;
+    });
+  }
+
+  private speak(text: string): void {
+    if (this.muted() || !text.trim() || !('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = 'de-DE';
+    utter.rate = 1.05;
+    utter.pitch = 0.9;
+
+    // Prefer a German voice if available
+    const voices = window.speechSynthesis.getVoices();
+    const deVoice = voices.find(v => v.lang.startsWith('de') && !v.name.includes('eSpeak'))
+                 ?? voices.find(v => v.lang.startsWith('de'));
+    if (deVoice) utter.voice = deVoice;
+
+    this.ttsUtterance = utter;
+    window.speechSynthesis.speak(utter);
+  }
+
   // ── Session management ────────────────────────────────────────────
 
   async newSession(): Promise<void> {
+    const token = this.auth.getAccessToken();
     try {
-      const session = await this.http
-        .post<{ session_id: string; label: string }>(`${this.apiBase}/sessions`, {})
-        .toPromise();
-      if (!session) return;
+      const r = await fetch(`${this.apiBase}/sessions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({}),
+      });
+      if (!r.ok) { console.error('Session creation failed:', r.status); return; }
+      const session: { session_id: string; label: string } = await r.json();
       this.sessions.update(ss => [...ss, { ...session, msg_count: 0, messages: [] }]);
       this.activeTabId.set(session.session_id);
       this.open();
@@ -206,8 +270,12 @@ export class ComputerComponent implements OnInit, OnDestroy {
   async deleteSession(): Promise<void> {
     const sid = this.activeTabId();
     if (!sid) return;
+    const token = this.auth.getAccessToken();
     try {
-      await this.http.delete(`${this.apiBase}/sessions/${sid}`).toPromise();
+      await fetch(`${this.apiBase}/sessions/${sid}`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
     } catch { /* ignore */ }
     this.sessions.update(ss => ss.filter(s => s.session_id !== sid));
     const remaining = this.sessions();
@@ -235,6 +303,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
     this.scrollToBottom();
 
     const token = this.auth.getAccessToken();
+    let fullAssistantText = '';
+
     try {
       const resp = await fetch(`${this.apiBase}/sessions/${sid}/message`, {
         method: 'POST',
@@ -267,10 +337,17 @@ export class ComputerComponent implements OnInit, OnDestroy {
           if (!raw || raw === '[DONE]') continue;
           try {
             const data = JSON.parse(raw);
-            if (data.type === 'delta') this._appendToLast(sid, data.text);
-            if (data.type === 'done')  this.loading.set(false);
+            if (data.type === 'delta') {
+              fullAssistantText += data.text;
+              this._appendToLast(sid, data.text);
+            }
+            if (data.type === 'done') {
+              this.loading.set(false);
+              this.speak(fullAssistantText);
+            }
             if (data.type === 'error') {
-              this._appendToLast(sid, `\n[Fehler: ${data.text}]`);
+              const errMsg = `\n[Fehler: ${data.text}]`;
+              this._appendToLast(sid, errMsg);
               this.loading.set(false);
             }
           } catch { /* skip malformed */ }
@@ -322,6 +399,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
           if (text?.trim()) {
             this.inputText = text.trim();
             this.focusInput();
+            // Auto-send after voice transcription
+            await this.send();
           }
         } catch (err) {
           console.error('Transcription failed:', err);
