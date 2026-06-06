@@ -113,7 +113,6 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         model=model or None,
         enabled_toolsets=["terminal", "web"],
         ephemeral_system_prompt=SYSTEM_PROMPT,
-        persist_session=True,
         quiet_mode=True,
         verbose_logging=False,
     )
