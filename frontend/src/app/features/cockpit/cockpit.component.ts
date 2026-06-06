@@ -812,8 +812,13 @@ export class CockpitComponent implements OnInit, OnDestroy {
   }
 
   openInFeed(msg: Message) {
-    window.opener?.open(`/feed?host=${encodeURIComponent(this.hostname())}`, '_self');
-    window.close();
+    if (window.opener) {
+      window.opener.postMessage(
+        { type: 'cockpit:focus-alert', id: msg.id, host: this.hostname() },
+        window.location.origin,
+      );
+      window.opener.focus();
+    }
   }
 
   close() {
