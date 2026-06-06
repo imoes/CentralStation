@@ -230,7 +230,7 @@ interface BridgeStatus {
   styles: [`
     :host { display:block; }
     .bridge { position:fixed; inset:0; z-index:100; display:flex; flex-direction:column; gap:6px; padding:8px;
-      font-family:'Eurostile','Antonio','Michroma','Segoe UI',sans-serif; overflow:hidden; box-sizing:border-box; }
+      font-family: Roboto, 'Helvetica Neue', sans-serif; overflow:hidden; box-sizing:border-box; }
     .bridge *, .bridge *::before { box-sizing:border-box; }
 
     /* ════ shared layout ════ */
@@ -330,7 +330,7 @@ interface BridgeStatus {
     .v-fill { height:100%; border-radius:4px; }
     .v-val { font-size:11px; font-weight:700; width:46px; text-align:right; flex-shrink:0; font-variant-numeric:tabular-nums; }
 
-    .log-line { display:flex; gap:8px; padding:6px 8px; border-radius:5px; cursor:pointer; }
+    .log-line { display:flex; gap:8px; padding:6px 8px; border-radius:5px; cursor:pointer; font-family: Roboto, 'Helvetica Neue', sans-serif; }
     .log-line:hover { filter:brightness(1.2); }
     .log-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; margin-top:4px; }
     .log-body { display:flex; flex-direction:column; min-width:0; gap:2px; }

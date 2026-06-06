@@ -490,20 +490,37 @@ class CheckMKConnector(BaseConnector):
             return {"series_history": series, "series_forecast": [], "confidence_band": [],
                     "title": title, "unit": unit, "error": f"Forecast projection failed: {e}"}
 
+    # CheckMK service state int → label
+    _STATE_LABELS = {0: "OK", 1: "WARN", 2: "CRIT", 3: "UNKNOWN"}
+
     async def list_services(self, host_name: str) -> list[dict]:
-        """Return all services for a host (name + state), used to populate metric picker."""
+        """Return all services for a host with name, state, state_label and summary.
+
+        `summary` is the CheckMK plugin_output — the human-readable status line that
+        usually carries the current values (e.g. "15.2% used (3.04 GB of 20.0 GB)").
+        """
         try:
             r = await self._request(
                 "GET",
                 "/domain-types/service/collections/all",
-                params={"host_name": host_name, "columns": "description,state,plugin_output"},
+                # CheckMK expects `columns` as repeated query params (not comma-joined);
+                # httpx emits ?columns=description&columns=state&columns=plugin_output
+                params={"host_name": host_name, "columns": ["description", "state", "plugin_output"]},
             )
             r.raise_for_status()
         except Exception:
             return []
-        return [
-            {"name": item.get("extensions", {}).get("description", ""),
-             "state": item.get("extensions", {}).get("state", 0)}
-            for item in r.json().get("value", [])
-            if item.get("extensions", {}).get("description")
-        ]
+        services = []
+        for item in r.json().get("value", []):
+            ext = item.get("extensions", {})
+            name = ext.get("description", "")
+            if not name:
+                continue
+            state = ext.get("state", 0)
+            services.append({
+                "name": name,
+                "state": state,
+                "state_label": self._STATE_LABELS.get(state, "UNKNOWN"),
+                "summary": ext.get("plugin_output", ""),
+            })
+        return services

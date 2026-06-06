@@ -192,3 +192,38 @@ async def test_setting_group(
 
     else:
         raise HTTPException(400, f"Unbekannte Gruppe '{group}'. Gültig: llm, vision, searxng")
+
+
+@router.get("/jira-projects", dependencies=[RequireAdmin])
+async def list_jira_projects(db: Annotated[AsyncSession, Depends(get_db)]):
+    """List available Jira projects across both connectors (jira + jira_sd).
+
+    Used by the settings UI to let an admin pick the ticket target project.
+    Each entry carries the connector type that hosts it (e.g. IMIT → jira_sd).
+    """
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
+    projects: list[dict] = []
+    seen: set[str] = set()
+    for ctype in ("jira_sd", "jira"):
+        r = await db.execute(
+            select(ConnectorConfig)
+            .where(ConnectorConfig.type == ctype, ConnectorConfig.enabled.is_(True))
+            .order_by(ConnectorConfig.owner_user_id.is_(None))
+        )
+        for conn in r.scalars().all():
+            try:
+                creds = decrypt_credentials(conn.encrypted_credentials)
+                jira = JiraConnector(base_url=conn.base_url, credentials=creds)
+                for p in await jira.list_projects():
+                    dedup = f"{ctype}:{p['key']}"
+                    if dedup in seen:
+                        continue
+                    seen.add(dedup)
+                    projects.append({"key": p["key"], "name": p["name"], "connector": ctype})
+            except Exception as e:
+                logger.warning("list_jira_projects: %s connector failed: %s", ctype, e)
+    projects.sort(key=lambda p: p["key"])
+    return {"projects": projects}

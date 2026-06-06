@@ -32,6 +32,12 @@ export interface GenerativePayload {
   widgets: DashboardWidget[];
   rationale?: string | null;
   generated_at?: string | null;
+  hosts?: string[];
+}
+
+export interface RationaleSegment {
+  text: string;
+  host: string | null;
 }
 
 export interface LayoutPlacement {

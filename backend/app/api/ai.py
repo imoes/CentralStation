@@ -132,6 +132,37 @@ async def _llm_search_assistant(
         return _fallback_search_assistant(body.message, lang)
 
 
+@router.get("/latest-summary")
+async def latest_summary(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """Return the most recent sysadmin AI analysis for the KI-Insight strip."""
+    result = await db.execute(
+        select(AiAnalysis)
+        .where(AiAnalysis.agent_type == "sysadmin")
+        .order_by(AiAnalysis.run_at.desc())
+        .limit(1)
+    )
+    a = result.scalar_one_or_none()
+    if not a:
+        return None
+    findings = a.findings or []
+    top = findings[:3]
+    summary_parts = [f.get("title", "") for f in top if f.get("title")]
+    summary_text = " · ".join(summary_parts[:2]) if summary_parts else ""
+    return {
+        "analysis_id": str(a.id),
+        "severity_summary": a.severity_summary,
+        "run_at": a.run_at.isoformat(),
+        "findings": [
+            {"title": f.get("title", ""), "severity": f.get("severity", "info"), "host": f.get("host", "")}
+            for f in top
+        ],
+        "summary_text": summary_text,
+    }
+
+
 @router.get("/analyses")
 async def list_analyses(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -576,8 +607,9 @@ async def trigger_agent(
         async with AsyncSessionLocal() as new_db:
             await run_network_workflow(new_db)
 
+    from app.core.tasks import run_background
     if agent_type == "sysadmin":
-        asyncio.create_task(_run_sysadmin())
+        run_background(_run_sysadmin(), name="trigger_sysadmin_agent")
     else:
-        asyncio.create_task(_run_network())
+        run_background(_run_network(), name="trigger_network_agent")
     return {"message": f"{agent_type} agent triggered"}

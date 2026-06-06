@@ -79,6 +79,18 @@ class JiraConnector(BaseConnector):
         except Exception as e:
             return ConnectorTestResult(success=False, message=str(e))
 
+    async def list_projects(self) -> list[dict]:
+        """Return available projects: [{key, name}]. Works on Jira + ServiceDesk."""
+        async with self._client(timeout=20.0) as client:
+            r = await client.get(self._api("/project"), headers=self._headers())
+            r.raise_for_status()
+        out: list[dict] = []
+        for p in r.json():
+            key = p.get("key")
+            if key:
+                out.append({"key": key, "name": p.get("name", key)})
+        return out
+
     async def search_issues(self, jql: str, fields: list[str] | None = None) -> list[dict]:
         fields = fields or ["summary", "status", "priority", "assignee", "created", "updated"]
         payload = {"jql": jql, "maxResults": 50, "fields": fields}

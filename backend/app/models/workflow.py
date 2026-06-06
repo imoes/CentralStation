@@ -37,8 +37,6 @@ class UserPreference(Base):
     ticket_seen_map: Mapped[dict | None] = mapped_column(JSON)
     # UI theme: "classic" | "holo" | "lcars"
     ui_theme: Mapped[str | None] = mapped_column(String(20), default="classic")
-    # UI language: "en" | "de"
-    ui_language: Mapped[str | None] = mapped_column(String(8), default="en")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -110,7 +108,7 @@ class Dashboard(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     position: Mapped[int] = mapped_column(Integer, default=0)
     # "classic" | "generative"
-    mode: Mapped[str] = mapped_column(String(20), default="classic")
+    mode: Mapped[str] = mapped_column(String(20), default="generative")
     # Generative dashboard only: the LLM's explanation for the chosen layout
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Generative dashboard only: when the AI last composed this layout
