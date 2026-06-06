@@ -93,10 +93,8 @@ services:
   centralcore:
     build:
       context: ./centralcore
-      # Hermes source is baked into the image at build time (pip install /opt/hermes).
-      # Rebuild the image when hermes-agent changes: docker compose build centralcore
-      additional_contexts:
-        hermes: /home/mutkluge/Dev/code/hermes-agent
+      # Hermes is git-cloned + pip-installed during docker build.
+      # Rebuild to update Hermes: docker compose build centralcore
       args:
         HTTP_PROXY: http://proxy.ippen.media:80
         HTTPS_PROXY: http://proxy.ippen.media:80
