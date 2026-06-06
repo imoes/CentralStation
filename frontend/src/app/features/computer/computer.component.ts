@@ -99,6 +99,13 @@ interface HermesSession {
             }
           </div>
 
+          <!-- Voice error banner -->
+          @if (voiceError()) {
+            <div class="voice-error" (click)="voiceError.set(null)">
+              ⚠ {{ voiceError() }}
+            </div>
+          }
+
           <!-- Input -->
           <div class="input-row">
             <input #inputEl
@@ -155,10 +162,13 @@ export class ComputerComponent implements OnInit, OnDestroy {
   loading = signal(false);
   listening = signal(false);
   muted = signal(localStorage.getItem('cs_computer_muted') === '1');
+  voiceError = signal<string | null>(null);
 
   private mediaRecorder?: MediaRecorder;
   private audioChunks: Blob[] = [];
   private ttsUtterance?: SpeechSynthesisUtterance;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private _recognition?: any;
 
   activeMessages = computed<HermesMessage[]>(() => {
     const sid = this.activeTabId();
@@ -196,17 +206,20 @@ export class ComputerComponent implements OnInit, OnDestroy {
   ngOnInit(): void {}
 
   ngOnDestroy(): void {
+    this._recognition?.abort();
     this.mediaRecorder?.stop();
     window.speechSynthesis?.cancel();
   }
 
   // ── Panel controls ────────────────────────────────────────────────
 
-  toggle(): void { this.isOpen.update(v => !v); this.focusInput(); }
-  open(): void   { this.isOpen.set(true);  this.focusInput(); }
+  // Note: we do NOT auto-focus the input on open so that the Space
+  // key shortcut works without typing spaces into the field.
+  toggle(): void { this.isOpen.update(v => !v); }
+  open(): void   { this.isOpen.set(true); }
   close(): void  { this.isOpen.set(false); window.speechSynthesis?.cancel(); }
 
-  private focusInput(): void {
+  focusInput(): void {
     setTimeout(() => this.inputEl?.nativeElement.focus(), 50);
   }
 
@@ -397,14 +410,63 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Voice input ───────────────────────────────────────────────────
 
-  async toggleVoice(): Promise<void> {
+  toggleVoice(): void {
     if (this.listening()) {
+      this._recognition?.stop();
       this.mediaRecorder?.stop();
+      this.listening.set(false);
       return;
     }
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    this.voiceError.set(null);
+
+    // Primary: browser-native SpeechRecognition (Chrome/Edge, no backend needed)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
+    if (SR) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this._recognition = new SR() as any;
+      this._recognition.lang = 'de-DE';
+      this._recognition.continuous = false;
+      this._recognition.interimResults = false;
+
+      this._recognition.onstart = () => this.listening.set(true);
+      this._recognition.onend   = () => this.listening.set(false);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this._recognition.onerror = (e: any) => {
+        this.listening.set(false);
+        if (e.error === 'not-allowed') {
+          this.voiceError.set('Mikrofon-Zugriff verweigert — Browsereinstellungen prüfen');
+        } else if (e.error === 'network') {
+          this.voiceError.set('Spracherkennung benötigt Internetverbindung');
+        } else if (e.error !== 'no-speech') {
+          this.voiceError.set(`Fehler: ${e.error}`);
+        }
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this._recognition.onresult = (e: any) => {
+        const text = e.results[0][0].transcript.trim();
+        if (text) {
+          this.inputText = text;
+          this.send();
+        }
+      };
+
+      try {
+        this._recognition.start();
+        return;
+      } catch (err) {
+        console.warn('SpeechRecognition start failed, trying Whisper fallback:', err);
+      }
+    }
+
+    // Fallback: record audio → Whisper (requires HTTPS or localhost)
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.voiceError.set('Mikrofon nicht verfügbar – HTTPS oder localhost erforderlich');
+      return;
+    }
+
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
       this.audioChunks = [];
       const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg';
       this.mediaRecorder = new MediaRecorder(stream, { mimeType });
@@ -419,7 +481,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
         const blob = new Blob(this.audioChunks, { type: mimeType });
         const fd = new FormData();
-        fd.append('file', blob, `audio.${mimeType.includes('webm') ? 'webm' : 'ogg'}`);
+        fd.append('file', blob, mimeType.includes('webm') ? 'audio.webm' : 'audio.ogg');
 
         const token = this.auth.getAccessToken();
         try {
@@ -428,26 +490,27 @@ export class ComputerComponent implements OnInit, OnDestroy {
             body: fd,
             headers: token ? { Authorization: `Bearer ${token}` } : {},
           });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const { text } = await r.json();
           if (text?.trim()) {
             this.inputText = text.trim();
-            this.focusInput();
-            // Auto-send after voice transcription
-            await this.send();
+            this.send();
           }
         } catch (err) {
-          console.error('Transcription failed:', err);
+          this.voiceError.set(`Transkription fehlgeschlagen: ${err}`);
         }
       };
 
       this.listening.set(true);
       this.mediaRecorder.start();
-      // Auto-stop after 10 seconds
       setTimeout(() => { if (this.listening()) this.mediaRecorder?.stop(); }, 10_000);
 
-    } catch (err) {
-      console.error('Microphone access denied:', err);
-    }
+    }).catch(err => {
+      const msg = err instanceof DOMException && err.name === 'NotAllowedError'
+        ? 'Mikrofon-Zugriff verweigert — Berechtigung im Browser prüfen'
+        : `Mikrofon-Fehler: ${err}`;
+      this.voiceError.set(msg);
+    });
   }
 
   // ── Helpers ───────────────────────────────────────────────────────
