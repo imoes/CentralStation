@@ -2,5 +2,5 @@
 # MCP server: CentralStation exposes IT-Ops tools for Hermes
 mcp_servers:
   centralstation:
-    transport: http
+    transport: sse
     url: http://backend:8000/api/mcp/sse
