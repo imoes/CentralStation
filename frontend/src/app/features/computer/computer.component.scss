@@ -326,6 +326,22 @@
   50% { opacity: 0; }
 }
 
+// ── Voice error banner ────────────────────────────────────────────
+
+.voice-error {
+  background: #330a08;
+  border-top: 1px solid #cc4433;
+  color: #ff8877;
+  font-size: 0.72rem;
+  padding: 5px 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+
+  &:hover {
+    background: #440c0a;
+  }
+}
+
 // ── Input Row ─────────────────────────────────────────────────────
 
 .input-row {
