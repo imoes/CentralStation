@@ -38,17 +38,15 @@ export class AuthService {
     this.http.get<User>(`${environment.apiUrl}/auth/me`).subscribe({
       next: user => this._user.set(user),
       error: () => {
-        // Stale/expired token — try cookie-based silent refresh before giving up.
+        // Stale/expired token — clear it and re-navigate to the same URL.
+        // window.location.pathname is always correct (e.g. /cockpit/hostname)
+        // even before Angular's router has committed its first navigation.
+        // Re-navigating triggers the auth guard with the correct state.url so
+        // it can silently refresh or set the proper returnUrl for /login.
         this._setToken(null);
-        this._silentRefresh().subscribe(ok => {
-          if (!ok) {
-            const returnUrl = this.router.url;
-            this.router.navigate(
-              ['/login'],
-              returnUrl && returnUrl !== '/' ? { queryParams: { returnUrl } } : {},
-            );
-          }
-        });
+        this._user.set(null);
+        const dest = window.location.pathname + window.location.search;
+        this.router.navigateByUrl(dest || '/');
       },
     });
   }
@@ -70,7 +68,11 @@ export class AuthService {
       .subscribe();
     this._setToken(null);
     this._user.set(null);
-    this.router.navigate(['/login']);
+    const url = this.router.url;
+    const opts = url && url !== '/' && !url.startsWith('/login')
+      ? { queryParams: { returnUrl: url } }
+      : {};
+    this.router.navigate(['/login'], opts);
   }
 
   getAccessToken(): string | null {
