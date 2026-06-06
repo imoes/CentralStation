@@ -116,9 +116,9 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
           }
         </div>
 
-        @if (vitals().length > 0) {
+        @if (baseVitals().length > 0 || filesystemVitals().length > 0) {
           <div class="gauges-row">
-            @for (vital of vitals(); track vital.metric) {
+            @for (vital of baseVitals(); track vital.metric) {
               <div class="gauge-cell">
                 <div class="gauge-label">{{ vital.label }}</div>
                 <div echarts [options]="gaugeOptions(vital)" class="gauge-chart"></div>
@@ -126,12 +126,18 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
                   <div echarts [options]="sparklineOptions(vital)" class="sparkline-chart"></div>
                 }
                 <div class="gauge-meta">
-                  <span class="gauge-value" [attr.data-level]="vital.level">
-                    {{ vital.value }}{{ vital.unit }}
-                  </span>
-                  <span class="gauge-level" [attr.data-level]="vital.level">
-                    {{ vital.level.toUpperCase() }}
-                  </span>
+                  <span class="gauge-value" [attr.data-level]="vital.level">{{ vital.value }}{{ vital.unit }}</span>
+                  <span class="gauge-level" [attr.data-level]="vital.level">{{ vital.level.toUpperCase() }}</span>
+                </div>
+              </div>
+            }
+            @for (vital of filesystemVitals(); track vital.metric) {
+              <div class="gauge-cell">
+                <div class="gauge-label">{{ vital.label }}</div>
+                <div echarts [options]="gaugeOptions(vital)" class="gauge-chart"></div>
+                <div class="gauge-meta">
+                  <span class="gauge-value" [attr.data-level]="vital.level">{{ vital.value }}{{ vital.unit }}</span>
+                  <span class="gauge-level" [attr.data-level]="vital.level">{{ vital.level.toUpperCase() }}</span>
                 </div>
               </div>
             }
@@ -180,8 +186,12 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
                   <div class="svc-row" (click)="toggleService(svc)">
                     <span class="svc-dot" [style.background]="svcColor(svc.state_label)"></span>
                     <span class="svc-state" [style.color]="svcColor(svc.state_label)">{{ svc.state_label }}</span>
-                    <span class="svc-name">{{ svc.name }}</span>
-                    <span class="svc-summary">{{ svc.summary }}</span>
+                    <div class="svc-info">
+                      <span class="svc-name">{{ svc.name }}</span>
+                      @if (svc.summary) {
+                        <span class="svc-summary">{{ svc.summary }}</span>
+                      }
+                    </div>
                   </div>
                   @if (expandedService() === svc.name) {
                     <div class="svc-graph">
@@ -366,7 +376,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
     /* ── Gauges ── */
     .gauges-row {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
       gap: 8px;
       padding: 12px 16px;
     }
@@ -426,10 +436,10 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
     .count-pill.warn { color: #ffcc00; }
     .count-pill.ok   { color: #66cc66; }
 
-    .services-area { max-height: 46vh; overflow-y: auto; }
+    .services-area { max-height: 52vh; overflow-y: auto; }
     .services-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      grid-template-columns: repeat(2, 1fr);
       gap: 1px;
       padding: 6px;
     }
@@ -440,7 +450,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
     .svc-cell.expanded { grid-column: 1 / -1; border-color: #3a2810; }
     .svc-row {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 8px;
       padding: 6px 10px;
       cursor: pointer;
@@ -451,6 +461,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
       width: 8px; height: 8px;
       border-radius: 50%;
       flex-shrink: 0;
+      margin-top: 3px;
     }
     .svc-state {
       font-size: 9px;
@@ -458,19 +469,24 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
       letter-spacing: .04em;
       width: 48px;
       flex-shrink: 0;
+      padding-top: 1px;
+    }
+    .svc-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
     }
     .svc-name {
       font-size: 12px;
       font-weight: 600;
       color: #ffe8a0;
-      flex-shrink: 0;
-      max-width: 38%;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
     .svc-summary {
-      flex: 1;
       font-size: 11px;
       color: #e8a060;
       font-family: inherit;
@@ -627,6 +643,28 @@ export class CockpitComponent implements OnInit, OnDestroy {
 
   readonly severities = SEVERITIES;
   readonly svcStates = SVC_STATES;
+
+  /** CPU + RAM vitals only — filesystems come from the services list (all mount paths). */
+  readonly baseVitals = computed(() =>
+    this.vitals().filter(v => v.metric !== 'fs_used_percent')
+  );
+
+  /** All Filesystem services from CheckMK converted to gauge-compatible objects. */
+  readonly filesystemVitals = computed((): Vital[] => {
+    const pctRe = /(\d+(?:\.\d+)?)\s*%/;
+    return this.services()
+      .filter(s => /^filesystem\s/i.test(s.name))
+      .map(s => {
+        const mount = s.name.replace(/^filesystem\s+/i, '') || '/';
+        const match = s.summary?.match(pctRe);
+        const value = match ? parseFloat(match[1]) : 0;
+        const lvl: 'crit' | 'high' | 'ok' =
+          s.state_label === 'CRIT' ? 'crit' :
+          s.state_label === 'WARN' ? 'high' :
+          value >= 90 ? 'crit' : value >= 75 ? 'high' : 'ok';
+        return { metric: `fs:${mount}`, label: mount, value, unit: '%', level: lvl, service: s.name, series: [] };
+      });
+  });
 
   readonly filteredServices = computed(() => {
     const st = this.stateFilter();
