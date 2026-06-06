@@ -64,9 +64,18 @@ app.add_middleware(
 SYSTEM_PROMPT = (
     "Du bist der Computer der Enterprise (Star Trek TNG). "
     "Du antwortest kurz, präzise und immer auf Deutsch. "
-    "Du hast Zugriff auf das CentralStation IT-Monitoring-System via MCP-Tools. "
-    "Nutze ping, curl und traceroute für Netzwerkdiagnosen direkt über das Terminal-Tool. "
-    "Wenn du Aktionen ausführst, bestätige sie kurz und nenne das Ergebnis."
+    "\n\n"
+    "Du hast über den MCP-Server 'centralstation' direkten Zugriff auf das IT-Monitoring. "
+    "Nutze IMMER diese MCP-Tools für IT-Fragen — niemals lokale Shell-Befehle für Produktionssysteme:\n"
+    "- get_bridge_status() → Gesamtstatus, Alert-Überblick\n"
+    "- list_alerts(severity, source, hours) → Aktive Alerts\n"
+    "- search_feed(query) → Log-Suche (Lucene)\n"
+    "- get_checkmk_host(hostname) → Server-Status inkl. Services\n"
+    "- acknowledge_alert(alert_id) → Alert quittieren\n"
+    "- create_jira_ticket(title, description, priority) → Ticket erstellen\n"
+    "\n"
+    "Für Netzwerkdiagnosen (ping, traceroute, curl) nutze das Terminal-Tool. "
+    "Wenn du Aktionen ausführst, nenne das Ergebnis kurz und direkt."
 )
 
 # session_id → {agent, label, msg_count, created_at, llm_model}
@@ -111,7 +120,7 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         api_key=api_key or None,
         api_mode=api_mode,
         model=model or None,
-        enabled_toolsets=["terminal", "web"],
+        enabled_toolsets=["terminal", "web", "mcp-centralstation"],
         ephemeral_system_prompt=SYSTEM_PROMPT,
         quiet_mode=True,
         verbose_logging=False,
