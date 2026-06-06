@@ -464,26 +464,47 @@ export class ComputerComponent implements OnInit, OnDestroy {
               this._appendToLast(sid, data.text);
             }
             if (data.type === 'done') {
-              this._finishAssistantMessage(sid, fullAssistantText);
-              this.loading.set(false);
               this.speak(fullAssistantText);
             }
             if (data.type === 'error') {
               this._appendToLast(sid, `\n[Fehler: ${data.text}]`);
-              this.loading.set(false);
             }
           } catch { /* skip malformed */ }
         }
         this.scrollToBottom();
       }
+
+      // The SSE stream can close before the final \n\n reaches the buffer,
+      // leaving the last event (often the "done" event) unparsed.
+      // Process whatever remains so no content or markers are dropped.
+      if (buf.startsWith('data:')) {
+        const raw = buf.slice(5).trim();
+        if (raw && raw !== '[DONE]') {
+          try {
+            const data = JSON.parse(raw);
+            if (data.type === 'delta') {
+              fullAssistantText += data.text;
+              this._appendToLast(sid, data.text);
+            }
+            if (data.type === 'done') {
+              this.speak(fullAssistantText);
+            }
+          } catch { /* ignore */ }
+        }
+      }
+
     } catch (err: unknown) {
-      // AbortError = user stopped the stream — not an error worth showing
       if (err instanceof Error && err.name === 'AbortError') {
         this._appendToLast(sid, ' [gestoppt]');
       } else {
         this._appendToLast(sid, `[Verbindungsfehler: ${err}]`);
       }
     } finally {
+      // Always strip [FEED:...] markers and attach action buttons, regardless
+      // of how the stream ended (normal close, abort, or error).
+      if (fullAssistantText) {
+        this._finishAssistantMessage(sid, fullAssistantText);
+      }
       this.loading.set(false);
       this.scrollToBottom();
     }
