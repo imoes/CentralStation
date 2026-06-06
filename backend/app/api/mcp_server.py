@@ -21,12 +21,6 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def _get_db():
-    from app.core.database import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        return session
-
-
 async def _get_os():
     from app.core.opensearch import get_opensearch
     return await get_opensearch()
@@ -42,9 +36,7 @@ async def get_bridge_status() -> dict:
     from sqlalchemy import select, func
     from app.models.alert import Alert
 
-    os_client = await _get_os()
     async with (await _get_db_session()) as db:
-        counts: dict[str, dict] = {}
         sources = ["checkmk", "graylog", "wazuh"]
         severities = ["critical", "high", "medium", "low", "info"]
 
@@ -126,7 +118,7 @@ async def list_alerts(
             "source": a.source,
             "severity": a.severity,
             "title": a.title,
-            "host": a.metadata.get("host", "") if a.metadata else "",
+            "host": a.metadata_.get("host", "") if a.metadata_ else "",
             "location": a.location_name or "",
             "status": a.status,
             "created_at": a.created_at.isoformat(),
@@ -223,6 +215,7 @@ async def get_checkmk_host(hostname: str) -> dict:
     from sqlalchemy import select
     from app.models.connector import ConnectorConfig
     from app.services.connectors.checkmk import CheckMKConnector
+    from app.core.security import decrypt_credentials
 
     async with (await _get_db_session()) as db:
         result = await db.execute(
@@ -235,9 +228,10 @@ async def get_checkmk_host(hostname: str) -> dict:
         if not cfg:
             return {"error": "Kein CheckMK-Connector konfiguriert"}
 
-        connector = CheckMKConnector(cfg)
+        creds = decrypt_credentials(cfg.encrypted_credentials)
+        connector = CheckMKConnector(base_url=cfg.base_url, credentials=creds)
         try:
-            services = await connector.get_host_services(hostname)
+            services = await connector.list_services(hostname)
             return {"hostname": hostname, "services": services}
         except Exception as exc:
             log.warning("get_checkmk_host %s: %s", hostname, exc)
@@ -260,6 +254,7 @@ async def create_jira_ticket(title: str, description: str, priority: str = "medi
     from app.models.connector import ConnectorConfig
     from app.services.connectors.jira import JiraConnector
     from app.models.settings import GlobalSetting
+    from app.core.security import decrypt_credentials
 
     prio_map = {"critical": "Kritisch", "high": "Hoch", "medium": "Mittel", "low": "Niedrig"}
     jira_priority = prio_map.get(priority, "Mittel")
@@ -282,7 +277,8 @@ async def create_jira_ticket(title: str, description: str, priority: str = "medi
         proj_row = proj_setting.scalar_one_or_none()
         project = proj_row.value_plain if proj_row else "IMIT"
 
-        connector = JiraConnector(cfg)
+        creds = decrypt_credentials(cfg.encrypted_credentials)
+        connector = JiraConnector(base_url=cfg.base_url, credentials=creds)
         try:
             issue = await connector.create_issue(
                 project=project,
