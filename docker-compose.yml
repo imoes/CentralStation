@@ -111,6 +111,8 @@ services:
       # Hermes auth tokens + session state (NOT the source code — that's baked in)
       - /home/mutkluge/.hermes:/root/.hermes
       - ./centralcore/hermes_config.yaml:/root/.hermes/config.yaml:ro
+      # Skills live-mount: edit skills on the host without rebuilding the image
+      - /home/mutkluge/Dev/code/hermes-agent/skills:/opt/hermes/skills
     ports:
       - "127.0.0.1:8001:8001"
     cap_add:
