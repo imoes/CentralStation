@@ -83,6 +83,32 @@ _sessions: dict[str, dict[str, Any]] = {}
 _whisper_model = None
 
 
+@app.on_event("startup")
+async def _startup_mcp_discovery() -> None:
+    """Pre-discover MCP tools at startup so they are ready before the first session.
+
+    Background: Hermes starts MCP discovery in a thread with only a 0.75s wait.
+    For a network SSE connection (centralstation backend) that's not enough.
+    Triggering discovery here at startup gives it plenty of time to complete
+    before any agent is created.
+    """
+    def _discover() -> None:
+        import time
+        try:
+            from tools.mcp_tool import discover_mcp_tools
+            log.info("Pre-discovering MCP tools (centralstation SSE)…")
+            discover_mcp_tools()
+            log.info("MCP tool discovery complete.")
+        except Exception as exc:
+            log.warning("MCP pre-discovery failed (tools may not be available): %s", exc)
+
+    import threading
+    t = threading.Thread(target=_discover, daemon=True, name="mcp-prediscovery")
+    t.start()
+    # Give it a few seconds in the background — don't block startup
+    await asyncio.sleep(0)
+
+
 def _get_whisper():
     global _whisper_model
     if _whisper_model is None:
@@ -114,7 +140,7 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
     log.info("[%s] creating AIAgent: model=%s base_url=%s mode=%s",
              sid[:8], model or "(default)", base_url or "(default)", api_mode)
 
-    return AIAgent(
+    agent = AIAgent(
         session_id=sid,
         base_url=base_url or None,
         api_key=api_key or None,
@@ -125,6 +151,10 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         quiet_mode=True,
         verbose_logging=False,
     )
+    # Give MCP discovery a generous window to complete before the first turn.
+    from hermes_cli.mcp_startup import wait_for_mcp_discovery
+    wait_for_mcp_discovery(timeout=8.0)
+    return agent
 
 
 # ── Session endpoints ──────────────────────────────────────────────
