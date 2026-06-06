@@ -19,10 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-# SSH config: accept new host keys for internal ippen.media servers without prompt
-RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh && \
-    printf 'Host *.ippen.media\n    StrictHostKeyChecking accept-new\n    ConnectTimeout 10\n    User mutkluge\n' \
-    > /root/.ssh/config_centralcore && chmod 600 /root/.ssh/config_centralcore
+RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
 
 # Clone Hermes (shallow — latest main, no history needed)
 # git respects http_proxy / https_proxy env vars set above
