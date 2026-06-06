@@ -718,8 +718,8 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
         const validSaved = saved && dashboards.some(d => d.id === saved) ? saved : '';
         const selected = validSaved || dashboards.find(d => d.is_default)?.id || dashboards[0]?.id || '';
         this.selectedDashboardId.set(selected);
-        // The generative view is a separate AI canvas, persisted per-browser.
-        if (localStorage.getItem(this.GEN_KEY) === '1') {
+        // Generative mode is on by default; only off when user explicitly opted out.
+        if (localStorage.getItem(this.GEN_KEY) !== '0') {
           this.generativeMode.set(true);
           this.loadGenerative();
         } else {
@@ -1000,7 +1000,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
       localStorage.setItem(this.GEN_KEY, '1');
       this.loadGenerative();
     } else {
-      localStorage.removeItem(this.GEN_KEY);
+      localStorage.setItem(this.GEN_KEY, '0');
       this.generativeRationale.set(null);
       this.generativeGeneratedAt.set(null);
       this.widgetData.set({});
