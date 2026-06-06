@@ -118,6 +118,9 @@ services:
       # Built-in Hermes-Skills bleiben unberührt in /opt/hermes/skills/ (baked in)
       - /home/mutkluge/.hermes:/root/.hermes
       - ./centralcore/hermes_config.yaml:/root/.hermes/config.yaml:ro
+      # SSH key für direkten Zugriff auf *.ippen.media Server
+      # Der Container legt eigenes /root/.ssh an und kopiert den Key beim Start (entrypoint.sh)
+      - /home/mutkluge/.ssh:/root/.ssh_host:ro
     ports:
       - "127.0.0.1:8001:8001"
     cap_add:

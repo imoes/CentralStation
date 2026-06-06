@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { ActivatedRoute, Router } from '@angular/router';
 import { skip } from 'rxjs';
+import { ComputerService } from '../../core/services/computer.service';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -722,14 +723,14 @@ const SEVERITY_COLOR: Record<string, string> = {
             </div>
             <button mat-stroked-button class="claude-handoff-btn"
                     [disabled]="copyingPrompt()"
-                    (click)="copyClaudePrompt(incidentTimeline()!.incident.id)"
-                    matTooltip="Belege + Timeline als fertigen AI-Prompt kopieren (z.B. für Claude CLI, Codex, eigenen Agenten)">
+                    (click)="handoffToComputer(incidentTimeline()!.incident.id)"
+                    matTooltip="Incident-Kontext an den Computer-Agenten übergeben — Hermes analysiert und kann per SSH eingreifen">
               @if (copyingPrompt()) {
                 <mat-spinner diameter="14"></mat-spinner>
               } @else {
-                <mat-icon>smart_toy</mat-icon>
+                <mat-icon>precision_manufacturing</mat-icon>
               }
-              {{ promptCopied() ? 'Kopiert!' : 'An AI übergeben' }}
+              {{ promptCopied() ? 'Übergeben ✓' : 'Computer, untersuche das' }}
             </button>
           } @else {
             <span>Incident Timeline</span>
@@ -1463,6 +1464,8 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (f.length === 0) return this.items();
     return this.items().filter(i => f.includes(i.source));
   });
+
+  private computerService = inject(ComputerService);
 
   constructor(
     private http: HttpClient,
@@ -2272,26 +2275,25 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   copyingPrompt = signal(false);
   promptCopied = signal(false);
 
-  copyClaudePrompt(incidentId: string) {
+  handoffToComputer(incidentId: string) {
+    const incident = this.incidentTimeline()?.incident;
+    const label = incident
+      ? `Incident: ${incident.primary_host}`
+      : 'Incident-Analyse';
+
     this.copyingPrompt.set(true);
     this.promptCopied.set(false);
     this.http.get<{ prompt: string }>(`${environment.apiUrl}/feed/incidents/${incidentId}/claude-prompt`)
       .subscribe({
-        next: async data => {
+        next: data => {
           this.copyingPrompt.set(false);
-          try {
-            await navigator.clipboard.writeText(data.prompt);
-            this.promptCopied.set(true);
-            setTimeout(() => this.promptCopied.set(false), 2500);
-          } catch {
-            // Clipboard API unavailable (non-HTTPS) — show the prompt to copy manually
-            this.snackBar.open('Prompt erzeugt — Clipboard nicht verfügbar, siehe Konsole', 'OK', { duration: 4000 });
-            console.log(data.prompt);
-          }
+          this.promptCopied.set(true);
+          setTimeout(() => this.promptCopied.set(false), 2000);
+          this.computerService.openWithContext(data.prompt, label);
         },
         error: () => {
           this.copyingPrompt.set(false);
-          this.snackBar.open('Prompt konnte nicht erzeugt werden', 'OK', { duration: 3000 });
+          this.snackBar.open('Kontext konnte nicht geladen werden', 'OK', { duration: 3000 });
         },
       });
   }

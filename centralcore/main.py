@@ -87,6 +87,24 @@ SYSTEM_PROMPT = (
     "- acknowledge_alert(alert_id) → Alert quittieren\n"
     "- create_jira_ticket(title, description, priority) → Jira-Ticket\n\n"
 
+    "## SSH-ZUGRIFF (Serverdiagnose und Fehlerbehebung):\n"
+    "Nutze SSH wenn du einen Server direkt untersuchen oder reparieren sollst.\n"
+    "Befehl: ssh -o StrictHostKeyChecking=accept-new mutkluge@<hostname>.ippen.media '<befehl>'\n"
+    "Beispiele:\n"
+    "  ssh ... docker086.ippen.media 'df -h; du -sh /var/log/* | sort -rh | head -5'\n"
+    "  ssh ... docker086.ippen.media 'systemctl status nginx; journalctl -u nginx -n 50 --no-pager'\n"
+    "  ssh ... docker086.ippen.media 'free -h; top -bn1 | head -20'\n"
+    "SSH nutzen bei: Disk-Full, Dienst-Ausfall, hohe CPU/RAM, Log-Analyse.\n\n"
+
+    "## FEED-NAVIGATION (am Ende deiner Antwort, wenn du Hosts/Alerts gezeigt hast):\n"
+    "Füge EXAKT eine dieser Zeilen ans Ende wenn du Infrastruktur-Daten ausgibst:\n"
+    "[FEED:host=docker*] — bei Docker-Hosts\n"
+    "[FEED:host=vpp*] — bei Proxmox-Hosts\n"
+    "[FEED:severity=critical] — bei kritischen Alerts (ohne Hostfocus)\n"
+    "[FEED:host=docker*&severity=critical] — Docker + nur kritisch\n"
+    "[FEED:host=<exakter-hostname>] — bei einem einzelnen Host\n"
+    "Diese Marker werden vom Frontend als Schaltfläche gerendert — der Nutzer sieht sie NICHT als Text.\n\n"
+
     "Netzwerkdiagnosen (ping, traceroute, curl): Terminal-Tool nutzen."
 )
 
