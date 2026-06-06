@@ -8,3 +8,7 @@ python-multipart>=0.0.9
 # Whisper STT — Hermes optional[voice] group, installed explicitly here
 faster-whisper>=1.0
 numpy>=1.24.0,<3
+
+# MCP SDK — required by Hermes for MCP server connectivity
+# Without this, Hermes silently disables all MCP tool support
+mcp>=1.0,<2
