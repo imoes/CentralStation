@@ -445,7 +445,7 @@ async def _get_or_create_generative_dashboard(user_id: uuid.UUID, db: AsyncSessi
     return dashboard
 
 
-_FQDN_RE = __import__("re").compile(r"\b[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?)+\b")
+_FQDN_RE = __import__("re").compile(r"\b[a-z](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?)+\b")
 
 
 async def _generative_payload(dashboard: Dashboard, db: AsyncSession) -> dict:
