@@ -21,9 +21,9 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def _get_os():
+def _get_os():
     from app.core.opensearch import get_opensearch
-    return await get_opensearch()
+    return get_opensearch()  # sync singleton, no await
 
 
 # ── Tool 1: Bridge Status ──────────────────────────────────────────
@@ -145,7 +145,7 @@ async def search_feed(query: str, index: str = "cs-feed-*", limit: int = 10) -> 
 
     Nutze dieses Tool für spezifische Log-Suchen."""
     limit = max(1, min(30, limit))
-    os_client = await _get_os()
+    os_client = _get_os()
     try:
         resp = await os_client.search(
             index=index,
