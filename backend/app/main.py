@@ -113,6 +113,14 @@ app.include_router(hosts.router, prefix="/api")
 app.include_router(oauth_providers.router, prefix="/api")
 app.include_router(centralcore_proxy.router, prefix="/api")
 app.include_router(ws.router)
+
+# fastmcp sse_app() has no HEAD handler — Hermes probes with HEAD before
+# connecting, which causes a TypeError. Intercept it here first.
+@app.head("/api/mcp/sse")
+async def mcp_sse_head():
+    from fastapi.responses import Response
+    return Response(status_code=200)
+
 app.mount("/api/mcp", mcp.sse_app())
 
 
