@@ -1,12 +1,13 @@
 """CentralCore — FastAPI wrapper around Hermes AIAgent.
 
 Manages multiple parallel Hermes sessions and exposes:
-  POST /sessions                    create new session
+  POST /sessions                    create new session (with LLM config from CentralStation)
   GET  /sessions                    list active sessions
   DELETE /sessions/{sid}            terminate session
   POST /sessions/{sid}/message      send message, SSE-stream response
   GET  /sessions/{sid}/history      conversation history
   POST /transcribe                  Whisper STT (audio → text)
+  GET  /health                      health + config status
 """
 from __future__ import annotations
 
@@ -25,8 +26,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-# Hermes is volume-mounted at /hermes
+# Hermes source code is volume-mounted at /hermes
 sys.path.insert(0, os.environ.get("HERMES_PATH", "/hermes"))
+
 
 def _configure_logging() -> None:
     level_name = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -44,7 +46,7 @@ def _configure_logging() -> None:
 
     # Quieten noisy third-party libs unless DEBUG is set
     if level > logging.DEBUG:
-        for noisy in ("httpx", "httpcore", "uvicorn.access"):
+        for noisy in ("httpx", "httpcore", "uvicorn.access", "openai", "anthropic"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
@@ -68,7 +70,7 @@ SYSTEM_PROMPT = (
     "Wenn du Aktionen ausführst, bestätige sie kurz und nenne das Ergebnis."
 )
 
-# session_id → {agent, label, msg_count, created_at}
+# session_id → {agent, label, msg_count, created_at, llm_model}
 _sessions: dict[str, dict[str, Any]] = {}
 _whisper_model = None
 
@@ -83,10 +85,33 @@ def _get_whisper():
     return _whisper_model
 
 
-def _make_agent(sid: str):
+# ── Session model ──────────────────────────────────────────────────
+
+class CreateSessionBody(BaseModel):
+    """LLM config forwarded from CentralStation backend settings."""
+    llm_base_url: str | None = None
+    llm_model: str | None = None
+    llm_api_key: str | None = None
+    llm_api_mode: str | None = None   # "chat_completions" | "responses" | "codex_responses"
+
+
+def _make_agent(sid: str, cfg: CreateSessionBody):
     from run_agent import AIAgent
+
+    base_url = cfg.llm_base_url or os.getenv("LLM_BASE_URL", "")
+    model    = cfg.llm_model    or os.getenv("LLM_MODEL", "")
+    api_key  = cfg.llm_api_key  or os.getenv("LLM_API_KEY")
+    api_mode = cfg.llm_api_mode or os.getenv("LLM_API_MODE", "chat_completions")
+
+    log.info("[%s] creating AIAgent: model=%s base_url=%s mode=%s",
+             sid[:8], model or "(default)", base_url or "(default)", api_mode)
+
     return AIAgent(
         session_id=sid,
+        base_url=base_url or None,
+        api_key=api_key or None,
+        api_mode=api_mode,
+        model=model or None,
         enabled_toolsets=["terminal", "web"],
         ephemeral_system_prompt=SYSTEM_PROMPT,
         persist_session=True,
@@ -98,22 +123,28 @@ def _make_agent(sid: str):
 # ── Session endpoints ──────────────────────────────────────────────
 
 @app.post("/sessions", status_code=201)
-def create_session():
+def create_session(body: CreateSessionBody = None):
+    body = body or CreateSessionBody()
     sid = str(uuid.uuid4())
     label = f"Session {len(_sessions) + 1}"
     log.info("Creating session %s (%s)", sid[:8], label)
     try:
-        agent = _make_agent(sid)
+        agent = _make_agent(sid, body)
     except ImportError as exc:
-        log.error("Hermes import failed: %s", exc)
+        log.error("Hermes import failed: %s", exc, exc_info=True)
         raise HTTPException(503, f"Hermes nicht verfügbar: {exc}")
+    except Exception as exc:
+        log.error("Agent init failed: %s", exc, exc_info=True)
+        raise HTTPException(503, f"Agent-Initialisierung fehlgeschlagen: {exc}")
     _sessions[sid] = {
         "agent": agent,
         "label": label,
         "msg_count": 0,
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "llm_model": body.llm_model or os.getenv("LLM_MODEL", "(default)"),
     }
-    log.info("Session %s ready (%s), total active: %d", sid[:8], label, len(_sessions))
+    log.info("Session %s ready (%s), model=%s, total active: %d",
+             sid[:8], label, _sessions[sid]["llm_model"], len(_sessions))
     return {"session_id": sid, "label": label}
 
 
@@ -223,14 +254,14 @@ async def transcribe(file: UploadFile):
         shutil.copyfileobj(file.file, tmp)
         path = tmp.name
 
-    log.info("Transcribing audio file (suffix=%s, size=%d B)", suffix, os.path.getsize(path))
+    log.info("Transcribing audio (suffix=%s, size=%d B)", suffix, os.path.getsize(path))
     try:
         model = _get_whisper()
         segments, info = await asyncio.to_thread(
             model.transcribe, path, language="de", beam_size=5
         )
         text = " ".join(s.text.strip() for s in segments)
-        log.info("Transcription done: lang=%s, prob=%.2f, result=%.60s",
+        log.info("Transcription done: lang=%s prob=%.2f text=%.60s",
                  info.language, info.language_probability, text)
         return {"text": text}
     except Exception as exc:
@@ -248,12 +279,21 @@ async def transcribe(file: UploadFile):
 @app.get("/health")
 def health():
     hermes_ok = True
+    hermes_err = ""
     try:
         import run_agent  # noqa: F401
-    except ImportError:
+    except ImportError as exc:
         hermes_ok = False
+        hermes_err = str(exc)
+
+    env_llm_url   = os.getenv("LLM_BASE_URL", "")
+    env_llm_model = os.getenv("LLM_MODEL", "")
+
     return {
         "status": "ok" if hermes_ok else "degraded",
         "hermes_available": hermes_ok,
+        "hermes_error": hermes_err or None,
         "active_sessions": len(_sessions),
+        "env_llm_base_url": env_llm_url or None,
+        "env_llm_model": env_llm_model or None,
     }

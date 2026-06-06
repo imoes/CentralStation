@@ -2,6 +2,8 @@
 
 Adds JWT authentication and checks the computer_console_enabled preference
 before forwarding any request. SSE streaming is passed through transparently.
+The active LLM config (from CentralStation settings) is injected at session
+creation so Hermes always uses the same model as the rest of CentralStation.
 """
 from __future__ import annotations
 
@@ -43,9 +45,25 @@ _ConsoleEnabled = Depends(_require_console)
 # ── Session CRUD ───────────────────────────────────────────────────
 
 @router.post("/sessions", status_code=201, dependencies=[_ConsoleEnabled])
-async def create_session():
+async def create_session(db: Annotated[AsyncSession, Depends(get_db)]):
+    """Create a new Hermes session, injecting the active CentralStation LLM config."""
+    from app.services.settings import get_active_llm_config
+    try:
+        llm = await get_active_llm_config(db)
+        llm_payload = {
+            "llm_base_url": llm.base_url or None,
+            "llm_model": llm.model or None,
+            "llm_api_key": llm.api_key or None,
+            "llm_api_mode": llm.api_mode or "chat_completions",
+        }
+        log.info("Injecting LLM config for new session: model=%s mode=%s",
+                 llm.model or "(not set)", llm.api_mode)
+    except Exception as exc:
+        log.warning("Could not load LLM config, using CentralCore defaults: %s", exc)
+        llm_payload = {}
+
     async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.post(f"{CENTRALCORE_URL}/sessions")
+        r = await client.post(f"{CENTRALCORE_URL}/sessions", json=llm_payload)
     _check(r)
     return r.json()
 
