@@ -65,6 +65,13 @@ const ROLES = [
                   (change)="toggleActive(u, $event.checked)"
                   matTooltip="Aktiv/Inaktiv">
                 </mat-slide-toggle>
+                <mat-slide-toggle
+                  [checked]="u.computer_console_enabled"
+                  (change)="toggleConsole(u, $event.checked)"
+                  matTooltip="Computer Console (Hermes KI)"
+                  color="accent">
+                  <mat-icon style="font-size:14px;width:14px;height:14px;vertical-align:middle">smart_toy</mat-icon>
+                </mat-slide-toggle>
                 <button mat-icon-button (click)="openEdit(u)" matTooltip="Bearbeiten">
                   <mat-icon>edit</mat-icon>
                 </button>
@@ -226,6 +233,19 @@ export class UsersComponent implements OnInit {
         this.users.update(list => list.map(x => x.id === u.id ? { ...x, is_active } : x));
         this.snackBar.open(is_active ? 'Aktiviert' : 'Deaktiviert', '', { duration: 2000 });
       },
+    });
+  }
+
+  toggleConsole(u: any, computer_console_enabled: boolean) {
+    this.http.patch(`${environment.apiUrl}/users/${u.id}`, { computer_console_enabled }).subscribe({
+      next: () => {
+        this.users.update(list => list.map(x => x.id === u.id ? { ...x, computer_console_enabled } : x));
+        this.snackBar.open(
+          computer_console_enabled ? 'Computer Console aktiviert' : 'Computer Console deaktiviert',
+          '', { duration: 2500 }
+        );
+      },
+      error: (err) => this.snackBar.open(err?.error?.detail ?? 'Fehler', '', { duration: 3000 }),
     });
   }
 

@@ -39,6 +39,9 @@ slowapi==0.1.9
 # OpenSearch feed storage
 opensearch-py==2.7.1
 
+# MCP Server (CentralStation as tool provider for Hermes)
+fastmcp>=2.0
+
 # Utils
 python-dotenv==1.0.1
 python-dateutil>=2.9
