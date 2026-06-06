@@ -37,7 +37,19 @@ export class AuthService {
   fetchMe() {
     this.http.get<User>(`${environment.apiUrl}/auth/me`).subscribe({
       next: user => this._user.set(user),
-      error: () => this.logout(),
+      error: () => {
+        // Stale/expired token — try cookie-based silent refresh before giving up.
+        this._setToken(null);
+        this._silentRefresh().subscribe(ok => {
+          if (!ok) {
+            const returnUrl = this.router.url;
+            this.router.navigate(
+              ['/login'],
+              returnUrl && returnUrl !== '/' ? { queryParams: { returnUrl } } : {},
+            );
+          }
+        });
+      },
     });
   }
 
