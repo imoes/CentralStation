@@ -31,6 +31,8 @@ import logging
 import re as _re
 from typing import Any
 
+from app.services.ai_language import with_language
+
 log = logging.getLogger(__name__)
 
 # CUE production host detection:
