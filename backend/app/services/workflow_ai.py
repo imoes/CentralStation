@@ -4,7 +4,7 @@ Provides AI assistance for all user-facing ITIL operations:
 - Priority matrix (impact × urgency → P1-P4)
 - AI comment drafting (progress update, handoff, escalation)
 - AI resolution / closing message generation
-- KEDB matching (known error database search via it-aikb)
+- KEDB matching (known error database search)
 - Root cause analysis suggestions (5-Why, Fishbone)
 - SLA deadline calculation
 - Auto-categorization from ticket title/description
@@ -188,7 +188,7 @@ async def generate_comment(
     db: Any = None,
     lang: str | None = None,
 ) -> str:
-    """Generate an ITIL-compliant ticket comment, enriched with it-aikb DeepSearch."""
+    """Generate an ITIL-compliant ticket comment."""
     notes_text = "\n".join(
         f"[{n.get('timestamp', '')[:16]}] {n.get('author', 'User')}: {n.get('content', '')}"
         for n in (work_notes or [])[-10:]
@@ -200,44 +200,13 @@ async def generate_comment(
         "handoff":    "Übergabekommentar — Zusammenfassung für die übernehmende Person",
     }
 
-    # it-aikb DeepSearch for relevant infrastructure/runbook context (timeout: 180s — deepsearch takes ~2min)
-    import asyncio
-    kb_text = ""
-    if db:
-        try:
-            from sqlalchemy import select as sa_select
-            from app.models.connector import ConnectorConfig
-            from app.core.security import decrypt_credentials
-            conn_result = await db.execute(
-                sa_select(ConnectorConfig).where(
-                    ConnectorConfig.type == "it_aikb",
-                    ConnectorConfig.enabled.is_(True),
-                ).limit(1)
-            )
-            conn = conn_result.scalars().first()
-            if conn:
-                creds = decrypt_credentials(conn.encrypted_credentials)
-                from app.services.connectors.it_aikb import ITAikbConnector
-                svc = ITAikbConnector(base_url=conn.base_url, credentials=creds)
-                results = await asyncio.wait_for(svc.deepsearch(ticket_title), timeout=180.0)
-                if results:
-                    snippets = "\n".join(
-                        f"- {r.get('title', '')}: {(r.get('content') or r.get('text', ''))[:300]}"
-                        for r in results[:5]
-                    )
-                    kb_text = f"\nWissensdatenbank-Kontext:\n{snippets}"
-        except asyncio.TimeoutError:
-            log.debug("generate_comment: it-aikb lookup timed out after 180s, skipping")
-        except Exception as e:
-            log.debug("generate_comment: it-aikb lookup failed: %s", e)
-
     context_block = f"\nAktuelle Entwicklungen (vom Bearbeiter angegeben):\n{additional_context}" if additional_context and additional_context.strip() else ""
     prompt = f"""Ticket: {ticket_title}
 Verlauf (Beschreibung + Kommentare, neueste zuletzt):
 {ticket_description}
 Kommentartyp: {type_hints.get(comment_type, comment_type)}
 Arbeitsnotizen:
-{notes_text or '(keine Notizen)'}{kb_text}{context_block}
+{notes_text or '(keine Notizen)'}{context_block}
 
 Schreibe jetzt den Kommentar basierend auf dem aktuellen Stand (letzter Kommentar im Verlauf):"""
     return await _invoke_llm(llm_config, COMMENT_SYSTEM, prompt, lang=lang)
@@ -318,26 +287,6 @@ async def suggest_solution(
 
     rag_results = []
     web_results = []
-
-    if use_rag and plan.get("knowledge_query"):
-        from sqlalchemy import select
-        from app.core.security import decrypt_credentials
-        from app.models.connector import ConnectorConfig
-        result = await db.execute(
-            select(ConnectorConfig).where(
-                ConnectorConfig.type == "it_aikb",
-                ConnectorConfig.enabled.is_(True),
-            )
-        )
-        conn = result.scalars().first()
-        if conn:
-            creds = decrypt_credentials(conn.encrypted_credentials)
-            from app.services.connectors.it_aikb import ITAikbConnector
-            svc = ITAikbConnector(base_url=conn.base_url, credentials=creds)
-            try:
-                rag_results = await svc.search(plan["knowledge_query"], top_k=5)
-            except Exception as e:
-                log.warning("suggest_solution RAG failed: %s", e)
 
     if use_web and plan.get("needs_web_search"):
         from app.services.settings import get_searxng_config

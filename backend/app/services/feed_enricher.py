@@ -1,12 +1,7 @@
 """Feed Enricher — adds a short AI explanation to new feed alerts.
 
 Called from alert_aggregator after indexing new alerts.
-Uses HyDE (Hypothetical Document Embeddings) pattern:
-  1. LLM generates a concise English search query for the log event
-  2. it-aikb RAG is searched with that query (if connector is configured)
-  3. LLM explains the alert WITH the RAG context as background knowledge
-
-Ref: llm-graylog-analyse/graylog_analyzer.py:hyde_query_for_log + analyze_single_log
+Optionally uses SearXNG web search to add context before the LLM explanation.
 """
 from __future__ import annotations
 
@@ -17,13 +12,6 @@ log = logging.getLogger(__name__)
 
 _ENRICH_SEVERITIES = {"critical", "high", "warning"}
 _MAX_CONCURRENT = 5  # parallel LLM calls
-
-_HYDE_SYSTEM_PROMPT = (
-    "You are a Linux sysadmin. Generate a concise English search query (max 12 words) "
-    "to find the cause or solution for this monitoring event. "
-    "Focus on the APPLICATION or SERVICE that is failing (not on the monitoring/log tool). "
-    "Reply with ONLY the search query, nothing else."
-)
 
 _EXPLAIN_SYSTEM_PROMPT = (
     "You are an experienced Linux sysadmin. "
@@ -38,45 +26,6 @@ _EXPLAIN_SYSTEM_PROMPT = (
     "Do not invent causes, misconfigurations or remediation steps that do not follow "
     "directly from the message content."
 )
-
-
-async def _hyde_rag_lookup(item: dict, llm, aikb_svc) -> str:
-    """Generate a HyDE search query and look up it-aikb. Returns context snippet or ''."""
-    source = item.get("source", "")
-    title = item.get("title", "")
-    body = (item.get("body") or "")[:200]
-
-    try:
-        from langchain_core.messages import HumanMessage, SystemMessage
-        # For HyDE, give only content — not the collector name
-        hyde_input = title
-        if host:
-            hyde_input = f"Host: {host}\n{hyde_input}"
-        if body:
-            hyde_input += f"\n{body[:200]}"
-        hyde_resp = await llm.ainvoke([
-            SystemMessage(content=_HYDE_SYSTEM_PROMPT),
-            HumanMessage(content=hyde_input),
-        ])
-        hyde_query = (hyde_resp.content or "").strip().strip('"')[:150]
-        if not hyde_query:
-            return ""
-
-        log.debug("HyDE query for '%s': %s", title[:60], hyde_query)
-        hits = await aikb_svc.search_opensearch(hyde_query, top_k=2)
-        if not hits:
-            return ""
-
-        snippets = []
-        for h in hits:
-            content = (h.get("content") or h.get("body") or h.get("text") or "")[:250]
-            title_hit = h.get("title") or h.get("page_title") or ""
-            if content:
-                snippets.append(f"- {title_hit}: {content}" if title_hit else f"- {content}")
-        return "\n".join(snippets)
-    except Exception as e:
-        log.debug("HyDE RAG lookup failed: %s", e)
-        return ""
 
 
 async def _web_search(query: str, searxng_url: str, results_count: int = 5) -> str:
@@ -99,7 +48,7 @@ async def _web_search(query: str, searxng_url: str, results_count: int = 5) -> s
     return ""
 
 
-async def _enrich_one(item: dict, llm, aikb_svc=None, searxng_url: str = "") -> str | None:
+async def _enrich_one(item: dict, llm, searxng_url: str = "") -> str | None:
     """Generate and store an AI insight for a single feed item. Returns the insight text."""
     from app.core.opensearch import get_opensearch
     from app.services.feed_index import _index  # type: ignore[attr-defined]
@@ -132,12 +81,6 @@ async def _enrich_one(item: dict, llm, aikb_svc=None, searxng_url: str = "") -> 
     user_content += f"\nMeldung: {title}"
     if body:
         user_content += f"\nDetails: {body}"
-
-    # HyDE step: enrich with RAG context if it-aikb is available
-    if aikb_svc:
-        rag_snippet = await _hyde_rag_lookup(item, llm, aikb_svc)
-        if rag_snippet:
-            user_content += f"\n\nRelevante Wissensbasis:\n{rag_snippet}"
 
     # Web search: use host + title keywords, not the raw log source name
     if searxng_url:
@@ -209,32 +152,7 @@ async def enrich_single(item: dict, llm_config, searxng_url: str = "") -> str | 
                 item = {**item, "_response_lang": await get_response_language(_db)}
         except Exception:
             pass
-    aikb_svc = await _load_aikb_svc()
-    return await _enrich_one(item, llm, aikb_svc, searxng_url=searxng_url)
-
-
-async def _load_aikb_svc():
-    """Load the it-aikb connector if configured."""
-    try:
-        from sqlalchemy import select
-        from app.core.database import AsyncSessionLocal
-        from app.core.security import decrypt_credentials
-        from app.models.connector import ConnectorConfig
-        from app.services.connectors.it_aikb import ITAikbConnector
-        async with AsyncSessionLocal() as s:
-            result = await s.execute(
-                select(ConnectorConfig).where(
-                    ConnectorConfig.type == "it_aikb",
-                    ConnectorConfig.enabled.is_(True),
-                )
-            )
-            aikb_row = result.scalars().first()
-            if aikb_row:
-                creds = decrypt_credentials(aikb_row.encrypted_credentials)
-                return ITAikbConnector(base_url=aikb_row.base_url, credentials=creds)
-    except Exception as e:
-        log.debug("Could not load it-aikb connector: %s", e)
-    return None
+    return await _enrich_one(item, llm, searxng_url=searxng_url)
 
 
 async def enrich_batch(
@@ -294,12 +212,10 @@ async def enrich_batch(
         log.warning("Could not initialise LLM for feed enrichment: %s", e)
         return
 
-    aikb_svc = await _load_aikb_svc()
-
     sem = asyncio.Semaphore(_MAX_CONCURRENT)
 
     async def _guarded(item: dict) -> None:
         async with sem:
-            await _enrich_one(item, llm, aikb_svc, searxng_url=searxng_url)
+            await _enrich_one(item, llm, searxng_url=searxng_url)
 
     await asyncio.gather(*[_guarded(i) for i in targets], return_exceptions=True)

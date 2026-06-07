@@ -28,7 +28,6 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'prometheus',   label: 'Prometheus' },
   { value: 'netbox',       label: 'NetBox' },
   { value: 'id_generator', label: 'ID-Generator' },
-  { value: 'it_aikb',      label: 'it-aikb RAG' },
 ];
 
 const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
@@ -77,7 +76,6 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     { key: 'username', label: 'Benutzername', type: 'text' },
     { key: 'password', label: 'Passwort', type: 'password' },
   ],
-  it_aikb:      [{ key: 'token', label: 'Bearer Token (aikb_xxx)', type: 'password' }],
 };
 
 @Component({
