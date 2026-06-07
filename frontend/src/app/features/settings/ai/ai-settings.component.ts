@@ -445,23 +445,6 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
     });
   }
 
-  loadJiraProjects() {
-    this.http.get<{ projects: { key: string; name: string; connector: string }[] }>(
-      `${environment.apiUrl}/settings/jira-projects`,
-    ).subscribe({
-      next: r => this.jiraProjects.set(r.projects || []),
-      error: () => {},
-    });
-  }
-
-  /** When a project is picked, also store which connector hosts it (IMIT → jira_sd). */
-  onJiraProjectChange(key: string) {
-    const p = this.jiraProjects().find(x => x.key === key);
-    if (p) {
-      this.svc.updateSetting('jira.ticket_connector', p.connector).subscribe({ next: () => {}, error: () => {} });
-    }
-  }
-
   startOAuth() {
     this.startingOAuth.set(true);
     this.http.post<OAuthSession>(`${environment.apiUrl}/oauth/openai-codex/start`, {}).subscribe({
