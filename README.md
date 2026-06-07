@@ -101,7 +101,6 @@ After the first login, create the global system connectors under **Settings → 
 | Graylog | `graylog` | log aggregation |
 | Wazuh | `wazuh` | security alerts |
 | Prometheus | `prometheus` | time-series widgets |
-| it-aikb RAG | `it_aikb` | solution search, AI knowledge search |
 
 ---
 
@@ -122,7 +121,6 @@ Browser (Angular 20 LTS)
                     ├── Jira / Jira ServiceDesk
                     ├── Microsoft O365 / Teams (Graph API)
                     ├── Prometheus HTTP API
-                    ├── it-aikb RAG API (HyDE + OpenSearch)
                     ├── SearXNG (web search)
                     └── ID-Generator (sites, switches)
 ```
@@ -220,7 +218,7 @@ Since OS/location/VE/criticality are CheckMK-native concepts, the filter accesse
 | **KI-Kommentare** | Fortschritt, Pending, Eskalation, Übergabe — per KI generiert, direkt in Jira kopierbar |
 | **Abschlussdokumentation** | KI-generierte Lösungsdokumentation mit Root Cause, Maßnahmen, Closure Code |
 | **5-Why-Analyse** | ITIL Problem Management — KI führt 5-Why-Analyse durch, schlägt Kernursache vor |
-| **Lösungssuche** | RAG-Suche in it-aikb Wissensdatenbank + SearXNG Web-Suche, HyDE-Pattern |
+| **Lösungssuche** | SearXNG Web-Suche + KI-gestützte Lösungsvorschläge |
 | **Netzwerk-Modul** | Switch-Alerts (NSA/NSS/NSC), Standort-Zuordnung (ID-Generator), Vendor-Erkennung |
 | **RBAC** | Admin / SysAdmin / Network-Technician / Viewer — rollenbasierte UI und API |
 | **Audit-Log** | Protokollierung aller schreibenden Operationen |
@@ -459,7 +457,7 @@ The News Feed shows all events from the active OpenSearch indices (`cs-feed-*`) 
 ### AI analysis with web search
 
 - The **AI Analysis** button per alert calls `POST /api/feed/{id}/enrich`
-- When `workflow.web_search` is enabled (default on), a SearXNG web search adds context on top of the it-aikb RAG search (HyDE)
+- When `workflow.web_search` is enabled (default on), a SearXNG web search adds context to the AI explanation
 - Automatic enrichment is controlled via `agent.auto_enrich`
 
 ### "Newest messages" button
@@ -740,11 +738,11 @@ Node 2: enrich
   → vendor detection (Juniper/Cisco/VMware from Graylog messages)
 
 Node 3: rag_lookup
-  → LLM decides: simple search (it-aikb /search) or deep search (/search/stream SSE)
-  → knowledge base: runbooks, past incidents, documentation
+  → LLM decides if additional context is needed (SearXNG web search)
+  → CheckMK metrics for affected hosts
 
 Node 4: analyze
-  → correlate events + RAG context
+  → correlate events + web/metrics context
   → findings + recommendations (structured, Pydantic AnalysisResult)
   → store in PostgreSQL (ai_analyses table)
 
@@ -800,13 +798,10 @@ Node 4: act
 | `llm.vision_model` | vision model ID | — |
 | `llm.thinking_mode` | enable extended thinking (only `custom`) | `false` |
 | `agent.auto_enrich` | automatic AI enrichment after aggregation (off = on-demand) | `true` |
-| `agent.rag_enabled` | knowledge-base search (RAG/it-aikb) in the AI agent | `true` |
 | `workflow.web_search` | web search (SearXNG) during AI analysis of feed/alerts | `true` |
 | `agent.interval_minutes` | interval for background agents (minutes) | `10` |
 | `agent.auto_jira` | create Jira tickets automatically | `true` |
 | `agent.jira_severity_threshold` | minimum severity to create tickets | `critical` |
-| `rag.base_url` | it-aikb RAG API URL | — |
-| `rag.api_token` | it-aikb bearer token | — |
 | `searxng.base_url` | SearXNG web search URL | — |
 
 ### OpenAI Codex OAuth provider
@@ -833,9 +828,8 @@ CentralStation can optionally use OpenAI Codex (GPT-5.x) as the LLM provider —
 - API endpoints: `GET/DELETE /api/oauth/openai-codex/status|logout`, `POST /api/oauth/openai-codex/start|poll/{session_id}`
 
 **AI output behaviour:**
-- The SysAdmin agent emits all text fields (findings, recommendations) **in the operator's language** (`ui_language`) — even when RAG/web context is in another language
-- **No hallucinations**: if context is missing, the AI says so explicitly (`"No context available from the knowledge base…"`) instead of inventing causes
-- it-aikb calls (standard + DeepSearch) have a timeout of **300 s** (DeepSearch takes ~2 min)
+- The SysAdmin agent emits all text fields (findings, recommendations) **in the operator's language** (`ui_language`) — even when web context is in another language
+- **No hallucinations**: if context is missing, the AI says so explicitly instead of inventing causes
 
 ---
 
@@ -1013,7 +1007,6 @@ Global connectors apply to all users and are used by the background agents.
 | `prometheus` | optional Basic/Bearer | `username` (optional), `password` (optional) |
 | `netbox` | Bearer Token | `api_token` |
 | `id_generator` | Basic Auth | `username` (`idgen_reader`), `password` |
-| `it_aikb` | Bearer Token | `api_token` |
 
 ### Personal connectors (per user)
 
@@ -1246,8 +1239,7 @@ All settings are stored encrypted in the database and managed via `GET/PATCH /ap
 - `agent.auto_create_jira` — create tickets automatically
 - `agent.jira_severity_threshold` — minimum severity for auto-ticketing
 
-**RAG/search:**
-- `rag.base_url`, `rag.api_token` — it-aikb knowledge base
+**Web search:**
 - `searxng.base_url` — SearXNG web search
 
 ### Fetch filter values
@@ -1290,7 +1282,7 @@ All settings are stored encrypted in the database and managed via `GET/PATCH /ap
 | `/api/feed/unread-count` | GET | Ungelesene Alerts seit `?since=<ISO>` |
 | `/api/feed/checkmk-filter-values` | GET | Verfügbare Filter-Werte aus CheckMK-Index |
 | `/api/feed/{item_id}/acknowledge` | POST | Alert als bestätigt markieren |
-| `/api/feed/{item_id}/enrich` | POST | KI-Anreicherung (it-aikb RAG + optional SearXNG) für einzelnes Item |
+| `/api/feed/{item_id}/enrich` | POST | KI-Anreicherung (optional SearXNG) für einzelnes Item |
 | `/api/feed/{item_id}/ignore` | POST | KI generiert OpenSearch-Ausschluss-Query → als System-Exclusion-Suche speichern |
 | `/api/feed/incidents` | GET | Offene Incidents (status: open/investigating) |
 | `/api/feed/incidents/{id}/timeline` | GET | Chronologische Timeline eines Incidents (Alerts + Kommentare + KI-Diagnosen) |
@@ -1369,11 +1361,11 @@ All settings are stored encrypted in the database and managed via `GET/PATCH /ap
 | `/api/workflow/{id}` | GET | work session with all notes |
 | `/api/workflow/{id}` | PATCH | edit a work session |
 | `/api/workflow/{id}/notes` | POST | add a note |
-| `/api/workflow/{id}/generate-comment` | POST | generate an AI Jira comment (it-aikb DeepSearch context, 300 s timeout) |
+| `/api/workflow/{id}/generate-comment` | POST | generate an AI Jira comment |
 | `/api/workflow/{id}/post-comment` | POST | post a comment to Jira (`{"comment": "..."}`) — AI-generated or manual |
 | `/api/workflow/{id}/generate-resolution` | POST | generate closure documentation |
 | `/api/workflow/{id}/auto-categorize` | POST | AI categorization |
-| `/api/workflow/{id}/suggest-solution` | POST | RAG + web solution search |
+| `/api/workflow/{id}/suggest-solution` | POST | web solution search |
 | `/api/workflow/{id}/5why` | POST | 5-whys root cause analysis |
 | `/api/workflow/analyze-mail` | POST | analyze an O365 email |
 
@@ -1442,7 +1434,7 @@ OPENSEARCH_USER=admin
 OPENSEARCH_PASSWORD=<password>
 ```
 
-All other configuration (LLM URL, connector credentials, SearXNG, RAG) is stored Fernet-encrypted in the database and managed via the frontend.
+All other configuration (LLM URL, connector credentials, SearXNG) is stored Fernet-encrypted in the database and managed via the frontend.
 
 ### Docker Compose
 
