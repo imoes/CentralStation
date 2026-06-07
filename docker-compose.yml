@@ -50,10 +50,6 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-      args:
-        HTTP_PROXY: http://proxy.ippen.media:80
-        HTTPS_PROXY: http://proxy.ippen.media:80
-        NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,centralcore,.ippen.media
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://centralstation:${POSTGRES_PASSWORD}@db:5432/centralstation
@@ -64,9 +60,6 @@ services:
       OPENSEARCH_USER: admin
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
       CENTRALCORE_URL: http://centralcore:8001
-      HTTP_PROXY: http://proxy.ippen.media:80
-      HTTPS_PROXY: http://proxy.ippen.media:80
-      NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,centralcore,.ippen.media
     depends_on:
       db:
         condition: service_healthy
@@ -87,10 +80,6 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      args:
-        HTTP_PROXY: http://proxy.ippen.media:80
-        HTTPS_PROXY: http://proxy.ippen.media:80
-        NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
     restart: unless-stopped
     depends_on:
       - backend
@@ -102,26 +91,23 @@ services:
       context: ./centralcore
       # Hermes is git-cloned + pip-installed during docker build.
       # Rebuild to update Hermes: docker compose build centralcore
-      args:
-        HTTP_PROXY: http://proxy.ippen.media:80
-        HTTPS_PROXY: http://proxy.ippen.media:80
-        NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
     restart: unless-stopped
     environment:
       CENTRALCORE_URL: http://centralcore:8001
-      HTTP_PROXY: http://proxy.ippen.media:80
-      HTTPS_PROXY: http://proxy.ippen.media:80
-      NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
     volumes:
-      # ~/.hermes enthält Auth-Tokens, Session-State UND eigene Skills
-      # Eigene Skills → /home/mutkluge/.hermes/skills/<name>/SKILL.md
-      # Built-in Hermes-Skills bleiben unberührt in /opt/hermes/skills/ (baked in)
-      - /home/mutkluge/.hermes:/root/.hermes
+      # ~/.hermes holds auth tokens, session state and custom skills
+      # Custom skills → ${PWD}/.hermes/skills/<name>/SKILL.md
+      # Built-in Hermes skills stay in /opt/hermes/skills/ (baked in)
+      - ${PWD}/.hermes:/root/.hermes
       - ./centralcore/hermes_config.yaml:/root/.hermes/config.yaml:ro
-      # SSH-Konfiguration aus dem Projektverzeichnis (User, Key, Hosts) — kein systemweiter Eingriff
+      # SSH config from the project directory — no system-wide changes needed
       - ./centralcore/ssh_config:/root/.ssh_project_config:ro
-      # SSH-Keys aus ~/.ssh des Hosts (read-only) — welcher Key genutzt wird, steht in ssh_config
-      - /home/mutkluge/.ssh:/root/.ssh_host:ro
+      # SSH keys from the host (read-only)
+      - ${HOME}/.ssh:/root/.ssh_host:ro
+      # Claude OAuth credentials — uncomment to enable claude-oauth provider
+      # Option A: mount ~/.claude/ directory (from: claude auth login --claudeai)
+      # - ${HOME}/.claude:/root/.claude:ro
+      # Option B: set CLAUDE_CODE_OAUTH_TOKEN in .env (from: claude setup-token)
     ports:
       - "127.0.0.1:8001:8001"
     cap_add:

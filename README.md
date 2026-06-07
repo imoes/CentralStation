@@ -16,20 +16,21 @@ assists with the entire ITIL-compliant work documentation using AI.
 3. [CheckMK as the Single Source of Truth](#checkmk-as-the-single-source-of-truth)
 4. [Feature Overview](#feature-overview)
 5. [Operations Cockpit (Dashboard)](#operations-cockpit-dashboard)
-6. [Server Cockpit (Host-Detail-Fenster)](#server-cockpit-host-detail-fenster)
+6. [Server Cockpit (Host Detail Panel)](#server-cockpit-host-detail-panel)
 7. [News Feed](#news-feed)
-8. [OpenSearch-Suchen (FeedSearches)](#opensearch-suchen-feedsearches)
-9. [Alert-Aggregation und Enrichment](#alert-aggregation-und-enrichment)
-10. [Incident-Korrelation](#incident-korrelation)
-11. [Kanban und Jira](#kanban-und-jira)
-12. [KI-Funktionen](#ki-funktionen)
-13. [Prometheus-Metriken & PromQL](#prometheus-metriken--promql)
-14. [Konnektoren](#konnektoren)
-15. [Benutzerverwaltung und RBAC](#benutzerverwaltung-und-rbac)
-16. [Einstellungen und Präferenzen](#einstellungen-und-präferenzen)
-17. [API-Referenz](#api-referenz)
-18. [Datenbankmigrationen](#datenbankmigrationen)
+8. [OpenSearch Searches (FeedSearches)](#opensearch-searches-feedsearches)
+9. [Alert Aggregation and Enrichment](#alert-aggregation-and-enrichment)
+10. [Incident Correlation](#incident-correlation)
+11. [Kanban and Jira](#kanban-and-jira)
+12. [AI Features](#ai-features)
+13. [Prometheus Metrics & PromQL](#prometheus-metrics--promql)
+14. [Connectors](#connectors)
+15. [User Management and RBAC](#user-management-and-rbac)
+16. [Settings and Preferences](#settings-and-preferences)
+17. [API Reference](#api-reference)
+18. [Database Migrations](#database-migrations)
 19. [Deployment](#deployment)
+20. [Upgrading](#upgrading)
 
 ---
 
@@ -196,7 +197,7 @@ Since OS/location/VE/criticality are CheckMK-native concepts, the filter accesse
 
 ---
 
-## Features im Überblick
+## Feature Overview
 
 | Bereich | Funktionen |
 |---------|------------|
@@ -332,7 +333,7 @@ A toggle button in the dashboard header switches between two modes:
 
 ---
 
-## Server Cockpit (Host-Detail-Fenster)
+## Server Cockpit (Host Detail Panel)
 
 Ein Klick auf einen Servernamen im **News Feed** öffnet das Server Cockpit in einem eigenständigen Browser-Fenster (`window.open`, Route `/cockpit/:hostname`). Das Fenster hat kein Navigationsmenü — es ist ein vollbildiges LCARS-Dashboard für genau einen Host.
 
@@ -356,14 +357,14 @@ Ein Klick auf einen Servernamen im **News Feed** öffnet das Server Cockpit in e
 └─────────────────────────────────────────────────────┘
 ```
 
-### Performance-Block
+### Performance Block
 
 - **Hero-Gauges**: CPU / RAM / Disk als ECharts-Gauge-Charts (140px), Farbe nach Level: crit `#ff4433` / high `#ffcc00` / ok `#66cc66`
 - **Sparklines**: Kompakte 52px-Liniencharts direkt unterhalb der Gauges (24h-Historie)
 - **Zweistufiges Laden**: Zuerst gecachte Werte aus `cs-metrics-checkmk` (sofort), dann Live-Refresh via CheckMK RRD (`?live=true`, ~1-2s)
 - **LIVE-Badge**: wechselt von `cached` auf `LIVE ●` sobald die aktuellen Werte eintreffen
 
-### Service-Liste
+### Service List
 
 Zeigt alle CheckMK-Services des Hosts mit aktuellem Status und `plugin_output` (menschenlesbare Zusammenfassung, z.B. „15.2% used (3.04 GB of 20.0 GB)").
 
@@ -393,7 +394,7 @@ Filter-Chips mit 0 Treffern bleiben immer sichtbar, werden aber ausgegraut (`opa
 - Metric-Inferenz aus Service-Name: `Filesystem*` → `fs_used_percent`, `Memory` → `mem_used_percent`, `CPU*` → `load1`
 - 24h-Linienchart erscheint inline unter der Zeile; erneuter Klick schließt ihn
 
-### API-Endpunkte (Backend)
+### API Endpoints (Backend)
 
 | Endpunkt | Beschreibung |
 |----------|-------------|
@@ -401,7 +402,7 @@ Filter-Chips mit 0 Treffern bleiben immer sichtbar, werden aber ausgegraut (`opa
 | `GET /api/hosts/{hostname}/services` | Alle CheckMK-Services mit `state_label` + `summary`; sortiert CRIT→WARN→UNKNOWN→OK |
 | `GET /api/hosts/{hostname}/graph` | 24h-Zeitreihe: `?service=<name>&metric=<id>` → `{series, title, unit}` |
 
-### Technische Details
+### Technical Details
 
 - **Navbar-Ausblendung**: `ngOnInit` setzt `document.body.classList.add('cockpit-active')`; `styles.scss` versteckt `.sidenav` und entfernt `mat-sidenav-content`-Margin (analog zu `bridge-active`)
 - **Font**: Roboto (identisch mit News Feed und Alerts)
@@ -622,11 +623,11 @@ After indexing, new alerts with severity `critical`, `high` or `warning` are enr
 
 ---
 
-## Incident-Korrelation
+## Incident Correlation
 
 CentralStation gruppiert zusammengehörige Alerts automatisch zu **Incidents** (`incidents` + `incident_members`-Tabellen).
 
-### Korrelationsregeln
+### Correlation Rules
 
 Ein neuer Incident wird nur angelegt wenn **alle** Bedingungen erfüllt sind:
 
@@ -634,11 +635,11 @@ Ein neuer Incident wird nur angelegt wenn **alle** Bedingungen erfüllt sind:
 2. **Mindestgröße**: Neuer Incident erfordert ≥ 2 korrelierte Alerts (gleicher Host, 30-Min-Fenster) **oder** Cross-Source-Evidenz (gleicher Host, ≥ 2 Quellen)
 3. **Host-Validierung**: Nur FQDNs werden als Hosts akzeptiert (muss mindestens einen Punkt enthalten). Docker-Container-Short-IDs (z.B. `5086bbde056b`) und Container-Namen werden abgelehnt
 
-### Zeitfenster
+### Time Window
 
 Offene Incidents werden nur wiederverwendet, wenn `updated_at >= jetzt - 30 Minuten`. Ein älterer Incident wird **nicht** verlängert — stattdessen wird ein neuer Incident angelegt. Das verhindert, dass zeitlich weit auseinanderliegende Alerts fälschlicherweise in denselben Incident gepackt werden.
 
-### Incident-Lifecycle
+### Incident Lifecycle
 
 ```
 Neuer Alert (critical/high) mit FQDN
@@ -650,14 +651,14 @@ Neuer Alert (critical/high) mit FQDN
     └── Housekeeping-Job (alle 2h): Incidents ohne neue Member → resolved
 ```
 
-### Datenmodell
+### Data Model
 
 | Tabelle | Felder |
 |---------|--------|
 | `incidents` | `id`, `title` (z.B. „host.example.com: 4 Alerts [checkmk/graylog]"), `primary_host`, `severity`, `status` (open/investigating/resolved), `created_at`, `updated_at`, `resolved_at` |
 | `incident_members` | `incident_id`, `external_id`, `source`, `added_at` |
 
-### API-Endpunkte
+### API Endpoints
 
 | Endpunkt | Beschreibung |
 |----------|-------------|
@@ -666,7 +667,7 @@ Neuer Alert (critical/high) mit FQDN
 
 ---
 
-## Kanban und Jira
+## Kanban and Jira
 
 ### Kanban board
 
@@ -1472,3 +1473,76 @@ curl http://localhost:9200/_cluster/health?pretty
 - [ ] `docker compose up -d --no-build` for production (use pre-built images)
 - [ ] change the admin password after the first login
 - [ ] rate limiting on `/api/auth/login` (10 requests/minute, already built in)
+
+---
+
+## Upgrading
+
+### Pulling the latest code
+
+```bash
+git pull origin main
+```
+
+### Rebuild and restart containers
+
+```bash
+# Rebuild all images (picks up code changes)
+docker compose build
+
+# Restart with the new images
+docker compose up -d
+```
+
+Only the `backend`, `frontend`, and `centralcore` services contain baked code.
+`db`, `redis`, `opensearch`, and `nginx` use upstream images and only need a
+pull + restart when you want a newer upstream version.
+
+### Apply database migrations
+
+Migrations run automatically when the backend starts. To apply them manually
+(e.g. after a failed start):
+
+```bash
+docker compose exec backend python -m alembic upgrade head
+```
+
+Check current revision:
+
+```bash
+docker compose exec backend python -m alembic current
+```
+
+### Updating a single service
+
+```bash
+# Rebuild and restart only the backend
+docker compose build backend && docker compose up -d --no-deps backend
+
+# Rebuild and restart only the frontend
+docker compose build frontend && docker compose up -d --no-deps frontend
+
+# Rebuild and restart centralcore (includes Hermes re-install)
+docker compose build centralcore && docker compose up -d --no-deps centralcore
+```
+
+### Rollback
+
+```bash
+# Roll back to the previous migration
+docker compose exec backend python -m alembic downgrade -1
+
+# Or roll back to a specific revision
+docker compose exec backend python -m alembic downgrade <revision>
+
+# Restore the database from backup
+docker compose exec -T db psql -U centralstation centralstation < backup_YYYYMMDD.sql
+```
+
+### Zero-downtime upgrade (production)
+
+1. `git pull origin main`
+2. `docker compose build backend frontend`
+3. `docker compose up -d --no-deps backend frontend` — new containers replace old ones
+4. Migrations apply automatically on backend startup
+5. Verify health: `docker compose ps` and `curl http://localhost/api/health`
