@@ -53,17 +53,20 @@ async def create_session(db: Annotated[AsyncSession, Depends(get_db)]):
     from app.services.settings import get_active_llm_config
     try:
         llm = await get_active_llm_config(db)
-        # codex_responses is a CentralStation-only API mode — Hermes uses its own
-        # client and needs standard chat_completions mode for the same endpoint.
-        api_mode = "chat_completions" if llm.api_mode == "codex_responses" else (llm.api_mode or "chat_completions")
-        llm_payload = {
-            "llm_base_url": llm.base_url or None,
-            "llm_model": llm.model or None,
-            "llm_api_key": llm.api_key or None,
-            "llm_api_mode": api_mode,
-        }
-        log.info("Injecting LLM config for new session: model=%s mode=%s",
-                 llm.model or "(not set)", api_mode)
+        # codex_responses uses a browser-only OAuth endpoint that Hermes cannot reach.
+        # Fall back to Hermes defaults (env LLM_BASE_URL / LLM_MODEL) in that case.
+        if llm.api_mode == "codex_responses":
+            log.info("LLM provider is codex_responses — Hermes uses its own defaults")
+            llm_payload = {}
+        else:
+            llm_payload = {
+                "llm_base_url": llm.base_url or None,
+                "llm_model": llm.model or None,
+                "llm_api_key": llm.api_key or None,
+                "llm_api_mode": llm.api_mode or "chat_completions",
+            }
+            log.info("Injecting LLM config for new session: model=%s mode=%s",
+                     llm.model or "(not set)", llm.api_mode)
     except Exception as exc:
         log.warning("Could not load LLM config, using CentralCore defaults: %s", exc)
         llm_payload = {}
