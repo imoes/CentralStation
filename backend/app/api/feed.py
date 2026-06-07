@@ -975,6 +975,13 @@ async def computer_resolve_alert(
     await db.commit()
     await _broadcast_collab(external_id, "ai", "Computer (KI)", collab.work_status, comment_body)
 
+    # Tag the alert in OpenSearch so future similarity searches can find this resolution
+    try:
+        from app.services.feed_index import update_ai_resolution
+        await update_ai_resolution(external_id, summary)
+    except Exception as _tag_exc:
+        log.warning("computer-resolve: OpenSearch tagging failed: %s", _tag_exc)
+
     log.info("computer-resolve: Lernkommentar gespeichert für %s (%d Zeichen)", external_id[:24], len(summary))
     return {"ok": True, "comment": comment_body}
 
@@ -1034,47 +1041,31 @@ async def alert_hermes_context(
             lines.append(r.to_llm_text())
         lines.append("")
 
-    # ── Past Computer learning comments for this host ─────────────────────────
+    # ── Past AI-resolved alerts (OpenSearch similarity search) ────────────────
     try:
-        from app.models.workflow import AlertComment as _AlertComment
-        host_alerts = await search_by_query(
-            "cs-feed-*",
-            f'metadata.host:"{host}" OR metadata.agent:"{host}"',
-            size=25,
-        )
-        if host_alerts:
-            ext_ids = [a.get("external_id") for a in host_alerts if a.get("external_id")]
-            if ext_ids:
-                com_r = await db.execute(
-                    select(_AlertComment)
-                    .where(
-                        _AlertComment.external_id.in_(ext_ids[:25]),
-                        _AlertComment.kind == "ai",
-                        _AlertComment.body.like("%Lernkommentar%"),
-                    )
-                    .order_by(_AlertComment.created_at.desc())
-                    .limit(3)
-                )
-                past_learn = com_r.scalars().all()
-                if past_learn:
-                    lines.append("## Frühere Computer-Diagnosen (gelernt)\n")
-                    for c in past_learn:
-                        ts = c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else ""
-                        # Strip the emoji/header prefix, keep the summary
-                        body_clean = c.body.split("\n", 1)[-1].strip() if "\n" in c.body else c.body
-                        lines.append(f"[{ts}] {body_clean[:400]}")
-                    lines.append("")
+        from app.services.feed_index import search_ai_resolved
+        past_resolved = await search_ai_resolved(alert_title=title, host=host, limit=3)
+        if past_resolved:
+            lines.append("## Frühere Computer-Diagnosen (gelernt)\n")
+            for inc in past_resolved:
+                ts = (inc.get("run_at") or "")[:16]
+                finding = inc.get("finding_title", "")
+                resolution = inc.get("resolution", "")
+                lines.append(f"**[{ts}]** {finding}")
+                if resolution:
+                    lines.append(f"→ {resolution}")
+            lines.append("")
     except Exception as _exc:
-        log.debug("hermes-context: past_comments failed: %s", _exc)
+        log.debug("hermes-context: past_resolved search failed: %s", _exc)
 
     lines.append("## Aufgabe")
     lines.append("1. Analysiere die Diagnosedaten und identifiziere die Ursache")
     if container:
         lines.append(
-            f"2. Prüfe Docker-Logs via SSH: `ssh marvin@{host} 'docker logs --tail=100 {container}'`"
+            f"2. Suche Container-Logs in Graylog: `search_feed('container_name:\"{container}\"')` — Logs kommen via Logspout, kein SSH nötig"
         )
     else:
-        lines.append("2. Prüfe den Host via SSH wenn weitere Infos nötig sind")
+        lines.append("2. Suche weitere Logs via `search_feed` oder `list_alerts` falls nötig")
     lines.append("3. Nenne konkret was das Problem ist und wie es zu beheben ist")
     lines.append("4. Falls du das Problem gelöst hast, klicke im Computer-Panel auf '✓ GELÖST'")
 
