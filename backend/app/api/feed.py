@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1199,3 +1200,169 @@ async def create_ticket(
         log.warning("create_ticket: timeline record failed: %s", e)
 
     return {"ok": True, "jira_key": jira_key, "url": url}
+
+
+# ── Computer panel — learn from resolved problems ──────────────────────────
+
+class _ComputerResolveBody(BaseModel):
+    messages: list[dict]
+
+
+@router.post("/{external_id}/computer-resolve")
+async def computer_resolve_alert(
+    external_id: str,
+    body: _ComputerResolveBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """After the Computer panel resolves an alert, synthesise a brief lesson-learned
+    comment via LLM and save it as an AI timeline entry. Also tags the OpenSearch
+    document with has_ai_resolution=True and ai_resolution_text so future similarity
+    searches can find it."""
+    from app.services.settings import get_active_llm_config
+    from app.services.llm_client import generate_text
+    from app.services.dashboard.generative_designer import _strip_thinking
+
+    conv_lines: list[str] = []
+    for m in body.messages[-20:]:
+        role = "USER" if m.get("role") == "user" else "COMPUTER"
+        text = (m.get("text") or "").strip()[:500]
+        if text:
+            conv_lines.append(f"{role}: {text}")
+    conv_text = "\n\n".join(conv_lines)
+
+    if not conv_text:
+        raise HTTPException(400, "No conversation submitted")
+
+    summary = ""
+    try:
+        llm_cfg = await get_active_llm_config(db)
+        if llm_cfg.is_configured:
+            system_prompt = (
+                "You are an IT documentation assistant. Summarise this Computer diagnosis "
+                "session in 2-3 concise English sentences. Answer: What was the problem? "
+                "What was found? What solution was recommended? "
+                "Facts from the conversation only — no speculation."
+            )
+            raw = await generate_text(
+                llm_cfg,
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Computer diagnosis session:\n\n{conv_text}"},
+                ],
+                temperature=0.2,
+            )
+            summary = _strip_thinking(raw).strip()
+    except Exception as exc:
+        log.warning("computer-resolve: LLM synthesis failed: %s", exc)
+
+    if not summary:
+        for m in reversed(body.messages):
+            if m.get("role") == "assistant":
+                summary = (m.get("text") or "").strip()[:600]
+                break
+
+    if not summary:
+        raise HTTPException(400, "Could not create a summary")
+
+    comment_body = f"🖥 **Learning note (Computer Diagnosis):**\n{summary}"
+
+    collab = await _get_or_create_collab(external_id, db)
+    await _add_timeline(external_id, None, "Computer (AI)", "ai", comment_body, db)
+    await db.commit()
+    await _broadcast_collab(external_id, "ai", "Computer (AI)", collab.work_status, comment_body)
+
+    try:
+        from app.services.feed_index import update_ai_resolution
+        await update_ai_resolution(external_id, summary)
+    except Exception as _tag_exc:
+        log.warning("computer-resolve: OpenSearch tagging failed: %s", _tag_exc)
+
+    log.info("computer-resolve: learning note saved for %s (%d chars)", external_id[:24], len(summary))
+    return {"ok": True, "comment": comment_body}
+
+
+@router.get("/{external_id}/hermes-context")
+async def alert_hermes_context(
+    external_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Build a Hermes starting prompt from an alert: resolves the host, runs CheckMK
+    diagnostics, and returns a structured prompt the Computer console sends directly."""
+    from app.services.ai_agent.diagnostics import run_diagnostics
+    from app.services.feed_index import search_by_query
+
+    host = ""
+    title = ""
+    severity = ""
+    source_name = ""
+    container = ""
+    try:
+        items = await search_by_query(
+            index_pattern="cs-feed-*",
+            query_string=f'external_id:"{external_id}"',
+            size=1,
+        )
+        if items:
+            item = items[0]
+            meta = item.get("metadata") or {}
+            host = meta.get("host") or meta.get("agent") or meta.get("container_name") or ""
+            title = item.get("title", "")
+            severity = item.get("severity", "")
+            source_name = item.get("source", "")
+            container = meta.get("container_name", "")
+    except Exception as e:
+        log.warning("hermes-context: search failed: %s", e)
+
+    if not host:
+        raise HTTPException(400, "Host could not be determined — no hostname in alert data.")
+
+    results = await run_diagnostics(host, db)
+
+    lines: list[str] = [
+        "Investigate this alert and act accordingly:\n",
+        f"**Alert:** {title}",
+        f"**Severity:** {severity}",
+        f"**Source:** {source_name}",
+        f"**Host:** {host}",
+    ]
+    if container:
+        lines.append(f"**Container:** {container}")
+    lines.append("")
+
+    if results:
+        lines.append("## Diagnostic data (auto-fetched)\n")
+        for r in results:
+            lines.append(r.to_llm_text())
+        lines.append("")
+
+    # ── Past AI-resolved alerts (OpenSearch similarity search) ────────────────
+    try:
+        from app.services.feed_index import search_ai_resolved
+        past_resolved = await search_ai_resolved(alert_title=title, host=host, limit=3)
+        if past_resolved:
+            lines.append("## Past Computer Diagnoses (learned)\n")
+            for inc in past_resolved:
+                ts = (inc.get("run_at") or "")[:16]
+                finding = inc.get("finding_title", "")
+                resolution = inc.get("resolution", "")
+                lines.append(f"**[{ts}]** {finding}")
+                if resolution:
+                    lines.append(f"→ {resolution}")
+            lines.append("")
+    except Exception as _exc:
+        log.debug("hermes-context: past_resolved search failed: %s", _exc)
+
+    lines.append("## Task")
+    lines.append("1. Analyse the diagnostic data and identify the root cause")
+    if container:
+        lines.append(
+            f"2. Search container logs in Graylog: `search_feed('container_name:\"{container}\"')` — logs arrive via Logspout, no SSH needed"
+        )
+    else:
+        lines.append("2. Search for more logs via `search_feed` or `list_alerts` if needed")
+    lines.append("3. State concretely what the problem is and how to fix it")
+    lines.append("4. If you have resolved the problem, click '✓ RESOLVED' in the Computer panel")
+
+    return {"prompt": "\n".join(lines), "host": host}
