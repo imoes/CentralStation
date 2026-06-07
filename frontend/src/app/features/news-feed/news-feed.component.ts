@@ -542,7 +542,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                   <button mat-stroked-button class="ki-btn diagnose-btn"
                           (click)="diagnoseAlert(item)"
                           [disabled]="isDiagnosing(item.id)"
-                          matTooltip="KI prüft read-only: CheckMK-Status, Metriken, aktuelle Logs">
+                          matTooltip="Hermes untersucht den Host: CheckMK-Services + Docker-Logs">
                     @if (isDiagnosing(item.id)) {
                       <mat-spinner diameter="14" class="ki-spinner"></mat-spinner>
                     } @else {
@@ -2249,16 +2249,14 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (!item.external_id || this.diagnosingIds.has(item.id)) return;
     this.diagnosingIds.add(item.id);
     this.diagnosingIds = new Set(this.diagnosingIds);
-    // Open comment thread so user sees the result appear
-    if (!this.showComments.has(item.id)) this.toggleComments(item.id);
-    this.http.post<any>(`${environment.apiUrl}/feed/${item.external_id}/diagnose`, {}).subscribe({
-      next: () => {
+
+    this.http.get<{ prompt: string; host: string }>(
+      `${environment.apiUrl}/feed/${item.external_id}/hermes-context`
+    ).subscribe({
+      next: data => {
         this.diagnosingIds.delete(item.id);
         this.diagnosingIds = new Set(this.diagnosingIds);
-        this.loadTimeline(item);
-        this.items.update(items => items.map(i =>
-          i.id === item.id ? { ...i, collab: { ...i.collab!, comment_count: (i.collab?.comment_count ?? 0) + 1 } } : i
-        ));
+        this.computerService.openWithContext(data.prompt, data.host, data.host, item.external_id ?? undefined);
       },
       error: err => {
         this.diagnosingIds.delete(item.id);
@@ -2277,9 +2275,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
 
   handoffToComputer(incidentId: string) {
     const incident = this.incidentTimeline()?.incident;
-    const label = incident
-      ? `Incident: ${incident.primary_host}`
-      : 'Incident-Analyse';
+    const label = incident?.primary_host || 'Incident-Analyse';
 
     this.copyingPrompt.set(true);
     this.promptCopied.set(false);
@@ -2289,7 +2285,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
           this.copyingPrompt.set(false);
           this.promptCopied.set(true);
           setTimeout(() => this.promptCopied.set(false), 2000);
-          this.computerService.openWithContext(data.prompt, label);
+          this.computerService.openWithContext(data.prompt, label, incident?.primary_host);
         },
         error: () => {
           this.copyingPrompt.set(false);
