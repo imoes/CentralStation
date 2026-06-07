@@ -126,8 +126,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                   {{ msg.role === 'user' ? '▶ NUTZER' : '◎ COMPUTER' }}
                 </span>
                 <div class="msg-text"
-                     [class.md]="msg.role === 'assistant'"
-                     [innerHTML]="msg.role === 'assistant' ? renderMarkdown(msg.text) : msg.text"></div>
+                     [innerHTML]="renderMarkdown(msg.text)"></div>
               </div>
             }
             @if (loading()) {
@@ -295,16 +294,18 @@ export class ComputerComponent implements OnInit, OnDestroy {
     });
   }
 
-  /** Extract the concluding paragraph (Fazit) for TTS — last substantive paragraph
-   *  whose heading starts with Fazit/Zusammenfassung/Empfehlung, or simply the
-   *  last non-empty paragraph, capped at 300 chars. */
+  /** Extract the concluding paragraph (Fazit) for TTS.
+   *  Finds a section starting with Fazit/Zusammenfassung/Empfehlung/Ergebnis/Schluss,
+   *  or falls back to the last substantive paragraph. Capped at 300 chars. */
   private _extractFazit(text: string): string {
     let t = text.replace(/\[FEED:[^\]]+\]/g, '').replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
     t = t.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
     t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/^#{1,6}\s+/gm, '');
+    // Merge heading line with its following content so "## Fazit\nText" becomes one paragraph
+    t = t.replace(/(Fazit|Zusammenfassung|Empfehlung|Ergebnis|Schluss)[:\s]*\n+/gi, '$1: ');
     const paragraphs = t.split(/\n{2,}/)
       .map(p => p.replace(/^\s*[-*>|]+\s*/gm, '').replace(/\s+/g, ' ').trim())
-      .filter(p => p.length > 20 && !/^\s*[\d.]+\s*$/.test(p));
+      .filter(p => p.length > 8);
     if (paragraphs.length === 0) return '';
     const fazit = paragraphs.find(p => /^(Fazit|Zusammenfassung|Empfehlung|Ergebnis|Schluss)/i.test(p));
     const chosen = fazit ?? paragraphs[paragraphs.length - 1];
@@ -314,7 +315,12 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   private speak(text: string): void {
     const fazit = this._extractFazit(text);
-    if (this.muted() || !fazit.trim()) return;
+    if (this.muted()) return;
+    if (!fazit.trim()) {
+      console.debug('[TTS] kein Fazit gefunden — keine Wiedergabe');
+      return;
+    }
+    console.debug('[TTS] spreche Fazit (%d Zeichen): %s', fazit.length, fazit.slice(0, 80));
     const token = this.auth.getAccessToken();
     this._ttsAudio?.pause();
     this._ttsAudio = undefined;
@@ -334,8 +340,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
       const audio = new Audio(url);
       this._ttsAudio = audio;
       audio.onended = () => URL.revokeObjectURL(url);
-      audio.play().catch(err => console.warn('TTS playback failed:', err));
-    }).catch(err => console.warn('TTS request failed:', err));
+      audio.play().catch(err => console.warn('[TTS] Wiedergabe fehlgeschlagen:', err));
+    }).catch(err => console.warn('[TTS] Anfrage fehlgeschlagen:', err));
   }
 
   // ── Incident handoff ──────────────────────────────────────────────
