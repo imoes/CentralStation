@@ -908,6 +908,175 @@ async def incident_timeline(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Computer learns: save a lesson-learned comment after a session resolves a problem
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _ComputerResolveBody(BaseModel):
+    messages: list[dict]  # [{role: "user"|"assistant", text: str}]
+
+
+@router.post("/{external_id}/computer-resolve")
+async def computer_resolve_alert(
+    external_id: str,
+    body: _ComputerResolveBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """After a Computer session resolves an alert, use the LLM to synthesise
+    a brief lesson-learned comment and save it as an AI timeline entry."""
+    from app.services.settings import get_active_llm_config
+    from app.services.llm_client import generate_text
+    from app.services.dashboard.generative_designer import _strip_thinking
+
+    # Build compact conversation for the summariser (last 20 turns, 500 chars each)
+    conv_lines: list[str] = []
+    for m in body.messages[-20:]:
+        role = "NUTZER" if m.get("role") == "user" else "COMPUTER"
+        text = (m.get("text") or "").strip()[:500]
+        if text:
+            conv_lines.append(f"{role}: {text}")
+    conv_text = "\n\n".join(conv_lines)
+
+    if not conv_text:
+        raise HTTPException(400, "Keine Konversation übermittelt")
+
+    summary = ""
+    try:
+        llm_cfg = await get_active_llm_config(db)
+        if llm_cfg.is_configured:
+            system_prompt = (
+                "Du bist ein IT-Dokumentations-Assistent. Fasse diese Computer-Diagnose-Session "
+                "in 2–3 präzisen deutschen Sätzen zusammen. Beantworte: Was war das Problem? "
+                "Was wurde herausgefunden? Welche Lösung wurde empfohlen? "
+                "Nur Fakten aus der Konversation — keine Spekulation."
+            )
+            raw = await generate_text(
+                llm_cfg,
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Computer-Diagnose-Session:\n\n{conv_text}"},
+                ],
+                temperature=0.2,
+            )
+            summary = _strip_thinking(raw).strip()
+    except Exception as exc:
+        log.warning("computer-resolve: LLM synthesis failed: %s", exc)
+
+    if not summary:
+        # Fallback: last assistant message
+        for m in reversed(body.messages):
+            if m.get("role") == "assistant":
+                summary = (m.get("text") or "").strip()[:600]
+                break
+
+    if not summary:
+        raise HTTPException(400, "Konnte keine Zusammenfassung erstellen")
+
+    comment_body = f"🖥 **Lernkommentar (Computer-Diagnose):**\n{summary}"
+
+    collab = await _get_or_create_collab(external_id, db)
+    await _add_timeline(external_id, None, "Computer (KI)", "ai", comment_body, db)
+    await db.commit()
+    await _broadcast_collab(external_id, "ai", "Computer (KI)", collab.work_status, comment_body)
+
+    # Tag the alert in OpenSearch so future similarity searches can find this resolution
+    try:
+        from app.services.feed_index import update_ai_resolution
+        await update_ai_resolution(external_id, summary)
+    except Exception as _tag_exc:
+        log.warning("computer-resolve: OpenSearch tagging failed: %s", _tag_exc)
+
+    log.info("computer-resolve: Lernkommentar gespeichert für %s (%d Zeichen)", external_id[:24], len(summary))
+    return {"ok": True, "comment": comment_body}
+
+
+@router.get("/{external_id}/hermes-context")
+async def alert_hermes_context(
+    external_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Build a Hermes starting prompt from an alert: resolves the host, runs CheckMK
+    diagnostics, and returns a structured prompt the computer console can send directly."""
+    from app.services.ai_agent.diagnostics import run_diagnostics
+
+    host = ""
+    title = ""
+    severity = ""
+    source_name = ""
+    container = ""
+    try:
+        from app.services.feed_index import search_by_query
+        items = await search_by_query(
+            index_pattern="cs-feed-*",
+            query_string=f'external_id:"{external_id}"',
+            size=1,
+        )
+        if items:
+            item = items[0]
+            meta = item.get("metadata") or {}
+            host = meta.get("host") or meta.get("agent") or meta.get("container_name") or ""
+            title = item.get("title", "")
+            severity = item.get("severity", "")
+            source_name = item.get("source", "")
+            container = meta.get("container_name", "")
+    except Exception as e:
+        log.warning("hermes-context: search failed: %s", e)
+
+    if not host:
+        raise HTTPException(400, "Host nicht ermittelbar — kein Hostname im Alert-Datensatz.")
+
+    results = await run_diagnostics(host, db)
+
+    lines: list[str] = [
+        "Untersuche diesen Alert und handle entsprechend:\n",
+        f"**Alert:** {title}",
+        f"**Schweregrad:** {severity}",
+        f"**Quelle:** {source_name}",
+        f"**Host:** {host}",
+    ]
+    if container:
+        lines.append(f"**Container:** {container}")
+    lines.append("")
+
+    if results:
+        lines.append("## Diagnosedaten (automatisch abgerufen)\n")
+        for r in results:
+            lines.append(r.to_llm_text())
+        lines.append("")
+
+    # ── Past AI-resolved alerts (OpenSearch similarity search) ────────────────
+    try:
+        from app.services.feed_index import search_ai_resolved
+        past_resolved = await search_ai_resolved(alert_title=title, host=host, limit=3)
+        if past_resolved:
+            lines.append("## Frühere Computer-Diagnosen (gelernt)\n")
+            for inc in past_resolved:
+                ts = (inc.get("run_at") or "")[:16]
+                finding = inc.get("finding_title", "")
+                resolution = inc.get("resolution", "")
+                lines.append(f"**[{ts}]** {finding}")
+                if resolution:
+                    lines.append(f"→ {resolution}")
+            lines.append("")
+    except Exception as _exc:
+        log.debug("hermes-context: past_resolved search failed: %s", _exc)
+
+    lines.append("## Aufgabe")
+    lines.append("1. Analysiere die Diagnosedaten und identifiziere die Ursache")
+    if container:
+        lines.append(
+            f"2. Suche Container-Logs in Graylog: `search_feed('container_name:\"{container}\"')` — Logs kommen via Logspout, kein SSH nötig"
+        )
+    else:
+        lines.append("2. Suche weitere Logs via `search_feed` oder `list_alerts` falls nötig")
+    lines.append("3. Nenne konkret was das Problem ist und wie es zu beheben ist")
+    lines.append("4. Falls du das Problem gelöst hast, klicke im Computer-Panel auf '✓ GELÖST'")
+
+    return {"prompt": "\n".join(lines), "host": host}
+
+
 @router.get("/incidents/{incident_id}/claude-prompt")
 async def incident_claude_prompt(
     incident_id: str,
@@ -1051,7 +1220,7 @@ async def ticket_draft(
     """
     item = await _feed_item_by_external_id(external_id)
     if not item:
-        raise HTTPException(404, "Feed item not found")
+        raise HTTPException(404, "Feed-Eintrag nicht gefunden")
 
     meta = item.get("metadata") or {}
     host = meta.get("host") or meta.get("agent") or meta.get("container_name") or ""
@@ -1072,6 +1241,7 @@ async def ticket_draft(
         or "IMIT"
     ).strip()
 
+    # Severity → Jira priority
     prio_map = {"critical": "Kritisch", "high": "Hoch", "medium": "Normal", "low": "Niedrig", "info": "Niedrig"}
     priority = prio_map.get(severity, "Normal")
 
@@ -1110,6 +1280,7 @@ async def ticket_draft(
                  {"role": "user", "content": ctx}],
             )
             clean = _strip_thinking(raw)
+            # Robustly extract the JSON object (ignores markdown fences / prose)
             lo, hi = clean.find("{"), clean.rfind("}")
             if lo >= 0 and hi > lo:
                 try:
@@ -1121,6 +1292,7 @@ async def ticket_draft(
     except Exception as e:
         log.warning("ticket_draft: AI prefill failed, using template fallback: %s", e)
 
+    # Fallbacks if AI unavailable
     if not summary:
         host_part = f"{host} — " if host else ""
         summary = f"{severity.upper()}: {host_part}{title}"[:120]
@@ -1146,27 +1318,27 @@ async def create_ticket(
     """Create the Jira ticket from the (possibly edited) draft."""
     from app.core.security import decrypt_credentials
     from app.services.connectors.jira import JiraConnector
+    from app.services.settings import get_setting
 
     summary = (body.get("summary") or "").strip()
     description = (body.get("description") or "").strip()
-    project = (body.get("project") or "").strip()
+    project = (body.get("project") or "").strip() or (await get_setting(db, "jira.ticket_project")) or "IMIT"
     priority = (body.get("priority") or "Normal").strip()
     issue_type = (body.get("issue_type") or "Serviceanfrage").strip()
 
     if not summary or not project:
-        raise HTTPException(400, "Summary and project are required")
+        raise HTTPException(400, "Summary und Projekt sind erforderlich")
 
-    from app.services.settings import get_setting as _get_setting
     # IMIT lives in the ServiceDesk (jira_sd), IMSP in regular Jira. Use the
     # configured ticket connector (default jira_sd), fall back to the other type.
-    target_type = (await _get_setting(db, "jira.ticket_connector")) or "jira_sd"
+    target_type = (await get_setting(db, "jira.ticket_connector")) or "jira_sd"
     conn = await _resolve_jira_connector(db, user.id, target_type)
     if not conn:
         # fall back to the other Jira type if the configured one isn't set up
         other = "jira" if target_type == "jira_sd" else "jira_sd"
         conn = await _resolve_jira_connector(db, user.id, other)
     if not conn:
-        raise HTTPException(400, "No Jira connector configured")
+        raise HTTPException(400, "Kein Jira-Connector konfiguriert")
 
     creds = decrypt_credentials(conn.encrypted_credentials)
     jira = JiraConnector(base_url=conn.base_url, credentials=creds)
@@ -1180,189 +1352,23 @@ async def create_ticket(
             labels=["centralstation"],
         )
     except Exception as e:
-        log.warning("create_ticket: Jira issue creation failed: %s", e)
-        raise HTTPException(502, f"Could not create the Jira ticket: {str(e)[:200]}")
+        raise HTTPException(502, f"Jira-Ticket konnte nicht erstellt werden: {str(e)[:200]}")
 
     jira_key = result.get("key", "")
     base = (conn.base_url or "").rstrip("/")
     url = f"{base}/browse/{jira_key}" if jira_key and base else None
 
+    # Record in the collaboration timeline
     try:
         collab = await _get_or_create_collab(external_id, db)
         await _add_timeline(
             external_id, user.id, user.full_name or user.email, "comment",
-            f"🎫 Jira ticket created: {jira_key}", db,
+            f"🎫 Jira-Ticket erstellt: {jira_key}", db,
         )
         await db.commit()
         await _broadcast_collab(external_id, "comment", user.full_name or user.email,
-                                collab.work_status, f"Jira ticket created: {jira_key}")
+                                collab.work_status, f"Jira-Ticket erstellt: {jira_key}")
     except Exception as e:
-        log.warning("create_ticket: timeline record failed: %s", e)
+        log.debug("create_ticket: timeline record failed: %s", e)
 
     return {"ok": True, "jira_key": jira_key, "url": url}
-
-
-# ── Computer panel — learn from resolved problems ──────────────────────────
-
-class _ComputerResolveBody(BaseModel):
-    messages: list[dict]
-
-
-@router.post("/{external_id}/computer-resolve")
-async def computer_resolve_alert(
-    external_id: str,
-    body: _ComputerResolveBody,
-    user: CurrentUser,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    """After the Computer panel resolves an alert, synthesise a brief lesson-learned
-    comment via LLM and save it as an AI timeline entry. Also tags the OpenSearch
-    document with has_ai_resolution=True and ai_resolution_text so future similarity
-    searches can find it."""
-    from app.services.settings import get_active_llm_config
-    from app.services.llm_client import generate_text
-    from app.services.dashboard.generative_designer import _strip_thinking
-
-    conv_lines: list[str] = []
-    for m in body.messages[-20:]:
-        role = "USER" if m.get("role") == "user" else "COMPUTER"
-        text = (m.get("text") or "").strip()[:500]
-        if text:
-            conv_lines.append(f"{role}: {text}")
-    conv_text = "\n\n".join(conv_lines)
-
-    if not conv_text:
-        raise HTTPException(400, "No conversation submitted")
-
-    summary = ""
-    try:
-        llm_cfg = await get_active_llm_config(db)
-        if llm_cfg.is_configured:
-            system_prompt = (
-                "You are an IT documentation assistant. Summarise this Computer diagnosis "
-                "session in 2-3 concise English sentences. Answer: What was the problem? "
-                "What was found? What solution was recommended? "
-                "Facts from the conversation only — no speculation."
-            )
-            raw = await generate_text(
-                llm_cfg,
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Computer diagnosis session:\n\n{conv_text}"},
-                ],
-                temperature=0.2,
-            )
-            summary = _strip_thinking(raw).strip()
-    except Exception as exc:
-        log.warning("computer-resolve: LLM synthesis failed: %s", exc)
-
-    if not summary:
-        for m in reversed(body.messages):
-            if m.get("role") == "assistant":
-                summary = (m.get("text") or "").strip()[:600]
-                break
-
-    if not summary:
-        raise HTTPException(400, "Could not create a summary")
-
-    comment_body = f"🖥 **Learning note (Computer Diagnosis):**\n{summary}"
-
-    collab = await _get_or_create_collab(external_id, db)
-    await _add_timeline(external_id, None, "Computer (AI)", "ai", comment_body, db)
-    await db.commit()
-    await _broadcast_collab(external_id, "ai", "Computer (AI)", collab.work_status, comment_body)
-
-    try:
-        from app.services.feed_index import update_ai_resolution
-        await update_ai_resolution(external_id, summary)
-    except Exception as _tag_exc:
-        log.warning("computer-resolve: OpenSearch tagging failed: %s", _tag_exc)
-
-    log.info("computer-resolve: learning note saved for %s (%d chars)", external_id[:24], len(summary))
-    return {"ok": True, "comment": comment_body}
-
-
-@router.get("/{external_id}/hermes-context")
-async def alert_hermes_context(
-    external_id: str,
-    user: CurrentUser,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    """Build a Hermes starting prompt from an alert: resolves the host, runs CheckMK
-    diagnostics, and returns a structured prompt the Computer console sends directly."""
-    from app.services.ai_agent.diagnostics import run_diagnostics
-    from app.services.feed_index import search_by_query
-
-    host = ""
-    title = ""
-    severity = ""
-    source_name = ""
-    container = ""
-    try:
-        items = await search_by_query(
-            index_pattern="cs-feed-*",
-            query_string=f'external_id:"{external_id}"',
-            size=1,
-        )
-        if items:
-            item = items[0]
-            meta = item.get("metadata") or {}
-            host = meta.get("host") or meta.get("agent") or meta.get("container_name") or ""
-            title = item.get("title", "")
-            severity = item.get("severity", "")
-            source_name = item.get("source", "")
-            container = meta.get("container_name", "")
-    except Exception as e:
-        log.warning("hermes-context: search failed: %s", e)
-
-    if not host:
-        raise HTTPException(400, "Host could not be determined — no hostname in alert data.")
-
-    results = await run_diagnostics(host, db)
-
-    lines: list[str] = [
-        "Investigate this alert and act accordingly:\n",
-        f"**Alert:** {title}",
-        f"**Severity:** {severity}",
-        f"**Source:** {source_name}",
-        f"**Host:** {host}",
-    ]
-    if container:
-        lines.append(f"**Container:** {container}")
-    lines.append("")
-
-    if results:
-        lines.append("## Diagnostic data (auto-fetched)\n")
-        for r in results:
-            lines.append(r.to_llm_text())
-        lines.append("")
-
-    # ── Past AI-resolved alerts (OpenSearch similarity search) ────────────────
-    try:
-        from app.services.feed_index import search_ai_resolved
-        past_resolved = await search_ai_resolved(alert_title=title, host=host, limit=3)
-        if past_resolved:
-            lines.append("## Past Computer Diagnoses (learned)\n")
-            for inc in past_resolved:
-                ts = (inc.get("run_at") or "")[:16]
-                finding = inc.get("finding_title", "")
-                resolution = inc.get("resolution", "")
-                lines.append(f"**[{ts}]** {finding}")
-                if resolution:
-                    lines.append(f"→ {resolution}")
-            lines.append("")
-    except Exception as _exc:
-        log.debug("hermes-context: past_resolved search failed: %s", _exc)
-
-    lines.append("## Task")
-    lines.append("1. Analyse the diagnostic data and identify the root cause")
-    if container:
-        lines.append(
-            f"2. Search container logs in Graylog: `search_feed('container_name:\"{container}\"')` — logs arrive via Logspout, no SSH needed"
-        )
-    else:
-        lines.append("2. Search for more logs via `search_feed` or `list_alerts` if needed")
-    lines.append("3. State concretely what the problem is and how to fix it")
-    lines.append("4. If you have resolved the problem, click '✓ RESOLVED' in the Computer panel")
-
-    return {"prompt": "\n".join(lines), "host": host}

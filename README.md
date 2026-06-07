@@ -16,19 +16,20 @@ assists with the entire ITIL-compliant work documentation using AI.
 3. [CheckMK as the Single Source of Truth](#checkmk-as-the-single-source-of-truth)
 4. [Feature Overview](#feature-overview)
 5. [Operations Cockpit (Dashboard)](#operations-cockpit-dashboard)
-6. [News Feed](#news-feed)
-7. [OpenSearch Searches (FeedSearches)](#opensearch-searches-feedsearches)
-8. [Alert Aggregation and Enrichment](#alert-aggregation-and-enrichment)
-9. [Kanban and Jira](#kanban-and-jira)
-10. [AI Features](#ai-features)
-11. [Computer Console (Hermes AI Panel)](#computer-console-hermes-ai-panel)
-12. [Prometheus Metrics & PromQL](#prometheus-metrics--promql)
-13. [Connectors](#connectors)
-14. [User Management and RBAC](#user-management-and-rbac)
-15. [Settings and Preferences](#settings-and-preferences)
-16. [API Reference](#api-reference)
-17. [Database Migrations](#database-migrations)
-18. [Deployment](#deployment)
+6. [Server Cockpit (Host-Detail-Fenster)](#server-cockpit-host-detail-fenster)
+7. [News Feed](#news-feed)
+8. [OpenSearch-Suchen (FeedSearches)](#opensearch-suchen-feedsearches)
+9. [Alert-Aggregation und Enrichment](#alert-aggregation-und-enrichment)
+10. [Incident-Korrelation](#incident-korrelation)
+11. [Kanban und Jira](#kanban-und-jira)
+12. [KI-Funktionen](#ki-funktionen)
+13. [Prometheus-Metriken & PromQL](#prometheus-metriken--promql)
+14. [Konnektoren](#konnektoren)
+15. [Benutzerverwaltung und RBAC](#benutzerverwaltung-und-rbac)
+16. [Einstellungen und Präferenzen](#einstellungen-und-präferenzen)
+17. [API-Referenz](#api-referenz)
+18. [Datenbankmigrationen](#datenbankmigrationen)
+19. [Deployment](#deployment)
 
 ---
 
@@ -195,31 +196,33 @@ Since OS/location/VE/criticality are CheckMK-native concepts, the filter accesse
 
 ---
 
-## Feature Overview
+## Features im Überblick
 
-| Area | Functions |
-|------|-----------|
-| **Operations Cockpit** | Dual-mode dashboard (Classic/Generative), widget types: stat, list, donut, bar, time series, forecast, AI situation report, top hosts, war room; clickable charts; pin/reset in generative mode; clickable hostname in top hosts |
-| **Generative Dashboard** | AI composes a tailored dashboard situationally — analyses findings, worklist, vitals + forecast candidates; rationale as a situation briefing; regenerate button + WS escalation trigger; CUE production hosts prioritised |
-| **Bridge** | Star-Trek-LCARS cockpit at `/bridge`; three themes (Classic/Holo/LCARS); priority worklist, fleet vitals, forecasts, sectors, live logs; primary incident panel |
-| **Adaptive Alert Scoring** | Deterministic base scoring (severity/novelty/age/flapping/cross-source); adaptive learning feedback loop (Jira tickets, acks, ignores → `alert_score_adjustments`); score-delta decay |
-| **Alert Aggregation** | CheckMK, Graylog, Wazuh — central timeline, acknowledge, severity filter; Graylog: Python log-level detection (INFO→low, ERROR→high, prevents Docker GELF misclassification) |
-| **News Feed** | Unified OpenSearch feed, saved searches (Lucene), last-seen divider, AI enrichment, AI ignore; clickable hostname → feed filter; severity filter correctly ignores active saved searches |
-| **AI Insights** | Findings + their recommendations shown together (no separate panel); data-source badge per finding; hostname/feed links; recommendations feed into the generative dashboard |
-| **AI War Room** | Blast-radius analysis on critical/high; co-located VMs, co-located hosts; recommendations with one-click Jira |
-| **CheckMK Metrics** | Collector writes CPU/RAM/disk/agent time into `cs-metrics-checkmk`; the bridge shows fleet vitals + forecasts (linear regression); stable metrics (< 90% without trend) are filtered out of the generative context |
-| **OpenAI Codex OAuth** | Browser-initiated device-code flow (no CLI needed); provider switchable between local LLM and OpenAI Codex (GPT-5.x); token encrypted in DB, automatic refresh |
-| **3 App-wide Themes** | **Classic** (light, blue haze), **Holo** (dark blue/cyan), **LCARS** (black/orange — official Neon Carrot + Golden Tanoi + Anakiwa + Lilac palette); selectable in settings |
-| **Kanban Board** | Drag-and-drop, bidirectional Jira/ServiceDesk sync, automatic Jira imports, AI-created cards |
-| **My Tickets** | Per-user Jira view, JQL filter management, AI JQL generator; unread badge; red dot on activity |
-| **Work Documentation** | ITIL work sessions: impact/urgency/priority P1–P4, SLA tracking, work notes |
-| **AI Comments** | Progress, pending, escalation, handover — AI-generated, directly copyable to Jira |
-| **Closure Documentation** | AI-generated resolution documentation with root cause, actions, closure code |
-| **5-Whys Analysis** | ITIL problem management — AI runs a 5-whys analysis, proposes the root cause |
-| **Solution Search** | RAG search in the it-aikb knowledge base + SearXNG web search, HyDE pattern |
-| **Network Module** | Switch alerts (NSA/NSS/NSC), site mapping (ID-Generator), vendor detection |
-| **RBAC** | Admin / SysAdmin / Network Technician / Viewer — role-based UI and API |
-| **Audit Log** | Logging of all write operations |
+| Bereich | Funktionen |
+|---------|------------|
+| **Operations Cockpit** | Dual-Mode Dashboard (Klassisch/Generativ), Widget-Typen: Stat, Liste, Donut, Balken, Zeitreihe, Forecast, KI-Lagebericht, Top-Hosts, War Room; klickbare Charts; Pin/Reset im generativen Modus; Hostname in Top-Hosts klickbar |
+| **Generatives Dashboard** | KI komponiert situativ ein maßgeschneidertes Dashboard — analysiert Findings, Worklist, Vitals + Forecast-Kandidaten; Rationale als Lage-Briefing; Neu-Generieren-Button + WS-Eskalation-Trigger; CUE-Produktionshosts priorisiert |
+| **Server Cockpit** | Klick auf Hostnamen im News Feed öffnet `/cockpit/:hostname` in neuem Fenster; LCARS-Design; Hero-Gauges (CPU/RAM/Disk) + Sparklines; **Voll-Service-Liste** aller CheckMK-Checks mit Status + Summary; hierarchische Filter-Chips (FEHLER/WARN/CRIT/UNKNOWN); Klick auf Service → on-demand 24h-Graph; Font Roboto; Navbar wird ausgeblendet |
+| **Brücke (Bridge)** | Star-Trek-LCARS-Cockpit unter `/bridge`; drei Themes (Classic/Holo/LCARS); Prioritäten-Worklist, Fleet-Vitals, Forecasts, Sektoren, Live-Logs; Primärer-Incident-Panel; Font Roboto |
+| **Adaptives Alert-Scoring** | Deterministisches Basis-Scoring (Severity/Novelty/Alter/Flapping/Cross-Source); adaptiver Lern-Feedback-Loop (Jira-Tickets, Acks, Ignorieren → `alert_score_adjustments`); Score-Delta-Verfall |
+| **Incident-Korrelation** | Automatische Gruppierung zusammengehöriger Alerts zu Incidents; nur FQDNs als Hosts (Docker-Container-IDs werden abgelehnt); 30-Minuten-Zeitfenster für Incident-Wiederverwendung; Minimum 2 Alerts oder Cross-Source für neuen Incident |
+| **Alert-Aggregation** | CheckMK, Graylog, Wazuh — zentrale Timeline, Acknowledge, Severity-Filter; Graylog: Python-Loglevel-Erkennung (INFO→low, ERROR→high, verhindert Docker-GELF-Fehleinstufung) |
+| **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung, KI-Ignorieren; Hostname anklickbar → Feed-Filter; Severity-Filter ignoriert aktive Saved-Searches korrekt |
+| **KI-Insights** | Befunde + zugehörige Empfehlungen direkt zusammen (kein getrenntes Panel); Datenquelle-Badge je Befund; Hostname/Feed-Links; Empfehlungen fließen in generatives Dashboard ein |
+| **AI War Room** | Blast-Radius-Analyse bei Critical/High; Ko-VMs, Ko-lokalisierte Hosts; Empfehlungen mit Ein-Klick-Jira |
+| **CheckMK Metriken** | Collector schreibt CPU/RAM/Disk/Agent-Zeit in `cs-metrics-checkmk`; Bridge zeigt Fleet-Vitals + Forecasts (lineare Regression); stabile Metriken (< 90 % ohne Trend) werden aus generativem Kontext gefiltert |
+| **OpenAI Codex OAuth** | Browser-initiierter Device-Code-Flow (kein CLI nötig); Provider umschaltbar zwischen lokalem LLM und OpenAI Codex (GPT-5.x); Token verschlüsselt in DB, automatischer Refresh |
+| **3 App-weite Themes** | **Classic** (hell, blauer Schleier), **Holo** (dunkelblau/cyan), **LCARS** (schwarz/orange — offizielles Neon Carrot + Golden Tanoi + Anakiwa + Lilac Palette); in Einstellungen wählbar |
+| **Kanban-Board** | Drag-Drop, bidirektionaler Jira-/ServiceDesk-Sync, automatische Jira-Importe, AI-erstellte Cards |
+| **Meine Tickets** | Per-User Jira-Sicht, JQL-Filter-Verwaltung, KI-JQL-Generator; Unread-Badge; roter Punkt bei Aktivität |
+| **Arbeitsdokumentation** | ITIL Work Sessions: Impact/Urgency/Priorität P1–P4, SLA-Tracking, Arbeitsnotizen |
+| **KI-Kommentare** | Fortschritt, Pending, Eskalation, Übergabe — per KI generiert, direkt in Jira kopierbar |
+| **Abschlussdokumentation** | KI-generierte Lösungsdokumentation mit Root Cause, Maßnahmen, Closure Code |
+| **5-Why-Analyse** | ITIL Problem Management — KI führt 5-Why-Analyse durch, schlägt Kernursache vor |
+| **Lösungssuche** | RAG-Suche in it-aikb Wissensdatenbank + SearXNG Web-Suche, HyDE-Pattern |
+| **Netzwerk-Modul** | Switch-Alerts (NSA/NSS/NSC), Standort-Zuordnung (ID-Generator), Vendor-Erkennung |
+| **RBAC** | Admin / SysAdmin / Network-Technician / Viewer — rollenbasierte UI und API |
+| **Audit-Log** | Protokollierung aller schreibenden Operationen |
 
 ---
 
@@ -326,6 +329,84 @@ A toggle button in the dashboard header switches between two modes:
 | Newest alerts | `list` | 5,2 (4×3) | all sources, limit=8 |
 | AI situation report | `ai_summary` | 0,5 (5×4) | — |
 | Top hosts | `top_hosts` | 5,5 (4×4) | all sources |
+
+---
+
+## Server Cockpit (Host-Detail-Fenster)
+
+Ein Klick auf einen Servernamen im **News Feed** öffnet das Server Cockpit in einem eigenständigen Browser-Fenster (`window.open`, Route `/cockpit/:hostname`). Das Fenster hat kein Navigationsmenü — es ist ein vollbildiges LCARS-Dashboard für genau einen Host.
+
+### Layout
+
+```
+┌─────────────────────────────────────────────────────┐
+│ ████ COCKPIT — hostname  ██████  [LIVE ●]  [✕]      │  ← orange Cap-Bar
+├─────────────────────────────────────────────────────┤
+│ ██ PERFORMANCE ██████████████████  [cached|live]    │
+│   [CPU Gauge + Sparkline]  [RAM]  [Disk]            │
+├─────────────────────────────────────────────────────┤
+│ ██ SERVICES (N) ██  [ALLE] [FEHLER] [CRIT] [WARN]  │
+│   ● CRIT  Filesystem /var         87% used (...)    │
+│   ● WARN  CPU load                load 3.4 (...)    │
+│   ● OK    Memory                  12.3% used        │
+│   → Klick auf Zeile → 24h-Graph erscheint inline    │
+├─────────────────────────────────────────────────────┤
+│ ██ ALERTS ██  [Severity▼] [Source▼]                 │
+│   sev●  title  host  source  time                   │
+└─────────────────────────────────────────────────────┘
+```
+
+### Performance-Block
+
+- **Hero-Gauges**: CPU / RAM / Disk als ECharts-Gauge-Charts (140px), Farbe nach Level: crit `#ff4433` / high `#ffcc00` / ok `#66cc66`
+- **Sparklines**: Kompakte 52px-Liniencharts direkt unterhalb der Gauges (24h-Historie)
+- **Zweistufiges Laden**: Zuerst gecachte Werte aus `cs-metrics-checkmk` (sofort), dann Live-Refresh via CheckMK RRD (`?live=true`, ~1-2s)
+- **LIVE-Badge**: wechselt von `cached` auf `LIVE ●` sobald die aktuellen Werte eintreffen
+
+### Service-Liste
+
+Zeigt alle CheckMK-Services des Hosts mit aktuellem Status und `plugin_output` (menschenlesbare Zusammenfassung, z.B. „15.2% used (3.04 GB of 20.0 GB)").
+
+**Service-Farben:**
+
+| Status | Farbe |
+|--------|-------|
+| CRIT | `#ff4433` (rot) |
+| WARN | `#ffcc00` (gelb) |
+| UNKNOWN | `#99ccff` (hellblau) |
+| OK | `#66cc66` (grün) |
+
+**Hierarchische Filter-Chips:**
+
+| Chip | Zeigt |
+|------|-------|
+| ALLE | alle Services |
+| FEHLER | CRIT + WARN + UNKNOWN (Standard-Ansicht beim Öffnen) |
+| WARN | CRIT + WARN |
+| CRIT | nur CRIT |
+| UNKNOWN | nur UNKNOWN |
+
+Filter-Chips mit 0 Treffern bleiben immer sichtbar, werden aber ausgegraut (`opacity: 0.25`, nicht klickbar).
+
+**On-Demand Graph:**
+- Klick auf eine Service-Zeile → `GET /api/hosts/{host}/graph?service=<name>&metric=<id>`
+- Metric-Inferenz aus Service-Name: `Filesystem*` → `fs_used_percent`, `Memory` → `mem_used_percent`, `CPU*` → `load1`
+- 24h-Linienchart erscheint inline unter der Zeile; erneuter Klick schließt ihn
+
+### API-Endpunkte (Backend)
+
+| Endpunkt | Beschreibung |
+|----------|-------------|
+| `GET /api/hosts/{hostname}/health` | Performance-Vitals (gecacht + `?live=true`) + Host-Alerts |
+| `GET /api/hosts/{hostname}/services` | Alle CheckMK-Services mit `state_label` + `summary`; sortiert CRIT→WARN→UNKNOWN→OK |
+| `GET /api/hosts/{hostname}/graph` | 24h-Zeitreihe: `?service=<name>&metric=<id>` → `{series, title, unit}` |
+
+### Technische Details
+
+- **Navbar-Ausblendung**: `ngOnInit` setzt `document.body.classList.add('cockpit-active')`; `styles.scss` versteckt `.sidenav` und entfernt `mat-sidenav-content`-Margin (analog zu `bridge-active`)
+- **Font**: Roboto (identisch mit News Feed und Alerts)
+- **Auth**: Verwendet denselben `cs_access_token` aus `localStorage` — kein erneuter Login nötig
+- **Mehrere Tabs**: `window.open` mit `target='cockpit-{hostname}'` — pro Host ein Fenster, kein Duplikat
 
 ---
 
@@ -541,7 +622,51 @@ After indexing, new alerts with severity `critical`, `high` or `warning` are enr
 
 ---
 
-## Kanban and Jira
+## Incident-Korrelation
+
+CentralStation gruppiert zusammengehörige Alerts automatisch zu **Incidents** (`incidents` + `incident_members`-Tabellen).
+
+### Korrelationsregeln
+
+Ein neuer Incident wird nur angelegt wenn **alle** Bedingungen erfüllt sind:
+
+1. **Severity-Schwelle**: Nur `critical`/`high` Alerts können einen Incident auslösen oder erweitern — `low`/`info` werden ignoriert
+2. **Mindestgröße**: Neuer Incident erfordert ≥ 2 korrelierte Alerts (gleicher Host, 30-Min-Fenster) **oder** Cross-Source-Evidenz (gleicher Host, ≥ 2 Quellen)
+3. **Host-Validierung**: Nur FQDNs werden als Hosts akzeptiert (muss mindestens einen Punkt enthalten). Docker-Container-Short-IDs (z.B. `5086bbde056b`) und Container-Namen werden abgelehnt
+
+### Zeitfenster
+
+Offene Incidents werden nur wiederverwendet, wenn `updated_at >= jetzt - 30 Minuten`. Ein älterer Incident wird **nicht** verlängert — stattdessen wird ein neuer Incident angelegt. Das verhindert, dass zeitlich weit auseinanderliegende Alerts fälschlicherweise in denselben Incident gepackt werden.
+
+### Incident-Lifecycle
+
+```
+Neuer Alert (critical/high) mit FQDN
+    │
+    ├── Offener Incident für diesen Host? (updated_at < 30 Min alt)
+    │       → Ja: Incident erweitern (Member hinzufügen, Severity eskalieren, updated_at aktualisieren)
+    │       → Nein: neuen Incident anlegen (wenn ≥ 2 Alerts oder Cross-Source)
+    │
+    └── Housekeeping-Job (alle 2h): Incidents ohne neue Member → resolved
+```
+
+### Datenmodell
+
+| Tabelle | Felder |
+|---------|--------|
+| `incidents` | `id`, `title` (z.B. „host.example.com: 4 Alerts [checkmk/graylog]"), `primary_host`, `severity`, `status` (open/investigating/resolved), `created_at`, `updated_at`, `resolved_at` |
+| `incident_members` | `incident_id`, `external_id`, `source`, `added_at` |
+
+### API-Endpunkte
+
+| Endpunkt | Beschreibung |
+|----------|-------------|
+| `GET /api/feed/incidents` | Offene Incidents (status: open/investigating) |
+| `GET /api/feed/incidents/{id}/timeline` | Chronologische Timeline (Alerts + Kommentare + KI-Diagnosen) |
+
+---
+
+## Kanban und Jira
 
 ### Kanban board
 
@@ -1134,22 +1259,40 @@ All settings are stored encrypted in the database and managed via `GET/PATCH /ap
 
 ### Authentication
 
-| Path | Method | Description |
-|------|--------|-------------|
-| `/api/auth/login` | POST | login; returns `access_token` + sets the `refresh_token` HttpOnly cookie |
-| `/api/auth/refresh` | POST | renew the access token via the cookie |
-| `/api/auth/logout` | POST | revoke the refresh token |
+| Pfad | Methode | Beschreibung |
+|------|---------|-------------|
+| `/api/auth/login` | POST | Login; gibt `access_token` + setzt `refresh_token` HttpOnly-Cookie |
+| `/api/auth/refresh` | POST | Access Token erneuern via Cookie |
+| `/api/auth/logout` | POST | Refresh Token revoken |
+| `/api/auth/me` | GET | Eigenes User-Profil (prüft Token-Gültigkeit) |
+
+**Token-Lebensdauer und Persistenz:**
+- Access Token ist **8 Stunden** gültig (konfigurierbar via `access_token_expire_minutes`)
+- Token wird im Browser unter `localStorage['cs_access_token']` gespeichert — überlebt Seiten-Reload und Browser-Neustart ohne erneutes Login
+- `AuthService` liest Token beim Angular-Start aus `localStorage` → `isLoggedIn()` ist sofort `true`
+- Fehlt das User-Profil (z.B. neuer Tab), wird es via `GET /auth/me` nachgeladen; schlägt das fehl, wird Cookie-basierter Silent-Refresh versucht
+- Logout löscht Token aus `localStorage` und revoked das Refresh-Cookie
+
+### Hosts
+
+| Pfad | Methode | Beschreibung |
+|------|---------|-------------|
+| `/api/hosts/{hostname}/health` | GET | Performance-Vitals (gecacht); `?live=true` für CheckMK-RRD-Refresh |
+| `/api/hosts/{hostname}/services` | GET | Alle CheckMK-Services mit `state_label` + `summary`; sortiert nach Schweregrad |
+| `/api/hosts/{hostname}/graph` | GET | 24h-Zeitreihe: `?service=<name>&metric=<id>` → `{series, title, unit}` |
 
 ### Feed
 
-| Path | Method | Description |
-|------|--------|-------------|
-| `/api/feed/` | GET | unified alert feed (OpenSearch), all filter parameters |
-| `/api/feed/unread-count` | GET | unread alerts since `?since=<ISO>` |
-| `/api/feed/checkmk-filter-values` | GET | available filter values from the CheckMK index |
-| `/api/feed/{item_id}/acknowledge` | POST | mark an alert as acknowledged |
-| `/api/feed/{item_id}/enrich` | POST | AI enrichment (it-aikb RAG + optional SearXNG) for a single item |
-| `/api/feed/{item_id}/ignore` | POST | AI generates an OpenSearch exclusion query → store as a system exclusion search |
+| Pfad | Methode | Beschreibung |
+|------|---------|-------------|
+| `/api/feed/` | GET | Unified Alert Feed (OpenSearch), alle Filter-Parameter |
+| `/api/feed/unread-count` | GET | Ungelesene Alerts seit `?since=<ISO>` |
+| `/api/feed/checkmk-filter-values` | GET | Verfügbare Filter-Werte aus CheckMK-Index |
+| `/api/feed/{item_id}/acknowledge` | POST | Alert als bestätigt markieren |
+| `/api/feed/{item_id}/enrich` | POST | KI-Anreicherung (it-aikb RAG + optional SearXNG) für einzelnes Item |
+| `/api/feed/{item_id}/ignore` | POST | KI generiert OpenSearch-Ausschluss-Query → als System-Exclusion-Suche speichern |
+| `/api/feed/incidents` | GET | Offene Incidents (status: open/investigating) |
+| `/api/feed/incidents/{id}/timeline` | GET | Chronologische Timeline eines Incidents (Alerts + Kommentare + KI-Diagnosen) |
 
 ### FeedSearches
 
@@ -1265,19 +1408,19 @@ All settings are stored encrypted in the database and managed via `GET/PATCH /ap
 | `0006` | personal connectors: `owner_user_id` FK in `connector_configs` |
 | `0007` | setup wizard state: `setup_completed` in `user_preferences` |
 | `0008` | `user_preferences`: `checkmk_os` + `checkmk_hostgroups` + `jira_project` |
-| `0009` | `feed_searches` table + `feed_disabled_search_ids` in `user_preferences`; 4 system searches as seeds |
-| `0010` | `dashboard_widgets` table |
-| `0011` | `dashboards` table + `dashboard_id` FK in `dashboard_widgets` |
-| `0012` | `user_preferences.checkmk_hostgroups` (if missing) |
-| `0013` | `feed_searches.is_exclusion` boolean field |
-| `0014` | `user_preferences.ticket_seen_map` (JSON) — server-side ticket badge tracking |
-| `0015` | `dashboards.mode` (`classic`/`generative`), `dashboard_widgets.pinned`, `dashboard_widgets.hidden` — generative mode |
-| `0016` | `alert_score_adjustments` — adaptive scoring (feedback loop, deltas with decay) |
-| `0017` | `worklist_snapshots`, `ai_insight_cache` — AI worklist cache and alert insight cache |
-| `0018` | `user_preferences.ui_theme` (`classic`/`holo`/`lcars`) — app-wide theme |
-| `0019` | `dashboards.rationale`, `dashboards.generated_at` — generative dashboard with AI situation report |
-| `0020` | `alert_collaboration` + `alert_comments` — collaborative alert handling (claim/status/timeline) |
-| `0021` | `incidents` + `incident_members` — incident grouping (alert compressor + timeline) |
+| `0009` | `feed_searches` Tabelle + `feed_disabled_search_ids` in `user_preferences`; 4 System-Suchen als Seeds |
+| `0010` | `dashboard_widgets` Tabelle |
+| `0011` | `dashboards` Tabelle + `dashboard_id` FK in `dashboard_widgets` |
+| `0012` | `user_preferences.checkmk_hostgroups` (falls fehlend) |
+| `0013` | `feed_searches.is_exclusion` Boolean-Feld |
+| `0014` | `user_preferences.ticket_seen_map` (JSON) — serverseitiges Ticket-Badge-Tracking |
+| `0015` | `dashboards.mode` (`classic`/`generative`), `dashboard_widgets.pinned`, `dashboard_widgets.hidden` — Generativer Modus |
+| `0016` | `alert_score_adjustments` — adaptives Scoring (Feedback-Loop, Deltas mit Verfall) |
+| `0017` | `worklist_snapshots`, `ai_insight_cache` — KI-Worklist-Cache und Alert-Insight-Cache |
+| `0018` | `user_preferences.ui_theme` (`classic`/`holo`/`lcars`) — app-weites Theme |
+| `0019` | `dashboards.rationale`, `dashboards.generated_at` — Generatives Dashboard mit KI-Lagebild |
+| `0020` | `alert_collaboration` + `alert_comments` — kollaboratives Alert-Handling (Claim/Status/Timeline) |
+| `0021` | `incidents` + `incident_members` — automatische Incident-Korrelation (FQDN-only, 30-Min-Zeitfenster, Cross-Source) |
 
 ---
 

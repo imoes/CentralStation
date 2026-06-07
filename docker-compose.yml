@@ -53,7 +53,7 @@ services:
       args:
         HTTP_PROXY: http://proxy.ippen.media:80
         HTTPS_PROXY: http://proxy.ippen.media:80
-        NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,.ippen.media
+        NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,centralcore,.ippen.media
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://centralstation:${POSTGRES_PASSWORD}@db:5432/centralstation
@@ -63,9 +63,10 @@ services:
       OPENSEARCH_URL: https://opensearch:9200
       OPENSEARCH_USER: admin
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
+      CENTRALCORE_URL: http://centralcore:8001
       HTTP_PROXY: http://proxy.ippen.media:80
       HTTPS_PROXY: http://proxy.ippen.media:80
-      NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,.ippen.media
+      NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,centralcore,.ippen.media
     depends_on:
       db:
         condition: service_healthy
@@ -73,6 +74,12 @@ services:
         condition: service_healthy
       opensearch:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     ports:
       - "127.0.0.1:8000:8000"
 
@@ -93,24 +100,40 @@ services:
   centralcore:
     build:
       context: ./centralcore
-      dockerfile: Dockerfile
+      # Hermes is git-cloned + pip-installed during docker build.
+      # Rebuild to update Hermes: docker compose build centralcore
+      args:
+        HTTP_PROXY: http://proxy.ippen.media:80
+        HTTPS_PROXY: http://proxy.ippen.media:80
+        NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
     restart: unless-stopped
     environment:
-      # LLM config is read from CentralStation backend settings at session creation time.
-      # Set these as fallback defaults if needed:
-      # LLM_BASE_URL: http://...
-      # LLM_MODEL: ...
-      # LLM_API_KEY: ...
+      CENTRALCORE_URL: http://centralcore:8001
+      HTTP_PROXY: http://proxy.ippen.media:80
+      HTTPS_PROXY: http://proxy.ippen.media:80
+      NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
     volumes:
-      # Mount your Hermes installation and config:
-      # - /path/to/hermes:/opt/hermes
-      # - /path/to/hermes-config:/root/.hermes
-      []
-    networks:
-      - default
+      # ~/.hermes enthält Auth-Tokens, Session-State UND eigene Skills
+      # Eigene Skills → /home/mutkluge/.hermes/skills/<name>/SKILL.md
+      # Built-in Hermes-Skills bleiben unberührt in /opt/hermes/skills/ (baked in)
+      - /home/mutkluge/.hermes:/root/.hermes
+      - ./centralcore/hermes_config.yaml:/root/.hermes/config.yaml:ro
+      # SSH-Konfiguration aus dem Projektverzeichnis (User, Key, Hosts) — kein systemweiter Eingriff
+      - ./centralcore/ssh_config:/root/.ssh_project_config:ro
+      # SSH-Keys aus ~/.ssh des Hosts (read-only) — welcher Key genutzt wird, steht in ssh_config
+      - /home/mutkluge/.ssh:/root/.ssh_host:ro
+    ports:
+      - "127.0.0.1:8001:8001"
+    cap_add:
+      - NET_RAW
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   nginx:
     image: nginx:alpine

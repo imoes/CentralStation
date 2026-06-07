@@ -54,7 +54,7 @@ class PreferenceUpdate(BaseModel):
     feed_disabled_search_ids:   list | None = None
     ticket_seen_map:            dict | None = None
     ui_theme:                   str | None = None
-    ui_language:                str | None = None
+    computer_console_enabled:   bool | None = None
 
 
 class JQLQueryCreate(BaseModel):
@@ -122,7 +122,7 @@ async def get_preferences(user: CurrentUser, db: Annotated[AsyncSession, Depends
         "feed_disabled_search_ids": prefs.feed_disabled_search_ids or [],
         "ticket_seen_map": prefs.ticket_seen_map or {},
         "ui_theme": getattr(prefs, "ui_theme", None) or "classic",
-        "ui_language": getattr(prefs, "ui_language", None) or "en",
+        "computer_console_enabled": prefs.computer_console_enabled,
     }
 
 
