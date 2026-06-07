@@ -10,8 +10,9 @@ ENV NO_PROXY=${NO_PROXY}
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libpq-dev \
+RUN apt-get -o Acquire::http::Proxy="${HTTP_PROXY}" -o Acquire::https::Proxy="${HTTPS_PROXY}" update \
+    && apt-get -o Acquire::http::Proxy="${HTTP_PROXY}" -o Acquire::https::Proxy="${HTTPS_PROXY}" \
+       install -y --no-install-recommends gcc libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .
@@ -28,8 +29,9 @@ ENV HTTP_PROXY=${HTTP_PROXY}
 ENV HTTPS_PROXY=${HTTPS_PROXY}
 ENV NO_PROXY=${NO_PROXY}
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
+RUN apt-get -o Acquire::http::Proxy="${HTTP_PROXY}" -o Acquire::https::Proxy="${HTTPS_PROXY}" update \
+    && apt-get -o Acquire::http::Proxy="${HTTP_PROXY}" -o Acquire::https::Proxy="${HTTPS_PROXY}" \
+       install -y --no-install-recommends libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
