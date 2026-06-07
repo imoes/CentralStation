@@ -20,7 +20,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ── Runtime image (no build tools, smaller) ──────────────────────────────────
 FROM python:3.12-slim
 
+ARG HTTP_PROXY=http://proxy.ippen.media:80
+ARG HTTPS_PROXY=http://proxy.ippen.media:80
 ARG NO_PROXY=localhost,127.0.0.1,.ippen.media
+
+ENV HTTP_PROXY=${HTTP_PROXY}
+ENV HTTPS_PROXY=${HTTPS_PROXY}
 ENV NO_PROXY=${NO_PROXY}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
