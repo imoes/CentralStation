@@ -1,37 +1,32 @@
-"""Response-language control for all LLM calls.
+"""Response-language control for LLM calls (internal repo: German default).
 
-The UI is i18n-enabled (English default, German switchable). The AI should
-answer in the SAME language the operator uses. The active language is resolved
-from the per-user preference ``ui_language`` with the legacy global
-``app.language`` setting as fallback, and injected into system prompts via
-``language_instruction()``.
+The AI answers in the language configured via the global setting ``app.language``
+(``de`` default, ``en`` switchable). ``language_instruction()`` is appended to
+system prompts so the model honours the chosen language.
 
-Add a new language by extending ``LANG_INSTRUCTION`` — no call site changes.
+The public fork ships an English-default, per-user variant of this module; the
+interface (with_language / get_response_language / get_response_language_for_user)
+is identical so call sites are portable between both repos.
 """
 from __future__ import annotations
 
-from uuid import UUID
 from typing import Any
 
-DEFAULT_LANG = "en"
+DEFAULT_LANG = "de"
 
-# Per-language instruction appended to system prompts. Keep each line explicit
-# so smaller models reliably honour it.
 LANG_INSTRUCTION: dict[str, str] = {
-    "en": (
-        "IMPORTANT: Respond in English. All output text fields "
-        "(title, description, action, rationale, summary, comment, etc.) "
-        "must be written in English, even when the context or sources are in another language."
-    ),
     "de": (
         "WICHTIG: Antworte auf Deutsch. Alle Textfelder "
         "(title, description, action, rationale, summary, comment usw.) "
         "MÜSSEN auf Deutsch sein — auch wenn Kontext oder Quellen in einer anderen Sprache vorliegen."
     ),
+    "en": (
+        "IMPORTANT: Respond in English. All output text fields "
+        "(title, description, action, rationale, summary, comment, etc.) "
+        "must be written in English, even when the context or sources are in another language."
+    ),
 }
-
-# Human-readable name used inside HyDE / search prompts.
-LANG_NAME: dict[str, str] = {"en": "English", "de": "German"}
+LANG_NAME: dict[str, str] = {"de": "German", "en": "English"}
 
 
 def normalize_lang(lang: str | None) -> str:
@@ -40,24 +35,16 @@ def normalize_lang(lang: str | None) -> str:
 
 
 async def get_response_language(db: Any) -> str:
-    """Return the configured response language code (e.g. 'en', 'de')."""
     return await get_response_language_for_user(db, None)
 
 
-async def get_response_language_for_user(db: Any, user_id: UUID | str | None) -> str:
-    """Resolve per-user language with a global fallback."""
+async def get_response_language_for_user(db: Any, user_id: Any) -> str:
+    """Resolve the response language from the global app.language setting.
+
+    (The internal repo has no per-user ui_language column; user_id is accepted
+    for interface parity with the public fork and ignored here.)
+    """
     try:
-        if user_id:
-            from sqlalchemy import select
-            from app.models.workflow import UserPreference
-
-            result = await db.execute(
-                select(UserPreference.ui_language).where(UserPreference.user_id == user_id)
-            )
-            user_lang = result.scalar_one_or_none()
-            if user_lang:
-                return normalize_lang(user_lang)
-
         from app.services.settings import get_setting
         return normalize_lang(await get_setting(db, "app.language"))
     except Exception:
@@ -73,5 +60,4 @@ def language_name(lang: str | None) -> str:
 
 
 def with_language(system_prompt: str, lang: str | None) -> str:
-    """Append the language instruction to a system prompt."""
     return f"{system_prompt}\n\n{language_instruction(lang)}"

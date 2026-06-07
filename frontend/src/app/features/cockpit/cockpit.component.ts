@@ -101,7 +101,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
       } @else if (loading()) {
         <span class="badge-loading">INIT…</span>
       }
-      <button class="cap-close" (click)="close()" matTooltip="Close window">✕</button>
+      <button class="cap-close" (click)="close()" matTooltip="Fenster schließen">✕</button>
       <div class="cap-tr"></div>
     </div>
 
@@ -112,7 +112,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
         <div class="block-head">
           <span>PERFORMANCE</span>
           @if (vitals().length === 0 && !loading()) {
-            <span class="block-hint">No metrics available</span>
+            <span class="block-hint">Keine Metriken verfügbar</span>
           }
         </div>
 
@@ -143,7 +143,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
             }
           </div>
         } @else if (loading()) {
-          <div class="block-loading">LOADING METRICS…</div>
+          <div class="block-loading">METRIKEN WERDEN GELADEN…</div>
         }
       </div>
 
@@ -166,18 +166,18 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
                 [class.active]="stateFilter() === st"
                 [class.zero]="stateCount(st) === 0 && st !== 'all' && st !== 'errors'"
                 (click)="setStateFilter(st)"
-              >{{ st === 'all' ? 'ALL' : st === 'errors' ? 'ERRORS' : st }}</button>
+              >{{ st === 'all' ? 'ALLE' : st === 'errors' ? 'FEHLER' : st }}</button>
             }
           </div>
         </div>
 
         <div class="services-area">
           @if (servicesLoading()) {
-            <div class="block-loading">LOADING SERVICES…</div>
+            <div class="block-loading">SERVICES WERDEN GELADEN…</div>
           } @else if (filteredServices().length === 0) {
             <div class="alert-empty">
-              @if (serviceCounts().total === 0) { No CheckMK services for this host. }
-              @else { No services match this filter. }
+              @if (serviceCounts().total === 0) { Keine CheckMK-Services für diesen Host. }
+              @else { Keine Services in dieser Auswahl. }
             </div>
           } @else {
             <div class="services-grid">
@@ -196,11 +196,11 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
                   @if (expandedService() === svc.name) {
                     <div class="svc-graph">
                       @if (graphLoading()) {
-                        <div class="svc-graph-msg">LOADING GRAPH…</div>
+                        <div class="svc-graph-msg">GRAPH WIRD GELADEN…</div>
                       } @else if (serviceGraph() && serviceGraph()!.series.length > 0) {
                         <div echarts [options]="graphOptions()" class="svc-graph-chart"></div>
                       } @else {
-                        <div class="svc-graph-msg">No graph data available.</div>
+                        <div class="svc-graph-msg">Keine Graph-Daten verfügbar.</div>
                       }
                     </div>
                   }
@@ -214,7 +214,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
       <!-- ── ALERTS BLOCK ── -->
       <div class="block">
         <div class="block-head blue">
-          <span>ALERTS &amp; MESSAGES</span>
+          <span>ALERTS &amp; MELDUNGEN</span>
           <span class="block-count">{{ filteredMessages().length }}</span>
           <div class="block-filters">
             @for (sev of severities; track sev) {
@@ -243,8 +243,8 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
         <div class="alert-list">
           @if (filteredMessages().length === 0) {
             <div class="alert-empty">
-              @if (loading()) { LOADING MESSAGES… }
-              @else { No messages for this host. }
+              @if (loading()) { LADE MELDUNGEN… }
+              @else { Keine Meldungen für diesen Host. }
             </div>
           }
           @for (msg of filteredMessages(); track msg.id) {
@@ -831,7 +831,7 @@ export class CockpitComponent implements OnInit, OnDestroy {
     if (!iso) return '';
     const diff = Date.now() - new Date(iso).getTime();
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
+    if (mins < 1) return 'gerade';
     if (mins < 60) return `${mins}m`;
     const hrs = Math.floor(mins / 60);
     if (hrs < 24) return `${hrs}h`;

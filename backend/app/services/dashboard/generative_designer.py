@@ -406,7 +406,6 @@ async def _ask_llm(db: Any, situation: dict, lang: str) -> dict | None:
     reasons about widget selection before emitting JSON. Thinking output is stripped
     before parsing so _parse_json only sees clean JSON.
     """
-    from app.services.ai_language import with_language
     from app.services.settings import get_active_llm_config
     from app.services.llm_client import generate_text, LLMInvocationError
 
@@ -429,6 +428,10 @@ async def _ask_llm(db: Any, situation: dict, lang: str) -> dict | None:
                 {"role": "system", "content": with_language(_SYSTEM_PROMPT, lang)},
                 {"role": "user", "content": user_msg},
             ],
+            # Codex high reasoning takes ~70s (over the gateway timeout); medium
+            # gives a deliberate dashboard in ~35s. For Qwen, thinking_mode (set
+            # above) drives reasoning instead.
+            reasoning_effort="medium",
             temperature=0.3,
             max_output_tokens=3500,   # extra room for thinking tokens + JSON output
             # Codex high reasoning takes ~70s (over the gateway timeout); medium

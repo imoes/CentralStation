@@ -37,6 +37,8 @@ class UserPreference(Base):
     ticket_seen_map: Mapped[dict | None] = mapped_column(JSON)
     # UI theme: "classic" | "holo" | "lcars"
     ui_theme: Mapped[str | None] = mapped_column(String(20), default="classic")
+    # Feature flag: Hermes Computer Console (admin activates per user, default off)
+    computer_console_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
