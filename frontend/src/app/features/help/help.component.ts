@@ -12,6 +12,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { marked } from 'marked';
 import { environment } from '../../../environments/environment';
+import { I18nService } from '../../core/services/i18n.service';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -39,7 +40,7 @@ interface ChatMessage {
       <div class="doc-panel">
         <div class="doc-header">
           <mat-icon>menu_book</mat-icon>
-          <span>Dokumentation</span>
+          <span>{{ i18n.t('help.docs') }}</span>
         </div>
         @if (docLoading()) {
           <div class="doc-loading"><mat-spinner diameter="32"></mat-spinner></div>
@@ -52,15 +53,15 @@ interface ChatMessage {
       <div class="chat-panel">
         <div class="chat-header">
           <mat-icon>psychology</mat-icon>
-          <span>Hilfe-Assistent</span>
-          <span class="chat-hint">Stell Fragen zur Dokumentation</span>
+          <span>{{ i18n.t('help.assistant') }}</span>
+          <span class="chat-hint">{{ i18n.t('help.hint') }}</span>
         </div>
 
         <div class="chat-messages" #chatMessages>
           @if (messages().length === 0) {
             <div class="chat-empty">
               <mat-icon>live_help</mat-icon>
-              <p>Stelle eine Frage zur CentralStation-Dokumentation.</p>
+              <p>{{ i18n.t('help.empty') }}</p>
               <div class="suggestions">
                 @for (s of suggestions; track s) {
                   <button class="suggestion-chip" (click)="askSuggestion(s)">{{ s }}</button>
@@ -89,7 +90,7 @@ interface ChatMessage {
         <div class="chat-input-row">
           <mat-form-field appearance="outline" class="chat-field">
             <textarea matInput rows="2" [(ngModel)]="question"
-              placeholder="Frage eingeben… (Enter = Senden, Shift+Enter = Zeilenumbruch)"
+              [placeholder]="i18n.t('help.placeholder')"
               (keydown)="onKey($event)"></textarea>
           </mat-form-field>
           <button mat-flat-button color="primary" class="send-btn"
@@ -300,6 +301,7 @@ export class HelpComponent implements OnInit, AfterViewInit {
 
   private http = inject(HttpClient);
   private sanitizer = inject(DomSanitizer);
+  protected readonly i18n = inject(I18nService);
 
   docHtml = signal<SafeHtml>('');
   docLoading = signal(true);
@@ -307,13 +309,15 @@ export class HelpComponent implements OnInit, AfterViewInit {
   asking = signal(false);
   question = '';
 
-  suggestions = [
-    'Wie konfiguriere ich ein Zeitreihen-Widget?',
-    'Was sind gespeicherte Suchen und wie nutze ich sie?',
-    'Wie funktioniert die KI-Anreicherung?',
-    'Welche Benutzerrollen gibt es?',
-    'Wie synchronisiert CentralStation Jira-Tickets?',
-  ];
+  get suggestions(): string[] {
+    return [
+      this.i18n.t('help.suggestion.1'),
+      this.i18n.t('help.suggestion.2'),
+      this.i18n.t('help.suggestion.3'),
+      this.i18n.t('help.suggestion.4'),
+      this.i18n.t('help.suggestion.5'),
+    ];
+  }
 
   ngOnInit() {
     this.http.get<{ content: string }>(`${environment.apiUrl}/help/content`).subscribe({
@@ -369,7 +373,7 @@ export class HelpComponent implements OnInit, AfterViewInit {
         this.scrollToBottom();
       },
       error: () => {
-        this.messages.update(m => [...m, { role: 'assistant', content: 'Fehler beim Abrufen der Antwort. Bitte prüfe ob der LLM konfiguriert ist.' }]);
+        this.messages.update(m => [...m, { role: 'assistant', content: this.i18n.t('help.error') }]);
         this.asking.set(false);
         this.scrollToBottom();
       },

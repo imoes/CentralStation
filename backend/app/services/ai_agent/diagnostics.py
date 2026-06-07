@@ -85,7 +85,7 @@ class CheckMKStatusProvider:
             problems = await cmk.get_problems(time_range_minutes=60)
             host_problems = [p for p in problems if host.lower() in (p.get("host") or "").lower()]
             if not host_problems:
-                summary = f"Keine aktiven Probleme für {host} in CheckMK."
+                summary = f"No active problems for {host} in CheckMK."
                 return DiagnosticResult(self.name, host, summary)
             lines = [
                 f"{p.get('severity','?').upper()}: {p.get('service') or p.get('title','?')}"
@@ -131,9 +131,9 @@ class MetricsProvider:
                 # explicit so the LLM does not flag it as a finding.
                 return DiagnosticResult(
                     self.name, host,
-                    f"Keine Performance-Metriken für {host} gespeichert — erwartbar, da "
-                    f"Metriken nur für Hosts mit aktivem CheckMK-Problem gesammelt werden. "
-                    f"Kein aktives Problem = keine Metriken = KEIN Befund.",
+                    f"No performance metrics stored for {host} — expected, as "
+                    f"metrics are only collected for hosts with an active CheckMK problem. "
+                    f"No active problem = no metrics = NO finding.",
                 )
             latest: dict[str, float] = {}
             latest_ts: dict[str, str] = {}
@@ -148,7 +148,7 @@ class MetricsProvider:
                 parts.append(f"Disk {latest['fs_used_percent']:.0f}%")
             if "load1" in latest:
                 parts.append(f"CPU-Load {latest['load1']:.1f}")
-            summary = ", ".join(parts) if parts else "Metriken geladen, keine Standardwerte."
+            summary = ", ".join(parts) if parts else "Metrics loaded, no standard values present."
             evidence = [
                 Evidence(
                     type="metric",
@@ -163,7 +163,7 @@ class MetricsProvider:
             return DiagnosticResult(self.name, host, summary, {"latest": latest}, evidence)
         except Exception as e:
             log.debug("diagnostics metrics failed: %s", e)
-            return DiagnosticResult(self.name, host, f"Metriken nicht verfügbar: {e}")
+            return DiagnosticResult(self.name, host, f"Metrics not available: {e}")
 
 
 class RecentLogsProvider:
@@ -179,7 +179,7 @@ class RecentLogsProvider:
         try:
             items = await search(host=host, exclude_resolved=False, size=5)
             if not items:
-                return DiagnosticResult(self.name, host, f"Keine Feed-Einträge für {host} gefunden.")
+                return DiagnosticResult(self.name, host, f"No feed entries found for {host}.")
             lines = [f"{i.get('severity','?').upper()}: {i.get('title','')[:80]}" for i in items[:5]]
             summary = f"{len(items)} Feed-Einträge: " + " | ".join(lines[:3])
             evidence = [
@@ -218,7 +218,7 @@ class TopologyProvider:
             )
             conn = r.scalar_one_or_none()
             if not conn:
-                return DiagnosticResult(self.name, host, "ID-Generator nicht konfiguriert.")
+                return DiagnosticResult(self.name, host, "ID-Generator not configured.")
             creds = decrypt_credentials(conn.encrypted_credentials)
             idgen = IDGeneratorConnector(base_url=conn.base_url, credentials=creds)
             loc = await idgen.resolve_host_to_location(host)
@@ -231,7 +231,7 @@ class TopologyProvider:
             )
         except Exception as e:
             log.debug("diagnostics topology failed: %s", e)
-            return DiagnosticResult(self.name, host, f"Topologie nicht verfügbar: {e}")
+            return DiagnosticResult(self.name, host, f"Topology not available: {e}")
 
 
 class PastIncidentsProvider:
@@ -251,7 +251,7 @@ class PastIncidentsProvider:
             incidents = await find_similar_incidents(host, db)
             if not incidents:
                 return DiagnosticResult(
-                    self.name, host, "Keine ähnlichen früheren Vorfälle gefunden (letzte 30 Tage)."
+                    self.name, host, "No similar past incidents found (last 30 days)."
                 )
             summary = format_past_incidents_for_llm(incidents)
             evidence = [
@@ -267,7 +267,7 @@ class PastIncidentsProvider:
             return DiagnosticResult(self.name, host, summary, {"incidents": incidents}, evidence)
         except Exception as e:
             log.debug("diagnostics past_incidents failed: %s", e)
-            return DiagnosticResult(self.name, host, f"Vergangene Incidents nicht abrufbar: {e}")
+            return DiagnosticResult(self.name, host, f"Past incidents not retrievable: {e}")
 
 
 # ── Provider registry ─────────────────────────────────────────────────────────

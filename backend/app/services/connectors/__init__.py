@@ -12,11 +12,13 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
     from app.services.connectors.netbox import NetBoxConnector
     from app.services.connectors.id_generator import IDGeneratorConnector
     from app.services.connectors.it_aikb import ITAikbConnector
+    from app.services.connectors.icinga2 import Icinga2Connector
 
     mapping = {
         "checkmk": CheckMKConnector,
         "graylog": GraylogConnector,
         "wazuh": WazuhConnector,
+        "icinga2": Icinga2Connector,
         "jira": JiraConnector,
         "jira_sd": JiraConnector,
         "o365": O365Connector,
