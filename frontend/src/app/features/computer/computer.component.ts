@@ -204,6 +204,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
   private computerService = inject(ComputerService);
   private apiBase = `${environment.apiUrl}/computer`;
 
+  // Maps a host key (e.g. hostname) → session_id so that repeated "Computer, prüfe das"
+  // clicks for the same host reuse the existing session instead of always creating a new one.
+  private hostSessions = new Map<string, string>();
+
   renderMarkdown(text: string): SafeHtml {
     const html = marked.parse(text) as string;
     return this.sanitizer.bypassSecurityTrustHtml(html);
@@ -220,7 +224,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   private mediaRecorder?: MediaRecorder;
   private audioChunks: Blob[] = [];
-  private ttsUtterance?: SpeechSynthesisUtterance;
+  private _ttsAudio?: HTMLAudioElement;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _recognition?: any;
   private _abortController?: AbortController;
@@ -257,16 +261,15 @@ export class ComputerComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
-    // Subscribe to incident handoffs from the News Feed
-    this._handoffSub = this.computerService.handoff$.subscribe(({ prompt, label }) => {
-      this._handleHandoff(prompt, label);
+    this._handoffSub = this.computerService.handoff$.subscribe(({ prompt, label, hostKey }) => {
+      this._handleHandoff(prompt, label, hostKey);
     });
   }
 
   ngOnDestroy(): void {
     this._recognition?.abort();
     this.mediaRecorder?.stop();
-    window.speechSynthesis?.cancel();
+    this._ttsAudio?.pause();
     this._abortController?.abort();
     this._handoffSub?.unsubscribe();
   }
@@ -275,7 +278,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   toggle(): void { this.isOpen.update(v => !v); }
   open(): void   { this.isOpen.set(true); }
-  close(): void  { this.isOpen.set(false); window.speechSynthesis?.cancel(); }
+  close(): void  { this.isOpen.set(false); this._ttsAudio?.pause(); }
 
   focusInput(): void {
     setTimeout(() => this.inputEl?.nativeElement.focus(), 50);
@@ -287,58 +290,81 @@ export class ComputerComponent implements OnInit, OnDestroy {
     this.muted.update(v => {
       const next = !v;
       localStorage.setItem('cs_computer_muted', next ? '1' : '0');
-      if (next) window.speechSynthesis?.cancel();
+      if (next) { this._ttsAudio?.pause(); this._ttsAudio = undefined; }
       return next;
     });
   }
 
-  private cleanForSpeech(text: string): string {
-    let t = text;
-    t = t.replace(/```[\s\S]*?```/g, ' . ');
-    t = t.replace(/`[^`]*`/g, '');
-    t = t.replace(/^\s*[#>\-*]+\s?/gm, '');
-    t = t.replace(/\*\*([^*]+)\*\*/g, '$1');
-    t = t.replace(/\*([^*]+)\*/g, '$1');
-    t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-    t = t.split('\n')
-      .filter(line => {
-        const l = line.trim();
-        if (!l) return false;
-        if (/^[\s|+\-=_]+$/.test(l)) return false;
-        if (/\d+\.\d+\.\d+\.\d+/.test(l)) return false;
-        if (/^\d+\s+(ms|bytes|packets)/i.test(l)) return false;
-        const digits = (l.match(/\d/g) || []).length;
-        if (digits > l.length * 0.4) return false;
-        return true;
-      })
-      .join(' ');
-    t = t.replace(/\s+/g, ' ').trim();
-    return t.length > 600 ? t.slice(0, 600) + ' …' : t;
+  /** Extract the concluding paragraph (Fazit) for TTS — last substantive paragraph
+   *  whose heading starts with Fazit/Zusammenfassung/Empfehlung, or simply the
+   *  last non-empty paragraph, capped at 300 chars. */
+  private _extractFazit(text: string): string {
+    let t = text.replace(/\[FEED:[^\]]+\]/g, '').replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
+    t = t.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
+    t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/^#{1,6}\s+/gm, '');
+    const paragraphs = t.split(/\n{2,}/)
+      .map(p => p.replace(/^\s*[-*>|]+\s*/gm, '').replace(/\s+/g, ' ').trim())
+      .filter(p => p.length > 20 && !/^\s*[\d.]+\s*$/.test(p));
+    if (paragraphs.length === 0) return '';
+    const fazit = paragraphs.find(p => /^(Fazit|Zusammenfassung|Empfehlung|Ergebnis|Schluss)/i.test(p));
+    const chosen = fazit ?? paragraphs[paragraphs.length - 1];
+    const clean = chosen.replace(/^(Fazit|Zusammenfassung|Empfehlung|Ergebnis|Schluss)[:\s]*/i, '');
+    return clean.length > 300 ? clean.slice(0, 297) + ' …' : clean;
   }
 
   private speak(text: string): void {
-    const clean = this.cleanForSpeech(text);
-    if (this.muted() || !clean.trim() || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(clean);
-    utter.lang = 'de-DE';
-    utter.rate = 1.05;
-    utter.pitch = 0.9;
-    const voices = window.speechSynthesis.getVoices();
-    const deVoice = voices.find(v => v.lang.startsWith('de') && !v.name.includes('eSpeak'))
-                 ?? voices.find(v => v.lang.startsWith('de'));
-    if (deVoice) utter.voice = deVoice;
-    this.ttsUtterance = utter;
-    window.speechSynthesis.speak(utter);
+    const fazit = this._extractFazit(text);
+    if (this.muted() || !fazit.trim()) return;
+    const token = this.auth.getAccessToken();
+    this._ttsAudio?.pause();
+    this._ttsAudio = undefined;
+    fetch(`${this.apiBase}/tts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ text: fazit }),
+    }).then(r => {
+      if (!r.ok) throw new Error(`TTS HTTP ${r.status}`);
+      return r.blob();
+    }).then(blob => {
+      if (this.muted()) return;
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      this._ttsAudio = audio;
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.play().catch(err => console.warn('TTS playback failed:', err));
+    }).catch(err => console.warn('TTS request failed:', err));
   }
 
   // ── Incident handoff ──────────────────────────────────────────────
 
-  private async _handleHandoff(prompt: string, label?: string): Promise<void> {
+  private async _handleHandoff(prompt: string, label?: string, hostKey?: string): Promise<void> {
     this.open();
+
+    // Reuse an existing session for this host if one exists
+    if (hostKey) {
+      const existingSid = this.hostSessions.get(hostKey);
+      if (existingSid && this.sessions().some(s => s.session_id === existingSid)) {
+        this.activeTabId.set(existingSid);
+        this.scrollToBottom(true);
+        this.inputText = prompt;
+        await this.send();
+        return;
+      }
+      // Session was deleted or never existed — fall through to create a new one
+      this.hostSessions.delete(hostKey);
+    }
+
     await this.newSession(label);
     const sid = this.activeTabId();
     if (!sid) return;
+
+    if (hostKey) {
+      this.hostSessions.set(hostKey, sid);
+    }
+
     this.inputText = prompt;
     await this.send();
   }
@@ -382,6 +408,12 @@ export class ComputerComponent implements OnInit, OnDestroy {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
     } catch { /* ignore */ }
+
+    // Remove host → session mapping so the next handoff creates a fresh session
+    for (const [key, id] of this.hostSessions) {
+      if (id === sid) { this.hostSessions.delete(key); break; }
+    }
+
     this.sessions.update(ss => ss.filter(s => s.session_id !== sid));
     const remaining = this.sessions();
     this.activeTabId.set(remaining.length > 0 ? remaining[remaining.length - 1].session_id : null);
@@ -416,6 +448,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
     const token = this.auth.getAccessToken();
     let fullAssistantText = '';
+    let wasAborted = false;
     this._abortController = new AbortController();
 
     try {
@@ -455,9 +488,6 @@ export class ComputerComponent implements OnInit, OnDestroy {
               fullAssistantText += data.text;
               this._appendToLast(sid, data.text);
             }
-            if (data.type === 'done') {
-              this.speak(fullAssistantText);
-            }
             if (data.type === 'error') {
               this._appendToLast(sid, `\n[Fehler: ${data.text}]`);
             }
@@ -478,15 +508,13 @@ export class ComputerComponent implements OnInit, OnDestroy {
               fullAssistantText += data.text;
               this._appendToLast(sid, data.text);
             }
-            if (data.type === 'done') {
-              this.speak(fullAssistantText);
-            }
           } catch { /* ignore */ }
         }
       }
 
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') {
+        wasAborted = true;
         this._appendToLast(sid, ' [gestoppt]');
       } else {
         this._appendToLast(sid, `[Verbindungsfehler: ${err}]`);
@@ -496,6 +524,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
       // of how the stream ended (normal close, abort, or error).
       if (fullAssistantText) {
         this._finishAssistantMessage(sid, fullAssistantText);
+      }
+      // Read the Fazit aloud — but not if the user explicitly stopped generation.
+      if (!wasAborted && fullAssistantText) {
+        this.speak(fullAssistantText);
       }
       this.loading.set(false);
       this.scrollToBottom();
