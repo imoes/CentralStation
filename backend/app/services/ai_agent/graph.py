@@ -230,50 +230,14 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
 
     rag_context: list[dict] = []
 
-    # ── Step 0: Automatic server KB lookup ────────────────────────────────
-    # For every affected host, fetch its Confluence inventory page from it-aikb.
-    # These pages contain CheckMK custom checks, runbooks, and service details.
-    # Done unconditionally — fast OpenSearch lookup, no LLM call.
-    from sqlalchemy import select
-    from app.core.security import decrypt_credentials
-    from app.models.connector import ConnectorConfig
-
-    result = await db.execute(
-        select(ConnectorConfig).where(
-            ConnectorConfig.type == "it_aikb",
-            ConnectorConfig.enabled.is_(True),
-        )
-    )
-    aikb_row = result.scalars().first()
-    aikb_svc = None
-    if aikb_row:
-        creds = decrypt_credentials(aikb_row.encrypted_credentials)
-        from app.services.connectors.it_aikb import ITAikbConnector
-        aikb_svc = ITAikbConnector(base_url=aikb_row.base_url, credentials=creds)
-
-    # Extract unique hostnames for KB + metrics lookups
+    # Extract unique hostnames for metrics lookups
     unique_hosts: set[str] = set()
     for a in alerts:
         raw = (a.get("host") or a.get("agent") or "").strip()
         if raw:
             unique_hosts.add(raw)
 
-    if aikb_svc:
-        for host in list(unique_hosts)[:10]:
-            short = host.split(".")[0].lower()
-            try:
-                hits = await aikb_svc.search_opensearch(short, top_k=3)
-                if hits:
-                    rag_context.append({
-                        "source": "server-kb",
-                        "query": short,
-                        "results": hits,
-                    })
-                    log.debug("rag_lookup: KB hit for host '%s' (%d chunks)", short, len(hits))
-            except Exception as e:
-                log.debug("rag_lookup: KB lookup for '%s' failed: %s", short, e)
-
-    # ── Step 0b: Recent metrics from cs-metrics-checkmk ──────────────────────
+    # ── Step 0: Recent metrics from cs-metrics-checkmk ───────────────────────
     # For hosts with critical/high alerts, pull recent metric snapshots so the
     # LLM can correlate "CPU was 94% → OOM → container restart" in one context.
     critical_hosts = {
@@ -327,20 +291,7 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
     if not decision.get("needs_rag") or not queries:
         return {**state, "rag_context": rag_context}
 
-    # ── Step 2: LLM-driven it-aikb search ─────────────────────────────────
-    if aikb_svc:
-        for query in queries:
-            try:
-                if use_deepsearch:
-                    results = await aikb_svc.deepsearch(query)
-                    rag_context.append({"source": "aikb-deepsearch", "query": query, "results": results})
-                else:
-                    results = await aikb_svc.search(query)
-                    rag_context.append({"source": "aikb-standard", "query": query, "results": results})
-            except Exception as e:
-                log.warning("rag_lookup: aikb failed for query '%s': %r", query, e)
-
-    # Step 3: SearXNG web search via HyDE pattern
+    # ── Step 2: SearXNG web search via HyDE pattern
     if searxng_config.is_configured and queries:
         for query in queries[:2]:  # limit web searches
             try:
