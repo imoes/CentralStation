@@ -188,12 +188,12 @@ import { WebsocketService } from '../../core/services/websocket.service';
           <!-- Header bar — same visual weight as a widget header -->
           <div class="gen-header">
             <mat-icon class="gen-icon" [class.spinning]="generativeLoading()">auto_awesome</mat-icon>
-            <span class="gen-header-title">KI-Komponiertes Lagebild</span>
+            <span class="gen-header-title">AI-Composed Situation Report</span>
             @if (generativeAgo()) { <span class="gen-ago">{{ generativeAgo() }}</span> }
             <button mat-flat-button color="primary" (click)="regenerate()" [disabled]="generativeLoading()">
               @if (generativeLoading()) { <mat-spinner diameter="18"></mat-spinner> }
               @else { <mat-icon>refresh</mat-icon> }
-              Neu generieren
+              Regenerate
             </button>
           </div>
           <!-- Body — dark background like widget body -->
@@ -209,7 +209,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
                 }
               </p>
               <button mat-button class="gen-why" (click)="rationaleExpanded.set(!rationaleExpanded())">
-                {{ rationaleExpanded() ? '▲ Weniger' : '▼ Mehr' }}
+                {{ rationaleExpanded() ? '▲ Less' : '▼ More' }}
               </button>
             </div>
           }
@@ -572,6 +572,44 @@ import { WebsocketService } from '../../core/services/websocket.service';
     :host-context(html.cs-theme-holo) .gen-banner button[color="primary"] {
       background: #4fd6ff !important; color: #00131f !important;
     }
+
+    .gen-host-link { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; border-radius: 3px; padding: 0 1px; transition: background .1s; }
+    .gen-host-link:hover { background: rgba(255,204,153,.18); }
+
+    /* KI-Insight strip — only visible in generativeMode */
+    .ki-strip {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 6px 14px; margin-bottom: 8px;
+      background: rgba(180,20,20,.12); border-left: 4px solid #b71c1c;
+      border-radius: 0 6px 6px 0; font-size: 12px;
+    }
+    .ki-strip[data-sev="high"]     { background: rgba(230,81,0,.1); border-left-color: #e65100; }
+    .ki-strip[data-sev="medium"]   { background: rgba(245,124,0,.08); border-left-color: #f57c00; }
+    .ki-strip[data-sev="info"], .ki-strip[data-sev="ok"] { background: rgba(46,125,50,.08); border-left-color: #2e7d32; }
+    .ki-strip-icon { color: var(--mat-sys-on-surface-variant); flex-shrink: 0; }
+    .ki-strip-sev { font-weight: 700; font-size: 11px; letter-spacing: .06em; min-width: 52px; flex-shrink: 0; }
+    .ki-strip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ki-strip-hosts { display: flex; gap: 4px; flex-wrap: wrap; }
+    .ki-strip-host { cursor: pointer; background: rgba(0,0,0,.12); border-radius: 3px;
+                     padding: 1px 6px; font-size: 10px; color: var(--mat-sys-primary); }
+    .ki-strip-host:hover { text-decoration: underline; }
+    .ki-strip-ago { font-size: 10px; color: var(--mat-sys-on-surface-variant); white-space: nowrap; flex-shrink: 0; }
+    .ki-strip-btn { width: 24px; height: 24px; line-height: 24px; flex-shrink: 0; }
+
+    :host-context(html.cs-theme-lcars) .ki-strip { background: rgba(255,68,51,.1); border-left-color: #ff4433; }
+    :host-context(html.cs-theme-lcars) .ki-strip[data-sev="high"] { border-left-color: #ffcc00; background: rgba(255,204,0,.08); }
+    :host-context(html.cs-theme-lcars) .ki-strip-sev { color: #FF9933; }
+    :host-context(html.cs-theme-lcars) .ki-strip-text { color: #ffe8a0; }
+    :host-context(html.cs-theme-lcars) .ki-strip-host { color: #FFCC99; background: rgba(255,153,51,.1); }
+    :host-context(html.cs-theme-holo)  .ki-strip { background: rgba(79,214,255,.07); border-left-color: #4fd6ff; }
+    :host-context(html.cs-theme-holo)  .ki-strip[data-sev="critical"] { border-left-color: #ff5b6e; background: rgba(255,91,110,.08); }
+    :host-context(html.cs-theme-holo)  .ki-strip-sev { color: #4fd6ff; }
+    :host-context(html.cs-theme-holo)  .ki-strip-host { color: #4fd6ff; }
+
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-host-link { color: var(--mat-sys-primary); }
+    :host-context(html.cs-theme-holo) .gen-host-link { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-lcars) .gen-host-link { color: #FFCC99 !important; }
+
     .grid-stack { min-height: 520px; }
     .grid-stack.config-mode {
       background-image:
@@ -658,6 +696,46 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     const h = Math.round(mins / 60);
     return `vor ${h} Std`;
   });
+  generativeHosts = signal<string[]>([]);
+  kiInsight = signal<{ analysis_id: string; severity_summary: string; run_at: string; findings: { title: string; severity: string; host: string }[]; summary_text: string } | null>(null);
+
+  readonly kiInsightAgo = computed(() => {
+    const ts = this.kiInsight()?.run_at;
+    if (!ts) return '';
+    const diff = Date.now() - new Date(ts).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.floor(mins / 60);
+    return hrs < 24 ? `${hrs}h ago` : `${Math.floor(hrs / 24)}d ago`;
+  });
+
+  readonly rationaleSegments = computed((): RationaleSegment[] => {
+    const text = this.generativeRationale();
+    if (!text) return [];
+    const hosts = [...this.generativeHosts()].sort((a, b) => b.length - a.length);
+    if (hosts.length === 0) {
+      // Fallback: FQDN regex
+      const fqdnRe = /\b[a-z](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?)+\b/g;
+      const segs: RationaleSegment[] = [];
+      let last = 0;
+      let m: RegExpExecArray | null;
+      while ((m = fqdnRe.exec(text)) !== null) {
+        if (m.index > last) segs.push({ text: text.slice(last, m.index), host: null });
+        segs.push({ text: m[0], host: m[0] });
+        last = m.index + m[0].length;
+      }
+      if (last < text.length) segs.push({ text: text.slice(last), host: null });
+      return segs;
+    }
+    // Split by known hosts (longest first to avoid partial matches)
+    const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(${hosts.map(escape).join('|')})`, 'g');
+    const parts = text.split(pattern);
+    const hostSet = new Set(hosts);
+    return parts.map(p => ({ text: p, host: hostSet.has(p) ? p : null }));
+  });
+
   warRoomActive = signal(false);
   loading = signal(true);
   creatingFromPrompt = signal(false);
@@ -710,6 +788,13 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
 
   private readonly STORAGE_KEY = 'cs_selected_dashboard_id';
 
+  loadKiInsight() {
+    this.http.get<any>(`${environment.apiUrl}/ai/latest-summary`).subscribe({
+      next: data => this.kiInsight.set(data),
+      error: () => {},
+    });
+  }
+
   loadDashboards() {
     this.http.get<Dashboard[]>(`${environment.apiUrl}/dashboard-widgets/dashboards`).subscribe({
       next: dashboards => {
@@ -728,7 +813,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
       },
       error: () => {
         this.loading.set(false);
-        this.snackBar.open('Dashboards konnten nicht geladen werden', 'OK', { duration: 4000 });
+        this.snackBar.open('Dashboards could not be loaded', 'OK', { duration: 4000 });
       },
     });
   }
@@ -997,7 +1082,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     if (next) {
       // Leave config mode — the generative canvas is AI-driven, not hand-edited.
       if (this.configMode()) { this.configMode.set(false); this.grid?.disable(); }
-      localStorage.setItem(this.GEN_KEY, '1');
+      localStorage.removeItem(this.GEN_KEY);
       this.loadGenerative();
     } else {
       localStorage.setItem(this.GEN_KEY, '0');

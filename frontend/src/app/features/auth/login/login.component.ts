@@ -9,6 +9,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { AuthService } from '../../../core/auth/auth.service';
+import { I18nService } from '../../../core/services/i18n.service';
 import { environment } from '../../../../environments/environment';
 
 @Component({
@@ -29,11 +30,11 @@ import { environment } from '../../../../environments/environment';
         <mat-card-content>
           <form [formGroup]="form" (ngSubmit)="onSubmit()">
             <mat-form-field appearance="outline" class="full-width">
-              <mat-label>E-Mail</mat-label>
+              <mat-label>{{ i18n.t('login.email') }}</mat-label>
               <input matInput type="email" formControlName="email" autocomplete="email" name="email" id="login-email">
             </mat-form-field>
             <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Passwort</mat-label>
+              <mat-label>{{ i18n.t('login.password') }}</mat-label>
               <input matInput type="password" formControlName="password" autocomplete="current-password" name="password" id="login-password">
             </mat-form-field>
             @if (error) {
@@ -44,7 +45,7 @@ import { environment } from '../../../../environments/environment';
               @if (loading) {
                 <mat-spinner diameter="20"></mat-spinner>
               } @else {
-                Anmelden
+                {{ i18n.t('login.submit') }}
               }
             </button>
           </form>
@@ -70,6 +71,7 @@ export class LoginComponent {
   loading = false;
   error = '';
   form: ReturnType<FormBuilder['group']>;
+  protected readonly i18n: I18nService;
 
   constructor(
     private fb: FormBuilder,
@@ -77,7 +79,9 @@ export class LoginComponent {
     private router: Router,
     private route: ActivatedRoute,
     private http: HttpClient,
+    i18n: I18nService,
   ) {
+    this.i18n = i18n;
     this.form = this.fb.group({
       email: ['', [Validators.required, Validators.email]],
       password: ['', Validators.required],
@@ -105,7 +109,7 @@ export class LoginComponent {
         });
       },
       error: () => {
-        this.error = 'Ungültige Anmeldedaten';
+        this.error = this.i18n.t('login.invalid');
         this.loading = false;
       },
     });

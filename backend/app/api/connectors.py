@@ -17,7 +17,7 @@ from app.schemas.connector import (
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
 VALID_TYPES = {
-    "checkmk", "graylog", "wazuh", "jira", "jira_sd",
+    "checkmk", "graylog", "wazuh", "icinga2", "jira", "jira_sd",
     "o365", "teams", "prometheus", "netbox", "id_generator", "it_aikb",
 }  # keep in sync with get_connector() factory
 USER_MANAGED_TYPES = {"o365", "teams", "jira", "jira_sd"}

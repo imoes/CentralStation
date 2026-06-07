@@ -16,6 +16,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from app.services.ai_language import with_language
 from app.services.llm_client import generate_text
 
 log = logging.getLogger(__name__)
@@ -157,11 +158,18 @@ Format:
 }"""
 
 
-async def _invoke_llm(llm_config: Any, system: str, user_content: str) -> str:
+async def _invoke_llm(
+    llm_config: Any,
+    system: str,
+    user_content: str,
+    *,
+    lang: str | None = None,
+) -> str:
+    system_prompt = with_language(system, lang) if lang else system
     response = await generate_text(
         llm_config,
         [
-            {"role": "system", "content": system},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
         temperature=0.3,
@@ -178,6 +186,7 @@ async def generate_comment(
     comment_type: str = "progress",  # progress | pending | escalation | handoff
     additional_context: str | None = None,
     db: Any = None,
+    lang: str | None = None,
 ) -> str:
     """Generate an ITIL-compliant ticket comment, enriched with it-aikb DeepSearch."""
     notes_text = "\n".join(
@@ -231,7 +240,7 @@ Arbeitsnotizen:
 {notes_text or '(keine Notizen)'}{kb_text}{context_block}
 
 Schreibe jetzt den Kommentar basierend auf dem aktuellen Stand (letzter Kommentar im Verlauf):"""
-    return await _invoke_llm(llm_config, COMMENT_SYSTEM, prompt)
+    return await _invoke_llm(llm_config, COMMENT_SYSTEM, prompt, lang=lang)
 
 
 async def generate_resolution(
@@ -242,6 +251,7 @@ async def generate_resolution(
     root_cause: str | None,
     resolution_type: str = "permanent",
     closure_code: str = "solved_permanently",
+    lang: str | None = None,
 ) -> str:
     """Generate ITIL-compliant resolution/closing documentation."""
     notes_text = "\n".join(
@@ -265,18 +275,19 @@ Durchgeführte Schritte:
 {notes_text or '(keine Arbeitsnotizen)'}
 
 Erstelle jetzt die Lösungsdokumentation:"""
-    return await _invoke_llm(llm_config, RESOLUTION_SYSTEM, prompt)
+    return await _invoke_llm(llm_config, RESOLUTION_SYSTEM, prompt, lang=lang)
 
 
 async def auto_categorize(
     llm_config: Any,
     title: str,
     description: str,
+    lang: str | None = None,
 ) -> dict:
     """Auto-categorize a ticket and suggest impact/urgency."""
     prompt = f"Ticket Titel: {title}\nBeschreibung: {description}"
     try:
-        raw = await _invoke_llm(llm_config, CATEGORIZE_SYSTEM, prompt)
+        raw = await _invoke_llm(llm_config, CATEGORIZE_SYSTEM, prompt, lang=lang)
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         return json.loads(raw)
@@ -292,11 +303,12 @@ async def suggest_solution(
     description: str,
     use_rag: bool = True,
     use_web: bool = True,
+    lang: str | None = None,
 ) -> dict:
     """Search for solutions using LLM + RAG + optional SearXNG web search."""
     prompt = f"Problem: {title}\nDetails: {description}"
     try:
-        raw = await _invoke_llm(llm_config, SOLUTION_SEARCH_SYSTEM, prompt)
+        raw = await _invoke_llm(llm_config, SOLUTION_SEARCH_SYSTEM, prompt, lang=lang)
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         plan = json.loads(raw)
@@ -354,11 +366,16 @@ async def suggest_solution(
     }
 
 
-async def analyze_mail(llm_config: Any, subject: str, preview: str) -> dict:
+async def analyze_mail(
+    llm_config: Any,
+    subject: str,
+    preview: str,
+    lang: str | None = None,
+) -> dict:
     """Extract structured info from an IT support email."""
     prompt = f"Betreff: {subject}\nNachrichtenvorschau: {preview[:600]}"
     try:
-        raw = await _invoke_llm(llm_config, MAIL_EXTRACT_SYSTEM, prompt)
+        raw = await _invoke_llm(llm_config, MAIL_EXTRACT_SYSTEM, prompt, lang=lang)
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         return json.loads(raw)
@@ -388,11 +405,11 @@ Wichtige JQL-Syntax:
 - ORDER BY updated DESC, priority ASC"""
 
 
-async def generate_jql(llm_config: Any, description: str) -> dict:
+async def generate_jql(llm_config: Any, description: str, lang: str | None = None) -> dict:
     """Generate a Jira JQL query from a natural language description."""
     prompt = f"Beschreibung: {description}"
     try:
-        raw = await _invoke_llm(llm_config, JQL_SYSTEM, prompt)
+        raw = await _invoke_llm(llm_config, JQL_SYSTEM, prompt, lang=lang)
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         return json.loads(raw)
@@ -421,7 +438,11 @@ Regeln:
 - Antworte NUR mit dem JSON, kein Markdown, keine Erklärung"""
 
 
-async def generate_exclusion_query(llm_config: Any, item: dict) -> dict:
+async def generate_exclusion_query(
+    llm_config: Any,
+    item: dict,
+    lang: str | None = None,
+) -> dict:
     """Generate an OpenSearch exclusion query for a feed item using the LLM."""
     source = item.get("source", "")
     title = item.get("title", "")
@@ -439,7 +460,7 @@ async def generate_exclusion_query(llm_config: Any, item: dict) -> dict:
         prompt_parts.append(f"Host: {host}")
 
     try:
-        raw = await _invoke_llm(llm_config, _EXCLUSION_SYSTEM, "\n".join(prompt_parts))
+        raw = await _invoke_llm(llm_config, _EXCLUSION_SYSTEM, "\n".join(prompt_parts), lang=lang)
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         result = json.loads(raw)
@@ -455,6 +476,7 @@ async def run_5why_analysis(
     title: str,
     description: str,
     work_notes: list[dict] | None = None,
+    lang: str | None = None,
 ) -> dict:
     """ITIL Problem Management: 5-Why root cause analysis."""
     notes_text = "\n".join(n.get("content", "") for n in (work_notes or [])[-5:])
@@ -464,7 +486,7 @@ Arbeitsnotizen: {notes_text or '(keine)'}
 
 Führe eine 5-Why-Analyse durch:"""
     try:
-        raw = await _invoke_llm(llm_config, RCA_5WHY_SYSTEM, prompt)
+        raw = await _invoke_llm(llm_config, RCA_5WHY_SYSTEM, prompt, lang=lang)
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         return json.loads(raw)

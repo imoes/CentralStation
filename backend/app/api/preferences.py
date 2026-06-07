@@ -193,13 +193,15 @@ async def generate_jql_query(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Use LLM to generate a Jira JQL query from natural language."""
+    from app.services.ai_language import get_response_language_for_user
     from app.services.settings import get_llm_config
     from app.services.workflow_ai import generate_jql
 
     llm = await get_llm_config(db)
     if not llm.is_configured:
         raise HTTPException(503, "LLM not configured")
-    return await generate_jql(llm, body.description)
+    lang = await get_response_language_for_user(db, user.id)
+    return await generate_jql(llm, body.description, lang=lang)
 
 
 @router.patch("/jira-queries/{query_id}")
