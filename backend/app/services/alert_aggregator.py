@@ -21,12 +21,15 @@ from datetime import datetime, timedelta, timezone
 #   "WARN: something"
 #   "DEBUG cue.module something"
 _APP_LEVEL_RE = _re.compile(
-    r'\b(DEBUG|INFO|NOTICE|WARNING|WARN|ERROR|SEVERE|CRITICAL|FATAL)\b',
+    r'\b(DEBUG|INFO|NOTICE|WARNING|WARN|LOG|ERROR|SEVERE|CRITICAL|FATAL)\b',
     _re.IGNORECASE,
 )
 _APP_LEVEL_SEVERITY = {
     'debug':    'info',
     'info':     'info',
+    # PostgreSQL uses LOG as a routine informational severity (checkpoints, autovacuum, etc.)
+    # Docker GELF stamps these with syslog level=3 (Error) — override to 'info'.
+    'log':      'info',
     'notice':   'low',
     'warning':  'medium',
     'warn':     'medium',
@@ -232,7 +235,7 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
                 lvl_sev = _APP_LEVEL_SEVERITY[log_level_text]
                 if _sev_rank.get(lvl_sev, 99) < _sev_rank.get(syslog_severity, 0):
                     syslog_severity = lvl_sev
-            app_match = _APP_LEVEL_RE.search(msg_text[:120])  # check first 120 chars
+            app_match = _APP_LEVEL_RE.search(msg_text)
             if app_match:
                 app_sev = _APP_LEVEL_SEVERITY.get(app_match.group(1).lower(), "")
                 if app_sev and _sev_rank.get(app_sev, 99) < _sev_rank.get(syslog_severity, 0):

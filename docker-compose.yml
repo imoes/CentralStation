@@ -90,6 +90,28 @@ services:
     ports:
       - "127.0.0.1:4200:80"
 
+  centralcore:
+    build:
+      context: ./centralcore
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      # LLM config is read from CentralStation backend settings at session creation time.
+      # Set these as fallback defaults if needed:
+      # LLM_BASE_URL: http://...
+      # LLM_MODEL: ...
+      # LLM_API_KEY: ...
+    volumes:
+      # Mount your Hermes installation and config:
+      # - /path/to/hermes:/opt/hermes
+      # - /path/to/hermes-config:/root/.hermes
+      []
+    networks:
+      - default
+    depends_on:
+      backend:
+        condition: service_started
+
   nginx:
     image: nginx:alpine
     restart: unless-stopped

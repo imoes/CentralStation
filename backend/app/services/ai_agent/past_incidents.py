@@ -160,7 +160,7 @@ def format_past_incidents_for_llm(incidents: list[dict]) -> str:
     """Format past incidents as a compact LLM context block."""
     if not incidents:
         return ""
-    lines = ["Ähnliche frühere Vorfälle (letzten 30 Tage):"]
+    lines = ["Similar past incidents (last 30 days):"]
     for i, inc in enumerate(incidents, 1):
         ts = inc.get("run_at", "")[:10]
         sev = inc.get("severity", "?")
@@ -168,10 +168,10 @@ def format_past_incidents_for_llm(incidents: list[dict]) -> str:
         rec = inc.get("recommendation", "")
         res = inc.get("resolution", "")
         src = inc.get("source", "?")
-        line = f"  {i}. [{ts}][{sev}] {title} (Quelle: {src})"
+        line = f"  {i}. [{ts}][{sev}] {title} (source: {src})"
         if rec:
-            line += f"\n     Empfehlung damals: {rec[:100]}"
+            line += f"\n     Recommendation: {rec[:100]}"
         if res:
-            line += f"\n     Lösung: {res[:100]}"
+            line += f"\n     Resolution: {res[:100]}"
         lines.append(line)
     return "\n".join(lines)
