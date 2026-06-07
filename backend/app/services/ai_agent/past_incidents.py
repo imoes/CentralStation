@@ -64,6 +64,8 @@ async def find_similar_incidents(
             host_findings = [
                 f for f in findings
                 if host.lower() in (f.get("host") or "").lower()
+                # skip meta-findings that just flag missing raw data — they're noise
+                and not (f.get("title") or "").startswith("UNGEKLÄRT:")
             ]
             if not host_findings:
                 continue  # analysis contains no finding for this host — skip
@@ -75,7 +77,12 @@ async def find_similar_incidents(
                         recs = _json.loads(recs)
                     except Exception:
                         recs = []
-                rec_text = recs[0].get("action", "") if recs else ""
+                # Prefer a recommendation that mentions this host; fall back to first
+                host_rec = next(
+                    (r for r in recs if host.lower() in (r.get("action") or "").lower()),
+                    recs[0] if recs else None,
+                )
+                rec_text = host_rec.get("action", "") if host_rec else ""
                 results.append({
                     "source": "ai_analyses",
                     "run_at": row.run_at.isoformat() if row.run_at else "",
