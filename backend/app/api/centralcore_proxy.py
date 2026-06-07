@@ -65,7 +65,7 @@ async def create_session(db: Annotated[AsyncSession, Depends(get_db)]):
         log.warning("Could not load LLM config, using CentralCore defaults: %s", exc)
         llm_payload = {}
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=90.0) as client:
         r = await client.post(f"{CENTRALCORE_URL}/sessions", json=llm_payload)
     _check(r)
     return r.json()
