@@ -21,23 +21,29 @@ ALL_SOURCES = ["checkmk", "graylog", "wazuh", "o365", "teams"]
 _INDEX_MAPPING = {
     "mappings": {
         "properties": {
-            "id":            {"type": "keyword"},
-            "type":          {"type": "keyword"},
-            "source":        {"type": "keyword"},
-            "severity":      {"type": "keyword"},
-            "title":         {"type": "text", "fields": {"raw": {"type": "keyword"}}},
-            "body":          {"type": "text"},
-            "metadata":      {"type": "object", "dynamic": True},
-            "created_at":    {"type": "date"},
-            "status":        {"type": "keyword"},
-            "location_name": {"type": "keyword"},
-            "location_city": {"type": "keyword"},
-            "external_url":  {"type": "keyword"},
-            "external_id":   {"type": "keyword"},
-            "ai_insight":    {"type": "text"},
-            "alert_score":   {"type": "float"},
+            "id":                  {"type": "keyword"},
+            "type":                {"type": "keyword"},
+            "source":              {"type": "keyword"},
+            "severity":            {"type": "keyword"},
+            "title":               {"type": "text", "fields": {"raw": {"type": "keyword"}}},
+            "body":                {"type": "text"},
+            "metadata":            {"type": "object", "dynamic": True},
+            "created_at":          {"type": "date"},
+            "status":              {"type": "keyword"},
+            "location_name":       {"type": "keyword"},
+            "location_city":       {"type": "keyword"},
+            "external_url":        {"type": "keyword"},
+            "external_id":         {"type": "keyword"},
+            "ai_insight":          {"type": "text"},
+            "alert_score":         {"type": "float"},
+            # AI resolution — set when the Computer panel marks a problem as solved
+            "has_ai_resolution":   {"type": "boolean"},
+            "ai_resolution_text":  {"type": "text"},
+            # Searchable tags auto-generated at index time (source, severity, service names, etc.)
+            # Special: "ai_resolved" added when Computer marks a problem solved
+            "tags":                {"type": "keyword"},
             # owner of personal items (o365, teams) — empty = shared/all-roles
-            "user_id":       {"type": "keyword"},
+            "user_id":             {"type": "keyword"},
         }
     },
     "settings": {
@@ -73,7 +79,12 @@ async def ensure_indices() -> None:
     """Create indices if they don't exist; push mapping updates to existing ones."""
     os_client = get_opensearch()
     # Fields to add to existing indices (safe: OpenSearch ignores already-mapped fields)
-    _mapping_update = {"properties": {"ai_insight": {"type": "text"}}}
+    _mapping_update = {"properties": {
+        "ai_insight":         {"type": "text"},
+        "has_ai_resolution":  {"type": "boolean"},
+        "ai_resolution_text": {"type": "text"},
+        "tags":               {"type": "keyword"},
+    }}
     for source in ALL_SOURCES:
         idx = _index(source)
         try:
@@ -147,6 +158,103 @@ async def backfill_from_db(days: int = 7) -> int:
         return 0
 
 
+# Keywords to service tag mapping — checked against title + container_name
+_SERVICE_KEYWORDS: dict[str, str] = {
+    "nginx":         "nginx",
+    "apache":        "apache",
+    "haproxy":       "haproxy",
+    "varnish":       "varnish",
+    "postgres":      "postgres",
+    "postgresql":    "postgres",
+    "mysql":         "mysql",
+    "mariadb":       "mysql",
+    "redis":         "redis",
+    "memcached":     "memcached",
+    "elasticsearch": "elasticsearch",
+    "opensearch":    "opensearch",
+    "kafka":         "kafka",
+    "rabbitmq":      "rabbitmq",
+    "docker":        "docker",
+    "kubernetes":    "kubernetes",
+    "k8s":           "kubernetes",
+    "keycloak":      "keycloak",
+    "gitlab":        "gitlab",
+    "jenkins":       "jenkins",
+    "grafana":       "grafana",
+    "prometheus":    "prometheus",
+    "jira":          "jira",
+    "confluence":    "confluence",
+    "cue":           "cue",
+    "zipline":       "zipline",
+    "logspout":      "logspout",
+    "wazuh":         "wazuh",
+    "checkmk":       "checkmk",
+    "graylog":       "graylog",
+    "ssh":           "ssh",
+    "ssl":           "ssl",
+    "tls":           "tls",
+    "http":          "http",
+    "dns":           "dns",
+    "nfs":           "nfs",
+    "smb":           "smb",
+    "ldap":          "ldap",
+    "smtp":          "smtp",
+    "backup":        "backup",
+    "checkpoint":    "postgres",   # PostgreSQL checkpoint messages
+    "autovacuum":    "postgres",
+}
+
+
+def _generate_tags(item: dict) -> list[str]:
+    """Derive searchable keyword tags from an alert's fields.
+
+    Tags generated:
+    - source name  (graylog, checkmk, wazuh, …)
+    - severity     (critical, high, medium, low, info)
+    - "docker"     when container_name is present
+    - "windows"/"linux" from title keywords
+    - service tags from _SERVICE_KEYWORDS matched in title + container_name
+    """
+    tags: set[str] = set()
+
+    source = item.get("source", "")
+    if source:
+        tags.add(source)
+
+    severity = item.get("severity", "")
+    if severity:
+        tags.add(severity)
+
+    meta = item.get("metadata") or {}
+    container = (meta.get("container_name") or "").lower()
+    title = (item.get("title") or "").lower()
+    body = (item.get("body") or "").lower()
+
+    if container:
+        tags.add("docker")
+
+    text = f"{title} {container} {body[:200]}"
+
+    for keyword, tag in _SERVICE_KEYWORDS.items():
+        if keyword in text:
+            tags.add(tag)
+
+    if any(k in text for k in ("windows", "win-", "win2019", "win2022")):
+        tags.add("windows")
+    if any(k in text for k in ("linux", "debian", "ubuntu", "centos", "rhel")):
+        tags.add("linux")
+    if any(k in text for k in ("oom", "out of memory", "killed process")):
+        tags.add("oom")
+    if any(k in text for k in ("disk", "filesystem", "no space")):
+        tags.add("disk")
+    if any(k in text for k in ("cpu", "load average", "high load")):
+        tags.add("cpu")
+    if any(k in text for k in ("timeout", "timed out", "connection refused", "unreachable")):
+        tags.add("network")
+
+    return sorted(tags)
+
+
 async def index_item(item: dict) -> None:
     """Index a single feed item. item must have 'id' and 'source'."""
     source = item.get("source", "unknown")
@@ -155,10 +263,11 @@ async def index_item(item: dict) -> None:
         return
     os_client = get_opensearch()
     try:
+        body = {**item, "tags": _generate_tags(item)}
         await os_client.index(
             index=_index(source),
             id=str(doc_id),
-            body=item,
+            body=body,
             refresh=False,
         )
     except Exception as e:
@@ -176,7 +285,7 @@ async def index_items(items: list[dict]) -> None:
         {
             "_index": _index(item.get("source", "unknown")),
             "_id": str(item.get("id") or item.get("external_id", "")),
-            "_source": item,
+            "_source": {**item, "tags": _generate_tags(item)},
         }
         for item in items
         if item.get("id") or item.get("external_id")
@@ -794,3 +903,124 @@ async def update_status(doc_id: str, source: str, status: str) -> None:
         )
     except Exception as e:
         log.warning("OpenSearch update_status failed: %s", e)
+
+
+async def update_ai_resolution(external_id: str, summary: str) -> None:
+    """Tag an alert in OpenSearch as AI-resolved and store the resolution text.
+
+    Called by the computer-resolve endpoint after Hermes marks a problem solved.
+    Sets has_ai_resolution=True, ai_resolution_text, ai_insight, and appends
+    the "ai_resolved" tag to the existing tags array.
+    """
+    os_client = get_opensearch()
+    try:
+        resp = await os_client.search(
+            index=f"{INDEX_PREFIX}-*",
+            body={"query": {"term": {"external_id": external_id}}, "size": 1},
+        )
+        hits = resp.get("hits", {}).get("hits", [])
+        if not hits:
+            log.warning("update_ai_resolution: no doc found for external_id=%s", external_id)
+            return
+        hit = hits[0]
+        # Use a Painless script to append "ai_resolved" to the tags array without duplicating
+        await os_client.update(
+            index=hit["_index"],
+            id=hit["_id"],
+            body={
+                "script": {
+                    "lang": "painless",
+                    "source": (
+                        "if (ctx._source.tags == null) { ctx._source.tags = new ArrayList(); } "
+                        "if (!ctx._source.tags.contains('ai_resolved')) { ctx._source.tags.add('ai_resolved'); } "
+                        "ctx._source.has_ai_resolution = true; "
+                        "ctx._source.ai_resolution_text = params.summary; "
+                        "ctx._source.ai_insight = params.summary;"
+                    ),
+                    "params": {"summary": summary[:1000]},
+                }
+            },
+        )
+        log.info("update_ai_resolution: tagged %s in %s", external_id, hit["_index"])
+    except Exception as e:
+        log.warning("update_ai_resolution failed for %s: %s", external_id, e)
+
+
+async def search_ai_resolved(
+    alert_title: str | None = None,
+    host: str | None = None,
+    limit: int = 3,
+) -> list[dict]:
+    """Search for past AI-resolved alerts similar to the current problem.
+
+    Strategy:
+    - If alert_title is given (≥10 chars): more_like_this on title field to find
+      semantically similar solved problems across all hosts.
+    - Otherwise: filter by host to find any past solved problem on the same machine.
+
+    Returns list of dicts with keys: source, run_at, severity, finding_title, resolution.
+    """
+    if not alert_title and not host:
+        return []
+
+    os_client = get_opensearch()
+
+    if alert_title and len(alert_title) >= 10:
+        query: dict = {
+            "bool": {
+                "must": [
+                    {
+                        "more_like_this": {
+                            "fields": ["title", "ai_resolution_text"],
+                            "like": alert_title,
+                            "min_term_freq": 1,
+                            "max_query_terms": 12,
+                            "min_doc_freq": 1,
+                            "minimum_should_match": "25%",
+                        }
+                    }
+                ],
+                "filter": [{"term": {"has_ai_resolution": True}}],
+            }
+        }
+    else:
+        # Fallback: any AI-resolved alert on the same host
+        host_filters: list[dict] = []
+        if host:
+            host_filters = [
+                {"term": {"metadata.host.keyword": host}},
+                {"term": {"metadata.agent.keyword": host}},
+            ]
+        query = {
+            "bool": {
+                "must": [{"term": {"has_ai_resolution": True}}],
+                "should": host_filters,
+                "minimum_should_match": 1 if host_filters else 0,
+            }
+        }
+
+    try:
+        resp = await os_client.search(
+            index=f"{INDEX_PREFIX}-*",
+            body={
+                "query": query,
+                "sort": [{"created_at": {"order": "desc"}}],
+                "size": limit,
+                "_source": ["title", "ai_resolution_text", "severity", "created_at", "external_id", "metadata"],
+            },
+        )
+        results = []
+        for hit in resp.get("hits", {}).get("hits", []):
+            src = hit["_source"]
+            results.append({
+                "source": "ai_resolution",
+                "run_at": (src.get("created_at") or "")[:19],
+                "severity": src.get("severity", "?"),
+                "finding_title": (src.get("title") or "")[:120],
+                "recommendation": "",
+                "resolution": (src.get("ai_resolution_text") or "")[:400],
+            })
+        return results
+    except Exception as e:
+        log.warning("search_ai_resolved failed: %s", e)
+        return []
