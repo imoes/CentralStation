@@ -11,9 +11,12 @@ import logging
 import os
 from typing import Annotated
 
+import urllib.parse
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response as PlainResponse, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -137,6 +140,39 @@ async def transcribe(request: Request):
         )
     _check(r)
     return r.json()
+
+
+# ── Google TTS proxy ───────────────────────────────────────────────
+
+class _TTSBody(BaseModel):
+    text: str
+
+
+@router.post("/tts", dependencies=[_ConsoleEnabled])
+async def text_to_speech(body: _TTSBody) -> PlainResponse:
+    """Proxy German TTS via Google Translate (unofficial endpoint, no key required).
+    Goes through the corporate HTTP proxy configured via HTTP_PROXY env var."""
+    text = body.text.strip()[:300]
+    if not text:
+        raise HTTPException(400, "Kein Text")
+    qs = urllib.parse.urlencode({"ie": "UTF-8", "q": text, "tl": "de", "client": "tw-ob"})
+    url = f"https://translate.google.com/translate_tts?{qs}"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get(url, headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (X11; Linux x86_64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                )
+            })
+        if r.status_code != 200:
+            raise HTTPException(502, f"Google TTS: HTTP {r.status_code}")
+        return PlainResponse(content=r.content, media_type="audio/mpeg")
+    except httpx.TimeoutException:
+        raise HTTPException(504, "Google TTS: Timeout")
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"Google TTS: {exc}")
 
 
 # ── Helpers ────────────────────────────────────────────────────────
