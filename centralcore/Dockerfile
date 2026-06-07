@@ -9,17 +9,20 @@ RUN apt-get -o Acquire::http::Proxy="http://proxy.example.com:80" -o Acquire::ht
 
 RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
 
+# Proxy for pip (inherited by all pip subprocesses incl. build-deps)
+ENV PIP_PROXY=http://proxy.example.com:80
+
 # Clone Hermes (shallow — latest main, no history needed)
 RUN https_proxy=http://proxy.example.com:80 http_proxy=http://proxy.example.com:80 \
     git clone --depth=1 https://github.com/NousResearch/hermes-agent /opt/hermes
 
 # Install Hermes + all its declared dependencies from pyproject.toml
-RUN pip install --no-cache-dir --proxy http://proxy.example.com:80 /opt/hermes
+RUN pip install --no-cache-dir /opt/hermes
 
 # CentralCore-specific additions not in Hermes base deps
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir --proxy http://proxy.example.com:80 -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
 COPY entrypoint.sh /entrypoint.sh
