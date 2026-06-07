@@ -122,9 +122,18 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
             @for (msg of activeMessages(); track $index) {
               <div class="msg" [class.user]="msg.role === 'user'"
                                [class.agent]="msg.role === 'assistant'">
-                <span class="msg-label">
-                  {{ msg.role === 'user' ? '▶ NUTZER' : '◎ COMPUTER' }}
-                </span>
+                <div class="msg-header">
+                  <span class="msg-label">
+                    {{ msg.role === 'user' ? '▶ NUTZER' : '◎ COMPUTER' }}
+                  </span>
+                  @if (msg.role === 'assistant' && msg.text.trim()) {
+                    <button class="tts-msg-btn"
+                            (click)="speakMessage(msg.text)"
+                            [title]="muted() ? 'Stumm (TTS deaktiviert)' : 'Fazit vorlesen'">
+                      <mat-icon>{{ muted() ? 'volume_off' : 'volume_up' }}</mat-icon>
+                    </button>
+                  }
+                </div>
                 <div class="msg-text"
                      [innerHTML]="renderMarkdown(msg.text)"></div>
               </div>
@@ -294,33 +303,43 @@ export class ComputerComponent implements OnInit, OnDestroy {
     });
   }
 
+  /** Public — called by the per-message TTS button (bypasses autoplay restriction). */
+  speakMessage(text: string): void { this.speak(text); }
+
   /** Extract the concluding paragraph (Fazit) for TTS.
    *  Finds a section starting with Fazit/Zusammenfassung/Empfehlung/Ergebnis/Schluss,
-   *  or falls back to the last substantive paragraph. Capped at 300 chars. */
+   *  or falls back to the last substantive paragraph. Capped at 280 chars. */
   private _extractFazit(text: string): string {
     let t = text.replace(/\[FEED:[^\]]+\]/g, '').replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
     t = t.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
     t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/^#{1,6}\s+/gm, '');
-    // Merge heading line with its following content so "## Fazit\nText" becomes one paragraph
+    // Merge "## Fazit\nText" into one paragraph before splitting
     t = t.replace(/(Fazit|Zusammenfassung|Empfehlung|Ergebnis|Schluss)[:\s]*\n+/gi, '$1: ');
     const paragraphs = t.split(/\n{2,}/)
       .map(p => p.replace(/^\s*[-*>|]+\s*/gm, '').replace(/\s+/g, ' ').trim())
-      .filter(p => p.length > 8);
-    if (paragraphs.length === 0) return '';
+      .filter(p => p.length > 8 && !/^[|\-\s]+$/.test(p));
+    // Fallback: use last 280 chars of clean text if no paragraph was found
+    if (paragraphs.length === 0) {
+      const flat = t.replace(/\s+/g, ' ').trim();
+      return flat.slice(-280).trim();
+    }
     const fazit = paragraphs.find(p => /^(Fazit|Zusammenfassung|Empfehlung|Ergebnis|Schluss)/i.test(p));
     const chosen = fazit ?? paragraphs[paragraphs.length - 1];
     const clean = chosen.replace(/^(Fazit|Zusammenfassung|Empfehlung|Ergebnis|Schluss)[:\s]*/i, '');
-    return clean.length > 300 ? clean.slice(0, 297) + ' …' : clean;
+    return clean.length > 280 ? clean.slice(0, 277) + ' …' : clean;
   }
 
   private speak(text: string): void {
-    const fazit = this._extractFazit(text);
-    if (this.muted()) return;
-    if (!fazit.trim()) {
-      console.debug('[TTS] kein Fazit gefunden — keine Wiedergabe');
+    if (this.muted()) {
+      console.debug('[TTS] stumm geschaltet — überspringe');
       return;
     }
-    console.debug('[TTS] spreche Fazit (%d Zeichen): %s', fazit.length, fazit.slice(0, 80));
+    const fazit = this._extractFazit(text);
+    if (!fazit.trim()) {
+      console.debug('[TTS] kein Text extrahiert — keine Wiedergabe');
+      return;
+    }
+    console.debug('[TTS] spreche (%d Zeichen): %s', fazit.length, fazit.slice(0, 80));
     const token = this.auth.getAccessToken();
     this._ttsAudio?.pause();
     this._ttsAudio = undefined;
@@ -636,9 +655,14 @@ export class ComputerComponent implements OnInit, OnDestroy {
       setTimeout(() => { if (this.listening()) this.mediaRecorder?.stop(); }, 10_000);
 
     }).catch(err => {
-      const msg = err instanceof DOMException && err.name === 'NotAllowedError'
-        ? 'Mikrofon-Zugriff verweigert — Berechtigung im Browser prüfen'
-        : `Mikrofon-Fehler: ${err}`;
+      let msg: string;
+      if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        msg = 'Mikrofon-Zugriff verweigert — Berechtigung im Browser prüfen';
+      } else if (err instanceof DOMException && (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError')) {
+        msg = 'Kein Mikrofon gefunden — bitte ein Mikrofon anschließen';
+      } else {
+        msg = `Mikrofon-Fehler: ${err instanceof Error ? err.message : err}`;
+      }
       this.voiceError.set(msg);
     });
   }
