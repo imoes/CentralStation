@@ -218,6 +218,24 @@
       background: #ee5544;
     }
   }
+
+  &.resolve-pill {
+    background: #336633;
+    color: #99ff99;
+    margin-top: 2px;
+
+    &:hover {
+      background: #448844;
+    }
+  }
+
+  &.resolved-pill {
+    background: #1a331a;
+    color: #66aa66;
+    cursor: default;
+    margin-top: 2px;
+    opacity: 0.8;
+  }
 }
 
 .msg-badge {
