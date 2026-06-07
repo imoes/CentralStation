@@ -65,7 +65,7 @@ async def find_similar_incidents(
                 if host.lower() in (f.get("host") or "").lower()
             ]
             if not host_findings:
-                host_findings = findings[:1]  # fallback: first finding
+                continue  # analysis contains no finding for this host — skip
             for f in host_findings[:1]:
                 recs = row.recommendations or []
                 if not isinstance(recs, list):

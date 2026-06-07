@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -900,6 +901,184 @@ async def incident_timeline(
         },
         "timeline": timeline,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Computer learns: save a lesson-learned comment after a session resolves a problem
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _ComputerResolveBody(BaseModel):
+    messages: list[dict]  # [{role: "user"|"assistant", text: str}]
+
+
+@router.post("/{external_id}/computer-resolve")
+async def computer_resolve_alert(
+    external_id: str,
+    body: _ComputerResolveBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """After a Computer session resolves an alert, use the LLM to synthesise
+    a brief lesson-learned comment and save it as an AI timeline entry."""
+    from app.services.settings import get_active_llm_config
+    from app.services.llm_client import generate_text
+    from app.services.dashboard.generative_designer import _strip_thinking
+
+    # Build compact conversation for the summariser (last 20 turns, 500 chars each)
+    conv_lines: list[str] = []
+    for m in body.messages[-20:]:
+        role = "NUTZER" if m.get("role") == "user" else "COMPUTER"
+        text = (m.get("text") or "").strip()[:500]
+        if text:
+            conv_lines.append(f"{role}: {text}")
+    conv_text = "\n\n".join(conv_lines)
+
+    if not conv_text:
+        raise HTTPException(400, "Keine Konversation übermittelt")
+
+    summary = ""
+    try:
+        llm_cfg = await get_active_llm_config(db)
+        if llm_cfg.is_configured:
+            system_prompt = (
+                "Du bist ein IT-Dokumentations-Assistent. Fasse diese Computer-Diagnose-Session "
+                "in 2–3 präzisen deutschen Sätzen zusammen. Beantworte: Was war das Problem? "
+                "Was wurde herausgefunden? Welche Lösung wurde empfohlen? "
+                "Nur Fakten aus der Konversation — keine Spekulation."
+            )
+            raw = await generate_text(
+                llm_cfg,
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Computer-Diagnose-Session:\n\n{conv_text}"},
+                ],
+                temperature=0.2,
+            )
+            summary = _strip_thinking(raw).strip()
+    except Exception as exc:
+        log.warning("computer-resolve: LLM synthesis failed: %s", exc)
+
+    if not summary:
+        # Fallback: last assistant message
+        for m in reversed(body.messages):
+            if m.get("role") == "assistant":
+                summary = (m.get("text") or "").strip()[:600]
+                break
+
+    if not summary:
+        raise HTTPException(400, "Konnte keine Zusammenfassung erstellen")
+
+    comment_body = f"🖥 **Lernkommentar (Computer-Diagnose):**\n{summary}"
+
+    collab = await _get_or_create_collab(external_id, db)
+    await _add_timeline(external_id, None, "Computer (KI)", "ai", comment_body, db)
+    await db.commit()
+    await _broadcast_collab(external_id, "ai", "Computer (KI)", collab.work_status, comment_body)
+
+    log.info("computer-resolve: Lernkommentar gespeichert für %s (%d Zeichen)", external_id[:24], len(summary))
+    return {"ok": True, "comment": comment_body}
+
+
+@router.get("/{external_id}/hermes-context")
+async def alert_hermes_context(
+    external_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Build a Hermes starting prompt from an alert: resolves the host, runs CheckMK
+    diagnostics, and returns a structured prompt the computer console can send directly."""
+    from app.services.ai_agent.diagnostics import run_diagnostics
+
+    host = ""
+    title = ""
+    severity = ""
+    source_name = ""
+    container = ""
+    try:
+        from app.services.feed_index import search_by_query
+        items = await search_by_query(
+            index_pattern="cs-feed-*",
+            query_string=f'external_id:"{external_id}"',
+            size=1,
+        )
+        if items:
+            item = items[0]
+            meta = item.get("metadata") or {}
+            host = meta.get("host") or meta.get("agent") or meta.get("container_name") or ""
+            title = item.get("title", "")
+            severity = item.get("severity", "")
+            source_name = item.get("source", "")
+            container = meta.get("container_name", "")
+    except Exception as e:
+        log.warning("hermes-context: search failed: %s", e)
+
+    if not host:
+        raise HTTPException(400, "Host nicht ermittelbar — kein Hostname im Alert-Datensatz.")
+
+    results = await run_diagnostics(host, db)
+
+    lines: list[str] = [
+        "Untersuche diesen Alert und handle entsprechend:\n",
+        f"**Alert:** {title}",
+        f"**Schweregrad:** {severity}",
+        f"**Quelle:** {source_name}",
+        f"**Host:** {host}",
+    ]
+    if container:
+        lines.append(f"**Container:** {container}")
+    lines.append("")
+
+    if results:
+        lines.append("## Diagnosedaten (automatisch abgerufen)\n")
+        for r in results:
+            lines.append(r.to_llm_text())
+        lines.append("")
+
+    # ── Past Computer learning comments for this host ─────────────────────────
+    try:
+        from app.models.workflow import AlertComment as _AlertComment
+        host_alerts = await search_by_query(
+            "cs-feed-*",
+            f'metadata.host:"{host}" OR metadata.agent:"{host}"',
+            size=25,
+        )
+        if host_alerts:
+            ext_ids = [a.get("external_id") for a in host_alerts if a.get("external_id")]
+            if ext_ids:
+                com_r = await db.execute(
+                    select(_AlertComment)
+                    .where(
+                        _AlertComment.external_id.in_(ext_ids[:25]),
+                        _AlertComment.kind == "ai",
+                        _AlertComment.body.like("%Lernkommentar%"),
+                    )
+                    .order_by(_AlertComment.created_at.desc())
+                    .limit(3)
+                )
+                past_learn = com_r.scalars().all()
+                if past_learn:
+                    lines.append("## Frühere Computer-Diagnosen (gelernt)\n")
+                    for c in past_learn:
+                        ts = c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else ""
+                        # Strip the emoji/header prefix, keep the summary
+                        body_clean = c.body.split("\n", 1)[-1].strip() if "\n" in c.body else c.body
+                        lines.append(f"[{ts}] {body_clean[:400]}")
+                    lines.append("")
+    except Exception as _exc:
+        log.debug("hermes-context: past_comments failed: %s", _exc)
+
+    lines.append("## Aufgabe")
+    lines.append("1. Analysiere die Diagnosedaten und identifiziere die Ursache")
+    if container:
+        lines.append(
+            f"2. Prüfe Docker-Logs via SSH: `ssh marvin@{host} 'docker logs --tail=100 {container}'`"
+        )
+    else:
+        lines.append("2. Prüfe den Host via SSH wenn weitere Infos nötig sind")
+    lines.append("3. Nenne konkret was das Problem ist und wie es zu beheben ist")
+    lines.append("4. Falls du das Problem gelöst hast, klicke im Computer-Panel auf '✓ GELÖST'")
+
+    return {"prompt": "\n".join(lines), "host": host}
 
 
 @router.get("/incidents/{incident_id}/claude-prompt")

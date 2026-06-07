@@ -27,6 +27,10 @@ interface HermesSession {
   label: string;
   msg_count: number;
   messages: HermesMessage[];
+  /** Alert external_id — present only for alert-triggered sessions. */
+  external_id?: string;
+  /** True after the user clicked "✓ GELÖST" and the learning comment was saved. */
+  resolved?: boolean;
 }
 
 /**
@@ -103,6 +107,15 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
             <button class="rail-pill del-pill" (click)="deleteSession()" title="Session beenden">
               ✕ ENDE
             </button>
+          }
+          @if (activeSession()?.external_id && !activeSession()?.resolved) {
+            <button class="rail-pill resolve-pill" (click)="resolveSession()"
+                    title="Problem als gelöst markieren — speichert Lernkommentar am Alert">
+              ✓ GELÖST
+            </button>
+          }
+          @if (activeSession()?.resolved) {
+            <span class="rail-pill resolved-pill">✓ GELÖST</span>
           }
         </div>
 
@@ -237,10 +250,16 @@ export class ComputerComponent implements OnInit, OnDestroy {
   private _recognition?: any;
   private _abortController?: AbortController;
   private _handoffSub?: Subscription;
+  private _resolvingSession = false;
 
   activeMessages = computed<HermesMessage[]>(() => {
     const sid = this.activeTabId();
     return this.sessions().find(s => s.session_id === sid)?.messages ?? [];
+  });
+
+  activeSession = computed<HermesSession | null>(() => {
+    const sid = this.activeTabId();
+    return this.sessions().find(s => s.session_id === sid) ?? null;
   });
 
   totalMessages = computed(() =>
@@ -269,8 +288,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
-    this._handoffSub = this.computerService.handoff$.subscribe(({ prompt, label, hostKey }) => {
-      this._handleHandoff(prompt, label, hostKey);
+    this._handoffSub = this.computerService.handoff$.subscribe(({ prompt, label, hostKey, externalId }) => {
+      this._handleHandoff(prompt, label, hostKey, externalId);
     });
   }
 
@@ -303,8 +322,37 @@ export class ComputerComponent implements OnInit, OnDestroy {
     });
   }
 
-  /** Public — called by the per-message TTS button (bypasses autoplay restriction). */
-  speakMessage(text: string): void { this.speak(text); }
+  /** Called by the per-message TTS button — always plays, ignores muted state. */
+  speakMessage(text: string): void { this._playTTS(text); }
+
+  /** Mark the active session as resolved: calls the backend to save a
+   *  LLM-generated lesson-learned comment on the originating alert. */
+  async resolveSession(): Promise<void> {
+    const session = this.activeSession();
+    if (!session?.external_id || session.resolved || this._resolvingSession) return;
+    this._resolvingSession = true;
+    const token = this.auth.getAccessToken();
+    const messages = session.messages.map(m => ({ role: m.role, text: m.text }));
+    try {
+      const r = await fetch(`${environment.apiUrl}/feed/${session.external_id}/computer-resolve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ messages }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      this.sessions.update(ss => ss.map(s =>
+        s.session_id === session.session_id ? { ...s, resolved: true } : s
+      ));
+      console.info('[Computer] Lernkommentar gespeichert für', session.external_id);
+    } catch (err) {
+      console.error('[Computer] Resolve fehlgeschlagen:', err);
+    } finally {
+      this._resolvingSession = false;
+    }
+  }
 
   /** Extract the concluding paragraph (Fazit) for TTS.
    *  Finds a section starting with Fazit/Zusammenfassung/Empfehlung/Ergebnis/Schluss,
@@ -329,16 +377,16 @@ export class ComputerComponent implements OnInit, OnDestroy {
     return clean.length > 280 ? clean.slice(0, 277) + ' …' : clean;
   }
 
+  /** Auto-trigger after stream end — respects muted. */
   private speak(text: string): void {
-    if (this.muted()) {
-      console.debug('[TTS] stumm geschaltet — überspringe');
-      return;
-    }
+    if (this.muted()) { console.debug('[TTS] stumm — überspringe'); return; }
+    this._playTTS(text);
+  }
+
+  /** Core TTS: extract Fazit, fetch audio, play. Always executes regardless of muted. */
+  private _playTTS(text: string): void {
     const fazit = this._extractFazit(text);
-    if (!fazit.trim()) {
-      console.debug('[TTS] kein Text extrahiert — keine Wiedergabe');
-      return;
-    }
+    if (!fazit.trim()) { console.debug('[TTS] kein Text extrahiert'); return; }
     console.debug('[TTS] spreche (%d Zeichen): %s', fazit.length, fazit.slice(0, 80));
     const token = this.auth.getAccessToken();
     this._ttsAudio?.pause();
@@ -354,7 +402,6 @@ export class ComputerComponent implements OnInit, OnDestroy {
       if (!r.ok) throw new Error(`TTS HTTP ${r.status}`);
       return r.blob();
     }).then(blob => {
-      if (this.muted()) return;
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       this._ttsAudio = audio;
@@ -365,7 +412,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Incident handoff ──────────────────────────────────────────────
 
-  private async _handleHandoff(prompt: string, label?: string, hostKey?: string): Promise<void> {
+  private async _handleHandoff(prompt: string, label?: string, hostKey?: string, externalId?: string): Promise<void> {
     this.open();
 
     // Reuse an existing session for this host if one exists
@@ -373,12 +420,17 @@ export class ComputerComponent implements OnInit, OnDestroy {
       const existingSid = this.hostSessions.get(hostKey);
       if (existingSid && this.sessions().some(s => s.session_id === existingSid)) {
         this.activeTabId.set(existingSid);
+        // Refresh the external_id and reset resolved state for the new alert
+        if (externalId) {
+          this.sessions.update(ss => ss.map(s =>
+            s.session_id === existingSid ? { ...s, external_id: externalId, resolved: false } : s
+          ));
+        }
         this.scrollToBottom(true);
         this.inputText = prompt;
         await this.send();
         return;
       }
-      // Session was deleted or never existed — fall through to create a new one
       this.hostSessions.delete(hostKey);
     }
 
@@ -386,8 +438,12 @@ export class ComputerComponent implements OnInit, OnDestroy {
     const sid = this.activeTabId();
     if (!sid) return;
 
-    if (hostKey) {
-      this.hostSessions.set(hostKey, sid);
+    if (hostKey) this.hostSessions.set(hostKey, sid);
+
+    if (externalId) {
+      this.sessions.update(ss => ss.map(s =>
+        s.session_id === sid ? { ...s, external_id: externalId } : s
+      ));
     }
 
     this.inputText = prompt;
