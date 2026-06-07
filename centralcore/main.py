@@ -47,6 +47,10 @@ def _configure_logging() -> None:
     if level > logging.DEBUG:
         for noisy in ("httpx", "httpcore", "uvicorn.access", "openai", "anthropic"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
+        # mcp.client.sse logs full tracebacks on every SSE reconnect (expected on backend
+        # restart). The higher-level tools.mcp_tool already logs reconnect status at WARNING.
+        for mcp_internal in ("mcp.client.sse", "mcp.client", "mcp"):
+            logging.getLogger(mcp_internal).setLevel(logging.CRITICAL)
 
 
 _configure_logging()
@@ -79,22 +83,36 @@ SYSTEM_PROMPT = (
     "Nutzer: 'ja'\n"
     "Du: [rufst get_checkmk_host('docker50.ippen.media') auf und zeigst das Ergebnis]\n\n"
 
+    "## SCHREIBOPERATIONEN — IMMER ZUERST FRAGEN:\n"
+    "Führe KEINE Schreiboperationen automatisch aus. Frage den Nutzer zuerst.\n"
+    "Schreiboperationen: create_jira_ticket, acknowledge_alert, und alle Tools die etwas anlegen/ändern/löschen.\n"
+    "Beispiel:\n"
+    "  Falsch: [rufst create_jira_ticket auf ohne zu fragen]\n"
+    "  Richtig: 'Soll ich dazu ein Jira-Ticket anlegen? (Titel: X, Priorität: Y)'\n"
+    "Erst nach expliziter Bestätigung des Nutzers ausführen.\n\n"
+
     "## MCP-TOOLS (nutze sie für ALLE IT-Fragen, nie lokale Shell):\n"
     "- get_bridge_status() → Gesamtstatus\n"
     "- list_alerts(severity, source, hours) → Alerts; source: checkmk/graylog/wazuh\n"
     "- search_feed(query) → Lucene-Suche\n"
     "- get_checkmk_host(hostname) → Host-Status und Services\n"
-    "- acknowledge_alert(alert_id) → Alert quittieren\n"
-    "- create_jira_ticket(title, description, priority) → Jira-Ticket\n\n"
+    "- acknowledge_alert(alert_id) → Alert quittieren [SCHREIBOPERATION — erst fragen]\n"
+    "- create_jira_ticket(title, description, priority) → Jira-Ticket [SCHREIBOPERATION — erst fragen]\n\n"
 
     "## SSH-ZUGRIFF (Serverdiagnose und Fehlerbehebung):\n"
     "Nutze SSH wenn du einen Server direkt untersuchen oder reparieren sollst.\n"
-    "Befehl: ssh -o StrictHostKeyChecking=accept-new mutkluge@<hostname>.ippen.media '<befehl>'\n"
-    "Beispiele:\n"
-    "  ssh ... docker086.ippen.media 'df -h; du -sh /var/log/* | sort -rh | head -5'\n"
-    "  ssh ... docker086.ippen.media 'systemctl status nginx; journalctl -u nginx -n 50 --no-pager'\n"
-    "  ssh ... docker086.ippen.media 'free -h; top -bn1 | head -20'\n"
-    "SSH nutzen bei: Disk-Full, Dienst-Ausfall, hohe CPU/RAM, Log-Analyse.\n\n"
+    "Befehl: ssh marvin@<hostname>.ippen.media '<befehl>'\n"
+    "(SSH-Key und User sind per Config voreingestellt — kein -i oder -l nötig)\n"
+    "System-Diagnose:\n"
+    "  ssh marvin@<host> 'df -h; du -sh /var/log/* | sort -rh | head -5'\n"
+    "  ssh marvin@<host> 'free -h; top -bn1 | head -20'\n"
+    "  ssh marvin@<host> 'systemctl status <service>; journalctl -u <service> -n 50 --no-pager'\n\n"
+    "## DOCKER-LOGS (Container-Diagnose via Graylog):\n"
+    "Container-Logs landen via Logspout automatisch in Graylog — kein SSH nötig.\n"
+    "  search_feed('container_name:\"<container>\"')  → aktuelle Logs des Containers\n"
+    "  list_alerts(source='graylog')                → Graylog-Alerts aller Container\n"
+    "  search_feed('container_name:\"<container>\" AND level:<=3')  → nur Fehler\n"
+    "SSH für Docker-Logs NICHT verwenden — die Daten sind bereits in Graylog.\n\n"
 
     "## FEED-NAVIGATION (am Ende deiner Antwort, wenn du Hosts/Alerts gezeigt hast):\n"
     "Füge EXAKT eine dieser Zeilen ans Ende wenn du Infrastruktur-Daten ausgibst:\n"
@@ -179,7 +197,7 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         model=model or None,
         enabled_toolsets=["terminal", "web", "mcp-centralstation"],
         ephemeral_system_prompt=SYSTEM_PROMPT,
-        quiet_mode=True,
+        quiet_mode=False,   # print tool calls + responses to stdout → Docker log → Logspout
         verbose_logging=False,
     )
     # Give MCP discovery a generous window to complete before the first turn.
@@ -231,12 +249,11 @@ def list_sessions():
 
 @app.delete("/sessions/{sid}")
 def delete_session(sid: str):
-    if sid not in _sessions:
-        log.warning("Delete: session %s not found", sid[:8])
-        raise HTTPException(404, "Session nicht gefunden")
-    label = _sessions[sid]["label"]
-    del _sessions[sid]
-    log.info("Deleted session %s (%s), remaining: %d", sid[:8], label, len(_sessions))
+    session = _sessions.pop(sid, None)
+    if session:
+        log.info("Deleted session %s (%s), remaining: %d", sid[:8], session["label"], len(_sessions))
+    else:
+        log.debug("Delete: session %s not found (already gone or never created)", sid[:8])
     return {"ok": True}
 
 
@@ -269,22 +286,24 @@ async def send_message(sid: str, body: MessageBody):
     q: asyncio.Queue[dict] = asyncio.Queue()
     loop = asyncio.get_event_loop()
     delta_count = 0
+    response_buf: list[str] = []
 
     def on_delta(text: str) -> None:
         nonlocal delta_count
         delta_count += 1
-        if delta_count <= 3 or delta_count % 20 == 0:
-            log.debug("[%s] delta #%d: %.40s", sid[:8], delta_count, text.replace("\n", "↵"))
+        response_buf.append(text)
         loop.call_soon_threadsafe(q.put_nowait, {"type": "delta", "text": text})
 
     def run_sync() -> None:
-        log.debug("[%s] hermes thread started", sid[:8])
         try:
             agent.run_conversation(
                 user_message=body.content,
                 stream_callback=on_delta,
             )
-            log.info("[%s] hermes done, %d deltas sent", sid[:8], delta_count)
+            full_response = "".join(response_buf)
+            log.info("[%s] response (%d chars): %.300s%s",
+                     sid[:8], len(full_response), full_response,
+                     "…" if len(full_response) > 300 else "")
             loop.call_soon_threadsafe(q.put_nowait, {"type": "done"})
         except Exception as exc:
             log.error("[%s] agent error: %s", sid[:8], exc, exc_info=True)

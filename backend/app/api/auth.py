@@ -95,7 +95,7 @@ async def refresh(
             RefreshToken.revoked.is_(False),
         )
     )
-    stored = result.scalar_one_or_none()
+    stored = result.scalars().first()
     if not stored:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="Token revoked or not found")
