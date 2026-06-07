@@ -81,6 +81,10 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
       'agent.checkmk_locations',
     ],
   },
+  {
+    title: 'Jira / Tickets',
+    keys: ['jira.ticket_project'],
+  },
 ];
 
 const BOOLEAN_KEYS = new Set([
@@ -365,6 +369,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
   oauthSession = signal<OAuthSession | null>(null);
   oauthPollStatus = signal<'pending' | 'authorized' | 'timeout' | 'error' | null>(null);
   startingOAuth = signal(false);
+  jiraProjects = signal<{ key: string; name: string; connector: string }[]>([]);
   form: FormGroup | null = null;
   private settingsMap = new Map<string, SettingItem>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -391,6 +396,23 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.stopPolling();
+  }
+
+  loadJiraProjects() {
+    this.http.get<{ projects: { key: string; name: string; connector: string }[] }>(
+      `${environment.apiUrl}/settings/jira-projects`,
+    ).subscribe({
+      next: r => this.jiraProjects.set(r.projects || []),
+      error: () => {},
+    });
+  }
+
+  /** When a project is picked, also store which connector hosts it (IMIT → jira_sd). */
+  onJiraProjectChange(key: string) {
+    const p = this.jiraProjects().find(x => x.key === key);
+    if (p) {
+      this.svc.updateSetting('jira.ticket_connector', p.connector).subscribe({ next: () => {}, error: () => {} });
+    }
   }
 
   loadCodexStatus() {

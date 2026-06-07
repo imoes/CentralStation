@@ -300,12 +300,23 @@ async def generate_comment(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    from app.services.ai_language import get_response_language_for_user
     from app.services.workflow_ai import generate_comment as ai_comment
 
     s = await _get_session(session_id, user.id, db)
     llm = await _get_llm(db)
     context = await _build_ticket_context(s, db)
-    comment = await ai_comment(llm, s.title, context, s.work_notes or [], body.comment_type, additional_context=body.additional_context, db=db)
+    lang = await get_response_language_for_user(db, user.id)
+    comment = await ai_comment(
+        llm,
+        s.title,
+        context,
+        s.work_notes or [],
+        body.comment_type,
+        additional_context=body.additional_context,
+        db=db,
+        lang=lang,
+    )
 
     notes = list(s.work_notes or [])
     notes.append({
@@ -366,15 +377,17 @@ async def generate_resolution(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    from app.services.ai_language import get_response_language_for_user
     from app.services.workflow_ai import generate_resolution as ai_resolution
 
     s = await _get_session(session_id, user.id, db)
     llm = await _get_llm(db)
     root_cause = body.root_cause or s.root_cause
     context = await _build_ticket_context(s, db)
+    lang = await get_response_language_for_user(db, user.id)
     resolution = await ai_resolution(
         llm, s.title, context, s.work_notes or [],
-        root_cause, body.resolution_type, body.closure_code,
+        root_cause, body.resolution_type, body.closure_code, lang=lang,
     )
     s.resolution_summary = resolution
     s.closure_code = body.closure_code
@@ -391,12 +404,14 @@ async def run_5why(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    from app.services.ai_language import get_response_language_for_user
     from app.services.workflow_ai import run_5why_analysis
 
     s = await _get_session(session_id, user.id, db)
     llm = await _get_llm(db)
     context = await _build_ticket_context(s, db)
-    analysis = await run_5why_analysis(llm, s.title, context, s.work_notes or [])
+    lang = await get_response_language_for_user(db, user.id)
+    analysis = await run_5why_analysis(llm, s.title, context, s.work_notes or [], lang=lang)
     if "root_cause" in analysis and not s.root_cause:
         s.root_cause = analysis["root_cause"]
         await db.commit()
@@ -410,12 +425,14 @@ async def suggest_solution(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    from app.services.ai_language import get_response_language_for_user
     from app.services.workflow_ai import suggest_solution as ai_suggest
 
     s = await _get_session(session_id, user.id, db)
     llm = await _get_llm(db)
     context = await _build_ticket_context(s, db)
-    solution = await ai_suggest(llm, db, s.title, context, body.use_rag, body.use_web)
+    lang = await get_response_language_for_user(db, user.id)
+    solution = await ai_suggest(llm, db, s.title, context, body.use_rag, body.use_web, lang=lang)
     if solution.get("solution_steps"):
         s.ai_suggested_solution = "\n".join(solution["solution_steps"])
         await db.commit()
@@ -428,12 +445,14 @@ async def auto_categorize(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    from app.services.ai_language import get_response_language_for_user
     from app.services.workflow_ai import auto_categorize as ai_cat, calculate_priority
 
     s = await _get_session(session_id, user.id, db)
     llm = await _get_llm(db)
     context = await _build_ticket_context(s, db)
-    result = await ai_cat(llm, s.title, context)
+    lang = await get_response_language_for_user(db, user.id)
+    result = await ai_cat(llm, s.title, context, lang=lang)
     s.category = result.get("category", s.category)
     s.subcategory = result.get("subcategory", s.subcategory)
     if result.get("impact"):
@@ -455,7 +474,9 @@ async def analyze_mail(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    from app.services.ai_language import get_response_language_for_user
     from app.services.workflow_ai import analyze_mail as ai_mail
 
     llm = await _get_llm(db)
-    return await ai_mail(llm, body.subject, body.preview)
+    lang = await get_response_language_for_user(db, user.id)
+    return await ai_mail(llm, body.subject, body.preview, lang=lang)
