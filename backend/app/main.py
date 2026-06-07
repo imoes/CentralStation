@@ -45,8 +45,8 @@ logger = logging.getLogger("app.main")
 
 from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, audit, preferences, jira_view, workflow, feed, feed_searches, dashboard_widgets, bridge, help as help_router, hosts
 from app.api import settings as settings_router
-from app.api import oauth_providers
-from app.api import centralcore_proxy
+from app.api import oauth_providers, centralcore_proxy
+from app.api.mcp_server import mcp
 from app.core.config import settings
 from app.core.opensearch import close_opensearch
 from app.core.rate_limit import limiter
@@ -113,6 +113,15 @@ app.include_router(hosts.router, prefix="/api")
 app.include_router(oauth_providers.router, prefix="/api")
 app.include_router(centralcore_proxy.router, prefix="/api")
 app.include_router(ws.router)
+
+# fastmcp sse_app() has no HEAD handler — Hermes probes with HEAD before
+# connecting, which causes a TypeError. Intercept it here first.
+@app.head("/api/mcp/sse")
+async def mcp_sse_head():
+    from fastapi.responses import Response
+    return Response(status_code=200)
+
+app.mount("/api/mcp", mcp.sse_app())
 
 
 @app.get("/api/health")

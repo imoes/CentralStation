@@ -1,5 +1,5 @@
 # Web Framework
-fastapi==0.115.5
+fastapi==0.115.12
 uvicorn[standard]==0.32.1
 python-multipart==0.0.19
 
@@ -38,6 +38,10 @@ slowapi==0.1.9
 
 # OpenSearch feed storage
 opensearch-py==2.7.1
+
+# MCP Server (CentralStation as tool provider for Hermes)
+# get_asgi_app() existiert nur in 2.x — 3.x hat die API umgebaut
+fastmcp>=2.0,<3
 
 # Utils
 python-dotenv==1.0.1

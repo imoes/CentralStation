@@ -25,6 +25,7 @@ async def find_similar_incidents(
     host: str,
     db: Any,
     *,
+    alert_title: str | None = None,
     lookback_days: int = _LOOKBACK_DAYS,
     limit: int = _MAX_RESULTS,
 ) -> list[dict]:
@@ -65,7 +66,7 @@ async def find_similar_incidents(
                 if host.lower() in (f.get("host") or "").lower()
             ]
             if not host_findings:
-                host_findings = findings[:1]  # fallback: first finding
+                continue  # analysis contains no finding for this host — skip
             for f in host_findings[:1]:
                 recs = row.recommendations or []
                 if not isinstance(recs, list):
@@ -152,6 +153,19 @@ async def find_similar_incidents(
                 })
         except Exception as e:
             log.debug("past_incidents score_adjustments query failed: %s", e)
+
+    # ── 4. OpenSearch: AI-resolved alerts similar to this host/title ─────────
+    if len(results) < limit:
+        try:
+            from app.services.feed_index import search_ai_resolved
+            os_results = await search_ai_resolved(
+                alert_title=alert_title,
+                host=host,
+                limit=limit - len(results),
+            )
+            results.extend(os_results)
+        except Exception as e:
+            log.debug("past_incidents ai_resolved search failed: %s", e)
 
     return results[:limit]
 

@@ -55,6 +55,10 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
     testGroup: 'searxng',
   },
   {
+    title: 'Jira / Tickets',
+    keys: ['jira.ticket_project'],
+  },
+  {
     title: 'Agent Einstellungen',
     keys: [
       'agent.interval_minutes',
@@ -243,7 +247,7 @@ const SECRET_MASK = '••••••••';
                           <mat-option [value]="p.key">{{ p.key }} — {{ p.name }} ({{ p.connector === 'jira_sd' ? 'ServiceDesk' : 'Jira' }})</mat-option>
                         }
                       </mat-select>
-                      <mat-hint>{{ jiraProjects().length ? 'Target project for created tickets' : 'No projects loaded — check Jira/ServiceDesk connector' }}</mat-hint>
+                      <mat-hint>{{ jiraProjects().length ? 'Ziel-Projekt für erstellte Tickets' : 'Keine Projekte geladen — Jira/ServiceDesk-Connector prüfen' }}</mat-hint>
                     </mat-form-field>
                   } @else if (isBooleanKey(key)) {
                     <div class="toggle-row">
@@ -361,6 +365,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
   testingGroup = signal<string | null>(null);
   testResults = signal<Record<string, TestResult>>({});
   codexStatus = signal<CodexStatus | null>(null);
+  jiraProjects = signal<{ key: string; name: string; connector: string }[]>([]);
   oauthSession = signal<OAuthSession | null>(null);
   oauthPollStatus = signal<'pending' | 'authorized' | 'timeout' | 'error' | null>(null);
   startingOAuth = signal(false);
@@ -415,6 +420,23 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       next: s => this.codexStatus.set(s),
       error: () => {},
     });
+  }
+
+  loadJiraProjects() {
+    this.http.get<{ projects: { key: string; name: string; connector: string }[] }>(
+      `${environment.apiUrl}/settings/jira-projects`,
+    ).subscribe({
+      next: r => this.jiraProjects.set(r.projects || []),
+      error: () => {},
+    });
+  }
+
+  /** When a project is picked, also store which connector hosts it (IMIT → jira_sd). */
+  onJiraProjectChange(key: string) {
+    const p = this.jiraProjects().find(x => x.key === key);
+    if (p) {
+      this.svc.updateSetting('jira.ticket_connector', p.connector).subscribe({ next: () => {}, error: () => {} });
+    }
   }
 
   startOAuth() {
@@ -591,7 +613,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       'agent.generative_interval_minutes':   'Generativ-Dashboard Intervall (Minuten)',
       'agent.jira_severity_threshold':       'Mindest-Severity für Jira',
       'agent.checkmk_locations':             'CheckMK Standort-Filter (Komma-getrennt)',
-      'jira.ticket_project':                 'Ticket Project (target for created tickets)',
+      'jira.ticket_project':                 'Ticket-Projekt (Ziel für erstellte Tickets)',
     };
     return labels[key] ?? key;
   }

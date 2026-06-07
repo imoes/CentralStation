@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.core.security import hash_password
 from app.models.audit import AuditLog
 from app.models.user import User
+from app.models.workflow import UserPreference
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -19,8 +20,16 @@ VALID_ROLES = {"admin", "sysadmin", "network_technician", "viewer"}
 
 @router.get("/", response_model=list[UserResponse], dependencies=[RequireAdmin])
 async def list_users(db: Annotated[AsyncSession, Depends(get_db)]):
-    result = await db.execute(select(User).order_by(User.created_at))
-    return result.scalars().all()
+    users = (await db.execute(select(User).order_by(User.created_at))).scalars().all()
+    prefs_rows = (await db.execute(select(UserPreference))).scalars().all()
+    prefs_map = {str(p.user_id): p for p in prefs_rows}
+    result = []
+    for u in users:
+        pref = prefs_map.get(str(u.id))
+        row = UserResponse.model_validate(u)
+        row.computer_console_enabled = pref.computer_console_enabled if pref else False
+        result.append(row)
+    return result
 
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED,
@@ -77,9 +86,26 @@ async def update_user(
     db.add(AuditLog(action="user_updated", resource_type="user",
                     resource_id=str(user_id), user_id=current_user.id,
                     old_value=old, new_value={"role": user.role, "is_active": user.is_active}))
+
+    if data.computer_console_enabled is not None:
+        prefs_result = await db.execute(
+            select(UserPreference).where(UserPreference.user_id == user_id)
+        )
+        prefs = prefs_result.scalar_one_or_none()
+        if prefs is None:
+            prefs = UserPreference(user_id=user_id)
+            db.add(prefs)
+        prefs.computer_console_enabled = data.computer_console_enabled
+
     await db.commit()
     await db.refresh(user)
-    return user
+    row = UserResponse.model_validate(user)
+    prefs_result2 = await db.execute(
+        select(UserPreference).where(UserPreference.user_id == user_id)
+    )
+    prefs2 = prefs_result2.scalar_one_or_none()
+    row.computer_console_enabled = prefs2.computer_console_enabled if prefs2 else False
+    return row
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT,

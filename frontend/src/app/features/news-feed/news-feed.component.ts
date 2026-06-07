@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { ActivatedRoute, Router } from '@angular/router';
 import { skip } from 'rxjs';
+import { ComputerService } from '../../core/services/computer.service';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -415,7 +416,7 @@ const SEVERITY_COLOR: Record<string, string> = {
               <span class="lh-sev" [attr.data-sev]="item.severity">{{ item.severity | uppercase }}</span>
               @if (itemHostLabel(item)) {
                 <span class="lh-dot">·</span>
-                <span class="lh-host host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Open Server Cockpit'">{{ itemHostLabel(item) }}</span>
+                <span class="lh-host host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Server Cockpit öffnen'">{{ itemHostLabel(item) }}</span>
               }
               @if (item.location_name) {
                 <span class="lh-dot">·</span>
@@ -479,7 +480,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                     </span>
                   }
                   @if (itemHostLabel(item)) {
-                    <span class="host-tag host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Open Server Cockpit'">
+                    <span class="host-tag host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Server Cockpit öffnen'">
                       <mat-icon style="font-size:12px;height:12px;width:12px">dns</mat-icon>
                       {{ itemHostLabel(item) }}
                     </span>
@@ -541,7 +542,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                   <button mat-stroked-button class="ki-btn diagnose-btn"
                           (click)="diagnoseAlert(item)"
                           [disabled]="isDiagnosing(item.id)"
-                          matTooltip="KI prüft read-only: CheckMK-Status, Metriken, aktuelle Logs">
+                          matTooltip="Hermes untersucht den Host: CheckMK-Services + Docker-Logs">
                     @if (isDiagnosing(item.id)) {
                       <mat-spinner diameter="14" class="ki-spinner"></mat-spinner>
                     } @else {
@@ -582,10 +583,10 @@ const SEVERITY_COLOR: Record<string, string> = {
                       [disabled]="isCreatingTicket(item.id)">
                 @if (isCreatingTicket(item.id)) {
                   <mat-spinner diameter="16"></mat-spinner>
-                  AI is preparing…
+                  KI bereitet vor…
                 } @else {
                   <mat-icon>add_task</mat-icon>
-                  Create ticket
+                  Ticket erstellen
                 }
               </button>
               <!-- Claim / Release -->
@@ -722,14 +723,14 @@ const SEVERITY_COLOR: Record<string, string> = {
             </div>
             <button mat-stroked-button class="claude-handoff-btn"
                     [disabled]="copyingPrompt()"
-                    (click)="copyClaudePrompt(incidentTimeline()!.incident.id)"
-                    matTooltip="Belege + Timeline als fertigen AI-Prompt kopieren (z.B. für Claude CLI, Codex, eigenen Agenten)">
+                    (click)="handoffToComputer(incidentTimeline()!.incident.id)"
+                    matTooltip="Incident-Kontext an den Computer-Agenten übergeben — Hermes analysiert und kann per SSH eingreifen">
               @if (copyingPrompt()) {
                 <mat-spinner diameter="14"></mat-spinner>
               } @else {
-                <mat-icon>smart_toy</mat-icon>
+                <mat-icon>precision_manufacturing</mat-icon>
               }
-              {{ promptCopied() ? 'Kopiert!' : 'An AI übergeben' }}
+              {{ promptCopied() ? 'Übergeben ✓' : 'Computer, untersuche das' }}
             </button>
           } @else {
             <span>Incident Timeline</span>
@@ -776,37 +777,37 @@ const SEVERITY_COLOR: Record<string, string> = {
       <div class="ticket-dialog">
         <div class="ticket-dialog-header">
           <mat-icon>add_task</mat-icon>
-          <span>Create Jira ticket</span>
-          <span class="ticket-ai-hint">AI-prefilled · review &amp; adjust</span>
+          <span>Jira-Ticket erstellen</span>
+          <span class="ticket-ai-hint">KI-vorausgefüllt · prüfen &amp; anpassen</span>
           <button mat-icon-button (click)="cancelTicketDraft()"><mat-icon>close</mat-icon></button>
         </div>
         <div class="ticket-dialog-body">
           <label class="ticket-field">
-            <span>Project</span>
-            <input class="ticket-input" [(ngModel)]="d.project" placeholder="e.g. IMIT" />
+            <span>Projekt</span>
+            <input class="ticket-input" [(ngModel)]="d.project" placeholder="z.B. IMIT" />
           </label>
           <div class="ticket-row">
             <label class="ticket-field" style="flex:1">
-              <span>Priority</span>
+              <span>Priorität</span>
               <select class="ticket-input" [(ngModel)]="d.priority">
                 <option>Kritisch</option><option>Hoch</option><option>Normal</option><option>Niedrig</option>
               </select>
             </label>
           </div>
           <label class="ticket-field">
-            <span>Summary</span>
+            <span>Zusammenfassung</span>
             <input class="ticket-input" [(ngModel)]="d.summary" maxlength="160" />
           </label>
           <label class="ticket-field">
-            <span>Description</span>
+            <span>Beschreibung</span>
             <textarea class="ticket-input ticket-textarea" [(ngModel)]="d.description" rows="9"></textarea>
           </label>
         </div>
         <div class="ticket-dialog-actions">
-          <button mat-button (click)="cancelTicketDraft()">Cancel</button>
+          <button mat-button (click)="cancelTicketDraft()">Abbrechen</button>
           <button mat-raised-button color="primary" (click)="submitTicket()" [disabled]="submittingTicket()">
-            @if (submittingTicket()) { <mat-spinner diameter="16"></mat-spinner> Creating… }
-            @else { <mat-icon>send</mat-icon> Create ticket }
+            @if (submittingTicket()) { <mat-spinner diameter="16"></mat-spinner> Erstelle… }
+            @else { <mat-icon>send</mat-icon> Ticket erstellen }
           </button>
         </div>
       </div>
@@ -1464,6 +1465,8 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     return this.items().filter(i => f.includes(i.source));
   });
 
+  private computerService = inject(ComputerService);
+
   constructor(
     private http: HttpClient,
     private snackBar: MatSnackBar,
@@ -2005,7 +2008,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       error: err => {
         this.creatingTicketIds.delete(item.id);
         this.creatingTicketIds = new Set(this.creatingTicketIds);
-        this.snackBar.open(err?.error?.detail ?? 'AI preparation failed', 'OK', { duration: 4000 });
+        this.snackBar.open(err?.error?.detail ?? 'KI-Vorbereitung fehlgeschlagen', 'OK', { duration: 4000 });
       },
     });
   }
@@ -2016,7 +2019,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     const d = this.ticketDraft();
     if (!d || !d.item.external_id) return;
     if (!d.project.trim()) {
-      this.snackBar.open('Please provide a Jira project', 'OK', { duration: 3000 });
+      this.snackBar.open('Bitte ein Jira-Projekt angeben', 'OK', { duration: 3000 });
       return;
     }
     this.submittingTicket.set(true);
@@ -2026,12 +2029,12 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       next: res => {
         this.submittingTicket.set(false);
         this.ticketDraft.set(null);
-        const ref = this.snackBar.open(`Ticket created: ${res.jira_key}`, res.url ? 'Open' : 'OK', { duration: 6000 });
+        const ref = this.snackBar.open(`Ticket erstellt: ${res.jira_key}`, res.url ? 'Öffnen' : 'OK', { duration: 6000 });
         if (res.url) ref.onAction().subscribe(() => window.open(res.url, '_blank', 'noopener'));
       },
       error: err => {
         this.submittingTicket.set(false);
-        this.snackBar.open(err?.error?.detail ?? 'Could not create the ticket', 'OK', { duration: 5000 });
+        this.snackBar.open(err?.error?.detail ?? 'Ticket konnte nicht erstellt werden', 'OK', { duration: 5000 });
       },
     });
   }
@@ -2073,7 +2076,6 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       'width=1300,height=820,menubar=no,toolbar=no,location=no,status=no',
     );
   }
-
   severityColor(sev: string) { return SEVERITY_COLOR[sev] ?? '#757575'; }
 
   itemHostLabel(item: FeedItem): string {
@@ -2247,16 +2249,14 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (!item.external_id || this.diagnosingIds.has(item.id)) return;
     this.diagnosingIds.add(item.id);
     this.diagnosingIds = new Set(this.diagnosingIds);
-    // Open comment thread so user sees the result appear
-    if (!this.showComments.has(item.id)) this.toggleComments(item.id);
-    this.http.post<any>(`${environment.apiUrl}/feed/${item.external_id}/diagnose`, {}).subscribe({
-      next: () => {
+
+    this.http.get<{ prompt: string; host: string }>(
+      `${environment.apiUrl}/feed/${item.external_id}/hermes-context`
+    ).subscribe({
+      next: data => {
         this.diagnosingIds.delete(item.id);
         this.diagnosingIds = new Set(this.diagnosingIds);
-        this.loadTimeline(item);
-        this.items.update(items => items.map(i =>
-          i.id === item.id ? { ...i, collab: { ...i.collab!, comment_count: (i.collab?.comment_count ?? 0) + 1 } } : i
-        ));
+        this.computerService.openWithContext(data.prompt, data.host, data.host, item.external_id ?? undefined);
       },
       error: err => {
         this.diagnosingIds.delete(item.id);
@@ -2273,26 +2273,23 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   copyingPrompt = signal(false);
   promptCopied = signal(false);
 
-  copyClaudePrompt(incidentId: string) {
+  handoffToComputer(incidentId: string) {
+    const incident = this.incidentTimeline()?.incident;
+    const label = incident?.primary_host || 'Incident-Analyse';
+
     this.copyingPrompt.set(true);
     this.promptCopied.set(false);
     this.http.get<{ prompt: string }>(`${environment.apiUrl}/feed/incidents/${incidentId}/claude-prompt`)
       .subscribe({
-        next: async data => {
+        next: data => {
           this.copyingPrompt.set(false);
-          try {
-            await navigator.clipboard.writeText(data.prompt);
-            this.promptCopied.set(true);
-            setTimeout(() => this.promptCopied.set(false), 2500);
-          } catch {
-            // Clipboard API unavailable (non-HTTPS) — show the prompt to copy manually
-            this.snackBar.open('Prompt erzeugt — Clipboard nicht verfügbar, siehe Konsole', 'OK', { duration: 4000 });
-            console.log(data.prompt);
-          }
+          this.promptCopied.set(true);
+          setTimeout(() => this.promptCopied.set(false), 2000);
+          this.computerService.openWithContext(data.prompt, label, incident?.primary_host);
         },
         error: () => {
           this.copyingPrompt.set(false);
-          this.snackBar.open('Prompt konnte nicht erzeugt werden', 'OK', { duration: 3000 });
+          this.snackBar.open('Kontext konnte nicht geladen werden', 'OK', { duration: 3000 });
         },
       });
   }
