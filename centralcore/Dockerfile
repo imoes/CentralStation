@@ -1,9 +1,9 @@
 FROM python:3.11-slim
 
 # Proxy — passed as build args, exported for pip + git + apt
-ARG HTTP_PROXY
-ARG HTTPS_PROXY
-ARG NO_PROXY
+ARG HTTP_PROXY=http://proxy.example.com:80
+ARG HTTPS_PROXY=http://proxy.example.com:80
+ARG NO_PROXY=localhost,127.0.0.1,.example.com
 ENV HTTP_PROXY=$HTTP_PROXY \
     HTTPS_PROXY=$HTTPS_PROXY \
     NO_PROXY=$NO_PROXY \
