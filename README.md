@@ -21,13 +21,14 @@ assists with the entire ITIL-compliant work documentation using AI.
 8. [Alert Aggregation and Enrichment](#alert-aggregation-and-enrichment)
 9. [Kanban and Jira](#kanban-and-jira)
 10. [AI Features](#ai-features)
-11. [Prometheus Metrics & PromQL](#prometheus-metrics--promql)
-12. [Connectors](#connectors)
-13. [User Management and RBAC](#user-management-and-rbac)
-14. [Settings and Preferences](#settings-and-preferences)
-15. [API Reference](#api-reference)
-16. [Database Migrations](#database-migrations)
-17. [Deployment](#deployment)
+11. [Computer Console (Hermes AI Panel)](#computer-console-hermes-ai-panel)
+12. [Prometheus Metrics & PromQL](#prometheus-metrics--promql)
+13. [Connectors](#connectors)
+14. [User Management and RBAC](#user-management-and-rbac)
+15. [Settings and Preferences](#settings-and-preferences)
+16. [API Reference](#api-reference)
+17. [Database Migrations](#database-migrations)
+18. [Deployment](#deployment)
 
 ---
 
@@ -709,6 +710,106 @@ CentralStation can optionally use OpenAI Codex (GPT-5.x) as the LLM provider —
 - The SysAdmin agent emits all text fields (findings, recommendations) **in the operator's language** (`ui_language`) — even when RAG/web context is in another language
 - **No hallucinations**: if context is missing, the AI says so explicitly (`"No context available from the knowledge base…"`) instead of inventing causes
 - it-aikb calls (standard + DeepSearch) have a timeout of **300 s** (DeepSearch takes ~2 min)
+
+---
+
+## Computer Console (Hermes AI Panel)
+
+CentralStation includes an interactive AI assistant panel — the **Computer Console** — that wraps a [Hermes](https://github.com/your-org/hermes-agent) AI agent session in a floating LCARS-styled popup. It gives operators a Star Trek-inspired interface for diagnosing alerts and querying the monitoring infrastructure through natural language.
+
+### Architecture
+
+```
+Browser (Computer panel)
+    │  POST /api/computer/sessions/{sid}/message  (SSE stream)
+    ▼
+backend (centralcore_proxy.py)  ←→  JWT auth guard
+    │  HTTP proxy
+    ▼
+centralcore container (FastAPI, port 8001)
+    │  Hermes AIAgent.run_conversation()
+    ▼
+MCP server  (/api/mcp/sse)  →  CentralStation tools
+```
+
+**`centralcore/`** is a standalone Python service that:
+- Manages multiple parallel Hermes sessions
+- Exposes SSE-streaming message endpoints
+- Provides Whisper STT for voice input
+- Connects to the CentralStation MCP server for live IT data
+
+**`backend/app/api/centralcore_proxy.py`** is a JWT-authenticated reverse proxy that forwards browser requests to the `centralcore` service.
+
+**`backend/app/api/mcp_server.py`** exposes CentralStation tools as an MCP server:
+
+| Tool | Description |
+|------|-------------|
+| `get_bridge_status()` | Overall monitoring status |
+| `list_alerts(severity, source, hours)` | Filtered alert list |
+| `search_feed(query)` | Lucene query against all feed indices |
+| `get_checkmk_host(hostname)` | Host status and services |
+| `acknowledge_alert(alert_id)` | Acknowledge an alert |
+| `create_jira_ticket(title, description, priority)` | Create a Jira ticket |
+
+### Computer diagnoses alerts
+
+When the user clicks **"Computer"** on a News Feed alert, `GET /api/feed/{id}/hermes-context` runs automatically:
+1. Looks up the alert in OpenSearch to get host, severity, container name
+2. Runs `run_diagnostics(host)` — CheckMK status, recent logs, metrics, topology, past incidents
+3. Searches for **past AI-resolved similar alerts** (see below) and prepends them as context
+4. Returns a structured prompt that is sent directly to the Hermes session
+
+### Computer learns — AI resolution notes
+
+When the operator clicks **✓ RESOLVED** in the Computer panel:
+- The conversation is summarised into a 2–3 sentence English lesson-learned note via LLM
+- The note is saved as an `AlertComment` (kind=`ai`) on the alert timeline
+- The OpenSearch document is updated with `has_ai_resolution: true` and `ai_resolution_text`
+- Future diagnostics for similar problems automatically retrieve this note via `search_ai_resolved()`
+
+### OpenSearch tags
+
+Every indexed alert automatically gets a `tags` keyword array for precise filtering:
+
+| Tag source | Examples |
+|------------|---------|
+| Alert source | `graylog`, `checkmk`, `wazuh` |
+| Severity | `critical`, `high`, `medium`, `low`, `info` |
+| Container presence | `docker` |
+| Service keywords in title/container | `nginx`, `postgres`, `redis`, `cue`, `zipline`, `keycloak`, `ssl`, `dns`, `backup`, … |
+| OS keywords | `linux`, `windows` |
+| Symptom keywords | `oom`, `disk`, `cpu`, `network` |
+| AI resolution | `ai_resolved` (added when Computer marks problem solved) |
+
+**Example OpenSearch queries using tags:**
+```
+tags:postgres                       → all PostgreSQL-related alerts
+tags:docker AND tags:critical       → critical container alerts
+tags:ai_resolved                    → all problems the Computer has solved
+tags:oom                            → out-of-memory events
+```
+
+### Setup
+
+1. Install [Hermes](https://github.com/your-org/hermes-agent) and configure an MCP server pointing at CentralStation:
+   ```yaml
+   # ~/.hermes/config.yaml
+   mcp_servers:
+     centralstation:
+       transport: http
+       url: http://backend:8000/api/mcp/sse
+   ```
+2. Set the `CENTRALCORE_URL` env variable in the backend service (default: `http://centralcore:8001`).
+3. Enable **Computer Console** for a user in Admin → Users.
+4. Add the `centralcore` service to your `docker-compose.yml` (see the included example).
+
+### System prompt
+
+The Computer system prompt (`centralcore/main.py:SYSTEM_PROMPT`) defines the agent's behaviour:
+- Uses MCP tools for all IT queries (never local shell)
+- Searches Graylog (via `search_feed`) for container logs — no SSH needed (Logspout sends all container output to Graylog)
+- Always asks before executing write operations (Jira ticket creation, alert acknowledgement)
+- Appends `[FEED:host=<hostname>]` markers that the frontend renders as clickable feed-filter buttons
 
 ---
 
