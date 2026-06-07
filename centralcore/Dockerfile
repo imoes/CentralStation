@@ -1,10 +1,18 @@
 FROM python:3.11-slim
 
-RUN apt-get -o Acquire::http::Proxy="http://proxy.ippen.media:80" -o Acquire::https::Proxy="http://proxy.ippen.media:80" update && apt-get -o Acquire::http::Proxy="http://proxy.ippen.media:80" -o Acquire::https::Proxy="http://proxy.ippen.media:80"  install -y --no-install-recommends \
-    git \
-    iputils-ping curl traceroute nmap dnsutils \
+RUN apt-get -o Acquire::http::Proxy="http://proxy.ippen.media:80" -o Acquire::https::Proxy="http://proxy.ippen.media:80" update && apt-get -o Acquire::http::Proxy="http://proxy.ippen.media:80" -o Acquire::https::Proxy="http://proxy.ippen.media:80" install -y --no-install-recommends \
+    git curl ca-certificates gnupg \
+    iputils-ping traceroute nmap dnsutils \
     netcat-openbsd mtr-tiny iperf3 jq wget iproute2 \
     openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 22 LTS (required by Hermes browser tools — pre-install to avoid runtime download)
+RUN https_proxy=http://proxy.ippen.media:80 http_proxy=http://proxy.ippen.media:80 \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | \
+    https_proxy=http://proxy.ippen.media:80 http_proxy=http://proxy.ippen.media:80 bash - \
+    && apt-get -o Acquire::http::Proxy="http://proxy.ippen.media:80" -o Acquire::https::Proxy="http://proxy.ippen.media:80" \
+       install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
