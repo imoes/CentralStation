@@ -696,45 +696,6 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     const h = Math.round(mins / 60);
     return `vor ${h} Std`;
   });
-  generativeHosts = signal<string[]>([]);
-  kiInsight = signal<{ analysis_id: string; severity_summary: string; run_at: string; findings: { title: string; severity: string; host: string }[]; summary_text: string } | null>(null);
-
-  readonly kiInsightAgo = computed(() => {
-    const ts = this.kiInsight()?.run_at;
-    if (!ts) return '';
-    const diff = Date.now() - new Date(ts).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins} min ago`;
-    const hrs = Math.floor(mins / 60);
-    return hrs < 24 ? `${hrs}h ago` : `${Math.floor(hrs / 24)}d ago`;
-  });
-
-  readonly rationaleSegments = computed((): RationaleSegment[] => {
-    const text = this.generativeRationale();
-    if (!text) return [];
-    const hosts = [...this.generativeHosts()].sort((a, b) => b.length - a.length);
-    if (hosts.length === 0) {
-      // Fallback: FQDN regex
-      const fqdnRe = /\b[a-z](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?)+\b/g;
-      const segs: RationaleSegment[] = [];
-      let last = 0;
-      let m: RegExpExecArray | null;
-      while ((m = fqdnRe.exec(text)) !== null) {
-        if (m.index > last) segs.push({ text: text.slice(last, m.index), host: null });
-        segs.push({ text: m[0], host: m[0] });
-        last = m.index + m[0].length;
-      }
-      if (last < text.length) segs.push({ text: text.slice(last), host: null });
-      return segs;
-    }
-    // Split by known hosts (longest first to avoid partial matches)
-    const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = new RegExp(`(${hosts.map(escape).join('|')})`, 'g');
-    const parts = text.split(pattern);
-    const hostSet = new Set(hosts);
-    return parts.map(p => ({ text: p, host: hostSet.has(p) ? p : null }));
-  });
 
   warRoomActive = signal(false);
   loading = signal(true);
@@ -787,13 +748,6 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   }
 
   private readonly STORAGE_KEY = 'cs_selected_dashboard_id';
-
-  loadKiInsight() {
-    this.http.get<any>(`${environment.apiUrl}/ai/latest-summary`).subscribe({
-      next: data => this.kiInsight.set(data),
-      error: () => {},
-    });
-  }
 
   loadDashboards() {
     this.http.get<Dashboard[]>(`${environment.apiUrl}/dashboard-widgets/dashboards`).subscribe({
