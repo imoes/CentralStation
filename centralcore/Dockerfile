@@ -12,11 +12,12 @@ ENV HTTP_PROXY=$HTTP_PROXY \
     no_proxy=$NO_PROXY
 
 # System tools: network diagnostics (terminal toolset) + git for clone
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    iputils-ping curl traceroute nmap dnsutils \
-    netcat-openbsd mtr-tiny iperf3 jq wget iproute2 \
-    openssh-client \
+RUN apt-get -o Acquire::http::Proxy="${HTTP_PROXY}" -o Acquire::https::Proxy="${HTTPS_PROXY}" update \
+    && apt-get -o Acquire::http::Proxy="${HTTP_PROXY}" -o Acquire::https::Proxy="${HTTPS_PROXY}" \
+       install -y --no-install-recommends \
+       git iputils-ping curl traceroute nmap dnsutils \
+       netcat-openbsd mtr-tiny iperf3 jq wget iproute2 \
+       openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
