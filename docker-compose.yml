@@ -60,9 +60,6 @@ services:
       OPENSEARCH_USER: admin
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
       CENTRALCORE_URL: http://centralcore:8001
-      HTTP_PROXY: http://proxy.ippen.media:80
-      HTTPS_PROXY: http://proxy.ippen.media:80
-      NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,centralcore,.ippen.media
     depends_on:
       db:
         condition: service_healthy
@@ -97,9 +94,6 @@ services:
     restart: unless-stopped
     environment:
       CENTRALCORE_URL: http://centralcore:8001
-      HTTP_PROXY: http://proxy.ippen.media:80
-      HTTPS_PROXY: http://proxy.ippen.media:80
-      NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
     volumes:
       # ~/.hermes holds auth tokens, session state and custom skills
       # Custom skills → ${PWD}/.hermes/skills/<name>/SKILL.md
