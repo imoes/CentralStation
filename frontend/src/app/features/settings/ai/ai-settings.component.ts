@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../../environments/environment';
@@ -36,21 +36,21 @@ interface OAuthSession {
 
 const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = [
   {
-    title: 'LLM Konfiguration',
+    title: 'LLM Configuration',
     keys: ['llm.provider', 'llm.base_url', 'llm.model', 'llm.api_mode', 'llm.api_key', 'llm.timeout_seconds', 'llm.thinking_mode'],
     testGroup: 'llm',
   },
   {
-    title: 'OpenAI Codex Modell',
+    title: 'OpenAI Codex Model',
     keys: ['llm.codex_model', 'llm.codex_timeout_seconds'],
   },
   {
-    title: 'Vision Modell',
+    title: 'Vision Model',
     keys: ['llm.vision_base_url', 'llm.vision_model', 'llm.vision_api_key'],
     testGroup: 'vision',
   },
   {
-    title: 'SearXNG Web-Suche',
+    title: 'SearXNG Web Search',
     keys: ['searxng.base_url', 'searxng.enabled', 'searxng.results_count'],
     testGroup: 'searxng',
   },
@@ -59,7 +59,7 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
     keys: ['jira.ticket_project'],
   },
   {
-    title: 'Agent Einstellungen',
+    title: 'Agent Settings',
     keys: [
       'agent.interval_minutes',
       'agent.aggregation_interval_minutes',
@@ -81,10 +81,6 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
       'agent.checkmk_locations',
     ],
   },
-  {
-    title: 'Jira / Tickets',
-    keys: ['jira.ticket_project'],
-  },
 ];
 
 const BOOLEAN_KEYS = new Set([
@@ -93,9 +89,10 @@ const BOOLEAN_KEYS = new Set([
 ]);
 const SELECT_KEYS: Record<string, string[]> = {
   'llm.api_mode': ['chat_completions', 'responses'],
-  'llm.provider': ['custom', 'openai-codex'],
+  'llm.provider': ['custom', 'openai-codex', 'claude-oauth'],
   'agent.jira_severity_threshold': ['critical', 'high', 'medium'],
 };
+const OAUTH_PROVIDERS = new Set(['openai-codex', 'claude-oauth']);
 const SECRET_MASK = '••••••••';
 
 @Component({
@@ -111,50 +108,48 @@ const SECRET_MASK = '••••••••';
   template: `
     <div class="page-container">
       <div class="page-header">
-        <h2>Globale Einstellungen</h2>
+        <h2>Global Settings</h2>
         <button mat-raised-button color="primary" [disabled]="saving()" (click)="saveAll()">
           @if (saving()) {
             <mat-spinner diameter="18"></mat-spinner>
           } @else {
-            <ng-container><mat-icon>save</mat-icon> Speichern</ng-container>
+            <ng-container><mat-icon>save</mat-icon> Save</ng-container>
           }
         </button>
       </div>
 
-      <!-- OpenAI Codex OAuth-Karte -->
+      <!-- OpenAI Codex OAuth card -->
       <mat-card class="settings-card oauth-card">
         <mat-card-header>
-          <mat-card-title>OpenAI Codex — Anmeldung</mat-card-title>
+          <mat-card-title>OpenAI Codex — Login</mat-card-title>
           <div class="card-header-actions">
-            <button mat-icon-button (click)="loadCodexStatus()" matTooltip="Status aktualisieren">
+            <button mat-icon-button (click)="loadCodexStatus()" matTooltip="Refresh status">
               <mat-icon>refresh</mat-icon>
             </button>
           </div>
         </mat-card-header>
         <mat-card-content>
-          <!-- Status-Banner -->
           @if (codexStatus()) {
             <div class="codex-status-banner" [class.authenticated]="codexStatus()!.authenticated">
               <mat-icon>{{ codexStatus()!.authenticated ? 'verified_user' : 'no_accounts' }}</mat-icon>
               <div class="codex-status-text">
-                <strong>{{ codexStatus()!.authenticated ? 'Eingeloggt' : 'Nicht eingeloggt' }}</strong>
+                <strong>{{ codexStatus()!.authenticated ? 'Logged in' : 'Not logged in' }}</strong>
                 <span>{{ codexStatus()!.message }}</span>
                 @if (codexStatus()!.authenticated && codexStatus()!.authenticated_at) {
-                  <span class="expires">Eingeloggt: {{ codexStatus()!.authenticated_at | date:'dd.MM.yyyy HH:mm' }}</span>
+                  <span class="expires">Logged in: {{ codexStatus()!.authenticated_at | date:'yyyy-MM-dd HH:mm' }}</span>
                 }
                 @if (codexStatus()!.authenticated && codexStatus()!.expires_at) {
-                  <span class="expires">Gültig bis: {{ codexStatus()!.expires_at | date:'dd.MM.yyyy HH:mm' }}</span>
+                  <span class="expires">Valid until: {{ codexStatus()!.expires_at | date:'yyyy-MM-dd HH:mm' }}</span>
                 }
               </div>
             </div>
           }
 
-          <!-- Device-Code Flow -->
           @if (!oauthSession()) {
             <div class="oauth-actions">
               @if (codexStatus()?.authenticated) {
                 <button mat-stroked-button color="warn" (click)="logoutCodex()">
-                  <mat-icon>logout</mat-icon> Abmelden
+                  <mat-icon>logout</mat-icon> Sign out
                 </button>
               }
               <button mat-raised-button color="primary"
@@ -165,34 +160,32 @@ const SECRET_MASK = '••••••••';
                 } @else {
                   <mat-icon>login</mat-icon>
                 }
-                {{ codexStatus()?.authenticated ? 'Neu anmelden' : 'Mit OpenAI anmelden' }}
+                {{ codexStatus()?.authenticated ? 'Sign in again' : 'Sign in with OpenAI' }}
               </button>
             </div>
           } @else {
-            <!-- Laufende OAuth-Session -->
             <div class="oauth-flow">
               @if (oauthPollStatus() === 'authorized') {
                 <div class="oauth-success">
                   <mat-icon>check_circle</mat-icon>
-                  <span>Erfolgreich angemeldet!</span>
+                  <span>Successfully signed in!</span>
                 </div>
               } @else if (oauthPollStatus() === 'timeout') {
                 <div class="oauth-error">
                   <mat-icon>timer_off</mat-icon>
-                  <span>Zeitüberschreitung — bitte erneut versuchen.</span>
+                  <span>Timed out — please try again.</span>
                 </div>
-                <button mat-stroked-button (click)="cancelOAuth()">Schließen</button>
+                <button mat-stroked-button (click)="cancelOAuth()">Close</button>
               } @else if (oauthPollStatus() === 'error') {
                 <div class="oauth-error">
                   <mat-icon>error</mat-icon>
-                  <span>Fehler beim Anmeldeprozess.</span>
+                  <span>Error during sign-in.</span>
                 </div>
-                <button mat-stroked-button (click)="cancelOAuth()">Schließen</button>
+                <button mat-stroked-button (click)="cancelOAuth()">Close</button>
               } @else {
-                <!-- Pending: zeige code + link -->
                 <div class="oauth-code-block">
                   <p class="oauth-instructions">
-                    Öffne den folgenden Link in deinem Browser und gib den Code ein:
+                    Open the link below in your browser and enter the code:
                   </p>
                   <div class="oauth-code">{{ oauthSession()!.user_code }}</div>
                   <a [href]="oauthSession()!.verification_uri" target="_blank" rel="noopener">
@@ -203,15 +196,40 @@ const SECRET_MASK = '••••••••';
                   </a>
                   <div class="oauth-waiting">
                     <mat-spinner diameter="20"></mat-spinner>
-                    <span>Warte auf Bestätigung…</span>
+                    <span>Waiting for confirmation…</span>
                   </div>
-                  <button mat-button (click)="cancelOAuth()">Abbrechen</button>
+                  <button mat-button (click)="cancelOAuth()">Cancel</button>
                 </div>
               }
             </div>
           }
         </mat-card-content>
       </mat-card>
+
+      <!-- Claude OAuth info card (shown when claude-oauth provider is selected) -->
+      @if (currentProvider() === 'claude-oauth') {
+        <mat-card class="settings-card oauth-card">
+          <mat-card-header>
+            <mat-card-title>Claude — OAuth Authentication</mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
+            <p style="font-size:14px;margin:0 0 12px">
+              With the <strong>Claude (OAuth)</strong> provider, CentralStation authenticates via the
+              <code>CLAUDE_CODE_OAUTH_TOKEN</code> environment variable instead of an API key.
+            </p>
+            <p style="font-size:14px;margin:0 0 12px">
+              Generate the token on the host running the backend:
+            </p>
+            <pre style="background:var(--mat-sys-surface-variant);padding:10px 14px;border-radius:6px;font-size:13px;overflow-x:auto">claude setup-token
+# Copy the displayed token, then add to your .env:
+CLAUDE_CODE_OAUTH_TOKEN=&lt;token&gt;</pre>
+            <p style="font-size:13px;opacity:.7;margin:8px 0 0">
+              No API key is required when this provider is selected.
+              Restart the backend after updating <code>.env</code>.
+            </p>
+          </mat-card-content>
+        </mat-card>
+      }
 
       @if (loading()) {
         <div class="spinner-center"><mat-spinner diameter="40"></mat-spinner></div>
@@ -226,20 +244,22 @@ const SECRET_MASK = '••••••••';
                     <button mat-stroked-button
                             [disabled]="testingGroup() === group.testGroup"
                             (click)="testGroup(group.testGroup!)"
-                            matTooltip="Verbindung mit gespeicherten Werten testen">
+                            matTooltip="Test connection with saved values">
                       @if (testingGroup() === group.testGroup) {
                         <mat-spinner diameter="16"></mat-spinner>
                       } @else {
                         <ng-container><mat-icon>wifi_tethering</mat-icon></ng-container>
                       }
-                      Verbindung testen
+                      Test connection
                     </button>
                   </div>
                 }
               </mat-card-header>
               <mat-card-content>
                 @for (key of group.keys; track key) {
-                  @if (key === 'jira.ticket_project') {
+                  @if (isHiddenForProvider(key)) {
+                    <!-- hidden when OAuth provider selected -->
+                  } @else if (key === 'jira.ticket_project') {
                     <mat-form-field appearance="outline" class="setting-field">
                       <mat-label>{{ keyLabel(key) }}</mat-label>
                       <mat-select [formControlName]="key" (selectionChange)="onJiraProjectChange($event.value)">
@@ -247,7 +267,7 @@ const SECRET_MASK = '••••••••';
                           <mat-option [value]="p.key">{{ p.key }} — {{ p.name }} ({{ p.connector === 'jira_sd' ? 'ServiceDesk' : 'Jira' }})</mat-option>
                         }
                       </mat-select>
-                      <mat-hint>{{ jiraProjects().length ? 'Ziel-Projekt für erstellte Tickets' : 'Keine Projekte geladen — Jira/ServiceDesk-Connector prüfen' }}</mat-hint>
+                      <mat-hint>{{ jiraProjects().length ? 'Target project for created tickets' : 'No projects loaded — check Jira/ServiceDesk connector' }}</mat-hint>
                     </mat-form-field>
                   } @else if (isBooleanKey(key)) {
                     <div class="toggle-row">
@@ -268,7 +288,7 @@ const SECRET_MASK = '••••••••';
                       <mat-label>{{ keyLabel(key) }}</mat-label>
                       <input matInput [formControlName]="key"
                              [type]="isSecret(key) ? 'password' : 'text'"
-                             [placeholder]="isSecret(key) ? 'Leer lassen = unverändert' : ''">
+                             [placeholder]="isSecret(key) ? 'Leave empty to keep unchanged' : ''">
                     </mat-form-field>
                   }
                 }
@@ -369,7 +389,8 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
   oauthSession = signal<OAuthSession | null>(null);
   oauthPollStatus = signal<'pending' | 'authorized' | 'timeout' | 'error' | null>(null);
   startingOAuth = signal(false);
-  jiraProjects = signal<{ key: string; name: string; connector: string }[]>([]);
+  currentProvider = signal<string>('custom');
+  isOAuthProvider = computed(() => OAUTH_PROVIDERS.has(this.currentProvider()));
   form: FormGroup | null = null;
   private settingsMap = new Map<string, SettingItem>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -393,6 +414,8 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
     this.loadCodexStatus();
     this.loadJiraProjects();
   }
+
+  private providerSub: ReturnType<typeof setTimeout> | null = null;
 
   ngOnDestroy() {
     this.stopPolling();
@@ -452,7 +475,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       error: err => {
         this.startingOAuth.set(false);
         this.snack.open(
-          `Fehler: ${err?.error?.detail ?? 'Verbindung zu OpenAI fehlgeschlagen'}`,
+          `Error: ${err?.error?.detail ?? 'Connection to OpenAI failed'}`,
           'OK', { duration: 5000 }
         );
       },
@@ -471,7 +494,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
           this.oauthPollStatus.set('authorized');
           this.loadCodexStatus();
           setTimeout(() => this.cancelOAuth(), 2000);
-          this.snack.open('Erfolgreich mit OpenAI Codex angemeldet!', 'OK', { duration: 4000 });
+          this.snack.open('Successfully signed in with OpenAI Codex!', 'OK', { duration: 4000 });
         } else if (res.status === 'timeout') {
           this.stopPolling();
           this.oauthPollStatus.set('timeout');
@@ -498,9 +521,9 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
     this.http.delete(`${environment.apiUrl}/oauth/openai-codex/logout`).subscribe({
       next: () => {
         this.loadCodexStatus();
-        this.snack.open('Abgemeldet', 'OK', { duration: 3000 });
+        this.snack.open('Signed out', 'OK', { duration: 3000 });
       },
-      error: () => this.snack.open('Fehler beim Abmelden', 'OK', { duration: 3000 }),
+      error: () => this.snack.open('Error signing out', 'OK', { duration: 3000 }),
     });
   }
 
@@ -523,6 +546,17 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       }
     }
     this.form = this.fb.group(controls);
+
+    const providerCtrl = this.form.get('llm.provider');
+    if (providerCtrl) {
+      this.currentProvider.set(providerCtrl.value || 'custom');
+      providerCtrl.valueChanges.subscribe(v => this.currentProvider.set(v || 'custom'));
+    }
+  }
+
+  isHiddenForProvider(key: string): boolean {
+    if (!this.isOAuthProvider()) return false;
+    return key === 'llm.api_key' || key === 'llm.api_mode';
   }
 
   saveAll() {
@@ -541,10 +575,10 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
 
     Promise.all(updates).then(() => {
       this.saving.set(false);
-      this.snack.open('Einstellungen gespeichert', 'OK', { duration: 3000 });
+      this.snack.open('Settings saved', 'OK', { duration: 3000 });
     }).catch(() => {
       this.saving.set(false);
-      this.snack.open('Fehler beim Speichern', 'OK', { duration: 4000 });
+      this.snack.open('Error saving settings', 'OK', { duration: 4000 });
     });
   }
 
@@ -559,7 +593,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       error: err => {
         this.testResults.update(r => ({
           ...r,
-          [group]: { success: false, message: err?.error?.detail ?? 'Unbekannter Fehler', detail: null },
+          [group]: { success: false, message: err?.error?.detail ?? 'Unknown error', detail: null },
         }));
         this.testingGroup.set(null);
       },
@@ -573,7 +607,9 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
 
   selectLabel(key: string, opt: string): string {
     if (key === 'llm.provider') {
-      return opt === 'custom' ? 'Lokal / Eigener Endpunkt' : 'OpenAI Codex (OAuth)';
+      if (opt === 'custom') return 'Custom / Self-hosted endpoint';
+      if (opt === 'openai-codex') return 'OpenAI Codex (OAuth)';
+      if (opt === 'claude-oauth') return 'Claude (OAuth — claude setup-token)';
     }
     return opt;
   }
@@ -581,39 +617,39 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
   keyLabel(key: string): string {
     const labels: Record<string, string> = {
       'llm.provider':                       'LLM Provider',
-      'llm.base_url':                        'LLM Basis-URL (nur für "Lokal")',
-      'llm.model':                           'LLM Modell',
-      'llm.api_mode':                        'LLM API Modus',
+      'llm.base_url':                        'LLM Base URL (custom endpoint only)',
+      'llm.model':                           'LLM Model',
+      'llm.api_mode':                        'LLM API Mode',
       'llm.api_key':                         'API Key',
-      'llm.timeout_seconds':                 'Timeout (Sekunden)',
-      'llm.codex_model':                     'OpenAI Codex Modell (z.B. gpt-4o)',
-      'llm.codex_timeout_seconds':           'OpenAI Codex Timeout (Sekunden)',
+      'llm.timeout_seconds':                 'Timeout (seconds)',
+      'llm.codex_model':                     'OpenAI Codex Model (e.g. gpt-4o)',
+      'llm.codex_timeout_seconds':           'OpenAI Codex Timeout (seconds)',
       'llm.vision_base_url':                 'Vision LLM URL',
-      'llm.vision_model':                    'Vision Modell',
+      'llm.vision_model':                    'Vision Model',
       'llm.vision_api_key':                  'Vision API Key',
       'searxng.base_url':                    'SearXNG URL',
-      'searxng.enabled':                     'SearXNG aktiviert',
-      'searxng.results_count':               'Anzahl Suchergebnisse',
+      'searxng.enabled':                     'SearXNG enabled',
+      'searxng.results_count':               'Number of search results',
       'llm.thinking_mode':                   'Thinking Mode (Extended Reasoning)',
-      'agent.interval_minutes':              'KI-Agent Intervall (Minuten)',
-      'agent.aggregation_interval_minutes':  'Alert-Abruf Intervall (Minuten)',
-      'agent.auto_jira':                     'Automatisch Jira-Tickets erstellen',
-      'agent.auto_enrich':                   'KI-Anreicherung automatisch (aus = On Demand)',
-      'agent.rag_enabled':                   'Wissensdatenbank-Suche (RAG) im KI-Agenten',
-      'workflow.web_search':                 'Websuche bei KI-Analyse',
-      'agent.scoring_enabled':               'CPU-Scoring aktiv',
-      'agent.enrich_score_threshold':        'Score-Schwellwert für KI-Anreicherung',
-      'agent.max_alerts_for_llm':            'Max. Alerts pro KI-Agent-Lauf ans LLM',
-      'agent.flap_window_minutes':           'Flapping-Erkennungsfenster (Minuten)',
-      'agent.flap_threshold':                'Wiederholungen bis Flapping erkannt',
-      'agent.score_learning_enabled':        'Adaptives Scoring aktiv',
-      'agent.score_delta_decay_days':        'Score-Delta Verfallszeit (Tage)',
-      'agent.worklist_interval_minutes':     'Prioritätenliste Aktualisierung (Minuten)',
-      'agent.worklist_size':                 'Anzahl Einträge in der Prioritätenliste',
-      'agent.generative_interval_minutes':   'Generativ-Dashboard Intervall (Minuten)',
-      'agent.jira_severity_threshold':       'Mindest-Severity für Jira',
-      'agent.checkmk_locations':             'CheckMK Standort-Filter (Komma-getrennt)',
-      'jira.ticket_project':                 'Ticket-Projekt (Ziel für erstellte Tickets)',
+      'agent.interval_minutes':              'AI Agent interval (minutes)',
+      'agent.aggregation_interval_minutes':  'Alert fetch interval (minutes)',
+      'agent.auto_jira':                     'Create Jira tickets automatically',
+      'agent.auto_enrich':                   'AI enrichment automatic (off = on demand)',
+      'agent.rag_enabled':                   'Knowledge base search (RAG) in AI agent',
+      'workflow.web_search':                 'Web search during AI analysis',
+      'agent.scoring_enabled':               'Alert scoring enabled',
+      'agent.enrich_score_threshold':        'Score threshold for AI enrichment',
+      'agent.max_alerts_for_llm':            'Max alerts per AI agent run sent to LLM',
+      'agent.flap_window_minutes':           'Flap detection window (minutes)',
+      'agent.flap_threshold':                'Repetitions until flapping detected',
+      'agent.score_learning_enabled':        'Adaptive scoring enabled',
+      'agent.score_delta_decay_days':        'Score delta decay time (days)',
+      'agent.worklist_interval_minutes':     'Priority list refresh interval (minutes)',
+      'agent.worklist_size':                 'Number of entries in the priority list',
+      'agent.generative_interval_minutes':   'Generative dashboard interval (minutes)',
+      'agent.jira_severity_threshold':       'Minimum severity for Jira tickets',
+      'agent.checkmk_locations':             'CheckMK location filter (comma-separated)',
+      'jira.ticket_project':                 'Ticket project (target for created tickets)',
     };
     return labels[key] ?? key;
   }
