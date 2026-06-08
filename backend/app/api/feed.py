@@ -24,7 +24,7 @@ from app.models.workflow import FeedSearch, UserPreference
 router = APIRouter(prefix="/feed", tags=["feed"])
 log = logging.getLogger(__name__)
 
-_ALL_SOURCES = ["checkmk", "graylog", "wazuh", "o365", "teams", "coroot"]
+_ALL_SOURCES = ["checkmk", "graylog", "wazuh", "icinga2", "o365", "teams", "coroot"]
 
 
 async def _get_prefs(user_id, db: AsyncSession) -> UserPreference | None:

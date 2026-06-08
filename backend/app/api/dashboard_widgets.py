@@ -650,7 +650,7 @@ async def get_widget_data(
         filters = [{
             "bool": {
                 "should": [
-                    {"terms": {"source": ["checkmk", "graylog", "wazuh"]}},
+                    {"terms": {"source": ["checkmk", "graylog", "wazuh", "icinga2", "coroot"]}},
                     {"bool": {"must": [
                         {"terms": {"source": ["o365", "teams"]}},
                         {"term": {"user_id": user_id_str}},
@@ -697,7 +697,7 @@ async def get_widget_data(
         filters = [{
             "bool": {
                 "should": [
-                    {"terms": {"source": ["checkmk", "graylog", "wazuh"]}},
+                    {"terms": {"source": ["checkmk", "graylog", "wazuh", "icinga2", "coroot"]}},
                     {"bool": {"must": [
                         {"terms": {"source": ["o365", "teams"]}},
                         {"term": {"user_id": user_id_str}},

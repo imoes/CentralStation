@@ -115,6 +115,7 @@ async def list_alerts(
     return [
         {
             "id": str(a.id),
+            "external_id": a.external_id or "",
             "source": a.source,
             "severity": a.severity,
             "title": a.title,
@@ -160,11 +161,13 @@ async def search_feed(query: str, index: str = "cs-feed-*", limit: int = 10) -> 
         return [
             {
                 "id": h.get("_id", ""),
+                "external_id": h["_source"].get("external_id", ""),
                 "source": h["_source"].get("source", ""),
                 "severity": h["_source"].get("severity", ""),
                 "title": h["_source"].get("title", ""),
                 "body": (h["_source"].get("body", "") or "")[:300],
                 "host": h["_source"].get("host", ""),
+                "ai_insight": h["_source"].get("ai_insight", ""),
                 "created_at": h["_source"].get("created_at", ""),
             }
             for h in hits
@@ -324,6 +327,207 @@ async def create_jira_ticket(title: str, description: str, priority: str = "medi
             except Exception as exc2:
                 log.warning("create_jira_ticket retry failed: %s", exc2)
                 return {"ok": False, "error": str(exc2)}
+
+
+# ── Tool 7: Get Alert Analysis ─────────────────────────────────────
+
+@mcp.tool()
+async def get_alert_analysis(external_id: str) -> dict:
+    """Gibt gespeicherte KI-Analysen und Kommentare zu einem Alert zurück.
+
+    Parameter:
+    - external_id: Die externe ID des Alerts (aus list_alerts oder search_feed)
+
+    Nutze dieses Tool wenn du wissen willst, was zu einem Alert bereits analysiert
+    oder kommentiert wurde — z.B. für Incident-Untersuchungen."""
+    from sqlalchemy import select
+    from app.models.workflow import AlertComment
+
+    async with (await _get_db_session()) as db:
+        rows = (await db.execute(
+            select(AlertComment)
+            .where(AlertComment.external_id == external_id)
+            .order_by(AlertComment.created_at.desc())
+            .limit(20)
+        )).scalars().all()
+
+    return {
+        "external_id": external_id,
+        "comments": [
+            {
+                "kind": r.kind,
+                "user_name": r.user_name,
+                "body": r.body,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in rows
+        ],
+    }
+
+
+# ── Tool 8: Post Alert Comment ─────────────────────────────────────
+
+@mcp.tool()
+async def post_alert_comment(external_id: str, text: str) -> dict:
+    """Speichert eine Analyse oder einen Befund als Kommentar an einem Alert.
+
+    Parameter:
+    - external_id: Die externe ID des Alerts (aus list_alerts oder search_feed)
+    - text: Der zu speichernde Text (Analyse, Befund, Handlungsempfehlung)
+
+    Nutze dieses Tool nach einer detaillierten Incident-Analyse, damit andere
+    (und du selbst in einer späteren Session) auf die Erkenntnisse zugreifen können.
+    SCHREIBOPERATION — nur nach Bestätigung durch den Nutzer ausführen."""
+    import uuid as _uuid
+    from app.models.workflow import AlertComment
+
+    if not external_id or not text:
+        return {"ok": False, "error": "external_id und text sind erforderlich"}
+
+    async with (await _get_db_session()) as db:
+        db.add(AlertComment(
+            id=_uuid.uuid4(),
+            external_id=external_id,
+            user_id=None,
+            user_name="Computer (KI)",
+            kind="ai",
+            body=text[:2000],
+        ))
+        await db.commit()
+
+    log.info("post_alert_comment: saved AI comment for %s", external_id)
+    return {"ok": True, "external_id": external_id}
+
+
+# ── Tool 9: Create Feed Exclusion ─────────────────────────────────
+
+@mcp.tool()
+async def create_feed_exclusion(
+    name: str,
+    query_string: str,
+    source: str = "",
+) -> dict:
+    """Legt eine Feed-Ausnahme an: Alerts die dem Query entsprechen werden dauerhaft
+    aus dem Haupt-Feed ausgeblendet (Whitelist/Suppress-Regel).
+
+    Parameter:
+    - name: Kurzer, beschreibender Name der Ausnahme (z.B. 'Backup-Jobs auf backup01')
+    - query_string: OpenSearch Lucene-Query zum Matchen der auszublendenden Alerts
+                   Beispiele:
+                   'title:*backup* AND metadata.host:backup01*'
+                   'source:graylog AND title:*connection refused*'
+                   'severity:low AND metadata.host:testserver*'
+    - source: Optionale Quell-Einschränkung (checkmk/graylog/wazuh/icinga2/coroot).
+              Leer lassen = gilt für alle Quellen (cs-feed-*).
+
+    Nutze dieses Tool wenn der Nutzer sagt:
+    - 'Blende diese Meldung dauerhaft aus'
+    - 'Erstelle eine Ausnahme für ...'
+    - 'Suppress diese Alerts'
+    - 'Ignoriere Alerts von Host X'
+
+    Hinweis: Die Ausnahme wird sofort aktiv und blendet matching Alerts im Feed aus.
+    Du kannst den query_string sorgfältig aus dem Kontext des betreffenden Alerts ableiten."""
+    from app.models.workflow import FeedSearch
+
+    source = source.strip().lower()
+    valid_sources = {"checkmk", "graylog", "wazuh", "icinga2", "coroot"}
+    if source and source not in valid_sources:
+        return {"error": f"Ungültige Quelle '{source}'. Erlaubt: {', '.join(sorted(valid_sources))}"}
+
+    index_pattern = f"cs-feed-{source}" if source else "cs-feed-*"
+    query_string = query_string.strip()
+    if not query_string:
+        return {"error": "query_string darf nicht leer sein"}
+
+    async with (await _get_db_session()) as db:
+        search = FeedSearch(
+            user_id=None,
+            index_pattern=index_pattern,
+            name=name.strip() or "Hermes-Ausnahme",
+            query_string=query_string,
+            enabled=True,
+            is_system=True,
+            is_exclusion=True,
+            position=97,
+        )
+        db.add(search)
+        await db.commit()
+        await db.refresh(search)
+
+    log.info("create_feed_exclusion: '%s' query='%s' index='%s'", name, query_string, index_pattern)
+    return {
+        "ok": True,
+        "id": str(search.id),
+        "name": search.name,
+        "query_string": query_string,
+        "index_pattern": index_pattern,
+        "message": f"Ausnahme '{search.name}' wurde angelegt. Matching Alerts werden im Feed nicht mehr angezeigt.",
+    }
+
+
+@mcp.tool()
+async def get_coroot_status(project: str = "") -> dict:
+    """Gibt Coroot-Übersicht zurück: aktive Incidents und betroffene Anwendungen.
+
+    Parameter:
+    - project: optionaler Projektname-Filter (z.B. 'cue-prod', 'cue-stage').
+               Leer lassen für alle konfigurierten Projekte.
+
+    Nützlich wenn der Nutzer fragt:
+    - 'Was sagt Coroot?' / 'Gibt es APM-Alerts?'
+    - 'Welche Anwendungen haben gerade Probleme?'
+    - 'Gibt es Latenz- oder Verfügbarkeitsprobleme?'"""
+    from sqlalchemy import select
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.coroot import CorootConnector
+
+    async with (await _get_db_session()) as db:
+        result = await db.execute(
+            select(ConnectorConfig).where(
+                ConnectorConfig.type == "coroot",
+                ConnectorConfig.enabled.is_(True),
+            )
+        )
+        connectors = result.scalars().all()
+
+    if not connectors:
+        return {"error": "Kein aktiver Coroot-Connector konfiguriert"}
+
+    all_incidents: list[dict] = []
+    errors: list[str] = []
+
+    for cfg in connectors:
+        try:
+            creds = decrypt_credentials(cfg.encrypted_credentials)
+            svc = CorootConnector(base_url=cfg.base_url, credentials=creds)
+            incidents = await svc.get_incidents()
+            if project:
+                incidents = [i for i in incidents
+                             if i["metadata"].get("project_name", "").lower() == project.lower()]
+            all_incidents.extend(incidents)
+        except Exception as exc:
+            errors.append(f"{cfg.name}: {exc}")
+            log.warning("get_coroot_status connector %s: %s", cfg.name, exc)
+
+    by_project: dict[str, list] = {}
+    for inc in all_incidents:
+        p = inc["metadata"].get("project_name", "unknown")
+        by_project.setdefault(p, []).append({
+            "severity":    inc["severity"],
+            "application": inc["metadata"].get("application", "?"),
+            "description": inc["metadata"].get("short_description", "?"),
+            "impact":      inc["metadata"].get("impact", 0),
+            "since":       inc["metadata"].get("opened_at", ""),
+            "external_id": inc["external_id"],
+        })
+
+    return {
+        "total_incidents": len(all_incidents),
+        "by_project": by_project,
+        "errors": errors if errors else None,
+    }
 
 
 # ── DB session helper ──────────────────────────────────────────────
