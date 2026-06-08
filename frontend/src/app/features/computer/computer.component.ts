@@ -291,6 +291,44 @@ export class ComputerComponent implements OnInit, OnDestroy {
     this._handoffSub = this.computerService.handoff$.subscribe(({ prompt, label, hostKey, externalId }) => {
       this._handleHandoff(prompt, label, hostKey, externalId);
     });
+    this.loadSessions();
+  }
+
+  /** Load persisted sessions from the backend DB.
+   *
+   * Sessions are stored in PostgreSQL so they survive page reloads.
+   * For sessions already in memory (current page), in-memory messages are preserved.
+   * For restored sessions, messages start empty — the conversation history lives
+   * in Hermes state.db and is replayed automatically on the next message.
+   */
+  async loadSessions(): Promise<void> {
+    const token = this.auth.getAccessToken();
+    try {
+      const r = await fetch(`${this.apiBase}/sessions`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) return;
+      const list: Array<{ session_id: string; label: string; msg_count: number }> = await r.json();
+      if (!list.length) return;
+
+      this.sessions.update(current => {
+        const inMemory = new Map(current.map(s => [s.session_id, s]));
+        return list.map(s => inMemory.get(s.session_id) ?? {
+          session_id: s.session_id,
+          label: s.label,
+          msg_count: s.msg_count,
+          messages: [],
+        });
+      });
+
+      // Restore active tab — keep current selection if still valid, otherwise pick first.
+      const ids = list.map(s => s.session_id);
+      if (!this.activeTabId() || !ids.includes(this.activeTabId()!)) {
+        this.activeTabId.set(ids[0]);
+      }
+    } catch (err) {
+      console.debug('loadSessions failed:', err);
+    }
   }
 
   ngOnDestroy(): void {
@@ -334,7 +372,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
     const token = this.auth.getAccessToken();
     const messages = session.messages.map(m => ({ role: m.role, text: m.text }));
     try {
-      const r = await fetch(`${environment.apiUrl}/feed/${session.external_id}/computer-resolve`, {
+      const eid = encodeURIComponent(session.external_id);
+      const r = await fetch(`${environment.apiUrl}/feed/computer-resolve?external_id=${eid}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
