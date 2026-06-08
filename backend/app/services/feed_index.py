@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 # One index per source for independent retention policies
 INDEX_PREFIX = "cs-feed"
-ALL_SOURCES = ["checkmk", "graylog", "wazuh", "o365", "teams"]
+ALL_SOURCES = ["checkmk", "graylog", "wazuh", "o365", "teams", "coroot"]
 
 _INDEX_MAPPING = {
     "mappings": {
@@ -539,7 +539,7 @@ async def search(
             "bool": {
                 "should": [
                     # shared monitoring sources — no user restriction
-                    {"terms": {"source": ["checkmk", "graylog", "wazuh"]}},
+                    {"terms": {"source": ["checkmk", "graylog", "wazuh", "coroot", "icinga2"]}},
                     # personal sources must match user_id
                     {"bool": {"must": [
                         {"terms": {"source": ["o365", "teams"]}},
