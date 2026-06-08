@@ -64,7 +64,7 @@ interface CollabTimeline {
 interface FeedItem {
   id: string;
   type: 'alert' | 'email' | 'teams_message';
-  source: 'checkmk' | 'graylog' | 'wazuh' | 'o365' | 'teams';
+  source: 'checkmk' | 'graylog' | 'wazuh' | 'o365' | 'teams' | 'coroot';
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
   title: string;
   body: string | null;
@@ -102,6 +102,7 @@ const SOURCE_META: Record<string, { label: string; icon: string; color: string }
   wazuh:    { label: 'Wazuh',         icon: 'security',         color: '#b71c1c' },
   o365:     { label: 'E-Mail',        icon: 'mail',             color: '#e65100' },
   teams:    { label: 'Teams',         icon: 'groups',           color: '#0f4c96' },
+  coroot:   { label: 'Coroot',        icon: 'insights',         color: '#00897b' },
 };
 
 const SEVERITY_COLOR: Record<string, string> = {
@@ -339,6 +340,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                 <mat-option value="cs-feed-graylog">Graylog</mat-option>
                 <mat-option value="cs-feed-wazuh">Wazuh</mat-option>
                 <mat-option value="cs-feed-checkmk">CheckMK</mat-option>
+                <mat-option value="cs-feed-coroot">Coroot</mat-option>
               </mat-select>
             </mat-form-field>
             <mat-form-field appearance="outline" class="query-field">
@@ -1129,6 +1131,7 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .feed-card[data-source="wazuh"]   .lcars-header  { background: #99CCFF; }
     :host-context(html.cs-theme-lcars) .feed-card[data-source="o365"]    .lcars-header  { background: #FFCC99; }
     :host-context(html.cs-theme-lcars) .feed-card[data-source="teams"]   .lcars-header  { background: #FFCC99; }
+    :host-context(html.cs-theme-lcars) .feed-card[data-source="coroot"]  .lcars-header  { background: #99FFCC; }
     /* Header text elements */
     :host-context(html.cs-theme-lcars) .lh-source { font-weight: 900; font-size: 12px; }
     :host-context(html.cs-theme-lcars) .lh-dot    { opacity: .5; }
@@ -2250,8 +2253,9 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.diagnosingIds.add(item.id);
     this.diagnosingIds = new Set(this.diagnosingIds);
 
+    const eid = encodeURIComponent(item.external_id ?? '');
     this.http.get<{ prompt: string; host: string }>(
-      `${environment.apiUrl}/feed/${item.external_id}/hermes-context`
+      `${environment.apiUrl}/feed/hermes-context?external_id=${eid}`
     ).subscribe({
       next: data => {
         this.diagnosingIds.delete(item.id);

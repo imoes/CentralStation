@@ -106,7 +106,7 @@ export class App implements OnInit, OnDestroy {
     { path: '/dashboard',    label: 'Dashboard',        icon: 'dashboard',    roles: ['admin','sysadmin','network_technician','viewer'] },
     { path: '/bridge',       label: 'Brücke',           icon: 'rocket_launch',roles: ['admin','sysadmin','network_technician','viewer'] },
     { path: '/feed',         label: 'News Feed',        icon: 'feed',         roles: ['admin','sysadmin','network_technician'] },
-    { path: '/alerts',       label: 'Alerts',           icon: 'notifications',roles: ['admin','sysadmin'] },
+    { path: '/alerts',       label: 'Alerts',           icon: 'notifications',roles: ['admin'] },
     { path: '/my-tickets',   label: 'Meine Tickets',    icon: 'assignment',   roles: ['admin','sysadmin'] },
     { path: '/kanban',       label: 'Kanban',           icon: 'view_kanban',  roles: ['admin','sysadmin','network_technician'] },
     { path: '/ai-insights',  label: 'KI-Insights',      icon: 'psychology',   roles: ['admin','sysadmin'] },
