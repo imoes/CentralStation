@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 # One index per source for independent retention policies
 INDEX_PREFIX = "cs-feed"
-ALL_SOURCES = ["checkmk", "graylog", "wazuh", "o365", "teams", "coroot"]
+ALL_SOURCES = ["checkmk", "graylog", "wazuh", "icinga2", "o365", "teams", "coroot"]
 
 _INDEX_MAPPING = {
     "mappings": {
@@ -733,7 +733,7 @@ async def search_by_query(
         filter_clauses.append({
             "bool": {
                 "should": [
-                    {"terms": {"source": ["checkmk", "graylog", "wazuh"]}},
+                    {"terms": {"source": ["checkmk", "graylog", "wazuh", "icinga2", "coroot"]}},
                     {"bool": {"must": [
                         {"terms": {"source": ["o365", "teams"]}},
                         {"term": {"user_id": user_id}},
@@ -847,7 +847,7 @@ async def count_since(
         filter_.append({
             "bool": {
                 "should": [
-                    {"terms": {"source": ["checkmk", "graylog", "wazuh"]}},
+                    {"terms": {"source": ["checkmk", "graylog", "wazuh", "icinga2", "coroot"]}},
                     {"bool": {"must": [
                         {"terms": {"source": ["o365", "teams"]}},
                         {"term": {"user_id": user_id}},
