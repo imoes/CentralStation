@@ -916,7 +916,7 @@ class _ComputerResolveBody(BaseModel):
     messages: list[dict]  # [{role: "user"|"assistant", text: str}]
 
 
-@router.post("/{external_id}/computer-resolve")
+@router.post("/computer-resolve")
 async def computer_resolve_alert(
     external_id: str,
     body: _ComputerResolveBody,
@@ -991,7 +991,7 @@ async def computer_resolve_alert(
     return {"ok": True, "comment": comment_body}
 
 
-@router.get("/{external_id}/hermes-context")
+@router.get("/hermes-context")
 async def alert_hermes_context(
     external_id: str,
     user: CurrentUser,
