@@ -131,7 +131,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
             </div>
           }
 
-          <div class="messages" #msgContainer>
+          <div class="messages" #msgContainer (scroll)="onMessagesScroll()">
             @for (msg of activeMessages(); track $index) {
               <div class="msg" [class.user]="msg.role === 'user'"
                                [class.agent]="msg.role === 'assistant'">
@@ -218,6 +218,15 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
 export class ComputerComponent implements OnInit, OnDestroy {
   @ViewChild('msgContainer') private msgContainer?: ElementRef<HTMLDivElement>;
   @ViewChild('inputEl') private inputEl?: ElementRef<HTMLInputElement>;
+
+  private _userScrolled = false;
+
+  onMessagesScroll(): void {
+    const el = this.msgContainer?.nativeElement;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    this._userScrolled = !atBottom;
+  }
 
   private auth = inject(AuthService);
   private router = inject(Router);
@@ -811,14 +820,16 @@ export class ComputerComponent implements OnInit, OnDestroy {
     ));
   }
 
-  /** Scroll to bottom only if the user is already near the end (within 120px).
-   *  Pass force=true when the user sends a new message (always scroll). */
+  /** Scroll to bottom unless the user has scrolled up to read.
+   *  Pass force=true when the user sends a message (overrides user scroll). */
   private scrollToBottom(force = false): void {
     setTimeout(() => {
       const el = this.msgContainer?.nativeElement;
       if (!el) return;
-      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-      if (force || nearBottom) {
+      if (force) {
+        this._userScrolled = false;
+      }
+      if (!this._userScrolled) {
         el.scrollTop = el.scrollHeight;
       }
     }, 10);
