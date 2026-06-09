@@ -524,7 +524,35 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   selectTab(sid: string): void {
     this.activeTabId.set(sid);
+    const session = this.sessions().find(s => s.session_id === sid);
+    // Lazy-load history for sessions restored from DB (empty messages, but msg_count > 0)
+    if (session && session.messages.length === 0 && session.msg_count > 0) {
+      this.loadSessionHistory(sid);
+    }
     this.scrollToBottom();
+  }
+
+  async loadSessionHistory(sid: string): Promise<void> {
+    const token = this.auth.getAccessToken();
+    try {
+      const r = await fetch(`${this.apiBase}/sessions/${sid}/history`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) return;
+      const raw: Array<{ role: string; content: string }> = await r.json();
+      // SessionDB returns OpenAI format {role, content}; map to HermesMessage {role, text}
+      const messages: HermesMessage[] = raw
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .filter(m => typeof m.content === 'string' && m.content.trim())
+        .map(m => ({ role: m.role as 'user' | 'assistant', text: m.content }));
+      if (!messages.length) return;
+      this.sessions.update(ss => ss.map(s =>
+        s.session_id === sid ? { ...s, messages } : s
+      ));
+      this.scrollToBottom();
+    } catch (err) {
+      console.debug('loadSessionHistory failed:', err);
+    }
   }
 
   async deleteSession(): Promise<void> {

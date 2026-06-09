@@ -285,9 +285,47 @@ def delete_session(sid: str):
     return {"ok": True}
 
 
+def _restore_session(sid: str) -> bool:
+    """Recreate an in-memory session entry from SessionDB (after container restart).
+
+    Returns True if history exists and the agent was successfully created.
+    The agent will load the full history on its next run_conversation() call.
+    """
+    try:
+        from hermes_state import SessionDB
+        db = SessionDB()
+        history = db.get_messages_as_conversation(sid)
+        if not history:
+            return False
+        cfg = CreateSessionBody()  # uses env-var LLM defaults
+        agent = _make_agent(sid, cfg)
+        user_turns = sum(1 for m in history if m.get("role") == "user")
+        _sessions[sid] = {
+            "agent": agent,
+            "label": "Session (restored)",
+            "msg_count": user_turns,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "llm_model": cfg.llm_model or os.getenv("LLM_MODEL", "(default)"),
+        }
+        log.info("Session %s restored from SessionDB (%d turns)", sid[:8], user_turns)
+        return True
+    except Exception as exc:
+        log.warning("Session restore failed for %s: %s", sid[:8], exc)
+        return False
+
+
 @app.get("/sessions/{sid}/history")
 def get_history(sid: str):
     if sid not in _sessions:
+        # Read directly from SessionDB — no agent needed, no restart required.
+        try:
+            from hermes_state import SessionDB
+            db = SessionDB()
+            history = db.get_messages_as_conversation(sid)
+            if history:
+                return history
+        except Exception as exc:
+            log.debug("SessionDB read for %s failed: %s", sid[:8], exc)
         raise HTTPException(404, "Session nicht gefunden")
     agent = _sessions[sid]["agent"]
     history = getattr(agent, "conversation_history", None) or []
@@ -303,8 +341,10 @@ class MessageBody(BaseModel):
 @app.post("/sessions/{sid}/message")
 async def send_message(sid: str, body: MessageBody):
     if sid not in _sessions:
-        log.warning("Message to unknown session %s", sid[:8])
-        raise HTTPException(404, "Session nicht gefunden")
+        log.info("Session %s not in memory — attempting restore from SessionDB", sid[:8])
+        if not _restore_session(sid):
+            log.warning("Restore failed for session %s — not found in SessionDB", sid[:8])
+            raise HTTPException(404, "Session nicht gefunden")
 
     agent = _sessions[sid]["agent"]
     _sessions[sid]["msg_count"] += 1
