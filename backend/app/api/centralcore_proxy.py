@@ -53,6 +53,9 @@ class _CreateSessionBody(BaseModel):
     # Optional custom label (e.g. host name from an incident handoff). When omitted
     # the backend generates a sequential "Session N" label.
     label: str | None = None
+    # Alert external_id for handoff sessions — persisted so the "✓ GELÖST"
+    # button survives page reloads and container restarts.
+    external_id: str | None = None
 
 
 @router.post("/sessions", status_code=201)
@@ -100,10 +103,14 @@ async def create_session(
         next_num = (count_result.scalar() or 0) + 1
         label = f"Session {next_num}"
 
-    db.add(ComputerSession(id=sid, user_id=user.id, label=label))
+    db.add(ComputerSession(
+        id=sid, user_id=user.id, label=label,
+        external_id=(body.external_id or None),
+    ))
     await db.commit()
-    log.info("Computer session %s created for user %s (label=%s)", sid[:8], user.id, label)
-    return {**data, "label": label}
+    log.info("Computer session %s created for user %s (label=%s, external_id=%s)",
+             sid[:8], user.id, label, body.external_id or "-")
+    return {**data, "label": label, "external_id": body.external_id or None}
 
 
 @router.get("/sessions")
@@ -124,6 +131,8 @@ async def list_sessions(
             "label": r.label,
             "msg_count": r.msg_count,
             "created_at": r.created_at.isoformat(),
+            "external_id": r.external_id,
+            "resolved": r.resolved,
         }
         for r in rows
     ]
