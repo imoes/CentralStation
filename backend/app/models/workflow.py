@@ -327,6 +327,10 @@ class ComputerSession(Base):
     )
     label: Mapped[str] = mapped_column(String(100), default="Session")
     msg_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Alert external_id for handoff sessions — drives the "✓ GELÖST" button.
+    # Persisted so the button survives reloads and container restarts.
+    external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )

@@ -316,7 +316,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!r.ok) return;
-      const list: Array<{ session_id: string; label: string; msg_count: number }> = await r.json();
+      const list: Array<{
+        session_id: string; label: string; msg_count: number;
+        external_id?: string | null; resolved?: boolean;
+      }> = await r.json();
       if (!list.length) return;
 
       this.sessions.update(current => {
@@ -326,6 +329,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
           label: s.label,
           msg_count: s.msg_count,
           messages: [],
+          // Restore external_id + resolved so the "✓ GELÖST" button reappears
+          // for alert-handoff sessions after a reload.
+          external_id: s.external_id ?? undefined,
+          resolved: s.resolved ?? false,
         });
       });
 
@@ -480,17 +487,11 @@ export class ComputerComponent implements OnInit, OnDestroy {
       this.hostSessions.delete(hostKey);
     }
 
-    await this.newSession(label);
+    await this.newSession(label, externalId);
     const sid = this.activeTabId();
     if (!sid) return;
 
     if (hostKey) this.hostSessions.set(hostKey, sid);
-
-    if (externalId) {
-      this.sessions.update(ss => ss.map(s =>
-        s.session_id === sid ? { ...s, external_id: externalId } : s
-      ));
-    }
 
     this.inputText = prompt;
     await this.send();
@@ -498,21 +499,25 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Session management ────────────────────────────────────────────
 
-  async newSession(label?: string): Promise<void> {
+  async newSession(label?: string, externalId?: string): Promise<void> {
     // Guard against concurrent calls (e.g. double-click or race between _handleHandoff + send())
     if (this._sessionCreating) return;
     this._sessionCreating = true;
     const token = this.auth.getAccessToken();
     try {
+      // Persist label (handoff host name) and external_id (alert id, drives the
+      // "✓ GELÖST" button) so both survive reloads — otherwise the backend
+      // generates a generic "Session N" and the resolve button is lost.
+      const createBody: { label?: string; external_id?: string } = {};
+      if (label) createBody.label = label;
+      if (externalId) createBody.external_id = externalId;
       const r = await fetch(`${this.apiBase}/sessions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        // Persist a custom label (e.g. host name from an incident handoff) so it
-        // survives reloads — otherwise the backend generates a generic "Session N".
-        body: JSON.stringify(label ? { label } : {}),
+        body: JSON.stringify(createBody),
       });
       if (!r.ok) { console.error('Session creation failed:', r.status); return; }
       const session: { session_id: string; label: string } = await r.json();
@@ -520,7 +525,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
       this.sessions.update(ss => {
         // Prevent duplicate entries if the session was somehow already added
         if (ss.some(s => s.session_id === session.session_id)) return ss;
-        return [...ss, { ...session, label: displayLabel, msg_count: 0, messages: [] }];
+        return [...ss, { ...session, label: displayLabel, msg_count: 0, messages: [], external_id: externalId }];
       });
       this.activeTabId.set(session.session_id);
       this.open();
