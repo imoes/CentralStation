@@ -272,7 +272,8 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
   `,
   styles: [`
     :host {
-      display: block;
+      display: flex;
+      flex-direction: column;
       height: 100vh;
       overflow: hidden;
       background: #000;
@@ -293,14 +294,13 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
       gap: 10px;
       padding: 0 0 0 4px;
       height: 32px;
+      flex-shrink: 0;
     }
     .cap-bar.bottom {
-      position: fixed;
-      bottom: 0; left: 0; right: 0;
       background: #FF9933;
-      z-index: 100;
       height: 28px;
       font-size: 11px;
+      flex-shrink: 0;
     }
     .cap-tl { width: 32px; height: 32px; background: #000; border-radius: 0 0 0 0; flex-shrink: 0; }
     .cap-tr { width: 20px; height: 32px; background: #000; flex-shrink: 0; }
@@ -334,9 +334,10 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
 
     /* ── Body ── */
     .cockpit-body {
-      height: calc(100vh - 32px);
+      flex: 1;
+      min-height: 0;          /* allow the flex child to shrink so overflow-y works */
       overflow-y: auto;
-      padding: 12px 16px 40px;
+      padding: 12px 16px 16px;
       display: flex;
       flex-direction: column;
       gap: 12px;
