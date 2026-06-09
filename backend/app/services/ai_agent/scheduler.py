@@ -159,20 +159,22 @@ async def run_score_housekeeping() -> None:
 async def run_feed_housekeeping() -> None:
     """Delete feed items older than per-source retention (from global_settings)."""
     from app.core.database import AsyncSessionLocal
-    from app.services.feed_index import delete_old_items, ALL_SOURCES
+    from app.services.feed_index import delete_old_items, delete_old_alerts_pg, ALL_SOURCES
     from app.services.settings import get_all_settings
 
     async with AsyncSessionLocal() as db:
         s = await get_all_settings(db)
+        total_os = 0
+        total_pg = 0
+        for source in ALL_SOURCES:
+            days = int(s.get(f"feed.retention.{source}_days") or 90)
+            deleted_os = await delete_old_items(source, days)
+            deleted_pg = await delete_old_alerts_pg(source, days, db)
+            total_os += deleted_os
+            total_pg += deleted_pg
 
-    total = 0
-    for source in ALL_SOURCES:
-        days = int(s.get(f"feed.retention.{source}_days") or 90)
-        deleted = await delete_old_items(source, days)
-        total += deleted
-
-    if total:
-        logger.info("Feed housekeeping: removed %d old items total", total)
+    if total_os or total_pg:
+        logger.info("Feed housekeeping: removed %d OpenSearch + %d PostgreSQL old items", total_os, total_pg)
 
 
 async def run_incident_housekeeping() -> None:

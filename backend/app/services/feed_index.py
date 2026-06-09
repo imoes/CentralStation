@@ -658,6 +658,27 @@ async def delete_old_items(source: str, retention_days: int) -> int:
         return 0
 
 
+async def delete_old_alerts_pg(source: str, retention_days: int, db: Any) -> int:
+    """Delete alerts older than retention_days for the given source from PostgreSQL."""
+    if retention_days <= 0:
+        return 0
+    from sqlalchemy import delete as sa_delete
+    from app.models.alert import Alert
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    try:
+        result = await db.execute(
+            sa_delete(Alert).where(Alert.source == source, Alert.created_at < cutoff)
+        )
+        await db.commit()
+        deleted = result.rowcount
+        if deleted:
+            log.info("Feed housekeeping PG: deleted %d alerts from %s (>%d days)", deleted, source, retention_days)
+        return deleted
+    except Exception as e:
+        log.warning("PostgreSQL alert cleanup failed for %s: %s", source, e)
+        return 0
+
+
 async def get_hosts_metadata(hostnames: list[str]) -> dict[str, dict]:
     """Fetch the latest CheckMK metadata for a list of hostnames from OpenSearch.
 
