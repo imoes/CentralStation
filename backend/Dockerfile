@@ -13,4 +13,4 @@ RUN pip install --no-cache-dir --proxy http://proxy.ippen.media:80 -r requiremen
 COPY backend/ .
 COPY README.md .
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "python -m alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
