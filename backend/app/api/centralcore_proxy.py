@@ -49,24 +49,36 @@ _ConsoleEnabled = Depends(_require_console)
 
 # ── Session CRUD ───────────────────────────────────────────────────
 
+class _CreateSessionBody(BaseModel):
+    # Optional custom label (e.g. host name from an incident handoff). When omitted
+    # the backend generates a sequential "Session N" label.
+    label: str | None = None
+
+
 @router.post("/sessions", status_code=201)
 async def create_session(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    body: _CreateSessionBody = _CreateSessionBody(),
     _: None = _ConsoleEnabled,
 ):
     """Create a new Hermes session, persist metadata in PostgreSQL."""
-    from app.services.settings import get_active_llm_config
+    from app.services.settings import get_active_llm_config, get_searxng_config
     try:
         llm = await get_active_llm_config(db)
+        searxng = await get_searxng_config(db)
         llm_payload = {
             "llm_base_url": llm.base_url or None,
             "llm_model": llm.model or None,
             "llm_api_key": llm.api_key or None,
             "llm_api_mode": llm.api_mode or "chat_completions",
+            "searxng_url": searxng.base_url if searxng.is_configured else None,
+            "llm_timeout_seconds": llm.timeout_seconds or None,
         }
-        log.info("Injecting LLM config for new session: model=%s mode=%s",
-                 llm.model or "(not set)", llm.api_mode)
+        log.info("Injecting LLM config for new session: model=%s mode=%s searxng=%s timeout=%ss",
+                 llm.model or "(not set)", llm.api_mode,
+                 searxng.base_url if searxng.is_configured else "(none)",
+                 llm.timeout_seconds or "default")
     except Exception as exc:
         log.warning("Could not load LLM config, using CentralCore defaults: %s", exc)
         llm_payload = {}
@@ -77,13 +89,16 @@ async def create_session(
     data = r.json()
     sid = data["session_id"]
 
-    # Generate label from PostgreSQL session count — centralcore uses its in-memory counter
-    # which resets to 1 after every container restart, causing duplicate "Session 1" labels.
-    count_result = await db.execute(
-        select(func.count(ComputerSession.id)).where(ComputerSession.user_id == user.id)
-    )
-    next_num = (count_result.scalar() or 0) + 1
-    label = f"Session {next_num}"
+    # Use the caller's custom label (handoff host name) when provided. Otherwise
+    # generate a label from the PostgreSQL session count — centralcore's in-memory
+    # counter resets to 1 after every restart, causing duplicate "Session 1" labels.
+    label = (body.label or "").strip()
+    if not label:
+        count_result = await db.execute(
+            select(func.count(ComputerSession.id)).where(ComputerSession.user_id == user.id)
+        )
+        next_num = (count_result.scalar() or 0) + 1
+        label = f"Session {next_num}"
 
     db.add(ComputerSession(id=sid, user_id=user.id, label=label))
     await db.commit()
@@ -157,8 +172,29 @@ async def send_message(
     db: Annotated[AsyncSession, Depends(get_db)],
     _: None = _ConsoleEnabled,
 ):
+    import json as _json
     body = await request.body()
     log.debug("proxy message → centralcore session %s", sid[:8])
+
+    # Inject active LLM config into every message so centralcore can use it
+    # when restoring a session after a container restart (env-var defaults are
+    # not configured in the centralcore container).
+    try:
+        from app.services.settings import get_active_llm_config, get_searxng_config
+        llm = await get_active_llm_config(db)
+        searxng = await get_searxng_config(db)
+        body_data = _json.loads(body)
+        body_data.update({
+            "llm_base_url": llm.base_url or None,
+            "llm_model": llm.model or None,
+            "llm_api_key": llm.api_key or None,
+            "llm_api_mode": llm.api_mode or "chat_completions",
+            "searxng_url": searxng.base_url if searxng.is_configured else None,
+            "llm_timeout_seconds": llm.timeout_seconds or None,
+        })
+        body = _json.dumps(body_data).encode()
+    except Exception as exc:
+        log.debug("LLM config inject for message failed (non-fatal): %s", exc)
 
     async def stream_gen():
         async with httpx.AsyncClient(timeout=None) as client:
