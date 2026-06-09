@@ -1010,6 +1010,21 @@ async def computer_resolve_alert(
     except Exception as _tag_exc:
         log.warning("computer-resolve: OpenSearch tagging failed: %s", _tag_exc)
 
+    # Persist resolved state on the matching Computer session(s) so the
+    # "✓ GELÖST" pill survives reloads and container restarts.
+    try:
+        from sqlalchemy import update as sa_update
+        from app.models.workflow import ComputerSession
+        await db.execute(
+            sa_update(ComputerSession)
+            .where(ComputerSession.external_id == external_id,
+                   ComputerSession.user_id == user.id)
+            .values(resolved=True)
+        )
+        await db.commit()
+    except Exception as _res_exc:
+        log.warning("computer-resolve: marking session resolved failed: %s", _res_exc)
+
     log.info("computer-resolve: Lernkommentar gespeichert für %s (%d Zeichen)", external_id[:24], len(summary))
     return {"ok": True, "comment": comment_body}
 
