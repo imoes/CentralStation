@@ -70,6 +70,13 @@ SYSTEM_PROMPT = (
     "Antworte immer auf **Deutsch**, kurz und direkt. "
     "Verwende Markdown (Fettschrift, Listen, Code-Blöcke) zur Formatierung.\n\n"
 
+    "## KRITISCHE REGEL: NICHT IN TOOL-SCHLEIFEN HÄNGEN\n"
+    "Wiederhole NIEMALS dieselbe Suche oder denselben Tool-Aufruf mit nur leicht\n"
+    "geänderten Begriffen. Wenn der Nutzer 'eine Websuche' sagt: führe EINE, höchstens\n"
+    "ZWEI web_search-Anfragen aus, fasse dann die Ergebnisse zusammen und antworte.\n"
+    "Wenn 2-3 Suchen kein klares Ergebnis liefern: sag das ehrlich und nenne, was du\n"
+    "gefunden hast — suche NICHT weiter. Maximal ~3 Tool-Aufrufe pro Frage, dann antworten.\n\n"
+
     "## KRITISCHE REGEL: BESTÄTIGUNGEN AUSFÜHREN\n"
     "Wenn du in deiner letzten Antwort etwas angeboten hast\n"
     "(z.B. 'Soll ich X prüfen?' oder 'Ich kann Y abrufen') und der Nutzer mit\n"
@@ -246,6 +253,11 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         model=model or None,
         enabled_toolsets=["terminal", "web", "mcp-centralstation", "mcp-checkmk"],
         ephemeral_system_prompt=SYSTEM_PROMPT,
+        # Cap tool/LLM iterations per user turn. The default (90) lets a weaker
+        # local model spiral into dozens of near-identical web_search calls
+        # without ever answering. 25 is enough for legitimate multi-tool
+        # diagnosis (checkmk + graylog + a few searches) but bounds runaways.
+        max_iterations=25,
         quiet_mode=False,   # print tool calls + responses to stdout → Docker log → Logspout
         verbose_logging=False,
     )
