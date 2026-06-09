@@ -20,8 +20,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import delete, update
+
 from app.api.deps import CurrentUser, get_db
-from app.models.workflow import UserPreference
+from app.models.workflow import ComputerSession, UserPreference
 
 router = APIRouter(prefix="/computer", tags=["computer"])
 log = logging.getLogger(__name__)
@@ -47,9 +49,13 @@ _ConsoleEnabled = Depends(_require_console)
 
 # ── Session CRUD ───────────────────────────────────────────────────
 
-@router.post("/sessions", status_code=201, dependencies=[_ConsoleEnabled])
-async def create_session(db: Annotated[AsyncSession, Depends(get_db)]):
-    """Create a new Hermes session, injecting the active CentralStation LLM config."""
+@router.post("/sessions", status_code=201)
+async def create_session(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: None = _ConsoleEnabled,
+):
+    """Create a new Hermes session, persist metadata in PostgreSQL."""
     from app.services.settings import get_active_llm_config
     try:
         llm = await get_active_llm_config(db)
@@ -68,23 +74,66 @@ async def create_session(db: Annotated[AsyncSession, Depends(get_db)]):
     async with httpx.AsyncClient(timeout=90.0) as client:
         r = await client.post(f"{CENTRALCORE_URL}/sessions", json=llm_payload)
     _check(r)
-    return r.json()
+    data = r.json()
+    sid = data["session_id"]
+
+    # Persist session metadata in PostgreSQL so it survives page reloads.
+    db.add(ComputerSession(
+        id=sid,
+        user_id=user.id,
+        label=data.get("label", "Session"),
+    ))
+    await db.commit()
+    log.info("Computer session %s created for user %s", sid[:8], user.id)
+    return data
 
 
-@router.get("/sessions", dependencies=[_ConsoleEnabled])
-async def list_sessions():
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(f"{CENTRALCORE_URL}/sessions")
-    _check(r)
-    return r.json()
+@router.get("/sessions")
+async def list_sessions(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: None = _ConsoleEnabled,
+):
+    """Return sessions from PostgreSQL (survives centralcore restarts)."""
+    rows = (await db.execute(
+        select(ComputerSession)
+        .where(ComputerSession.user_id == user.id)
+        .order_by(ComputerSession.created_at.asc())
+    )).scalars().all()
+    return [
+        {
+            "session_id": r.id,
+            "label": r.label,
+            "msg_count": r.msg_count,
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
 
 
-@router.delete("/sessions/{sid}", dependencies=[_ConsoleEnabled])
-async def delete_session(sid: str):
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.delete(f"{CENTRALCORE_URL}/sessions/{sid}")
-    _check(r)
-    return r.json()
+@router.delete("/sessions/{sid}")
+async def delete_session(
+    sid: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: None = _ConsoleEnabled,
+):
+    # Delete from centralcore (best-effort — may already be gone after restart)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.delete(f"{CENTRALCORE_URL}/sessions/{sid}")
+    except Exception as exc:
+        log.debug("centralcore delete %s: %s (ignored)", sid[:8], exc)
+
+    # Delete from PostgreSQL (authoritative)
+    await db.execute(
+        delete(ComputerSession).where(
+            ComputerSession.id == sid,
+            ComputerSession.user_id == user.id,
+        )
+    )
+    await db.commit()
+    return {"ok": True}
 
 
 @router.get("/sessions/{sid}/history", dependencies=[_ConsoleEnabled])
@@ -97,10 +146,15 @@ async def get_history(sid: str):
 
 # ── Message → SSE stream (pass-through) ───────────────────────────
 
-@router.post("/sessions/{sid}/message", dependencies=[_ConsoleEnabled])
-async def send_message(sid: str, request: Request):
+@router.post("/sessions/{sid}/message")
+async def send_message(
+    sid: str,
+    request: Request,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: None = _ConsoleEnabled,
+):
     body = await request.body()
-
     log.debug("proxy message → centralcore session %s", sid[:8])
 
     async def stream_gen():
@@ -115,9 +169,33 @@ async def send_message(sid: str, request: Request):
                     err = await resp.aread()
                     log.warning("centralcore %s for session %s: %s",
                                 resp.status_code, sid[:8], err[:200])
-                    resp.raise_for_status()
-                async for chunk in resp.aiter_bytes():
-                    yield chunk
+                    msg = "Session nicht mehr vorhanden — bitte neue Session starten." if resp.status_code == 404 \
+                        else f"CentralCore-Fehler {resp.status_code}"
+                    import json as _json
+                    yield f'data: {_json.dumps({"type": "error", "text": msg})}\n\n'.encode()
+                    return
+                try:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+                except httpx.RemoteProtocolError:
+                    # Hermes closes the SSE stream without a proper chunked-transfer
+                    # terminator when the response is complete — this is expected.
+                    pass
+
+    # Increment msg_count in PostgreSQL (fire-and-forget, don't block SSE).
+    async def _bump_msg_count() -> None:
+        try:
+            await db.execute(
+                update(ComputerSession)
+                .where(ComputerSession.id == sid, ComputerSession.user_id == user.id)
+                .values(msg_count=ComputerSession.msg_count + 1)
+            )
+            await db.commit()
+        except Exception as exc:
+            log.debug("msg_count bump for %s failed: %s", sid[:8], exc)
+
+    import asyncio
+    asyncio.ensure_future(_bump_msg_count())
 
     return StreamingResponse(
         stream_gen(),
