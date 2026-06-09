@@ -474,11 +474,13 @@ export class ComputerComponent implements OnInit, OnDestroy {
       const existingSid = this.hostSessions.get(hostKey);
       if (existingSid && this.sessions().some(s => s.session_id === existingSid)) {
         this.activeTabId.set(existingSid);
-        // Refresh the external_id and reset resolved state for the new alert
+        // Re-point the reused session at the new alert — in memory AND persisted,
+        // so the "✓ GELÖST" button shows for the new alert and survives reload.
         if (externalId) {
           this.sessions.update(ss => ss.map(s =>
             s.session_id === existingSid ? { ...s, external_id: externalId, resolved: false } : s
           ));
+          this.persistSessionAlert(existingSid, externalId);
         }
         this.inputText = prompt;
         await this.send();
@@ -498,6 +500,23 @@ export class ComputerComponent implements OnInit, OnDestroy {
   }
 
   // ── Session management ────────────────────────────────────────────
+
+  /** Persist a (possibly changed) alert external_id on a reused session. */
+  private async persistSessionAlert(sid: string, externalId: string): Promise<void> {
+    const token = this.auth.getAccessToken();
+    try {
+      await fetch(`${this.apiBase}/sessions/${sid}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ external_id: externalId }),
+      });
+    } catch (err) {
+      console.debug('persistSessionAlert failed:', err);
+    }
+  }
 
   async newSession(label?: string, externalId?: string): Promise<void> {
     // Guard against concurrent calls (e.g. double-click or race between _handleHandoff + send())
