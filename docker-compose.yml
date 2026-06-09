@@ -103,7 +103,10 @@ services:
     volumes:
       # Project-local .hermes dir (session state, skills); config.yaml is
       # overlaid below so the container uses llamacpp03 as its LLM provider.
-      - ${PWD}/.hermes:/root/.hermes
+      # Relative path (not ${PWD}) so it always resolves to the compose-file
+      # directory — ${PWD} created a stray root-owned frontend/.hermes when
+      # compose was invoked from a subdirectory.
+      - ./.hermes:/root/.hermes
       - ./centralcore/hermes_config.yaml:/root/.hermes/config.yaml:ro
       # SSH config from the project directory — no system-wide changes needed
       - ./centralcore/ssh_config:/root/.ssh_project_config:ro
