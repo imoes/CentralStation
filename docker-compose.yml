@@ -101,19 +101,16 @@ services:
       HTTPS_PROXY: http://proxy.ippen.media:80
       NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
     volumes:
-      # ~/.hermes holds auth tokens, session state and custom skills
-      # Custom skills → ${PWD}/.hermes/skills/<name>/SKILL.md
-      # Built-in Hermes skills stay in /opt/hermes/skills/ (baked in)
+      # Project-local .hermes dir (session state, skills); config.yaml is
+      # overlaid below so the container uses llamacpp03 as its LLM provider.
       - ${PWD}/.hermes:/root/.hermes
       - ./centralcore/hermes_config.yaml:/root/.hermes/config.yaml:ro
       # SSH config from the project directory — no system-wide changes needed
       - ./centralcore/ssh_config:/root/.ssh_project_config:ro
       # SSH keys from the host (read-only)
       - ${HOME}/.ssh:/root/.ssh_host:ro
-      # Claude OAuth credentials — uncomment to enable claude-oauth provider
-      # Option A: mount ~/.claude/ directory (from: claude auth login --claudeai)
-      # - ${HOME}/.claude:/root/.claude:ro
-      # Option B: set CLAUDE_CODE_OAUTH_TOKEN in .env (from: claude setup-token)
+      # Claude & OpenAI OAuth tokens are stored in the DB and injected per session
+      # via the centralcore proxy — no credential file mount needed.
     ports:
       - "127.0.0.1:8001:8001"
     cap_add:

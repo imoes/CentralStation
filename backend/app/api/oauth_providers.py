@@ -19,6 +19,7 @@ from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, RequireAdmin
@@ -290,4 +291,237 @@ async def get_codex_access_token(db: AsyncSession) -> str | None:
         except Exception as e:
             log.warning("codex auto-refresh failed: %s", e)
             return None
+    return access
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Claude OAuth (Authorization Code + PKCE — same flow as `claude setup-token`)
+# ══════════════════════════════════════════════════════════════════════════════
+import hashlib
+import secrets
+
+CLAUDE_CLIENT_ID    = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+CLAUDE_AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
+CLAUDE_TOKEN_URL     = "https://console.anthropic.com/v1/oauth/token"
+CLAUDE_REDIRECT_URI  = "https://console.anthropic.com/oauth/code/callback"
+CLAUDE_SCOPES        = "org:create_api_key user:profile user:inference"
+
+# session_id → {verifier, state, started_at}
+_claude_auth_sessions: dict[str, dict] = {}
+
+
+def _pkce_pair() -> tuple[str, str]:
+    """Return (code_verifier, code_challenge) for PKCE S256."""
+    verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+    digest = hashlib.sha256(verifier.encode()).digest()
+    challenge = base64.urlsafe_b64encode(digest).decode().rstrip("=")
+    return verifier, challenge
+
+
+async def _save_claude_tokens(
+    db: AsyncSession, access_token: str, refresh_token: str, expires_at: str | None
+) -> None:
+    from app.services.settings import set_secret_setting, set_setting
+    await set_secret_setting(db, "llm.claude_access_token", access_token)
+    await set_secret_setting(db, "llm.claude_refresh_token", refresh_token)
+    await set_setting(db, "llm.claude_expires_at", expires_at or "")
+    await set_setting(db, "llm.claude_authenticated_at", datetime.now(timezone.utc).isoformat())
+    await db.commit()
+
+
+async def _load_claude_tokens(db: AsyncSession) -> tuple[str | None, str | None]:
+    from app.services.settings import get_setting
+    access  = await get_setting(db, "llm.claude_access_token")
+    refresh = await get_setting(db, "llm.claude_refresh_token")
+    return access, refresh
+
+
+async def _refresh_claude_token(refresh_token: str) -> tuple[str, str, int]:
+    """Exchange a refresh token for a new access+refresh pair. Returns (access, refresh, expires_in)."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(
+            CLAUDE_TOKEN_URL,
+            json={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": CLAUDE_CLIENT_ID,
+            },
+            headers={"Content-Type": "application/json"},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(401, f"Claude token refresh failed: HTTP {resp.status_code}")
+    data = resp.json()
+    new_access  = data.get("access_token", "")
+    new_refresh = data.get("refresh_token") or refresh_token
+    expires_in  = int(data.get("expires_in", 0))
+    if not new_access:
+        raise HTTPException(401, "Claude refresh did not return access_token")
+    return new_access, new_refresh, expires_in
+
+
+def _claude_expires_at_iso(expires_in: int) -> str | None:
+    if not expires_in:
+        return None
+    return datetime.fromtimestamp(time.time() + expires_in, tz=timezone.utc).isoformat()
+
+
+@router.post("/claude-oauth/start", dependencies=[RequireAdmin])
+async def claude_start():
+    """Step 1: Start the PKCE authorization flow.
+    Returns an authorize_url to open in the browser. After authorizing, the user
+    receives a code to paste back via /claude-oauth/complete.
+    """
+    verifier, challenge = _pkce_pair()
+    state = secrets.token_urlsafe(24)
+    session_id = str(uuid.uuid4())
+    _claude_auth_sessions[session_id] = {
+        "verifier": verifier,
+        "state": state,
+        "started_at": time.monotonic(),
+    }
+    # claude.ai displays the authorization code for manual copy when code=true.
+    params = {
+        "code": "true",
+        "client_id": CLAUDE_CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": CLAUDE_REDIRECT_URI,
+        "scope": CLAUDE_SCOPES,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "state": state,
+    }
+    from urllib.parse import urlencode
+    authorize_url = f"{CLAUDE_AUTHORIZE_URL}?{urlencode(params)}"
+    return {
+        "session_id": session_id,
+        "authorize_url": authorize_url,
+        "expires_in_minutes": 15,
+    }
+
+
+class _ClaudeCompleteBody(BaseModel):
+    session_id: str
+    code: str
+
+
+@router.post("/claude-oauth/complete", dependencies=[RequireAdmin])
+async def claude_complete(
+    body: _ClaudeCompleteBody,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Step 2: Exchange the pasted authorization code for tokens."""
+    session = _claude_auth_sessions.get(body.session_id)
+    if not session:
+        raise HTTPException(404, "Auth-Session nicht gefunden oder abgelaufen")
+
+    # claude.ai returns the code in the form "<code>#<state>"; accept either.
+    raw = body.code.strip()
+    code_part = raw
+    state_part = session["state"]
+    if "#" in raw:
+        code_part, state_part = raw.split("#", 1)
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        token_resp = await client.post(
+            CLAUDE_TOKEN_URL,
+            json={
+                "grant_type":    "authorization_code",
+                "code":          code_part,
+                "state":         state_part,
+                "client_id":     CLAUDE_CLIENT_ID,
+                "redirect_uri":  CLAUDE_REDIRECT_URI,
+                "code_verifier": session["verifier"],
+            },
+            headers={"Content-Type": "application/json"},
+        )
+
+    if token_resp.status_code != 200:
+        raise HTTPException(502, f"Claude Token-Austausch fehlgeschlagen: HTTP {token_resp.status_code} {token_resp.text[:200]}")
+
+    tokens        = token_resp.json()
+    access_token  = tokens.get("access_token", "")
+    refresh_token = tokens.get("refresh_token", "")
+    expires_in    = int(tokens.get("expires_in", 0))
+
+    if not access_token:
+        raise HTTPException(502, "Kein access_token in Claude Token-Antwort")
+
+    await _save_claude_tokens(db, access_token, refresh_token, _claude_expires_at_iso(expires_in))
+    _claude_auth_sessions.pop(body.session_id, None)
+    return {"status": "authorized"}
+
+
+@router.get("/claude-oauth/status", dependencies=[RequireAdmin])
+async def claude_oauth_status(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return current Claude auth status, auto-refreshing if near expiry."""
+    from app.services.settings import get_setting
+    access, refresh = await _load_claude_tokens(db)
+    if not access:
+        return {"authenticated": False, "message": "Nicht eingeloggt"}
+
+    expires_at = await get_setting(db, "llm.claude_expires_at")
+    # Refresh if expired or near-expiry
+    needs_refresh = False
+    if expires_at:
+        try:
+            exp_dt = datetime.fromisoformat(expires_at)
+            if time.time() + CODEX_REFRESH_SKEW >= exp_dt.timestamp():
+                needs_refresh = True
+        except Exception:
+            pass
+
+    msg = "Eingeloggt"
+    if needs_refresh and refresh:
+        try:
+            new_access, new_refresh, expires_in = await _refresh_claude_token(refresh)
+            await _save_claude_tokens(db, new_access, new_refresh, _claude_expires_at_iso(expires_in))
+            expires_at = _claude_expires_at_iso(expires_in)
+            msg = "Token automatisch erneuert"
+        except Exception as e:
+            log.warning("claude token refresh failed: %s", e)
+            return {"authenticated": False, "message": "Token-Erneuerung fehlgeschlagen — bitte neu einloggen"}
+
+    auth_at = await get_setting(db, "llm.claude_authenticated_at")
+    return {
+        "authenticated": True,
+        "message": msg,
+        "expires_at": expires_at or None,
+        "authenticated_at": auth_at,
+    }
+
+
+@router.delete("/claude-oauth/logout", dependencies=[RequireAdmin])
+async def claude_logout(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Remove stored Claude tokens."""
+    from app.services.settings import set_secret_setting, set_setting
+    await set_secret_setting(db, "llm.claude_access_token", None)
+    await set_secret_setting(db, "llm.claude_refresh_token", None)
+    await set_setting(db, "llm.claude_expires_at", None)
+    await set_setting(db, "llm.claude_authenticated_at", None)
+    await db.commit()
+    return {"ok": True}
+
+
+async def get_claude_access_token(db: AsyncSession) -> str | None:
+    """Return a valid Claude access token, refreshing if needed. None if not authenticated."""
+    from app.services.settings import get_setting
+    access, refresh = await _load_claude_tokens(db)
+    if not access:
+        return None
+    expires_at = await get_setting(db, "llm.claude_expires_at")
+    if expires_at and refresh:
+        try:
+            exp_dt = datetime.fromisoformat(expires_at)
+            if time.time() + CODEX_REFRESH_SKEW >= exp_dt.timestamp():
+                new_access, new_refresh, expires_in = await _refresh_claude_token(refresh)
+                await _save_claude_tokens(db, new_access, new_refresh, _claude_expires_at_iso(expires_in))
+                return new_access
+        except HTTPException:
+            return None
+        except Exception as e:
+            log.warning("claude auto-refresh failed: %s", e)
     return access

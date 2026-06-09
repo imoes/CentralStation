@@ -19,6 +19,10 @@ class LLMConfig:
 
     @property
     def is_configured(self) -> bool:
+        # anthropic_messages (Claude OAuth) uses Anthropic's default endpoint —
+        # no base_url required, just a model + OAuth token.
+        if self.api_mode == "anthropic_messages":
+            return bool(self.model and self.api_key)
         return bool(self.base_url and self.model)
 
 
@@ -63,7 +67,7 @@ class SearXNGConfig:
 class AgentConfig:
     interval_minutes: int = 10
     aggregation_interval_minutes: int = 2
-    auto_jira: bool = True
+    auto_jira: bool = False
     auto_enrich: bool = True
     rag_enabled: bool = True
     jira_severity_threshold: str = "critical"
@@ -186,8 +190,21 @@ async def get_active_llm_config(db: AsyncSession) -> LLMConfig:
                 api_key=token,
                 timeout_seconds=int(s.get("llm.codex_timeout_seconds") or 60),
                 api_mode="codex_responses",
-                # Follow the configured thinking_mode (default off → low reasoning,
-                # fast). The generative dashboard overrides this to True at call time.
+                thinking_mode=s.get("llm.thinking_mode", "false") == "true",
+            )
+
+    if provider == "claude-oauth":
+        # OAuth access token (sk-ant-oat...) stored in DB via the browser PKCE flow.
+        # Passed as api_key with anthropic_messages mode — Hermes recognises the
+        # sk-ant- prefix as an OAuth Bearer token (not an x-api-key).
+        from app.api.oauth_providers import get_claude_access_token
+        token = await get_claude_access_token(db)
+        if token:
+            return LLMConfig(
+                base_url="",
+                model=s.get("llm.claude_model") or "claude-opus-4-8",
+                api_key=token,
+                api_mode="anthropic_messages",
                 thinking_mode=s.get("llm.thinking_mode", "false") == "true",
             )
 
@@ -230,7 +247,7 @@ async def get_agent_config(db: AsyncSession) -> AgentConfig:
     return AgentConfig(
         interval_minutes=int(s.get("agent.interval_minutes") or 10),
         aggregation_interval_minutes=int(s.get("agent.aggregation_interval_minutes") or 2),
-        auto_jira=s.get("agent.auto_jira", "true") == "true",
+        auto_jira=s.get("agent.auto_jira", "false") == "true",
         auto_enrich=s.get("agent.auto_enrich", "true") == "true",
         rag_enabled=s.get("agent.rag_enabled", "true") == "true",
         jira_severity_threshold=s.get("agent.jira_severity_threshold") or "critical",

@@ -544,7 +544,9 @@ async def act(state: dict, db: Any) -> dict:
                         priority=priority_map.get(rec.priority, "Hoch"),
                         labels=["CentralStation", "AI-generated"],
                     )
-                    tickets_created.append(issue.get("key", "?"))
+                    key = issue.get("key", "?")
+                    tickets_created.append(key)
+                    log.info("act: Jira ticket created: %s — %s", key, title[:80])
                     # Adaptive learning: this alert pattern led to a ticket → boost
                     try:
                         from app.services.alert_score_learner import record_jira_created
