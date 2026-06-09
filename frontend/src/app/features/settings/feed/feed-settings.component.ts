@@ -19,8 +19,10 @@ interface RetentionConfig {
   checkmk_days: number;
   graylog_days: number;
   wazuh_days: number;
+  icinga2_days: number;
   o365_days: number;
   teams_days: number;
+  coroot_days: number;
 }
 
 interface FeedSearch {
@@ -38,8 +40,10 @@ const SOURCE_META = [
   { key: 'checkmk', label: 'CheckMK',  icon: 'monitor_heart', color: '#1565c0', desc: 'Monitoring-Alerts' },
   { key: 'graylog', label: 'Graylog',  icon: 'article',       color: '#6a1b9a', desc: 'Log-Einträge' },
   { key: 'wazuh',   label: 'Wazuh',    icon: 'security',      color: '#b71c1c', desc: 'Security-Alerts' },
+  { key: 'icinga2', label: 'Icinga2',  icon: 'monitor_heart', color: '#06A000', desc: 'Monitoring-Alerts' },
   { key: 'o365',    label: 'E-Mail',   icon: 'mail',          color: '#e65100', desc: 'O365-Nachrichten' },
   { key: 'teams',   label: 'Teams',    icon: 'groups',        color: '#0f4c96', desc: 'Teams-Nachrichten' },
+  { key: 'coroot',  label: 'Coroot',   icon: 'insights',      color: '#00897b', desc: 'APM & Incidents' },
 ];
 
 @Component({
@@ -286,7 +290,7 @@ export class FeedSettingsComponent implements OnInit {
   saving = signal(false);
   retention: Record<string, number> = {
     checkmk_days: 90, graylog_days: 90, wazuh_days: 90,
-    o365_days: 90, teams_days: 90,
+    icinga2_days: 90, o365_days: 90, teams_days: 90, coroot_days: 90,
   };
   searches = signal<FeedSearch[]>([]);
   previewing = signal<string | null>(null);
