@@ -309,3 +309,24 @@ class IncidentMember(Base):
     added_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+class ComputerSession(Base):
+    """Persists Computer Console (Hermes) session metadata per user.
+
+    The actual conversation history is stored in Hermes's own state.db
+    (${PWD}/.hermes/state.db). This table only holds the metadata needed
+    to list and restore sessions after page reload.
+    id = the Hermes session UUID (used as session_id in AIAgent).
+    """
+    __tablename__ = "computer_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)  # Hermes session UUID
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    label: Mapped[str] = mapped_column(String(100), default="Session")
+    msg_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )

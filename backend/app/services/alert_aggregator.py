@@ -349,11 +349,39 @@ async def collect_icinga2(connector: ConnectorConfig, time_range_minutes: int = 
         return []
 
 
+async def collect_coroot(connector: ConnectorConfig, time_range_minutes: int = 60) -> list[dict]:
+    """Collect active (unresolved) incidents from Coroot."""
+    from app.services.connectors.coroot import CorootConnector
+    creds = decrypt_credentials(connector.encrypted_credentials)
+    svc = CorootConnector(base_url=connector.base_url, credentials=creds)
+    base = (connector.base_url or "").rstrip("/")
+    try:
+        items = await svc.get_incidents()
+        return [
+            {
+                "source": "coroot",
+                "severity": i["severity"],
+                "title": i["title"],
+                "body": i.get("body", ""),
+                "external_id": i["external_id"],
+                "external_url": (
+                    f"{base}/p/{i['metadata']['project_id']}/incidents"
+                ) if base else None,
+                "metadata": i.get("metadata", {}),
+            }
+            for i in items
+        ]
+    except Exception as e:
+        log.warning("Coroot collection failed: %s", e)
+        return []
+
+
 COLLECTORS = {
     "checkmk": collect_checkmk,
     "graylog": collect_graylog,
     "wazuh": collect_wazuh,
     "icinga2": collect_icinga2,
+    "coroot": collect_coroot,
 }
 
 

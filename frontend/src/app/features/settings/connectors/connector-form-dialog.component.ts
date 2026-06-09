@@ -1,4 +1,4 @@
-import { Component, Inject, OnInit, OnDestroy, signal, inject } from '@angular/core';
+import { Component, Inject, OnInit, OnDestroy, signal, inject, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
 import { MatDialogModule, MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
@@ -9,12 +9,14 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatIconModule } from '@angular/material/icon';
+import { MatCheckboxModule } from '@angular/material/checkbox';
 import { HttpClient } from '@angular/common/http';
 import { ConnectorService } from '../../../core/services/connector.service';
 import { Connector, ConnectorType } from '../../../core/models/connector.model';
 import { environment } from '../../../../environments/environment';
 
-interface CredField { key: string; label: string; type: 'text' | 'password' | 'textarea'; hint?: string }
+interface CredField { key: string; label: string; type: 'text' | 'password' | 'textarea' | '_hidden'; hint?: string }
+interface CorootProject { id: string; name: string; selected: boolean }
 const PERSONAL_CONNECTOR_TYPES: ConnectorType[] = ['jira', 'jira_sd', 'o365', 'teams'];
 
 const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
@@ -28,6 +30,7 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'prometheus',   label: 'Prometheus' },
   { value: 'netbox',       label: 'NetBox' },
   { value: 'id_generator', label: 'ID-Generator' },
+  { value: 'coroot',       label: 'Coroot (Observability)' },
 ];
 
 const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
@@ -76,6 +79,11 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     { key: 'username', label: 'Benutzername', type: 'text' },
     { key: 'password', label: 'Passwort', type: 'password' },
   ],
+  coroot: [
+    { key: 'email',       label: 'E-Mail',   type: 'text'     },
+    { key: 'password',    label: 'Passwort', type: 'password' },
+    { key: 'project_ids', label: '',         type: '_hidden'  },
+  ],
 };
 
 @Component({
@@ -85,7 +93,7 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     CommonModule, ReactiveFormsModule,
     MatDialogModule, MatFormFieldModule, MatInputModule,
     MatSelectModule, MatButtonModule, MatSlideToggleModule,
-    MatProgressSpinnerModule, MatIconModule,
+    MatProgressSpinnerModule, MatIconModule, MatCheckboxModule,
   ],
   template: `
     <h2 mat-dialog-title>{{ isEdit ? 'Connector bearbeiten' : 'Neuer Connector' }}</h2>
@@ -111,21 +119,60 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
         </mat-form-field>
 
         @for (field of credFields(); track field.key) {
-          <mat-form-field appearance="outline" class="full-width">
-            <mat-label>{{ field.label }}</mat-label>
-            @if (field.type === 'textarea') {
-              <textarea matInput rows="3"
-                        [formControlName]="'cred_' + field.key"
-                        [placeholder]="field.hint ?? ''"></textarea>
-            } @else {
-              <input matInput [type]="field.type"
-                     [formControlName]="'cred_' + field.key"
-                     [placeholder]="isEdit ? '(unverändert lassen = leer)' : ''">
+          @if (field.type !== '_hidden') {
+            <mat-form-field appearance="outline" class="full-width">
+              <mat-label>{{ field.label }}</mat-label>
+              @if (field.type === 'textarea') {
+                <textarea matInput rows="3"
+                          [formControlName]="'cred_' + field.key"
+                          [placeholder]="field.hint ?? ''"></textarea>
+              } @else {
+                <input matInput [type]="field.type"
+                       [formControlName]="'cred_' + field.key"
+                       [placeholder]="isEdit ? '(unverändert lassen = leer)' : ''">
+              }
+              @if (field.hint && field.type !== 'textarea') {
+                <mat-hint>{{ field.hint }}</mat-hint>
+              }
+            </mat-form-field>
+          }
+        }
+
+        <!-- ── Coroot project selector ────────────────────────────── -->
+        @if (isCorootType()) {
+          <div class="coroot-projects-section">
+            <div class="coroot-projects-title">
+              <mat-icon>insights</mat-icon>
+              <span>Projekte auswählen</span>
+            </div>
+            @if (corootProjects().length === 0 && !corootLoadingProjects()) {
+              <p class="coroot-hint">
+                Fülle URL, E-Mail und Passwort aus und klicke auf „Projekte laden".
+                Standard wenn leer: cue-prod.
+              </p>
             }
-            @if (field.hint && field.type !== 'textarea') {
-              <mat-hint>{{ field.hint }}</mat-hint>
+            <button type="button" mat-stroked-button color="primary"
+                    [disabled]="corootLoadingProjects()"
+                    (click)="loadCorootProjects()">
+              @if (corootLoadingProjects()) { <mat-spinner diameter="16"></mat-spinner> }
+              @else { <mat-icon>refresh</mat-icon> }
+              Projekte laden
+            </button>
+            @if (corootProjects().length > 0) {
+              <div class="coroot-projects-list">
+                @for (proj of corootProjects(); track proj.id) {
+                  <mat-checkbox
+                    [checked]="proj.selected"
+                    (change)="toggleCorootProject(proj.id, $event.checked)">
+                    {{ proj.name }}
+                  </mat-checkbox>
+                }
+              </div>
             }
-          </mat-form-field>
+            @if (corootLoadError()) {
+              <p class="coroot-error"><mat-icon>error</mat-icon> {{ corootLoadError() }}</p>
+            }
+          </div>
         }
 
         <mat-slide-toggle formControlName="enabled">Aktiviert</mat-slide-toggle>
@@ -220,6 +267,22 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     .ms-poll-hint { margin: 0; font-size: 12px; color: var(--mat-sys-on-surface-variant); }
     .ms-success { display: flex; align-items: center; gap: 8px; color: #2e7d32; font-size: 13px; }
     .ms-error { display: flex; align-items: center; gap: 8px; color: var(--mat-sys-error); font-size: 13px; }
+
+    .coroot-projects-section {
+      border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: color-mix(in srgb, #00897b 4%, transparent);
+    }
+    .coroot-projects-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+    .coroot-projects-title mat-icon { color: #00897b; font-size: 20px; }
+    .coroot-hint { margin: 0; font-size: 12px; color: var(--mat-sys-on-surface-variant); }
+    .coroot-projects-list { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; }
+    .coroot-error { display: flex; align-items: center; gap: 6px; color: var(--mat-sys-error); font-size: 12px; margin: 0; }
+    .coroot-error mat-icon { font-size: 16px; }
   `],
 })
 export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
@@ -228,6 +291,11 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
   form!: FormGroup;
   saving = signal(false);
   credFields = signal<CredField[]>([]);
+
+  // Coroot project selector state
+  corootProjects = signal<CorootProject[]>([]);
+  corootLoadingProjects = signal(false);
+  corootLoadError = signal('');
 
   // Microsoft Device Code flow state
   private http = inject(HttpClient);
@@ -258,6 +326,57 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
 
   isMicrosoftType(): boolean {
     return ['o365', 'teams'].includes(this.form?.get('type')?.value ?? '');
+  }
+
+  isCorootType(): boolean {
+    return this.form?.get('type')?.value === 'coroot';
+  }
+
+  loadCorootProjects() {
+    const v = this.form.value;
+    const baseUrl = v.base_url?.trim();
+    const email = v.cred_email?.trim();
+    const password = v.cred_password?.trim();
+    if (!baseUrl || !email || !password) {
+      this.corootLoadError.set('Bitte URL, E-Mail und Passwort ausfüllen');
+      return;
+    }
+    this.corootLoadingProjects.set(true);
+    this.corootLoadError.set('');
+    this.http.post<Array<{id: string; name: string}>>(
+      `${environment.apiUrl}/connectors/coroot/projects`,
+      { base_url: baseUrl, email, password },
+    ).subscribe({
+      next: projects => {
+        this.corootLoadingProjects.set(false);
+        const current = this.corootProjects();
+        const selectedIds = current.filter(p => p.selected).map(p => p.id);
+        this.corootProjects.set(projects.map(p => ({
+          id: p.id,
+          name: p.name,
+          selected: selectedIds.length > 0
+            ? selectedIds.includes(p.id)
+            : p.name.toLowerCase() === 'cue-prod',
+        })));
+        this._syncProjectIdsControl();
+      },
+      error: err => {
+        this.corootLoadingProjects.set(false);
+        this.corootLoadError.set(err?.error?.detail ?? 'Verbindung fehlgeschlagen');
+      },
+    });
+  }
+
+  toggleCorootProject(id: string, checked: boolean) {
+    this.corootProjects.update(list =>
+      list.map(p => p.id === id ? { ...p, selected: checked } : p)
+    );
+    this._syncProjectIdsControl();
+  }
+
+  private _syncProjectIdsControl() {
+    const ids = this.corootProjects().filter(p => p.selected).map(p => p.id);
+    this.form.get('cred_project_ids')?.setValue(JSON.stringify(ids));
   }
 
   ngOnDestroy() {
@@ -415,6 +534,7 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
         const lines = (val as string).split('\n').map((s: string) => s.trim()).filter(Boolean);
         if (lines.length) credentials[field.key] = lines;
       } else {
+        // '_hidden' fields (e.g. project_ids) are stored as plain strings
         credentials[field.key] = val;
       }
     }
