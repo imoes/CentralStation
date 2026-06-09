@@ -61,6 +61,10 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showO
     testGroup: 'searxng',
   },
   {
+    title: 'Computer Console (Hermes)',
+    keys: ['computer.show_reasoning'],
+  },
+  {
     title: 'Jira / Tickets',
     keys: ['jira.ticket_project'],
   },
@@ -92,7 +96,10 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showO
 const BOOLEAN_KEYS = new Set([
   'searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled',
   'llm.thinking_mode', 'workflow.web_search', 'agent.score_learning_enabled', 'agent.scoring_enabled',
+  'computer.show_reasoning',
 ]);
+// Boolean settings that default to ON when no DB row exists yet.
+const DEFAULT_ON_KEYS = new Set(['computer.show_reasoning']);
 const SELECT_KEYS: Record<string, string[]> = {
   'llm.api_mode': ['chat_completions', 'responses'],
   'llm.provider': ['custom', 'openai-codex', 'claude-oauth'],
@@ -657,7 +664,12 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
         const item = this.settingsMap.get(key);
         let val: string | boolean = item?.value ?? '';
         if (item?.is_secret && item.value === SECRET_MASK) val = '';
-        if (BOOLEAN_KEYS.has(key)) val = val === 'true' || (typeof val !== 'string' && !!val);
+        if (BOOLEAN_KEYS.has(key)) {
+          // Default-on booleans: when the setting row doesn't exist yet, fall back
+          // to true instead of an unchecked toggle.
+          if (item === undefined && DEFAULT_ON_KEYS.has(key)) val = true;
+          else val = val === 'true' || (typeof val !== 'string' && !!val);
+        }
         controls[key] = [val];
       }
     }
@@ -776,6 +788,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       'agent.jira_severity_threshold':       'Minimum severity for Jira tickets',
       'agent.checkmk_locations':             'CheckMK location filter (comma-separated)',
       'jira.ticket_project':                 'Ticket project (target for created tickets)',
+      'computer.show_reasoning':             'Reasoning in Hermes-Sitzung anzeigen',
     };
     return labels[key] ?? key;
   }
