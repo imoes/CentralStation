@@ -377,14 +377,35 @@ _EXCLUSION_SYSTEM = """Du bist ein OpenSearch/Lucene-Query-Experte.
 Analysiere eine Monitoring-Meldung und erstelle eine OpenSearch Lucene-Ausschluss-Query,
 die ähnliche Meldungen dauerhaft ausblendet — ohne zu viele andere Meldungen zu blockieren.
 
+WICHTIG — Felder:
+- Verwende AUSSCHLIESSLICH die Felder, die im Prompt als "BEFÜLLT" markiert sind.
+- Das Feld `body` ist bei vielen Quellen (z.B. Graylog) leer — steht es nicht als BEFÜLLT im Prompt, DARF es NICHT im Query verwendet werden.
+- BEFÜLLTE Felder stehen im Prompt mit Wert, LEERE Felder stehen als "(leer)".
+
 Regeln:
-- Nutze bevorzugt das `title`-Feld (body ist oft leer bei kurzen Meldungen)
-- Wähle charakteristische Phrasen oder Muster aus dem Titel (z.B. "[php-fpm:access]", "cci:ccitext")
+- Wähle charakteristische Phrasen oder Muster aus dem Haupttextfeld (z.B. "[php-fpm:access]", "cci:ccitext")
 - Bei Container-spezifischen Logs: `metadata.container_name:"name"` mit einschließen wenn sinnvoll
 - Nicht zu breit (NICHT nur source:graylog oder severity:info)
 - Nicht zu eng (kein Timestamp, keine exakten numerischen Werte)
 - Antworte im JSON-Format: {"query": "...", "name": "Kurzer Name (max 60 Zeichen)"}
 - Antworte NUR mit dem JSON, kein Markdown, keine Erklärung"""
+
+
+def _fix_exclusion_query_fields(query: str, item: dict) -> str:
+    """Auto-correct field references in a generated query against the item's actual data.
+
+    Fixes the common case where the LLM uses `body:` when body is null/empty
+    and the message text is actually in `title`, or vice-versa.
+    """
+    body_val = (item.get("body") or "").strip()
+    title_val = (item.get("title") or "").strip()
+    if not body_val and "body:" in query:
+        query = query.replace("body:", "title:")
+        log.debug("exclusion query: body→title rewrite (body is empty)")
+    elif not title_val and "title:" in query:
+        query = query.replace("title:", "body:")
+        log.debug("exclusion query: title→body rewrite (title is empty)")
+    return query
 
 
 async def generate_exclusion_query(
@@ -395,25 +416,29 @@ async def generate_exclusion_query(
     """Generate an OpenSearch exclusion query for a feed item using the LLM."""
     source = item.get("source", "")
     title = item.get("title", "")
-    body = (item.get("body") or "")[:300]
+    body = (item.get("body") or "").strip()
     metadata = item.get("metadata") or {}
     container = metadata.get("container_name", "")
     host = metadata.get("host", "") or metadata.get("agent", "")
 
-    prompt_parts = [f"Source: {source}", f"Title: {title}"]
-    if body and body != title:
-        prompt_parts.append(f"Body: {body[:200]}")
+    # Show the LLM explicitly which fields are populated vs empty
+    prompt_parts = [
+        f"Source: {source}",
+        f"title (BEFÜLLT): {title}" if title else "title: (leer)",
+        f"body (BEFÜLLT): {body[:200]}" if (body and body != title) else "body: (leer)",
+    ]
     if container:
-        prompt_parts.append(f"Container: {container}")
+        prompt_parts.append(f"metadata.container_name (BEFÜLLT): {container}")
     if host:
-        prompt_parts.append(f"Host: {host}")
+        prompt_parts.append(f"metadata.host (BEFÜLLT): {host}")
 
     try:
         raw = await _invoke_llm(llm_config, _EXCLUSION_SYSTEM, "\n".join(prompt_parts), lang=lang)
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         result = json.loads(raw)
-        return {"query": result.get("query", ""), "name": result.get("name", title[:60])}
+        query = _fix_exclusion_query_fields(result.get("query", ""), item)
+        return {"query": query, "name": result.get("name", title[:60])}
     except Exception as e:
         log.warning("generate_exclusion_query failed: %s", e)
         safe = title.replace('"', '\\"')[:100]

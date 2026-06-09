@@ -463,6 +463,19 @@ async def get_exclusion_must_not_clauses(db: Any) -> list[dict]:
         return []
 
 
+async def count_query_matches(query_string: str, index_pattern: str) -> int:
+    """Return the number of OpenSearch documents matching a query_string."""
+    os = get_opensearch()
+    try:
+        resp = await os.count(
+            index=index_pattern,
+            body={"query": {"query_string": {"query": query_string, "lenient": True}}},
+        )
+        return int(resp.get("count", 0))
+    except Exception:
+        return 0
+
+
 async def search(
     sources: list[str] | None = None,
     severity: str | None = None,

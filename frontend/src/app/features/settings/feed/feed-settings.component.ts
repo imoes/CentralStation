@@ -112,7 +112,10 @@ const SOURCE_META = [
               <h3>System-Suchen</h3>
               <p class="hint">
                 Diese gespeicherten OpenSearch-Queries stehen im Feed und in Dashboard-Widgets zur Verfügung.
-                Query-Syntax: Lucene gegen <code>cs-feed-*</code> Indices.
+                Query-Syntax: Lucene gegen <code>cs-feed-*</code> Indices.<br>
+                Verfügbare Felder: <code>title</code>, <code>body</code>, <code>source</code>, <code>severity</code>,
+                <code>status</code>, <code>metadata.container_name</code>, <code>metadata.host</code>.
+                Hinweis: Der Nachrichtentext steht meist in <code>title</code> (nicht <code>body</code>).
               </p>
             </div>
           </div>
