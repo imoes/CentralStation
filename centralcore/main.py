@@ -371,6 +371,7 @@ class MessageBody(BaseModel):
     llm_api_mode: str | None = None
     searxng_url: str | None = None
     llm_timeout_seconds: int | None = None
+    show_reasoning: bool = True
 
 
 def _restore_session(sid: str, cfg: CreateSessionBody | None = None) -> bool:
@@ -498,6 +499,9 @@ async def send_message(sid: str, body: MessageBody):
                     "error": bool(is_error),
                 })
             elif event_type == "reasoning.available":
+                # Gated by the admin setting computer.show_reasoning (default on).
+                if not body.show_reasoning:
+                    return
                 text = cb_args[1] if len(cb_args) > 1 else ""
                 if text:
                     loop.call_soon_threadsafe(q.put_nowait, {
