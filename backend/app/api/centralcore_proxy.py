@@ -138,6 +138,31 @@ async def list_sessions(
     ]
 
 
+class _UpdateSessionBody(BaseModel):
+    # Re-point a reused handoff session at a new alert. Setting external_id
+    # resets resolved so the "✓ GELÖST" button reappears for the new alert.
+    external_id: str | None = None
+
+
+@router.patch("/sessions/{sid}")
+async def update_session(
+    sid: str,
+    body: _UpdateSessionBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: None = _ConsoleEnabled,
+):
+    """Update a session's alert binding (used when a host session is reused
+    for a new alert) so external_id + resolved survive reloads."""
+    await db.execute(
+        update(ComputerSession)
+        .where(ComputerSession.id == sid, ComputerSession.user_id == user.id)
+        .values(external_id=(body.external_id or None), resolved=False)
+    )
+    await db.commit()
+    return {"ok": True, "external_id": body.external_id or None}
+
+
 @router.delete("/sessions/{sid}")
 async def delete_session(
     sid: str,
@@ -189,9 +214,11 @@ async def send_message(
     # when restoring a session after a container restart (env-var defaults are
     # not configured in the centralcore container).
     try:
-        from app.services.settings import get_active_llm_config, get_searxng_config
+        from app.services.settings import get_active_llm_config, get_searxng_config, get_setting
         llm = await get_active_llm_config(db)
         searxng = await get_searxng_config(db)
+        # Admin toggle: show the model's reasoning in the session (default ON).
+        show_reasoning = (await get_setting(db, "computer.show_reasoning") or "true") != "false"
         body_data = _json.loads(body)
         body_data.update({
             "llm_base_url": llm.base_url or None,
@@ -200,6 +227,7 @@ async def send_message(
             "llm_api_mode": llm.api_mode or "chat_completions",
             "searxng_url": searxng.base_url if searxng.is_configured else None,
             "llm_timeout_seconds": llm.timeout_seconds or None,
+            "show_reasoning": show_reasoning,
         })
         body = _json.dumps(body_data).encode()
     except Exception as exc:
