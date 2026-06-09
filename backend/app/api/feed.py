@@ -402,6 +402,29 @@ async def ignore_feed_item(
     index_map = {"graylog": "cs-feed-graylog", "wazuh": "cs-feed-wazuh", "checkmk": "cs-feed-checkmk"}
     index_pattern = index_map.get(source, "cs-feed-*")
 
+    # Validate: ensure the generated query actually matches documents.
+    # If it returns 0 results, try swapping body↔title as a fallback.
+    if query_string:
+        try:
+            count = await feed_index.count_query_matches(query_string, index_pattern)
+            if count == 0:
+                if "body:" in query_string:
+                    alt = query_string.replace("body:", "title:")
+                elif "title:" in query_string:
+                    alt = query_string.replace("title:", "body:")
+                else:
+                    alt = None
+                if alt:
+                    alt_count = await feed_index.count_query_matches(alt, index_pattern)
+                    if alt_count > 0:
+                        log.info(
+                            "ignore: query matched 0 docs, auto-corrected: %r → %r (%d hits)",
+                            query_string, alt, alt_count,
+                        )
+                        query_string = alt
+        except Exception as exc:
+            log.debug("ignore: query validation failed (non-fatal): %s", exc)
+
     search = FeedSearch(
         user_id=None,
         index_pattern=index_pattern,
