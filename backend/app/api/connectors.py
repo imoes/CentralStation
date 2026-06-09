@@ -18,7 +18,7 @@ router = APIRouter(prefix="/connectors", tags=["connectors"])
 
 VALID_TYPES = {
     "checkmk", "graylog", "wazuh", "icinga2", "jira", "jira_sd",
-    "o365", "teams", "prometheus", "netbox", "id_generator",
+    "o365", "teams", "prometheus", "netbox", "id_generator", "coroot",
 }  # keep in sync with get_connector() factory
 USER_MANAGED_TYPES = {"o365", "teams", "jira", "jira_sd"}
 
@@ -381,3 +381,33 @@ async def ms_device_code_complete(
     await db.commit()
 
     return {"status": "authorized", "message": "Microsoft-Konto erfolgreich verbunden"}
+
+
+# ── Coroot project discovery ──────────────────────────────────────────────────
+
+from pydantic import BaseModel as _BaseModel
+
+
+class _CorootDiscoverBody(_BaseModel):
+    base_url: str
+    email: str
+    password: str
+
+
+@router.post("/coroot/projects", dependencies=[RequireAdmin])
+async def discover_coroot_projects(body: _CorootDiscoverBody) -> list[dict]:
+    """Return available Coroot projects for the project-selector dropdown.
+
+    Called by the frontend connector form when the user clicks 'Projekte laden'.
+    """
+    from app.services.connectors.coroot import CorootConnector
+    svc = CorootConnector(
+        base_url=body.base_url,
+        credentials={"email": body.email, "password": body.password},
+    )
+    try:
+        projects = await svc.list_projects()
+        return projects  # [{id, name}, ...]
+    except Exception as exc:
+        from fastapi import HTTPException
+        raise HTTPException(502, f"Coroot nicht erreichbar: {exc}")

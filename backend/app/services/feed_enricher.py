@@ -113,6 +113,28 @@ async def _enrich_one(item: dict, llm, searxng_url: str = "") -> str | None:
             id=str(doc_id),
             body={"doc": {"ai_insight": insight}},
         )
+
+        # Persist insight as AlertComment so the Computer Console and incident
+        # workflows can reference it later via get_alert_analysis().
+        external_id = item.get("external_id")
+        if external_id:
+            try:
+                import uuid as _uuid
+                from app.core.database import AsyncSessionLocal
+                from app.models.workflow import AlertComment
+                async with AsyncSessionLocal() as _db:
+                    _db.add(AlertComment(
+                        id=_uuid.uuid4(),
+                        external_id=str(external_id),
+                        user_id=None,
+                        user_name="KI-Analyse",
+                        kind="ai",
+                        body=f"🤖 Automatische Analyse:\n{insight}",
+                    ))
+                    await _db.commit()
+            except Exception as _ce:
+                log.debug("Could not save enrichment comment for %s: %s", external_id, _ce)
+
         return insight
     except Exception as e:
         log.debug("Feed enrichment failed for %s: %s", item.get("id"), e)

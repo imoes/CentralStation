@@ -12,6 +12,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
     from app.services.connectors.netbox import NetBoxConnector
     from app.services.connectors.id_generator import IDGeneratorConnector
     from app.services.connectors.icinga2 import Icinga2Connector
+    from app.services.connectors.coroot import CorootConnector
 
     mapping = {
         "checkmk": CheckMKConnector,
@@ -25,6 +26,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
         "prometheus": PrometheusConnector,
         "netbox": NetBoxConnector,
         "id_generator": IDGeneratorConnector,
+        "coroot": CorootConnector,
     }
     cls = mapping.get(connector_type)
     if not cls:
