@@ -12,6 +12,39 @@ class LLMInvocationError(RuntimeError):
     pass
 
 
+# ── Anthropic OAuth constants (must match Hermes anthropic_adapter) ───────────
+# OAuth tokens (sk-ant-oat*) are only routed correctly when the request carries
+# the Claude Code identity: Bearer auth, the oauth beta headers, a claude-cli
+# user-agent and a system prompt that starts with the Claude Code prefix.
+_ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+_ANTHROPIC_VERSION = "2023-06-01"
+_ANTHROPIC_OAUTH_BETAS = "claude-code-20250219,oauth-2025-04-20"
+_CLAUDE_CODE_UA = "claude-cli/2.1.74 (external, cli)"
+_CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
+
+
+def _split_anthropic_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+    """Split out system messages; return (system_prompt, non_system_messages).
+    The Claude Code identity prefix is always prepended for OAuth routing."""
+    system_parts: list[str] = [_CLAUDE_CODE_SYSTEM_PREFIX]
+    convo: list[dict[str, Any]] = []
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if role == "system":
+            if content:
+                system_parts.append(content if isinstance(content, str) else str(content))
+        else:
+            convo.append({"role": role, "content": content})
+    return "\n\n".join(system_parts), convo
+
+
+def _extract_anthropic_output(data: dict[str, Any]) -> str:
+    blocks = data.get("content") or []
+    parts = [b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text"]
+    return "".join(parts).strip()
+
+
 def _build_api_url(base_url: str, path: str) -> str:
     normalized = base_url.rstrip("/")
     for suffix in ("/chat/completions", "/responses"):
@@ -173,6 +206,31 @@ async def generate_text(
     headers = {"Content-Type": "application/json"}
     if getattr(llm_config, "api_key", None):
         headers["Authorization"] = f"Bearer {llm_config.api_key}"
+
+    if mode == "anthropic_messages":
+        # Claude via OAuth — Anthropic Messages API with Claude Code identity.
+        system_prompt, convo = _split_anthropic_messages(messages)
+        headers.update({
+            "anthropic-version": _ANTHROPIC_VERSION,
+            "anthropic-beta": _ANTHROPIC_OAUTH_BETAS,
+            "user-agent": _CLAUDE_CODE_UA,
+        })
+        payload: dict[str, Any] = {
+            "model": llm_config.model,
+            "max_tokens": max_output_tokens or 1024,
+            "system": system_prompt,
+            "messages": convo,
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        async with httpx.AsyncClient(timeout=llm_config.timeout_seconds, verify=False) as client:
+            response = await client.post(_ANTHROPIC_MESSAGES_URL, headers=headers, json=payload)
+        if response.status_code >= 400:
+            detail = response.text[:500].strip()
+            msg = f"HTTP {response.status_code}: {detail}"
+            log.warning("LLM call failed [anthropic_messages %s]: %s", llm_config.model, msg)
+            raise LLMInvocationError(msg)
+        return _extract_anthropic_output(response.json())
 
     if mode == "codex_responses":
         url = _build_api_url(llm_config.base_url, "responses")

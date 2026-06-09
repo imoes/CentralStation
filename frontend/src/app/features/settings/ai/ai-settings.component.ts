@@ -2,7 +2,7 @@ import { Component, OnInit, OnDestroy, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../../environments/environment';
-import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
+import { FormBuilder, FormGroup, ReactiveFormsModule, FormsModule } from '@angular/forms';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
@@ -34,7 +34,7 @@ interface OAuthSession {
   poll_interval_seconds: number;
 }
 
-const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = [
+const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showOnlyFor?: string[] }[] = [
   {
     title: 'LLM Configuration',
     keys: ['llm.provider', 'llm.base_url', 'llm.model', 'llm.api_mode', 'llm.api_key', 'llm.timeout_seconds', 'llm.thinking_mode'],
@@ -43,6 +43,12 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string }[] = 
   {
     title: 'OpenAI Codex Model',
     keys: ['llm.codex_model', 'llm.codex_timeout_seconds'],
+    showOnlyFor: ['openai-codex'],
+  },
+  {
+    title: 'Claude Model',
+    keys: ['llm.claude_model'],
+    showOnlyFor: ['claude-oauth'],
   },
   {
     title: 'Vision Model',
@@ -99,7 +105,7 @@ const SECRET_MASK = '••••••••';
   selector: 'cs-ai-settings',
   standalone: true,
   imports: [
-    CommonModule, ReactiveFormsModule,
+    CommonModule, ReactiveFormsModule, FormsModule,
     MatCardModule, MatFormFieldModule, MatInputModule,
     MatButtonModule, MatIconModule, MatSlideToggleModule,
     MatSelectModule, MatProgressSpinnerModule, MatSnackBarModule,
@@ -118,7 +124,8 @@ const SECRET_MASK = '••••••••';
         </button>
       </div>
 
-      <!-- OpenAI Codex OAuth card -->
+      <!-- OpenAI Codex OAuth card — nur bei openai-codex sichtbar -->
+      @if (currentProvider() === 'openai-codex') {
       <mat-card class="settings-card oauth-card">
         <mat-card-header>
           <mat-card-title>OpenAI Codex — Login</mat-card-title>
@@ -205,28 +212,83 @@ const SECRET_MASK = '••••••••';
           }
         </mat-card-content>
       </mat-card>
+      } <!-- end @if openai-codex -->
 
-      <!-- Claude OAuth info card (shown when claude-oauth provider is selected) -->
+      <!-- Claude OAuth card (shown when claude-oauth provider is selected) -->
       @if (currentProvider() === 'claude-oauth') {
         <mat-card class="settings-card oauth-card">
           <mat-card-header>
-            <mat-card-title>Claude — OAuth Authentication</mat-card-title>
+            <mat-card-title>Claude — OAuth Login</mat-card-title>
+            <div class="card-header-actions">
+              <button mat-icon-button (click)="loadClaudeStatus()" matTooltip="Status aktualisieren">
+                <mat-icon>refresh</mat-icon>
+              </button>
+            </div>
           </mat-card-header>
           <mat-card-content>
-            <p style="font-size:14px;margin:0 0 12px">
-              With the <strong>Claude (OAuth)</strong> provider, CentralStation authenticates via the
-              <code>CLAUDE_CODE_OAUTH_TOKEN</code> environment variable instead of an API key.
-            </p>
-            <p style="font-size:14px;margin:0 0 12px">
-              Generate the token on the host running the backend:
-            </p>
-            <pre style="background:var(--mat-sys-surface-variant);padding:10px 14px;border-radius:6px;font-size:13px;overflow-x:auto">claude setup-token
-# Copy the displayed token, then add to your .env:
-CLAUDE_CODE_OAUTH_TOKEN=&lt;token&gt;</pre>
-            <p style="font-size:13px;opacity:.7;margin:8px 0 0">
-              No API key is required when this provider is selected.
-              Restart the backend after updating <code>.env</code>.
-            </p>
+            @if (claudeStatus()) {
+              <div class="codex-status-banner" [class.authenticated]="claudeStatus()!.authenticated">
+                <mat-icon>{{ claudeStatus()!.authenticated ? 'verified_user' : 'no_accounts' }}</mat-icon>
+                <div class="codex-status-text">
+                  <strong>{{ claudeStatus()!.authenticated ? 'Eingeloggt' : 'Nicht eingeloggt' }}</strong>
+                  <span>{{ claudeStatus()!.message }}</span>
+                  @if (claudeStatus()!.authenticated && claudeStatus()!.expires_at) {
+                    <span class="expires">Gültig bis: {{ claudeStatus()!.expires_at | date:'yyyy-MM-dd HH:mm' }}</span>
+                  }
+                </div>
+              </div>
+            }
+
+            @if (!claudeOAuthUrl()) {
+              <div class="oauth-actions">
+                @if (claudeStatus()?.authenticated) {
+                  <button mat-stroked-button color="warn" (click)="logoutClaude()">
+                    <mat-icon>logout</mat-icon> Abmelden
+                  </button>
+                }
+                <button mat-raised-button color="primary"
+                        [disabled]="startingClaudeOAuth()"
+                        (click)="startClaudeOAuth()">
+                  @if (startingClaudeOAuth()) {
+                    <mat-spinner diameter="18"></mat-spinner>
+                  } @else {
+                    <mat-icon>login</mat-icon>
+                  }
+                  {{ claudeStatus()?.authenticated ? 'Erneut anmelden' : 'Mit Claude anmelden' }}
+                </button>
+              </div>
+            } @else {
+              <div class="oauth-flow">
+                <p class="oauth-instructions">
+                  1. Öffne den Link, melde dich bei Claude an und autorisiere den Zugriff.<br>
+                  2. Kopiere den angezeigten Code und füge ihn unten ein.
+                </p>
+                <a [href]="claudeOAuthUrl()!" target="_blank" rel="noopener">
+                  <button mat-stroked-button>
+                    <mat-icon>open_in_new</mat-icon>
+                    Bei Claude anmelden
+                  </button>
+                </a>
+                <mat-form-field appearance="outline" class="setting-field" style="margin-top:8px">
+                  <mat-label>Autorisierungs-Code</mat-label>
+                  <input matInput [(ngModel)]="claudeCode" [ngModelOptions]="{standalone: true}"
+                         placeholder="Code aus dem Browser einfügen">
+                </mat-form-field>
+                <div class="oauth-actions">
+                  <button mat-raised-button color="primary"
+                          [disabled]="completingClaudeOAuth() || !claudeCode()"
+                          (click)="completeClaudeOAuth()">
+                    @if (completingClaudeOAuth()) {
+                      <mat-spinner diameter="18"></mat-spinner>
+                    } @else {
+                      <mat-icon>check</mat-icon>
+                    }
+                    Code bestätigen
+                  </button>
+                  <button mat-button (click)="cancelClaudeOAuth()">Abbrechen</button>
+                </div>
+              </div>
+            }
           </mat-card-content>
         </mat-card>
       }
@@ -236,6 +298,7 @@ CLAUDE_CODE_OAUTH_TOKEN=&lt;token&gt;</pre>
       } @else if (form) {
         <form [formGroup]="form">
           @for (group of groups; track group.title) {
+            @if (isGroupVisible(group)) {
             <mat-card class="settings-card">
               <mat-card-header>
                 <mat-card-title>{{ group.title }}</mat-card-title>
@@ -307,6 +370,7 @@ CLAUDE_CODE_OAUTH_TOKEN=&lt;token&gt;</pre>
                 }
               </mat-card-content>
             </mat-card>
+            } <!-- end @if isGroupVisible -->
           }
         </form>
       }
@@ -385,6 +449,12 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
   testingGroup = signal<string | null>(null);
   testResults = signal<Record<string, TestResult>>({});
   codexStatus = signal<CodexStatus | null>(null);
+  claudeStatus = signal<CodexStatus | null>(null);
+  claudeOAuthUrl = signal<string | null>(null);
+  claudeSessionId = signal<string | null>(null);
+  claudeCode = signal<string>('');
+  startingClaudeOAuth = signal(false);
+  completingClaudeOAuth = signal(false);
   jiraProjects = signal<{ key: string; name: string; connector: string }[]>([]);
   oauthSession = signal<OAuthSession | null>(null);
   oauthPollStatus = signal<'pending' | 'authorized' | 'timeout' | 'error' | null>(null);
@@ -412,6 +482,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       },
     });
     this.loadCodexStatus();
+    this.loadClaudeStatus();
     this.loadJiraProjects();
   }
 
@@ -442,6 +513,68 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
     this.http.get<CodexStatus>(`${environment.apiUrl}/oauth/openai-codex/status`).subscribe({
       next: s => this.codexStatus.set(s),
       error: () => {},
+    });
+  }
+
+  loadClaudeStatus() {
+    this.http.get<CodexStatus>(`${environment.apiUrl}/oauth/claude-oauth/status`).subscribe({
+      next: s => this.claudeStatus.set(s),
+      error: () => {},
+    });
+  }
+
+  startClaudeOAuth() {
+    this.startingClaudeOAuth.set(true);
+    this.http.post<{ session_id: string; authorize_url: string }>(
+      `${environment.apiUrl}/oauth/claude-oauth/start`, {}
+    ).subscribe({
+      next: r => {
+        this.claudeSessionId.set(r.session_id);
+        this.claudeOAuthUrl.set(r.authorize_url);
+        this.claudeCode.set('');
+        this.startingClaudeOAuth.set(false);
+      },
+      error: err => {
+        this.startingClaudeOAuth.set(false);
+        this.snack.open(`Fehler: ${err?.error?.detail ?? 'Start fehlgeschlagen'}`, 'OK', { duration: 5000 });
+      },
+    });
+  }
+
+  completeClaudeOAuth() {
+    const sid = this.claudeSessionId();
+    const code = this.claudeCode().trim();
+    if (!sid || !code) return;
+    this.completingClaudeOAuth.set(true);
+    this.http.post<{ status: string }>(
+      `${environment.apiUrl}/oauth/claude-oauth/complete`, { session_id: sid, code }
+    ).subscribe({
+      next: () => {
+        this.completingClaudeOAuth.set(false);
+        this.cancelClaudeOAuth();
+        this.loadClaudeStatus();
+        this.snack.open('Erfolgreich mit Claude angemeldet!', 'OK', { duration: 4000 });
+      },
+      error: err => {
+        this.completingClaudeOAuth.set(false);
+        this.snack.open(`Fehler: ${err?.error?.detail ?? 'Code ungültig'}`, 'OK', { duration: 6000 });
+      },
+    });
+  }
+
+  cancelClaudeOAuth() {
+    this.claudeOAuthUrl.set(null);
+    this.claudeSessionId.set(null);
+    this.claudeCode.set('');
+  }
+
+  logoutClaude() {
+    this.http.delete(`${environment.apiUrl}/oauth/claude-oauth/logout`).subscribe({
+      next: () => {
+        this.loadClaudeStatus();
+        this.snack.open('Abgemeldet', 'OK', { duration: 3000 });
+      },
+      error: () => this.snack.open('Fehler beim Abmelden', 'OK', { duration: 3000 }),
     });
   }
 
@@ -530,7 +663,10 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
     }
     this.form = this.fb.group(controls);
 
-    const providerCtrl = this.form.get('llm.provider');
+    // NOTE: control name 'llm.provider' contains a dot. form.get('llm.provider')
+    // would treat the dot as a PATH separator (llm → provider) and return null.
+    // Pass an array so the literal name (incl. dot) is used.
+    const providerCtrl = this.form.get(['llm.provider']);
     if (providerCtrl) {
       this.currentProvider.set(providerCtrl.value || 'custom');
       providerCtrl.valueChanges.subscribe(v => this.currentProvider.set(v || 'custom'));
@@ -539,7 +675,13 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
 
   isHiddenForProvider(key: string): boolean {
     if (!this.isOAuthProvider()) return false;
-    return key === 'llm.api_key' || key === 'llm.api_mode';
+    // For OAuth providers: hide all manual LLM connection fields — they're auto-configured.
+    return ['llm.api_key', 'llm.api_mode', 'llm.base_url', 'llm.model', 'llm.timeout_seconds'].includes(key);
+  }
+
+  isGroupVisible(group: { showOnlyFor?: string[] }): boolean {
+    if (!group.showOnlyFor) return true;
+    return group.showOnlyFor.includes(this.currentProvider());
   }
 
   saveAll() {
@@ -607,6 +749,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       'llm.timeout_seconds':                 'Timeout (seconds)',
       'llm.codex_model':                     'OpenAI Codex Model (e.g. gpt-4o)',
       'llm.codex_timeout_seconds':           'OpenAI Codex Timeout (seconds)',
+      'llm.claude_model':                    'Claude Model (e.g. claude-opus-4-8)',
       'llm.vision_base_url':                 'Vision LLM URL',
       'llm.vision_model':                    'Vision Model',
       'llm.vision_api_key':                  'Vision API Key',
