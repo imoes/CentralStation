@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sqlalchemy import delete, update
+from sqlalchemy import delete, func, update
 
 from app.api.deps import CurrentUser, get_db
 from app.models.workflow import ComputerSession, UserPreference
@@ -77,15 +77,18 @@ async def create_session(
     data = r.json()
     sid = data["session_id"]
 
-    # Persist session metadata in PostgreSQL so it survives page reloads.
-    db.add(ComputerSession(
-        id=sid,
-        user_id=user.id,
-        label=data.get("label", "Session"),
-    ))
+    # Generate label from PostgreSQL session count — centralcore uses its in-memory counter
+    # which resets to 1 after every container restart, causing duplicate "Session 1" labels.
+    count_result = await db.execute(
+        select(func.count(ComputerSession.id)).where(ComputerSession.user_id == user.id)
+    )
+    next_num = (count_result.scalar() or 0) + 1
+    label = f"Session {next_num}"
+
+    db.add(ComputerSession(id=sid, user_id=user.id, label=label))
     await db.commit()
-    log.info("Computer session %s created for user %s", sid[:8], user.id)
-    return data
+    log.info("Computer session %s created for user %s (label=%s)", sid[:8], user.id, label)
+    return {**data, "label": label}
 
 
 @router.get("/sessions")
@@ -183,14 +186,17 @@ async def send_message(
                     pass
 
     # Increment msg_count in PostgreSQL (fire-and-forget, don't block SSE).
+    # Uses a fresh session — the request's `db` may already be closed when this runs.
     async def _bump_msg_count() -> None:
+        from app.core.database import AsyncSessionLocal
         try:
-            await db.execute(
-                update(ComputerSession)
-                .where(ComputerSession.id == sid, ComputerSession.user_id == user.id)
-                .values(msg_count=ComputerSession.msg_count + 1)
-            )
-            await db.commit()
+            async with AsyncSessionLocal() as fresh_db:
+                await fresh_db.execute(
+                    update(ComputerSession)
+                    .where(ComputerSession.id == sid, ComputerSession.user_id == user.id)
+                    .values(msg_count=ComputerSession.msg_count + 1)
+                )
+                await fresh_db.commit()
         except Exception as exc:
             log.debug("msg_count bump for %s failed: %s", sid[:8], exc)
 

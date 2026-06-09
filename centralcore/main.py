@@ -316,20 +316,24 @@ def _restore_session(sid: str) -> bool:
 
 @app.get("/sessions/{sid}/history")
 def get_history(sid: str):
-    if sid not in _sessions:
-        # Read directly from SessionDB — no agent needed, no restart required.
-        try:
-            from hermes_state import SessionDB
-            db = SessionDB()
-            history = db.get_messages_as_conversation(sid)
-            if history:
-                return history
-        except Exception as exc:
-            log.debug("SessionDB read for %s failed: %s", sid[:8], exc)
-        raise HTTPException(404, "Session nicht gefunden")
-    agent = _sessions[sid]["agent"]
-    history = getattr(agent, "conversation_history", None) or []
-    return history
+    # Always read from SessionDB — it is the authoritative source.
+    # The agent's in-memory conversation_history is loaded lazily on the first
+    # run_conversation() call and is empty for freshly restored sessions.
+    try:
+        from hermes_state import SessionDB
+        db = SessionDB()
+        history = db.get_messages_as_conversation(sid)
+        if history:
+            return history
+    except Exception as exc:
+        log.debug("SessionDB read for %s failed: %s", sid[:8], exc)
+
+    # Fallback: agent in-memory history (only non-empty mid-stream or for new sessions)
+    if sid in _sessions:
+        agent = _sessions[sid]["agent"]
+        return getattr(agent, "conversation_history", None) or []
+
+    raise HTTPException(404, "Session nicht gefunden")
 
 
 # ── Message → SSE stream ───────────────────────────────────────────

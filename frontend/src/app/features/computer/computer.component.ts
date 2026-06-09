@@ -260,6 +260,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   private _abortController?: AbortController;
   private _handoffSub?: Subscription;
   private _resolvingSession = false;
+  private _sessionCreating = false;
 
   activeMessages = computed<HermesMessage[]>(() => {
     const sid = this.activeTabId();
@@ -501,6 +502,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
   // ── Session management ────────────────────────────────────────────
 
   async newSession(label?: string): Promise<void> {
+    // Guard against concurrent calls (e.g. double-click or race between _handleHandoff + send())
+    if (this._sessionCreating) return;
+    this._sessionCreating = true;
     const token = this.auth.getAccessToken();
     try {
       const r = await fetch(`${this.apiBase}/sessions`, {
@@ -514,19 +518,26 @@ export class ComputerComponent implements OnInit, OnDestroy {
       if (!r.ok) { console.error('Session creation failed:', r.status); return; }
       const session: { session_id: string; label: string } = await r.json();
       const displayLabel = label ?? session.label;
-      this.sessions.update(ss => [...ss, { ...session, label: displayLabel, msg_count: 0, messages: [] }]);
+      this.sessions.update(ss => {
+        // Prevent duplicate entries if the session was somehow already added
+        if (ss.some(s => s.session_id === session.session_id)) return ss;
+        return [...ss, { ...session, label: displayLabel, msg_count: 0, messages: [] }];
+      });
       this.activeTabId.set(session.session_id);
       this.open();
     } catch (err) {
       console.error('Failed to create session:', err);
+    } finally {
+      this._sessionCreating = false;
     }
   }
 
   selectTab(sid: string): void {
     this.activeTabId.set(sid);
     const session = this.sessions().find(s => s.session_id === sid);
-    // Lazy-load history for sessions restored from DB (empty messages, but msg_count > 0)
-    if (session && session.messages.length === 0 && session.msg_count > 0) {
+    // Lazy-load history for sessions restored from DB (no messages in memory yet).
+    // Always try — msg_count in PostgreSQL can be 0 even when state.db has messages.
+    if (session && session.messages.length === 0) {
       this.loadSessionHistory(sid);
     }
     this.scrollToBottom();
