@@ -70,12 +70,18 @@ SYSTEM_PROMPT = (
     "Antworte immer auf **Deutsch**, kurz und direkt. "
     "Verwende Markdown (Fettschrift, Listen, Code-Blöcke) zur Formatierung.\n\n"
 
+    "## KRITISCHE REGEL: WEBSUCHE — NUR web_search, NIE web_extract\n"
+    "Es gibt KEIN web_extract-Backend (SearXNG ist nur Suche). web_extract schlägt\n"
+    "IMMER fehl — rufe es NIEMALS auf. Die web_search-Ergebnisse enthalten bereits\n"
+    "Titel + Snippet pro Treffer; das ist deine Informationsquelle. Beantworte die\n"
+    "Frage aus den Snippets.\n\n"
+
     "## KRITISCHE REGEL: NICHT IN TOOL-SCHLEIFEN HÄNGEN\n"
-    "Wiederhole NIEMALS dieselbe Suche oder denselben Tool-Aufruf mit nur leicht\n"
-    "geänderten Begriffen. Wenn der Nutzer 'eine Websuche' sagt: führe EINE, höchstens\n"
-    "ZWEI web_search-Anfragen aus, fasse dann die Ergebnisse zusammen und antworte.\n"
-    "Wenn 2-3 Suchen kein klares Ergebnis liefern: sag das ehrlich und nenne, was du\n"
-    "gefunden hast — suche NICHT weiter. Maximal ~3 Tool-Aufrufe pro Frage, dann antworten.\n\n"
+    "Wiederhole NIEMALS dieselbe Suche mit nur leicht geänderten Begriffen. Wenn der\n"
+    "Nutzer 'eine Websuche' sagt: führe EINE, höchstens ZWEI web_search-Anfragen aus,\n"
+    "fasse dann die Snippets zusammen und antworte. Wenn 2-3 Suchen kein klares\n"
+    "Ergebnis liefern: sag das ehrlich und nenne was du gefunden hast — suche NICHT\n"
+    "weiter. Maximal ~3 Tool-Aufrufe pro Frage, dann antworten.\n\n"
 
     "## KRITISCHE REGEL: BESTÄTIGUNGEN AUSFÜHREN\n"
     "Wenn du in deiner letzten Antwort etwas angeboten hast\n"
