@@ -20,6 +20,8 @@ marked.setOptions({ gfm: true, breaks: true });
 interface HermesMessage {
   role: 'user' | 'assistant';
   text: string;
+  /** Current tool being executed — shown as a spinner line while streaming. */
+  activeTool?: string;
 }
 
 interface HermesSession {
@@ -131,7 +133,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
             </div>
           }
 
-          <div class="messages" #msgContainer (scroll)="onMessagesScroll()">
+          <div class="messages" #msgContainer>
             @for (msg of activeMessages(); track $index) {
               <div class="msg" [class.user]="msg.role === 'user'"
                                [class.agent]="msg.role === 'assistant'">
@@ -149,6 +151,11 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                 </div>
                 <div class="msg-text"
                      [innerHTML]="renderMarkdown(msg.text)"></div>
+                @if (msg.activeTool) {
+                  <div class="tool-status">
+                    <span class="tool-spinner">⟳</span> {{ msg.activeTool }}
+                  </div>
+                }
               </div>
             }
             @if (loading()) {
@@ -218,15 +225,6 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
 export class ComputerComponent implements OnInit, OnDestroy {
   @ViewChild('msgContainer') private msgContainer?: ElementRef<HTMLDivElement>;
   @ViewChild('inputEl') private inputEl?: ElementRef<HTMLInputElement>;
-
-  private _userScrolled = false;
-
-  onMessagesScroll(): void {
-    const el = this.msgContainer?.nativeElement;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-    this._userScrolled = !atBottom;
-  }
 
   private auth = inject(AuthService);
   private router = inject(Router);
@@ -475,7 +473,6 @@ export class ComputerComponent implements OnInit, OnDestroy {
             s.session_id === existingSid ? { ...s, external_id: externalId, resolved: false } : s
           ));
         }
-        this.scrollToBottom(true);
         this.inputText = prompt;
         await this.send();
         return;
@@ -513,7 +510,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({}),
+        // Persist a custom label (e.g. host name from an incident handoff) so it
+        // survives reloads — otherwise the backend generates a generic "Session N".
+        body: JSON.stringify(label ? { label } : {}),
       });
       if (!r.ok) { console.error('Session creation failed:', r.status); return; }
       const session: { session_id: string; label: string } = await r.json();
@@ -540,7 +539,6 @@ export class ComputerComponent implements OnInit, OnDestroy {
     if (session && session.messages.length === 0) {
       this.loadSessionHistory(sid);
     }
-    this.scrollToBottom();
   }
 
   async loadSessionHistory(sid: string): Promise<void> {
@@ -560,7 +558,6 @@ export class ComputerComponent implements OnInit, OnDestroy {
       this.sessions.update(ss => ss.map(s =>
         s.session_id === sid ? { ...s, messages } : s
       ));
-      this.scrollToBottom();
     } catch (err) {
       console.debug('loadSessionHistory failed:', err);
     }
@@ -612,7 +609,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
     this._addMessage(sid, 'user', text);
     this._addMessage(sid, 'assistant', '');
     this._updateMsgCount(sid);
-    this.scrollToBottom(true); // force: immer zur neuen Nachricht scrollen
+    this.scrollToBottom();
 
     const token = this.auth.getAccessToken();
     let fullAssistantText = '';
@@ -655,13 +652,22 @@ export class ComputerComponent implements OnInit, OnDestroy {
             if (data.type === 'delta') {
               fullAssistantText += data.text;
               this._appendToLast(sid, data.text);
+              this._setActiveTool(sid, undefined);
+            }
+            if (data.type === 'tool_start') {
+              this._setActiveTool(sid, data.tool);
+            }
+            if (data.type === 'tool_done') {
+              this._setActiveTool(sid, undefined);
+            }
+            if (data.type === 'reasoning') {
+              this._setActiveTool(sid, `💭 ${data.text}`);
             }
             if (data.type === 'error') {
               this._appendToLast(sid, `\n[Fehler: ${data.text}]`);
             }
           } catch { /* skip malformed */ }
         }
-        this.scrollToBottom();
       }
 
       // The SSE stream can close before the final \n\n reaches the buffer,
@@ -697,8 +703,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
       if (!wasAborted && fullAssistantText) {
         this.speak(fullAssistantText);
       }
+      this._setActiveTool(sid, undefined);
       this.loading.set(false);
-      this.scrollToBottom();
     }
   }
 
@@ -831,6 +837,17 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }));
   }
 
+  private _setActiveTool(sid: string, tool: string | undefined): void {
+    this.sessions.update(ss => ss.map(s => {
+      if (s.session_id !== sid) return s;
+      const msgs = [...s.messages];
+      if (msgs.length > 0 && msgs[msgs.length - 1].role === 'assistant') {
+        msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], activeTool: tool };
+      }
+      return { ...s, messages: msgs };
+    }));
+  }
+
   /**
    * Called once streaming is complete.
    * Strips [FEED:...] markers from the displayed text and, if any were found,
@@ -859,18 +876,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
     ));
   }
 
-  /** Scroll to bottom unless the user has scrolled up to read.
-   *  Pass force=true when the user sends a message (overrides user scroll). */
-  private scrollToBottom(force = false): void {
+  private scrollToBottom(): void {
     setTimeout(() => {
       const el = this.msgContainer?.nativeElement;
-      if (!el) return;
-      if (force) {
-        this._userScrolled = false;
-      }
-      if (!this._userScrolled) {
-        el.scrollTop = el.scrollHeight;
-      }
+      if (el) el.scrollTop = el.scrollHeight;
     }, 10);
   }
 }
