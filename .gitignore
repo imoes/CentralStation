@@ -1,6 +1,7 @@
 # Environment
 .env
 *.env.local
+ssh_config
 
 # Python
 __pycache__/
@@ -31,6 +32,12 @@ frontend/node_modules/
 data/postgres/
 data/opensearch/
 data/redis/
+
+# Hermes runtime dir (contains OAuth tokens — never commit)
+.hermes/
+
+# Claude OAuth credentials — never commit
+centralcore/.claude/
 
 # OS
 .DS_Store
