@@ -195,19 +195,40 @@ class CreateSessionBody(BaseModel):
     llm_model: str | None = None
     llm_api_key: str | None = None
     llm_api_mode: str | None = None   # "chat_completions" | "responses" | "codex_responses"
+    searxng_url: str | None = None
+    llm_timeout_seconds: int | None = None
 
 
 def _make_agent(sid: str, cfg: CreateSessionBody):
     from run_agent import AIAgent
     from hermes_state import SessionDB
 
-    base_url = cfg.llm_base_url or os.getenv("LLM_BASE_URL", "")
-    model    = cfg.llm_model    or os.getenv("LLM_MODEL", "")
-    api_key  = cfg.llm_api_key  or os.getenv("LLM_API_KEY")
-    api_mode = cfg.llm_api_mode or os.getenv("LLM_API_MODE", "chat_completions")
+    base_url   = cfg.llm_base_url or os.getenv("LLM_BASE_URL", "")
+    model      = cfg.llm_model    or os.getenv("LLM_MODEL", "")
+    api_key    = cfg.llm_api_key  or os.getenv("LLM_API_KEY")
+    api_mode   = cfg.llm_api_mode or os.getenv("LLM_API_MODE", "chat_completions")
+    searxng_url     = cfg.searxng_url or os.getenv("SEARXNG_URL", "")
+    timeout_seconds = cfg.llm_timeout_seconds or int(os.getenv("HERMES_API_TIMEOUT", 0)) or None
 
-    log.info("[%s] creating AIAgent: model=%s base_url=%s mode=%s",
-             sid[:8], model or "(default)", base_url or "(default)", api_mode)
+    # Hermes reads these from the environment — set before agent init.
+    if searxng_url:
+        os.environ["SEARXNG_URL"] = searxng_url
+    if timeout_seconds:
+        # Hermes reads all three at request time. The one that actually fires for a
+        # remote OpenAI-compatible endpoint is HERMES_STREAM_READ_TIMEOUT (httpx read
+        # timeout, default 120s) — without it a large local model that needs >120s of
+        # prefill before the first token raises APITimeoutError. is_local_endpoint()
+        # only auto-raises for localhost, not for a remote host like llamacpp03.
+        #   HERMES_API_TIMEOUT:          total request timeout per LLM call
+        #   HERMES_STREAM_READ_TIMEOUT:  max seconds to first/next byte on the stream
+        #   HERMES_STREAM_STALE_TIMEOUT: Hermes' own no-progress watchdog
+        os.environ["HERMES_API_TIMEOUT"] = str(timeout_seconds)
+        os.environ["HERMES_STREAM_READ_TIMEOUT"] = str(timeout_seconds)
+        os.environ["HERMES_STREAM_STALE_TIMEOUT"] = str(timeout_seconds)
+
+    log.info("[%s] creating AIAgent: model=%s base_url=%s mode=%s searxng=%s timeout=%s",
+             sid[:8], model or "(default)", base_url or "(default)", api_mode,
+             searxng_url or "(none)", f"{timeout_seconds}s" if timeout_seconds else "(default)")
 
     agent = AIAgent(
         session_id=sid,
@@ -255,7 +276,8 @@ def create_session(body: CreateSessionBody = None):
         "label": label,
         "msg_count": 0,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "llm_model": body.llm_model or os.getenv("LLM_MODEL", "(default)"),
+        "llm_model":   (body.llm_model    or os.getenv("LLM_MODEL",    "(default)")).strip(),
+        "llm_base_url": (body.llm_base_url or os.getenv("LLM_BASE_URL", "")).strip(),
     }
     log.info("Session %s ready (%s), model=%s, total active: %d",
              sid[:8], label, _sessions[sid]["llm_model"], len(_sessions))
@@ -285,35 +307,6 @@ def delete_session(sid: str):
     return {"ok": True}
 
 
-def _restore_session(sid: str) -> bool:
-    """Recreate an in-memory session entry from SessionDB (after container restart).
-
-    Returns True if history exists and the agent was successfully created.
-    The agent will load the full history on its next run_conversation() call.
-    """
-    try:
-        from hermes_state import SessionDB
-        db = SessionDB()
-        history = db.get_messages_as_conversation(sid)
-        if not history:
-            return False
-        cfg = CreateSessionBody()  # uses env-var LLM defaults
-        agent = _make_agent(sid, cfg)
-        user_turns = sum(1 for m in history if m.get("role") == "user")
-        _sessions[sid] = {
-            "agent": agent,
-            "label": "Session (restored)",
-            "msg_count": user_turns,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "llm_model": cfg.llm_model or os.getenv("LLM_MODEL", "(default)"),
-        }
-        log.info("Session %s restored from SessionDB (%d turns)", sid[:8], user_turns)
-        return True
-    except Exception as exc:
-        log.warning("Session restore failed for %s: %s", sid[:8], exc)
-        return False
-
-
 @app.get("/sessions/{sid}/history")
 def get_history(sid: str):
     # Always read from SessionDB — it is the authoritative source.
@@ -340,15 +333,94 @@ def get_history(sid: str):
 
 class MessageBody(BaseModel):
     content: str
+    # Optional LLM config forwarded by the backend proxy on every message.
+    # Used to restore sessions after container restarts when env-var defaults
+    # are not configured (the proxy injects the active CentralStation LLM config).
+    llm_base_url: str | None = None
+    llm_model: str | None = None
+    llm_api_key: str | None = None
+    llm_api_mode: str | None = None
+    searxng_url: str | None = None
+    llm_timeout_seconds: int | None = None
+
+
+def _restore_session(sid: str, cfg: CreateSessionBody | None = None) -> bool:
+    """Recreate an in-memory session entry from SessionDB (after container restart).
+
+    Returns True if history exists and the agent was successfully created.
+    The agent will load the full history on its next run_conversation() call.
+    """
+    try:
+        from hermes_state import SessionDB
+        db = SessionDB()
+        history = db.get_messages_as_conversation(sid)
+        if not history:
+            return False
+        effective_cfg = cfg or CreateSessionBody()
+        agent = _make_agent(sid, effective_cfg)
+        user_turns = sum(1 for m in history if m.get("role") == "user")
+        _sessions[sid] = {
+            "agent": agent,
+            "label": "Session (restored)",
+            "msg_count": user_turns,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "llm_model":    (effective_cfg.llm_model    or os.getenv("LLM_MODEL",    "(default)")).strip(),
+            "llm_base_url": (effective_cfg.llm_base_url or os.getenv("LLM_BASE_URL", "")).strip(),
+        }
+        log.info("Session %s restored from SessionDB (%d turns)", sid[:8], user_turns)
+        return True
+    except Exception as exc:
+        log.warning("Session restore failed for %s: %s", sid[:8], exc)
+        return False
 
 
 @app.post("/sessions/{sid}/message")
 async def send_message(sid: str, body: MessageBody):
     if sid not in _sessions:
         log.info("Session %s not in memory — attempting restore from SessionDB", sid[:8])
-        if not _restore_session(sid):
+        llm_cfg = CreateSessionBody(
+            llm_base_url=body.llm_base_url,
+            llm_model=body.llm_model,
+            llm_api_key=body.llm_api_key,
+            llm_api_mode=body.llm_api_mode,
+            searxng_url=body.searxng_url,
+            llm_timeout_seconds=body.llm_timeout_seconds,
+        )
+        if not _restore_session(sid, llm_cfg):
             log.warning("Restore failed for session %s — not found in SessionDB", sid[:8])
             raise HTTPException(404, "Session nicht gefunden")
+
+    else:
+        # Session is in memory — check if LLM config changed since it was created.
+        # Re-initialize the agent when base_url or model differ so the user does not
+        # need to reload after changing the LLM in CentralStation settings.
+        session = _sessions[sid]
+        incoming_model   = (body.llm_model    or "").strip()
+        incoming_base    = (body.llm_base_url  or "").strip()
+        stored_model     = (session.get("llm_model",    "") or "").strip()
+        stored_base      = (session.get("llm_base_url", "") or "").strip()
+        if (incoming_model or incoming_base) and (
+            incoming_model != stored_model or incoming_base != stored_base
+        ):
+            log.info(
+                "Session %s: LLM config changed (model: %r→%r  base_url: %r→%r) — re-init agent",
+                sid[:8], stored_model, incoming_model, stored_base, incoming_base,
+            )
+            try:
+                new_cfg = CreateSessionBody(
+                    llm_base_url=body.llm_base_url,
+                    llm_model=body.llm_model,
+                    llm_api_key=body.llm_api_key,
+                    llm_api_mode=body.llm_api_mode,
+                    searxng_url=body.searxng_url,
+                    llm_timeout_seconds=body.llm_timeout_seconds,
+                )
+                new_agent = _make_agent(sid, new_cfg)
+                session["agent"]       = new_agent
+                session["llm_model"]   = incoming_model
+                session["llm_base_url"] = incoming_base
+            except Exception as exc:
+                log.warning("Session %s: LLM re-init failed, keeping old agent: %s", sid[:8], exc)
 
     agent = _sessions[sid]["agent"]
     _sessions[sid]["msg_count"] += 1
@@ -366,6 +438,45 @@ async def send_message(sid: str, body: MessageBody):
         response_buf.append(text)
         loop.call_soon_threadsafe(q.put_nowait, {"type": "delta", "text": text})
 
+    def _tool_label(name: str) -> str:
+        for prefix in ("mcp_centralstation_", "mcp_checkmk_vibemk_", "mcp_checkmk_"):
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+                break
+        return name.replace("_", " ")
+
+    def on_tool_progress(event_type: str, *cb_args, **cb_kwargs) -> None:
+        # Hermes' unified progress callback. Variadic signature per event:
+        #   ("tool.started",   name, preview, args)
+        #   ("tool.completed", name, None, None, duration=, is_error=, result=)
+        #   ("reasoning.available", "_thinking", text, None)
+        try:
+            if event_type == "tool.started":
+                name = cb_args[0] if cb_args else ""
+                preview = cb_args[1] if len(cb_args) > 1 else None
+                label = _tool_label(name)
+                # Append the human-readable preview (command, query, host, …) so the
+                # user sees exactly what the agent is doing, not just the tool name.
+                detail = f"{label}: {preview}" if preview else label
+                loop.call_soon_threadsafe(q.put_nowait, {
+                    "type": "tool_start", "tool": detail,
+                })
+            elif event_type == "tool.completed":
+                name = cb_args[0] if cb_args else ""
+                is_error = cb_kwargs.get("is_error")
+                loop.call_soon_threadsafe(q.put_nowait, {
+                    "type": "tool_done", "tool": _tool_label(name),
+                    "error": bool(is_error),
+                })
+            elif event_type == "reasoning.available":
+                text = cb_args[1] if len(cb_args) > 1 else ""
+                if text:
+                    loop.call_soon_threadsafe(q.put_nowait, {
+                        "type": "reasoning", "text": str(text)[:500],
+                    })
+        except Exception:
+            pass  # never let display callbacks break the run
+
     def run_sync() -> None:
         try:
             # Load conversation history from Hermes state.db (native persistence).
@@ -375,6 +486,11 @@ async def send_message(sid: str, body: MessageBody):
             # this session_id, surviving container restarts (state.db is host-mounted).
             db = getattr(agent, "_session_db", None)
             history = db.get_messages_as_conversation(sid) if db else []
+            # Tool/reasoning callbacks are AIAgent attributes, NOT run_conversation
+            # kwargs — only stream_callback is accepted by run_conversation. Set the
+            # progress callback on the agent right before the run (requests to a
+            # single session are sequential, so this is safe).
+            agent.tool_progress_callback = on_tool_progress
             agent.run_conversation(
                 user_message=body.content,
                 stream_callback=on_delta,

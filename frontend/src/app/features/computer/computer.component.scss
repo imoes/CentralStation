@@ -486,6 +486,27 @@
   }
 }
 
+.tool-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: #ff9933;
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  opacity: 0.85;
+
+  .tool-spinner {
+    display: inline-block;
+    animation: spin 1.2s linear infinite;
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 @keyframes blink {
   50% { opacity: 0; }
 }
