@@ -114,7 +114,10 @@ async def test_setting_group(
         if not llm_config.is_configured:
             return TestResult(success=False, message="LLM nicht konfiguriert (URL oder Modell fehlt)")
         provider = s.get("llm.provider") or "custom"
-        provider_label = "OpenAI Codex" if provider == "openai-codex" else "Lokal"
+        provider_label = {
+            "openai-codex": "OpenAI Codex",
+            "claude-oauth": "Claude (OAuth)",
+        }.get(provider, "Lokal")
         try:
             text = await generate_text(
                 llm_config,
