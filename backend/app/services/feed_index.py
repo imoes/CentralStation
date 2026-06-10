@@ -435,16 +435,25 @@ def matches_exclusion(text: str, matchers: list[dict]) -> bool:
     return False
 
 
-async def get_exclusion_must_not_clauses(db: Any) -> list[dict]:
-    """Return OpenSearch must_not clauses for all active exclusion FeedSearches."""
+async def get_exclusion_must_not_clauses(db: Any, user_id: str | None = None) -> list[dict]:
+    """Return OpenSearch must_not clauses for active exclusion FeedSearches.
+
+    Scope: system exclusions (user_id IS NULL, set by admins — apply to everyone)
+    plus the current user's own personal exclusions. Another user's personal
+    exclusion never affects this user's feed.
+    """
     try:
         from sqlalchemy import select
         from app.models.workflow import FeedSearch
+        scope = FeedSearch.user_id == None  # noqa: E711 — system exclusions
+        if user_id:
+            scope = scope | (FeedSearch.user_id == user_id)
         result = await db.execute(
             select(FeedSearch).where(
                 FeedSearch.is_exclusion == True,  # noqa: E712
                 FeedSearch.enabled == True,  # noqa: E712
                 FeedSearch.query_string != "",
+                scope,
             )
         )
         searches = result.scalars().all()
@@ -509,7 +518,7 @@ async def search(
 
     # Apply active exclusion FeedSearches (hide matching items)
     if db is not None:
-        exclusion_clauses = await get_exclusion_must_not_clauses(db)
+        exclusion_clauses = await get_exclusion_must_not_clauses(db, user_id)
         must_not.extend(exclusion_clauses)
 
     if severity:
@@ -762,7 +771,7 @@ async def search_by_query(
     filter_clauses: list[dict] = []
     must_not: list[dict] = []
     if db is not None:
-        must_not.extend(await get_exclusion_must_not_clauses(db))
+        must_not.extend(await get_exclusion_must_not_clauses(db, user_id))
     if user_id:
         filter_clauses.append({
             "bool": {
