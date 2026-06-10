@@ -534,6 +534,7 @@ export class BridgeComponent implements OnInit, OnDestroy {
   readonly bridgeNav = [
     { path: '/dashboard', label: 'Dashboard', icon: '▦' },
     { path: '/feed', label: 'News Feed', icon: '≋' },
+    { path: '/problems', label: 'Problemboard', icon: '⚠' },
     { path: '/alerts', label: 'Alerts', icon: '!' },
     { path: '/my-tickets', label: 'Meine Tickets', icon: '✓' },
     { path: '/kanban', label: 'Kanban', icon: '▤' },

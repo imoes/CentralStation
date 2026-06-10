@@ -9,6 +9,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
+import { Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { environment } from '../../../environments/environment';
 import { ThemeService } from '../../core/services/theme.service';
@@ -64,8 +65,27 @@ const SEV_LABEL: Record<string, string> = {
     <div class="pb" [class.t-lcars]="theme()==='lcars'" [class.t-holo]="theme()==='holo'" [class.t-classic]="theme()==='classic'"
          [attr.data-alert]="topState()">
 
+      @if (navOpen()) {
+        <div class="bridge-menu-backdrop" (click)="navOpen.set(false)"></div>
+        <nav class="bridge-menu" aria-label="Navigation">
+          <div class="bridge-menu-head">
+            <span>NAVIGATION</span>
+            <button class="bridge-menu-close" (click)="navOpen.set(false)" title="Schließen">×</button>
+          </div>
+          @for (item of nav; track item.path) {
+            <button class="bridge-menu-item" (click)="go(item.path)">
+              <span class="bridge-menu-icon">{{ item.icon }}</span>
+              <span>{{ item.label }}</span>
+            </button>
+          }
+        </nav>
+      }
+
       <!-- ══ LCARS top sweep ══ -->
       <div class="topbar">
+        <button class="bridge-menu-btn" (click)="navOpen.set(true)" title="Navigation">
+          <span></span><span></span><span></span>
+        </button>
         <div class="cap cap-tl"></div>
         <div class="bar-seg seg-a">PROBLEMBOARD</div>
         @if (data(); as d) {
@@ -175,9 +195,24 @@ const SEV_LABEL: Record<string, string> = {
   `,
   styles: [`
     :host { display:block; }
-    .pb { display:flex; flex-direction:column; gap:8px; padding:10px; min-height:calc(100vh - 16px);
-      box-sizing:border-box; font-family:Roboto,'Helvetica Neue',sans-serif; }
+    .pb { position:fixed; inset:0; z-index:100; display:flex; flex-direction:column; gap:6px; padding:8px;
+      overflow:hidden; box-sizing:border-box; font-family:Roboto,'Helvetica Neue',sans-serif; }
     .pb *, .pb *::before { box-sizing:border-box; }
+
+    /* ── hamburger nav (identical pattern to bridge.component.ts) ── */
+    .bridge-menu-btn { width:46px; height:46px; border:0; flex:0 0 46px; display:flex; flex-direction:column;
+      align-items:center; justify-content:center; gap:5px; cursor:pointer; flex-shrink:0; }
+    .bridge-menu-btn span { display:block; width:23px; height:3px; border-radius:2px; }
+    .bridge-menu-backdrop { position:fixed; inset:0; z-index:105; background:rgba(0,0,0,.35); }
+    .bridge-menu { position:fixed; z-index:106; top:8px; left:8px; width:min(320px,calc(100vw - 16px));
+      max-height:calc(100vh - 16px); display:flex; flex-direction:column; gap:6px; padding:8px;
+      overflow:auto; box-shadow:0 20px 80px rgba(0,0,0,.55); }
+    .bridge-menu-head { min-height:44px; display:flex; align-items:center; justify-content:space-between;
+      padding:0 8px 0 18px; font-size:14px; font-weight:900; letter-spacing:.18em; }
+    .bridge-menu-close { width:40px; height:40px; border:0; cursor:pointer; font:inherit; font-size:24px; font-weight:900; }
+    .bridge-menu-item { display:flex; align-items:center; gap:12px; min-height:42px; border:0; cursor:pointer;
+      font:inherit; font-size:13px; font-weight:800; letter-spacing:.08em; text-align:left; }
+    .bridge-menu-icon { width:34px; height:28px; display:inline-flex; align-items:center; justify-content:center; font-size:18px; }
 
     /* ── top sweep ── */
     .topbar { display:flex; align-items:stretch; gap:6px; height:54px; flex-shrink:0; }
@@ -246,6 +281,35 @@ const SEV_LABEL: Record<string, string> = {
     .empty-ic { font-size:56px; } .empty-tx { font-size:20px; font-weight:800; letter-spacing:.18em; }
 
     @keyframes redPulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+    /* ═══════════════ HAMBURGER NAV — per-theme ═══════════════ */
+    .t-classic .bridge-menu-btn { background:#fff; color:#1565c0; border:1px solid #cdd9e5; border-radius:14px; }
+    .t-classic .bridge-menu-btn span { background:#1565c0; }
+    .t-classic .bridge-menu { background:#fff; border:1px solid #d7e0ea; border-radius:14px; color:#1f2933; }
+    .t-classic .bridge-menu-head { color:#1565c0; border-bottom:1px solid #d7e0ea; }
+    .t-classic .bridge-menu-close { background:#eef4fb; color:#1565c0; border-radius:12px; }
+    .t-classic .bridge-menu-item { background:#f1f5fa; color:#1f2933; border-radius:12px; padding:0 12px; }
+    .t-classic .bridge-menu-icon { color:#1565c0; }
+
+    .t-lcars .bridge-menu-btn { background:#ffcc66; color:#000; border-radius:24px 0 0 0; }
+    .t-lcars .bridge-menu-btn span { background:#000; }
+    .t-lcars .bridge-menu { background:#000; border-left:18px solid #FF9933; color:#ffcc99; border-radius:44px 0 18px 0; }
+    .t-lcars .bridge-menu-head { background:#ffcc66; color:#000; border-radius:24px 0 0 0; }
+    .t-lcars .bridge-menu-close { background:#000; color:#ffcc66; }
+    .t-lcars .bridge-menu-item { background:#15120c; color:#ffcc99; border-radius:0 20px 20px 0; padding:0 14px; }
+    .t-lcars .bridge-menu-item:nth-child(3n) { background:#99CCFF; color:#000; }
+    .t-lcars .bridge-menu-item:nth-child(3n+1) { background:#FF9933; color:#000; }
+    .t-lcars .bridge-menu-item:hover { filter:brightness(1.14); }
+    .t-lcars .bridge-menu-icon { color:inherit; }
+
+    .t-holo .bridge-menu-btn { background:rgba(79,214,255,.15); color:#9fe8ff; border:1px solid #4fd6ff; border-radius:8px; }
+    .t-holo .bridge-menu-btn span { background:#9fe8ff; }
+    .t-holo .bridge-menu { background:#050d1a; border:1px solid rgba(79,214,255,.4); border-radius:10px; color:#bfefff; }
+    .t-holo .bridge-menu-head { color:#9fe8ff; border-bottom:1px solid rgba(79,214,255,.25); }
+    .t-holo .bridge-menu-close { background:rgba(79,214,255,.08); color:#9fe8ff; border-radius:8px; }
+    .t-holo .bridge-menu-item { background:rgba(79,214,255,.08); color:#bfefff; border:1px solid rgba(79,214,255,.12); border-radius:8px; padding:0 12px; }
+    .t-holo .bridge-menu-item:hover { filter:brightness(1.2); }
+    .t-holo .bridge-menu-icon { color:#5fc8ee; }
 
     /* ═══════════════ THEME: CLASSIC ═══════════════ */
     .t-classic { color:#1f2933;
@@ -364,12 +428,14 @@ const SEV_LABEL: Record<string, string> = {
 })
 export class ProblemsComponent implements OnInit, OnDestroy {
   private http     = inject(HttpClient);
+  private router   = inject(Router);
   private themeSvc = inject(ThemeService);
   theme = this.themeSvc.theme;
 
   data    = signal<ProblemsResponse | null>(null);
   loading = signal(false);
   error   = signal('');
+  navOpen = signal(false);
 
   filterSev     = signal<string>('all');
   searchSig     = signal<string>('');
@@ -378,6 +444,17 @@ export class ProblemsComponent implements OnInit, OnDestroy {
   expandedHosts = signal<Set<string>>(new Set());
 
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+  readonly nav = [
+    { path: '/bridge',      label: 'Brücke',         icon: '◈' },
+    { path: '/dashboard',   label: 'Dashboard',       icon: '▦' },
+    { path: '/feed',        label: 'News Feed',        icon: '≋' },
+    { path: '/alerts',      label: 'Alerts',           icon: '!' },
+    { path: '/my-tickets',  label: 'Meine Tickets',    icon: '✓' },
+    { path: '/kanban',      label: 'Kanban',           icon: '▤' },
+    { path: '/ai-insights', label: 'KI-Insights',      icon: '◎' },
+    { path: '/settings',    label: 'Einstellungen',    icon: '⚙' },
+  ];
 
   readonly filters = [
     { key: 'all',      label: 'ALLE' },
@@ -518,6 +595,11 @@ export class ProblemsComponent implements OnInit, OnDestroy {
       'cockpit-' + host,
       'width=1300,height=820,menubar=no,toolbar=no,location=no,status=no',
     );
+  }
+
+  go(path: string): void {
+    this.navOpen.set(false);
+    this.router.navigateByUrl(path);
   }
 
   sevLabel(sev: string): string {
