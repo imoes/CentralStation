@@ -458,7 +458,7 @@ async def send_message(sid: str, body: MessageBody):
     log.info("[%s] msg #%d: %.80s", sid[:8], msg_num, body.content)
 
     q: asyncio.Queue[dict] = asyncio.Queue()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     delta_count = 0
     response_buf: list[str] = []
 
@@ -542,7 +542,14 @@ async def send_message(sid: str, body: MessageBody):
 
     async def event_stream():
         while True:
-            item = await q.get()
+            try:
+                item = await asyncio.wait_for(q.get(), timeout=15)
+            except asyncio.TimeoutError:
+                # Send a no-op SSE comment to keep the connection alive while
+                # the agent is busy with a long tool call (CheckMK, web search, …).
+                # Without this, nginx/browsers drop idle SSE connections after ~60 s.
+                yield ": keepalive\n\n"
+                continue
             yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
             if item["type"] in ("done", "error"):
                 log.debug("[%s] SSE stream closed (type=%s)", sid[:8], item["type"])
