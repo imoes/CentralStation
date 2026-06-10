@@ -1421,7 +1421,8 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   ignoringIds = signal<Set<string>>(new Set());
   feedSearches = signal<FeedSearch[]>([]);
   activeSearch = signal<FeedSearch | null>(null);
-  systemSearches = computed(() => this.feedSearches().filter(s => s.is_system));
+  // Exclusion searches are background filters — don't show them as clickable search tiles
+  systemSearches = computed(() => this.feedSearches().filter(s => s.is_system && !s.is_exclusion));
   generatingSearch = signal(false);
   aiSearchPrompt = '';
   searchDraft: { id?: string; name: string; index_pattern: string; query_string: string; enabled: boolean; is_exclusion: boolean } = {
@@ -1927,8 +1928,8 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
         const next = new Set(this.ignoringIds());
         next.delete(item.id);
         this.ignoringIds.set(next);
-        // Remove all matching items from the local list immediately
-        this.items.update(prev => prev.filter(i => i.id !== item.id));
+        // Reload the full list so all items matching the new exclusion disappear at once
+        this.load(true);
         this.snackBar.open(`Ignoriert: „${res.name}" — ähnliche Meldungen werden ausgeblendet`, 'OK', { duration: 5000 });
       },
       error: (err) => {
