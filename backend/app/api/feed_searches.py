@@ -154,9 +154,12 @@ async def delete_search(
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(404, "Search not found")
+    is_admin = current_user.role in ("admin", "sysadmin")
     if s.is_system:
-        raise HTTPException(403, "System searches cannot be deleted")
-    if s.user_id != current_user.id:
+        # System searches are shared — only admins may remove them.
+        if not is_admin:
+            raise HTTPException(403, "Only admins can delete system searches")
+    elif s.user_id != current_user.id:
         raise HTTPException(403, "Not your search")
     await db.delete(s)
     await db.commit()
