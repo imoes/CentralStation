@@ -86,8 +86,10 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     { key: 'project_ids', label: '',         type: '_hidden'  },
   ],
   aikb: [
-    { key: 'username', label: 'Benutzername', type: 'text' },
-    { key: 'password', label: 'Passwort', type: 'password' },
+    { key: 'api_token', label: 'API Token (aikb_…)', type: 'password',
+      hint: 'Token unter /admin/api-tokens anlegen — empfohlen' },
+    { key: 'username', label: 'Benutzername (Fallback, wenn kein Token)', type: 'text' },
+    { key: 'password', label: 'Passwort (Fallback)', type: 'password' },
   ],
 };
 
