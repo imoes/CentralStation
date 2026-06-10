@@ -13,6 +13,7 @@ import { Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { environment } from '../../../environments/environment';
 import { ThemeService } from '../../core/services/theme.service';
+import { AuthService } from '../../core/auth/auth.service';
 
 interface ProblemService {
   host: string;
@@ -72,7 +73,7 @@ const SEV_LABEL: Record<string, string> = {
             <span>NAVIGATION</span>
             <button class="bridge-menu-close" (click)="navOpen.set(false)" title="Schließen">×</button>
           </div>
-          @for (item of nav; track item.path) {
+          @for (item of nav(); track item.path) {
             <button class="bridge-menu-item" (click)="go(item.path)">
               <span class="bridge-menu-icon">{{ item.icon }}</span>
               <span>{{ item.label }}</span>
@@ -430,6 +431,7 @@ export class ProblemsComponent implements OnInit, OnDestroy {
   private http     = inject(HttpClient);
   private router   = inject(Router);
   private themeSvc = inject(ThemeService);
+  private auth     = inject(AuthService);
   theme = this.themeSvc.theme;
 
   data    = signal<ProblemsResponse | null>(null);
@@ -445,16 +447,24 @@ export class ProblemsComponent implements OnInit, OnDestroy {
 
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
-  readonly nav = [
-    { path: '/bridge',      label: 'Brücke',         icon: '◈' },
-    { path: '/dashboard',   label: 'Dashboard',       icon: '▦' },
-    { path: '/feed',        label: 'News Feed',        icon: '≋' },
-    { path: '/alerts',      label: 'Alerts',           icon: '!' },
-    { path: '/my-tickets',  label: 'Meine Tickets',    icon: '✓' },
-    { path: '/kanban',      label: 'Kanban',           icon: '▤' },
-    { path: '/ai-insights', label: 'KI-Insights',      icon: '◎' },
-    { path: '/settings',    label: 'Einstellungen',    icon: '⚙' },
+  // Same role-gating as the app sidenav (app.ts navItems); current view (/problems) excluded.
+  private readonly NAV_ALL = [
+    { path: '/dashboard',   label: 'Dashboard',     icon: '▦', roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/bridge',      label: 'Brücke',        icon: '◈', roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/feed',        label: 'News Feed',     icon: '≋', roles: ['admin','sysadmin','network_technician'] },
+    { path: '/problems',    label: 'Problemboard',  icon: '⚠', roles: ['admin','sysadmin','network_technician'] },
+    { path: '/alerts',      label: 'Alerts',        icon: '!', roles: ['admin'] },
+    { path: '/my-tickets',  label: 'Meine Tickets', icon: '✓', roles: ['admin','sysadmin'] },
+    { path: '/kanban',      label: 'Kanban',        icon: '▤', roles: ['admin','sysadmin','network_technician'] },
+    { path: '/ai-insights', label: 'KI-Insights',   icon: '◎', roles: ['admin','sysadmin'] },
+    { path: '/settings',    label: 'Einstellungen', icon: '⚙', roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/help',        label: 'Hilfe',         icon: '?', roles: ['admin','sysadmin','network_technician','viewer'] },
   ];
+
+  nav = computed(() => {
+    const role = this.auth.userRole();
+    return this.NAV_ALL.filter(i => i.path !== '/problems' && role && i.roles.includes(role));
+  });
 
   readonly filters = [
     { key: 'all',      label: 'ALLE' },
