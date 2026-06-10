@@ -284,14 +284,32 @@ export class ComputerComponent implements OnInit, OnDestroy {
       this.toggle();
       return;
     }
-    if (e.key === ' ' && this.isOpen()) {
+    // Push-to-talk: start recording on Space press (ignore auto-repeat)
+    if (e.key === ' ' && !e.repeat && this.isOpen()) {
       const active = document.activeElement;
       const isTyping = active instanceof HTMLInputElement
                     || active instanceof HTMLTextAreaElement
                     || (active instanceof HTMLElement && active.isContentEditable);
       if (!isTyping) {
         e.preventDefault();
-        this.toggleVoice();
+        if (!this.listening()) this.toggleVoice();
+      }
+    }
+  }
+
+  @HostListener('document:keyup', ['$event'])
+  onKeyup(e: KeyboardEvent): void {
+    // Push-to-talk: stop recording on Space release
+    if (e.key === ' ' && this.isOpen() && this.listening()) {
+      const active = document.activeElement;
+      const isTyping = active instanceof HTMLInputElement
+                    || active instanceof HTMLTextAreaElement
+                    || (active instanceof HTMLElement && active.isContentEditable);
+      if (!isTyping) {
+        e.preventDefault();
+        this._recognition?.stop();
+        this.mediaRecorder?.stop();
+        this.listening.set(false);
       }
     }
   }
