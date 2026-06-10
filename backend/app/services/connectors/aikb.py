@@ -2,10 +2,11 @@
 
 Provides RAG lookups against the internal Confluence KB via the IT-AIKB API.
 Two search modes:
-  - OpenSearch (fast, no LLM): POST /search/opensearch — raw Confluence excerpts
-  - RAG/Deepsearch (LLM answer): POST /search — full answer with sources
+  - OpenSearch (fast, returns excerpts): POST /search/opensearch
+  - RAG/Deepsearch (LLM answer): POST /search
 
-Credentials key: api_token  (Bearer token, format: aikb_...)
+Auth: username + password → fresh JWT per call via POST /auth/login/internal.
+Credentials keys: username, password.
 """
 from __future__ import annotations
 
@@ -21,10 +22,20 @@ log = logging.getLogger(__name__)
 
 
 class AIKBConnector(BaseConnector):
-    """Credentials key: api_token."""
+    """Credentials keys: username, password."""
 
-    def _headers(self) -> dict:
-        token = self.credentials.get("api_token", "")
+    async def _get_token(self, client: httpx.AsyncClient) -> str:
+        r = await client.post(
+            f"{self.base_url}/auth/login/internal",
+            json={
+                "username": self.credentials.get("username", ""),
+                "password": self.credentials.get("password", ""),
+            },
+        )
+        r.raise_for_status()
+        return r.json().get("token", "")
+
+    def _headers(self, token: str) -> dict:
         return {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -34,12 +45,19 @@ class AIKBConnector(BaseConnector):
     async def test_connection(self) -> ConnectorTestResult:
         try:
             async with self._client(timeout=10.0) as client:
+                token = await self._get_token(client)
                 r = await client.get(
-                    f"{self.base_url}/health",
-                    headers=self._headers(),
+                    f"{self.base_url}/auth/me",
+                    headers=self._headers(token),
                 )
                 r.raise_for_status()
-                return ConnectorTestResult(success=True, message="IT-AIKB erreichbar")
+                data = r.json()
+                user = data.get("display_name") or data.get("username", "")
+                role = data.get("role", "")
+                return ConnectorTestResult(
+                    success=True,
+                    message=f"IT-AIKB verbunden als {user} ({role})",
+                )
         except Exception as exc:
             return ConnectorTestResult(success=False, message=str(exc))
 
@@ -49,9 +67,10 @@ class AIKBConnector(BaseConnector):
         space_keys: list[str] | None = None,
         size: int = 5,
     ) -> list[dict]:
-        """Raw OpenSearch hits — no LLM, fastest path.
+        """OpenSearch hits with content_snippet — no extra LLM call.
 
-        Returns a list of dicts with keys: title, text/body, url, space_key.
+        Response format: {results: [{title, content_snippet, source_url, space_key, ...}]}
+        Returns list of normalised dicts: title, content, source_url, space_key.
         """
         payload: dict[str, Any] = {
             "query": query,
@@ -59,16 +78,17 @@ class AIKBConnector(BaseConnector):
         }
         try:
             async with self._client(timeout=20.0) as client:
+                token = await self._get_token(client)
                 r = await client.post(
                     f"{self.base_url}/search/opensearch",
                     json=payload,
-                    headers=self._headers(),
+                    headers=self._headers(token),
                 )
                 r.raise_for_status()
-                hits = r.json()
-                if isinstance(hits, dict):
-                    hits = hits.get("results") or hits.get("hits") or []
-                return [self._normalise_hit(h) for h in (hits or [])[:size]]
+                data = r.json()
+                # Response: {results: [...], references: [...], answer: null, ...}
+                hits = data.get("results") or []
+                return [self._normalise_hit(h) for h in hits[:size]]
         except Exception as exc:
             log.warning("AIKBConnector.search_opensearch failed: %s", exc)
             return []
@@ -79,9 +99,9 @@ class AIKBConnector(BaseConnector):
         deepsearch: bool = False,
         space_keys: list[str] | None = None,
     ) -> dict:
-        """LLM-powered answer from KB.
+        """LLM-powered answer from KB with source citations.
 
-        Returns dict with keys: answer (str), results (list of normalised hits).
+        Returns dict: answer (str), results (list of normalised hits).
         """
         payload: dict[str, Any] = {
             "query": query,
@@ -91,17 +111,17 @@ class AIKBConnector(BaseConnector):
         if deepsearch:
             payload["deepsearch_mode"] = True
         try:
-            async with self._client(timeout=60.0) as client:
+            async with self._client(timeout=90.0) as client:
+                token = await self._get_token(client)
                 r = await client.post(
                     f"{self.base_url}/search",
                     json=payload,
-                    headers=self._headers(),
+                    headers=self._headers(token),
                 )
                 r.raise_for_status()
                 data = r.json()
                 answer = data.get("answer") or ""
-                # Prefer references (with URL) over raw sources
-                raw_results = data.get("references") or data.get("sources") or []
+                raw_results = data.get("results") or data.get("references") or []
                 results = [self._normalise_hit(h) for h in raw_results[:5]]
                 return {"answer": answer, "results": results}
         except Exception as exc:
@@ -110,10 +130,11 @@ class AIKBConnector(BaseConnector):
 
     @staticmethod
     def _normalise_hit(h: dict) -> dict:
-        """Normalise a KB search hit to a common dict format."""
         return {
             "title": h.get("title") or h.get("page_title") or "",
-            "content": (h.get("text") or h.get("content") or h.get("body") or "")[:500],
-            "source_url": h.get("url") or h.get("source_url") or h.get("link") or "",
+            "content": (
+                h.get("content_snippet") or h.get("text") or h.get("content") or h.get("body") or ""
+            )[:500],
+            "source_url": h.get("source_url") or h.get("url") or h.get("link") or "",
             "space_key": h.get("space_key") or h.get("space") or "",
         }
