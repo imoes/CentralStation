@@ -594,7 +594,14 @@ async def run_aggregation(db: AsyncSession) -> int:
                             )
                         )
                     )
-                if existing.scalar_one_or_none():
+                existing_alert = existing.scalar_one_or_none()
+                if existing_alert:
+                    # For Coroot: refresh metadata so newly added fields (e.g. host)
+                    # are written to existing open incidents on the next aggregation.
+                    if source == "coroot":
+                        fresh_meta = dict(item.get("metadata") or {})
+                        if fresh_meta:
+                            existing_alert.metadata_ = fresh_meta
                     continue
 
             meta = dict(item.get("metadata") or {})
