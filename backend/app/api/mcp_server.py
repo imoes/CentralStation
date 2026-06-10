@@ -530,6 +530,83 @@ async def get_coroot_status(project: str = "") -> dict:
     }
 
 
+# ── Tool 11: IT-AIKB Knowledge Base ───────────────────────────────
+
+@mcp.tool()
+async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
+    """Durchsucht die interne IT-Wissensdatenbank (IT-AIKB / Confluence KB).
+
+    Enthält Runbooks, Server-Dokumentation, Abhängigkeiten, Konfigurationsanleitungen
+    und KB-Artikel für alle ippen.media-Systeme.
+
+    Parameter:
+    - query: Suchbegriff, z.B. 'HAProxy Konfiguration', '[KB] docker50 Abhängigkeiten',
+             'Graylog Filebeat Setup', 'cue-integrations Schnittstellen'
+    - deepsearch: False (Standard) = schnelle OpenSearch-Treffer mit Textauszügen
+                  True = LLM-gestützte Antwort mit Quellenangaben (langsamer, ~20-60s)
+
+    Nützlich wenn:
+    - Du die Dokumentation/Konfiguration eines Servers suchst
+    - Du Abhängigkeiten zwischen Diensten nachschlagen willst
+    - Du Runbooks oder Anleitungen für bekannte Probleme brauchst
+    - Du dir bei einer technischen Lösung unsicher bist und interne Doku prüfen willst
+    """
+    from sqlalchemy import select
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.aikb import AIKBConnector
+
+    async with (await _get_db_session()) as db:
+        result = await db.execute(
+            select(ConnectorConfig).where(
+                ConnectorConfig.type == "aikb",
+                ConnectorConfig.enabled.is_(True),
+            )
+        )
+        conn = result.scalar_one_or_none()
+
+    if not conn:
+        return {"error": "Kein aktiver IT-AIKB Connector konfiguriert"}
+
+    creds = decrypt_credentials(conn.encrypted_credentials)
+    aikb = AIKBConnector(base_url=conn.base_url, credentials=creds)
+
+    if deepsearch:
+        res = await aikb.search_rag(query, deepsearch=True)
+        answer = res.get("answer") or ""
+        sources = res.get("results") or []
+        return {
+            "mode": "deepsearch",
+            "query": query,
+            "answer": answer,
+            "sources": [
+                {
+                    "title": s.get("title", ""),
+                    "space": s.get("space_key", ""),
+                    "url": s.get("source_url", ""),
+                    "excerpt": s.get("content", "")[:200],
+                }
+                for s in sources
+            ],
+        }
+    else:
+        hits = await aikb.search_opensearch(query, size=5)
+        return {
+            "mode": "opensearch",
+            "query": query,
+            "results": [
+                {
+                    "title": h.get("title", ""),
+                    "space": h.get("space_key", ""),
+                    "url": h.get("source_url", ""),
+                    "excerpt": h.get("content", "")[:300],
+                }
+                for h in hits
+            ],
+            "count": len(hits),
+        }
+
+
 # ── DB session helper ──────────────────────────────────────────────
 
 async def _get_db_session():
