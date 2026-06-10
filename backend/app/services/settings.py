@@ -264,3 +264,22 @@ async def get_agent_config(db: AsyncSession) -> AgentConfig:
         worklist_size=int(s.get("agent.worklist_size") or 15),
         generative_interval_minutes=int(s.get("agent.generative_interval_minutes") or 15),
     )
+
+
+async def get_active_checkmk_connector(db: AsyncSession):
+    """Return a CheckMKConnector for the first enabled CheckMK connector, or None."""
+    from sqlalchemy import select
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.checkmk import CheckMKConnector
+
+    result = await db.execute(
+        select(ConnectorConfig)
+        .where(ConnectorConfig.type == "checkmk", ConnectorConfig.enabled.is_(True))
+        .limit(1)
+    )
+    conn = result.scalar_one_or_none()
+    if not conn:
+        return None
+    creds = decrypt_credentials(conn.encrypted_credentials)
+    return CheckMKConnector(base_url=conn.base_url, credentials=creds)
