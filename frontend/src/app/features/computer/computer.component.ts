@@ -724,17 +724,20 @@ export class ComputerComponent implements OnInit, OnDestroy {
         this._appendToLast(sid, `[Verbindungsfehler: ${err}]`);
       }
     } finally {
-      // Always strip [FEED:...] markers and attach action buttons, regardless
-      // of how the stream ended (normal close, abort, or error).
-      if (fullAssistantText) {
-        this._finishAssistantMessage(sid, fullAssistantText);
-      }
-      // Read the Fazit aloud — but not if the user explicitly stopped generation.
-      if (!wasAborted && fullAssistantText) {
-        this.speak(fullAssistantText);
-      }
-      this._setActiveTool(sid, undefined);
-      this.loading.set(false);
+      // All signal writes must run inside NgZone — the stream and its finally-block
+      // execute outside Angular's zone (ReadableStream is not zone-patched), so
+      // without ngZone.run() the view would not update after stream end.
+      this.ngZone.run(() => {
+        if (fullAssistantText) {
+          this._finishAssistantMessage(sid, fullAssistantText);
+        }
+        if (!wasAborted && fullAssistantText) {
+          this.speak(fullAssistantText);
+        }
+        this._setActiveTool(sid, undefined);
+        this.loading.set(false);
+        this.scrollToBottom();
+      });
     }
   }
 

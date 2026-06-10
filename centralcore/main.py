@@ -277,11 +277,12 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         model=model or None,
         enabled_toolsets=["terminal", "web", "mcp-centralstation", "mcp-checkmk"],
         ephemeral_system_prompt=SYSTEM_PROMPT,
-        # Cap tool/LLM iterations per user turn. The default (90) lets a weaker
-        # local model spiral into dozens of near-identical web_search calls
-        # without ever answering. 25 is enough for legitimate multi-tool
-        # diagnosis (checkmk + graylog + a few searches) but bounds runaways.
-        max_iterations=25,
+        # Cap tool/LLM iterations per user turn. Web search spirals are bounded by
+        # the system prompt rule (max 3 web_search per question), not this limit.
+        # This limit only guards against hard runaway loops (infinite tool chains).
+        # 60 is enough for complex multi-tool diagnosis without blocking legitimate
+        # workflows (vibemk_* + search_feed + checkmk + SSH + KB = easily 30+ steps).
+        max_iterations=60,
         quiet_mode=False,   # print tool calls + responses to stdout → Docker log → Logspout
         verbose_logging=False,
     )
