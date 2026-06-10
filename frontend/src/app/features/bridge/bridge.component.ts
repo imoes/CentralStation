@@ -5,6 +5,7 @@ import { Router } from '@angular/router';
 import { environment } from '../../../environments/environment';
 import { WebsocketService } from '../../core/services/websocket.service';
 import { ThemeService } from '../../core/services/theme.service';
+import { AuthService } from '../../core/auth/auth.service';
 
 interface SourceStatus { name: string; state: string; critical: number; high: number; total: number; }
 interface SectorStatus { name: string; state: string; critical: number; high: number; total: number; }
@@ -69,7 +70,7 @@ interface BridgeStatus {
             <span>NAVIGATION</span>
             <button class="bridge-menu-close" (click)="bridgeMenuOpen.set(false)" title="Schließen">×</button>
           </div>
-          @for (item of bridgeNav; track item.path) {
+          @for (item of bridgeNav(); track item.path) {
             <button class="bridge-menu-item" (click)="go(item.path)">
               <span class="bridge-menu-icon">{{ item.icon }}</span>
               <span>{{ item.label }}</span>
@@ -522,6 +523,7 @@ export class BridgeComponent implements OnInit, OnDestroy {
   private http = inject(HttpClient);
   private router = inject(Router);
   private ws = inject(WebsocketService);
+  private auth = inject(AuthService);
 
   private themeSvc = inject(ThemeService);
   status = signal<BridgeStatus | null>(null);
@@ -531,16 +533,23 @@ export class BridgeComponent implements OnInit, OnDestroy {
   activeSource = signal<string>('');   // '' = no filter, 'checkmk'|'graylog'|'wazuh' = filtered
   bridgeMenuOpen = signal(false);
   theme = this.themeSvc.theme;   // follows the global app theme
-  readonly bridgeNav = [
-    { path: '/dashboard', label: 'Dashboard', icon: '▦' },
-    { path: '/feed', label: 'News Feed', icon: '≋' },
-    { path: '/problems', label: 'Problemboard', icon: '⚠' },
-    { path: '/alerts', label: 'Alerts', icon: '!' },
-    { path: '/my-tickets', label: 'Meine Tickets', icon: '✓' },
-    { path: '/kanban', label: 'Kanban', icon: '▤' },
-    { path: '/ai-insights', label: 'KI-Insights', icon: '◎' },
-    { path: '/settings', label: 'Einstellungen', icon: '⚙' },
+  // Same role-gating as the app sidenav (app.ts navItems); current view (/bridge) excluded.
+  private readonly NAV_ALL = [
+    { path: '/dashboard',   label: 'Dashboard',     icon: '▦', roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/feed',        label: 'News Feed',     icon: '≋', roles: ['admin','sysadmin','network_technician'] },
+    { path: '/problems',    label: 'Problemboard',  icon: '⚠', roles: ['admin','sysadmin','network_technician'] },
+    { path: '/alerts',      label: 'Alerts',        icon: '!', roles: ['admin'] },
+    { path: '/my-tickets',  label: 'Meine Tickets', icon: '✓', roles: ['admin','sysadmin'] },
+    { path: '/kanban',      label: 'Kanban',        icon: '▤', roles: ['admin','sysadmin','network_technician'] },
+    { path: '/ai-insights', label: 'KI-Insights',   icon: '◎', roles: ['admin','sysadmin'] },
+    { path: '/settings',    label: 'Einstellungen', icon: '⚙', roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/help',        label: 'Hilfe',         icon: '?', roles: ['admin','sysadmin','network_technician','viewer'] },
   ];
+
+  bridgeNav = computed(() => {
+    const role = this.auth.userRole();
+    return this.NAV_ALL.filter(i => i.path !== '/bridge' && role && i.roles.includes(role));
+  });
 
   filteredWorklist = computed(() => {
     const src = this.activeSource();
