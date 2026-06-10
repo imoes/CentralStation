@@ -1,5 +1,7 @@
 import { Component, computed, effect, inject, OnDestroy, OnInit, signal, ViewChild } from '@angular/core';
-import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
+import { Router, RouterOutlet, RouterLink, RouterLinkActive, NavigationEnd } from '@angular/router';
+import { filter } from 'rxjs/operators';
+import { Subscription } from 'rxjs';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { MatSidenavModule } from '@angular/material/sidenav';
@@ -33,6 +35,7 @@ interface NavItem {
   template: `
     @if (auth.isLoggedIn()) {
       <mat-sidenav-container class="app-container">
+        @if (!fullscreenRoute()) {
         <mat-sidenav mode="side" opened class="sidenav" [class.collapsed]="navCollapsed()">
           <div class="sidenav-header">
             <button mat-icon-button class="nav-toggle" (click)="toggleNav()" title="Navigation ein-/ausklappen">
@@ -84,6 +87,7 @@ interface NavItem {
             </button>
           </div>
         </mat-sidenav>
+        }
         <mat-sidenav-content>
           <router-outlet></router-outlet>
         </mat-sidenav-content>
@@ -118,6 +122,12 @@ export class App implements OnInit, OnDestroy {
   unreadFeedCount = signal<number>(0);
   unreadTicketCount = signal<number>(0);
   navCollapsed = signal<boolean>(localStorage.getItem('cs_nav_collapsed') === '1');
+  // Fullscreen takeover views (own hamburger nav) — hide the app sidenav so it
+  // doesn't sit above their position:fixed overlay (mat-sidenav-content forms a
+  // stacking context that would otherwise trap their z-index below the drawer).
+  private static readonly FULLSCREEN_ROUTES = ['/bridge', '/problems'];
+  fullscreenRoute = signal<boolean>(App.isFullscreen(location.pathname));
+  private routerSub?: Subscription;
   private badgeInterval: ReturnType<typeof setInterval> | null = null;
   private http = inject(HttpClient);
   private themeService = inject(ThemeService);
@@ -156,11 +166,20 @@ export class App implements OnInit, OnDestroy {
 
   ngOnInit() {
     window.addEventListener('message', this._cockpitMsgHandler);
+    this.routerSub = this.router.events
+      .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd))
+      .subscribe(e => this.fullscreenRoute.set(App.isFullscreen(e.urlAfterRedirects)));
   }
 
   ngOnDestroy() {
     if (this.badgeInterval) clearInterval(this.badgeInterval);
+    this.routerSub?.unsubscribe();
     window.removeEventListener('message', this._cockpitMsgHandler);
+  }
+
+  private static isFullscreen(url: string): boolean {
+    const path = (url.split('?')[0] || '').replace(/\/+$/, '');
+    return App.FULLSCREEN_ROUTES.some(r => path === r || path.startsWith(r + '/'));
   }
 
   startBadgePolling() {
