@@ -670,12 +670,12 @@ async def diagnose_alert(
         pass
 
     if not host:
-        raise HTTPException(400, "Host nicht ermittelbar — Diagnose nicht möglich.")
+        raise HTTPException(400, "Cannot determine host — diagnostics not possible.")
 
     # ── 2. Run diagnostic providers (all read-only) ───────────────────────
     results = await run_diagnostics(host, db)
     if not results:
-        raise HTTPException(503, "Keine Diagnose-Provider verfügbar.")
+        raise HTTPException(503, "No diagnostic providers available.")
 
     # ── 3. Let LLM synthesise a human-readable summary ───────────────────
     findings_text = "\n".join(r.to_llm_text() for r in results)
@@ -732,10 +732,10 @@ async def diagnose_alert(
             lines.append(f"• [{etype}] {ref} — {text}")
         ai_body += "\n" + "\n".join(lines)
     entry = await _add_timeline(
-        external_id, None, "Computer (KI)", "ai", ai_body, db
+        external_id, None, "Computer (AI)", "ai", ai_body, db
     )
     await db.commit()
-    await _broadcast_collab(external_id, "ai", "Computer (KI)", collab.work_status, ai_body)
+    await _broadcast_collab(external_id, "ai", "Computer (AI)", collab.work_status, ai_body)
 
     return {
         "ok": True,
@@ -971,14 +971,14 @@ async def computer_resolve_alert(
                 break
 
     if not summary:
-        raise HTTPException(400, "Konnte keine Zusammenfassung erstellen")
+        raise HTTPException(400, "Could not generate summary")
 
-    comment_body = f"🖥 **Lernkommentar (Computer-Diagnose):**\n{summary}"
+    comment_body = f"🖥 **Learning Note (Computer Diagnosis):**\n{summary}"
 
     collab = await _get_or_create_collab(external_id, db)
-    await _add_timeline(external_id, None, "Computer (KI)", "ai", comment_body, db)
+    await _add_timeline(external_id, None, "Computer (AI)", "ai", comment_body, db)
     await db.commit()
-    await _broadcast_collab(external_id, "ai", "Computer (KI)", collab.work_status, comment_body)
+    await _broadcast_collab(external_id, "ai", "Computer (AI)", collab.work_status, comment_body)
 
     # Tag the alert in OpenSearch so future similarity searches can find this resolution
     try:
@@ -987,7 +987,7 @@ async def computer_resolve_alert(
     except Exception as _tag_exc:
         log.warning("computer-resolve: OpenSearch tagging failed: %s", _tag_exc)
 
-    log.info("computer-resolve: Lernkommentar gespeichert für %s (%d Zeichen)", external_id[:24], len(summary))
+    log.info("computer-resolve: learning note saved for %s (%d Zeichen)", external_id[:24], len(summary))
     return {"ok": True, "comment": comment_body}
 
 
@@ -1025,15 +1025,15 @@ async def alert_hermes_context(
         log.warning("hermes-context: search failed: %s", e)
 
     if not host:
-        raise HTTPException(400, "Host nicht ermittelbar — kein Hostname im Alert-Datensatz.")
+        raise HTTPException(400, "Cannot determine host — no hostname in alert record.")
 
     results = await run_diagnostics(host, db)
 
     lines: list[str] = [
-        "Untersuche diesen Alert und handle entsprechend:\n",
+        "Investigate this alert and act accordingly:\n",
         f"**Alert:** {title}",
-        f"**Schweregrad:** {severity}",
-        f"**Quelle:** {source_name}",
+        f"**Severity:** {severity}",
+        f"**Source:** {source_name}",
         f"**Host:** {host}",
     ]
     if container:
@@ -1041,7 +1041,7 @@ async def alert_hermes_context(
     lines.append("")
 
     if results:
-        lines.append("## Diagnosedaten (automatisch abgerufen)\n")
+        lines.append("## Diagnostics (automatically retrieved)\n")
         for r in results:
             lines.append(r.to_llm_text())
         lines.append("")
@@ -1051,7 +1051,7 @@ async def alert_hermes_context(
         from app.services.feed_index import search_ai_resolved
         past_resolved = await search_ai_resolved(alert_title=title, host=host, limit=3)
         if past_resolved:
-            lines.append("## Frühere Computer-Diagnosen (gelernt)\n")
+            lines.append("## Past Computer Diagnoses (learned)\n")
             for inc in past_resolved:
                 ts = (inc.get("run_at") or "")[:16]
                 finding = inc.get("finding_title", "")
@@ -1063,16 +1063,16 @@ async def alert_hermes_context(
     except Exception as _exc:
         log.debug("hermes-context: past_resolved search failed: %s", _exc)
 
-    lines.append("## Aufgabe")
-    lines.append("1. Analysiere die Diagnosedaten und identifiziere die Ursache")
+    lines.append("## Task")
+    lines.append("1. Analyze the diagnostics and identify the root cause")
     if container:
         lines.append(
             f"2. Suche Container-Logs in Graylog: `search_feed('container_name:\"{container}\"')` — Logs kommen via Logspout, kein SSH nötig"
         )
     else:
-        lines.append("2. Suche weitere Logs via `search_feed` oder `list_alerts` falls nötig")
-    lines.append("3. Nenne konkret was das Problem ist und wie es zu beheben ist")
-    lines.append("4. Falls du das Problem gelöst hast, klicke im Computer-Panel auf '✓ GELÖST'")
+        lines.append("2. Search further logs via `search_feed` or `list_alerts` if needed")
+    lines.append("3. State concretely what the problem is and how to fix it")
+    lines.append("4. Once resolved, click '✓ RESOLVED' in the Computer panel")
 
     return {"prompt": "\n".join(lines), "host": host}
 
