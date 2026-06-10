@@ -371,6 +371,54 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
     if not decision.get("needs_rag") or not queries:
         return {**state, "rag_context": rag_context}
 
+    # ── Step 1b: IT-AIKB internal KB lookup ──────────────────────────────────
+    # Query the Confluence knowledge base for documentation, runbooks, and
+    # dependency graphs relevant to the current alerts before hitting the web.
+    try:
+        from sqlalchemy import select
+        from app.models.connector import ConnectorConfig
+        from app.core.security import decrypt_credentials
+        from app.services.connectors.aikb import AIKBConnector
+
+        r = await db.execute(
+            select(ConnectorConfig)
+            .where(ConnectorConfig.type == "aikb", ConnectorConfig.enabled.is_(True))
+            .limit(1)
+        )
+        aikb_conn = r.scalar_one_or_none()
+        if aikb_conn:
+            creds = decrypt_credentials(aikb_conn.encrypted_credentials)
+            aikb = AIKBConnector(base_url=aikb_conn.base_url, credentials=creds)
+
+            for query in queries[:2]:
+                if use_deepsearch:
+                    # Full LLM-powered answer for complex queries
+                    result = await aikb.search_rag(query, deepsearch=True)
+                    answer = result.get("answer", "")
+                    hits = result.get("results", [])
+                    if answer or hits:
+                        rag_context.append({
+                            "source": "server-kb",
+                            "query": query,
+                            "results": [
+                                {"title": "IT-AIKB Antwort", "content": answer[:600], "source_url": ""},
+                                *hits[:3],
+                            ],
+                        })
+                        log.debug("rag_lookup: AIKB deepsearch for '%s' → %d chars answer", query, len(answer))
+                else:
+                    # Fast OpenSearch hits
+                    hits = await aikb.search_opensearch(query, size=4)
+                    if hits:
+                        rag_context.append({
+                            "source": "server-kb",
+                            "query": query,
+                            "results": hits,
+                        })
+                        log.debug("rag_lookup: AIKB opensearch for '%s' → %d hits", query, len(hits))
+    except Exception as e:
+        log.warning("rag_lookup: AIKB lookup failed: %s", e)
+
     # ── Step 2: SearXNG web search via HyDE pattern
     if searxng_config.is_configured and queries:
         for query in queries[:2]:  # limit web searches
