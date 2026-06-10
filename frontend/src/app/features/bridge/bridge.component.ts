@@ -399,7 +399,10 @@ interface BridgeStatus {
 
     /* ═══════════════ THEME: LCARS ═══════════════ */
     .t-lcars { background:#000; color:#FF9933; font-family:'Antonio','Eurostile',sans-serif; text-transform:uppercase; }
-    .t-lcars .work-verdict, .t-lcars .log-title { text-transform:none; }  /* keep prose readable */
+    /* Message/prose texts use the readable Roboto body font — never the condensed
+       LCARS display font (same convention as News Feed .card-body-text + Dashboard). */
+    .t-lcars .work-verdict, .t-lcars .log-title, .t-lcars .ip-title, .t-lcars .ip-insight {
+      text-transform:none; font-family:Roboto,'Helvetica Neue',sans-serif; }
     .t-lcars .seg-a, .t-lcars .hero-title, .t-lcars .rail-pill, .t-lcars .num-cell b, .t-lcars .num-cell span,
     .t-lcars .block-head, .t-lcars .rail-label, .t-lcars .work-host { font-weight:700; letter-spacing:.06em; }
     /* top sweep: orange bar, rounded outer ends = the LCARS elbow caps */
