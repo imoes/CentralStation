@@ -1,6 +1,6 @@
 import {
   Component, OnInit, OnDestroy, signal, computed,
-  ViewChild, ElementRef, HostListener, inject,
+  ViewChild, ElementRef, HostListener, inject, NgZone,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -230,6 +230,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private sanitizer = inject(DomSanitizer);
   private computerService = inject(ComputerService);
+  private ngZone = inject(NgZone);
   private apiBase = `${environment.apiUrl}/computer`;
 
   // Maps a host key (e.g. hostname) → session_id so that repeated "Computer, prüfe das"
@@ -341,6 +342,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
       if (!this.activeTabId() || !ids.includes(this.activeTabId()!)) {
         this.activeTabId.set(ids[0]);
       }
+
+      // Load message history for all sessions so they're available after a reload.
+      await Promise.all(ids.map(sid => this.loadSessionHistory(sid)));
     } catch (err) {
       console.debug('loadSessions failed:', err);
     }
@@ -673,23 +677,25 @@ export class ComputerComponent implements OnInit, OnDestroy {
           if (!raw || raw === '[DONE]') continue;
           try {
             const data = JSON.parse(raw);
-            if (data.type === 'delta') {
-              fullAssistantText += data.text;
-              this._appendToLast(sid, data.text);
-              this._setActiveTool(sid, undefined);
-            }
-            if (data.type === 'tool_start') {
-              this._setActiveTool(sid, data.tool);
-            }
-            if (data.type === 'tool_done') {
-              this._setActiveTool(sid, undefined);
-            }
-            if (data.type === 'reasoning') {
-              this._setActiveTool(sid, `💭 ${data.text}`);
-            }
-            if (data.type === 'error') {
-              this._appendToLast(sid, `\n[Fehler: ${data.text}]`);
-            }
+            this.ngZone.run(() => {
+              if (data.type === 'delta') {
+                fullAssistantText += data.text;
+                this._appendToLast(sid, data.text);
+                this._setActiveTool(sid, undefined);
+              }
+              if (data.type === 'tool_start') {
+                this._setActiveTool(sid, data.tool);
+              }
+              if (data.type === 'tool_done') {
+                this._setActiveTool(sid, undefined);
+              }
+              if (data.type === 'reasoning') {
+                this._setActiveTool(sid, `💭 ${data.text}`);
+              }
+              if (data.type === 'error') {
+                this._appendToLast(sid, `\n[Fehler: ${data.text}]`);
+              }
+            });
           } catch { /* skip malformed */ }
         }
       }
