@@ -31,6 +31,7 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'netbox',       label: 'NetBox' },
   { value: 'id_generator', label: 'ID-Generator' },
   { value: 'coroot',       label: 'Coroot (Observability)' },
+  { value: 'aikb',         label: 'IT-AIKB (Wissensdatenbank)' },
 ];
 
 const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
@@ -83,6 +84,10 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     { key: 'email',       label: 'E-Mail',   type: 'text'     },
     { key: 'password',    label: 'Passwort', type: 'password' },
     { key: 'project_ids', label: '',         type: '_hidden'  },
+  ],
+  aikb: [
+    { key: 'api_token', label: 'API Token (aikb_…)', type: 'password',
+      hint: 'Token unter /admin/api-tokens in der IT-AIKB Oberfläche anlegen' },
   ],
 };
 
