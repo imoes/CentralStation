@@ -208,6 +208,9 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         model=model or None,
         enabled_toolsets=["terminal", "web", "mcp-centralstation"],
         ephemeral_system_prompt=SYSTEM_PROMPT,
+        # Web search spirals are bounded by system prompt rules (max 3 web_search).
+        # This limit only guards against infinite tool loops.
+        max_iterations=60,
         quiet_mode=False,   # print tool calls + responses to stdout → Docker log → Logspout
         verbose_logging=False,
     )
