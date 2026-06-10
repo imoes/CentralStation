@@ -5,8 +5,8 @@ Two search modes:
   - OpenSearch (fast, returns excerpts): POST /search/opensearch
   - RAG/Deepsearch (LLM answer): POST /search
 
-Auth: username + password → fresh JWT per call via POST /auth/login/internal.
-Credentials keys: username, password.
+Auth: Bearer token (format: aikb_…) stored as credentials key "api_token".
+Fallback: username + password → fresh JWT per call via POST /auth/login/internal.
 """
 from __future__ import annotations
 
@@ -22,9 +22,14 @@ log = logging.getLogger(__name__)
 
 
 class AIKBConnector(BaseConnector):
-    """Credentials keys: username, password."""
+    """Credentials keys: api_token  (preferred)  OR  username + password."""
 
-    async def _get_token(self, client: httpx.AsyncClient) -> str:
+    async def _bearer(self, client: httpx.AsyncClient) -> str:
+        """Return a valid Bearer token — static api_token or fresh JWT."""
+        token = self.credentials.get("api_token", "").strip()
+        if token:
+            return token
+        # Fallback: authenticate with username / password
         r = await client.post(
             f"{self.base_url}/auth/login/internal",
             json={
@@ -45,7 +50,7 @@ class AIKBConnector(BaseConnector):
     async def test_connection(self) -> ConnectorTestResult:
         try:
             async with self._client(timeout=10.0) as client:
-                token = await self._get_token(client)
+                token = await self._bearer(client)
                 r = await client.get(
                     f"{self.base_url}/auth/me",
                     headers=self._headers(token),
@@ -69,7 +74,6 @@ class AIKBConnector(BaseConnector):
     ) -> list[dict]:
         """OpenSearch hits with content_snippet — no extra LLM call.
 
-        Response format: {results: [{title, content_snippet, source_url, space_key, ...}]}
         Returns list of normalised dicts: title, content, source_url, space_key.
         """
         payload: dict[str, Any] = {
@@ -78,7 +82,7 @@ class AIKBConnector(BaseConnector):
         }
         try:
             async with self._client(timeout=20.0) as client:
-                token = await self._get_token(client)
+                token = await self._bearer(client)
                 r = await client.post(
                     f"{self.base_url}/search/opensearch",
                     json=payload,
@@ -86,7 +90,6 @@ class AIKBConnector(BaseConnector):
                 )
                 r.raise_for_status()
                 data = r.json()
-                # Response: {results: [...], references: [...], answer: null, ...}
                 hits = data.get("results") or []
                 return [self._normalise_hit(h) for h in hits[:size]]
         except Exception as exc:
@@ -112,7 +115,7 @@ class AIKBConnector(BaseConnector):
             payload["deepsearch_mode"] = True
         try:
             async with self._client(timeout=90.0) as client:
-                token = await self._get_token(client)
+                token = await self._bearer(client)
                 r = await client.post(
                     f"{self.base_url}/search",
                     json=payload,
