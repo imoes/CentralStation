@@ -150,7 +150,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                   }
                 </div>
                 <div class="msg-text"
-                     [innerHTML]="renderMarkdown(msg.text)"></div>
+                     [innerHTML]="renderMarkdown(msg)"></div>
                 @if (msg.activeTool) {
                   <div class="tool-status">
                     <span class="tool-spinner">⟳</span> {{ msg.activeTool }}
@@ -237,9 +237,21 @@ export class ComputerComponent implements OnInit, OnDestroy {
   // clicks for the same host reuse the existing session instead of always creating a new one.
   private hostSessions = new Map<string, string>();
 
-  renderMarkdown(text: string): SafeHtml {
-    const html = marked.parse(text) as string;
-    return this.sanitizer.bypassSecurityTrustHtml(html);
+  // Cache rendered markdown per message object. Without this, the [innerHTML]
+  // binding calls bypassSecurityTrustHtml() on every change-detection cycle and
+  // returns a NEW SafeHtml each time, so Angular rewrites the DOM on every CD —
+  // including the mouse events fired while selecting text, which wipes the
+  // selection. Messages are replaced immutably on each update (new object key),
+  // so a WeakMap auto-invalidates on text change and stays bounded to live messages.
+  private _mdCache = new WeakMap<HermesMessage, SafeHtml>();
+
+  renderMarkdown(msg: HermesMessage): SafeHtml {
+    const cached = this._mdCache.get(msg);
+    if (cached) return cached;
+    const html = marked.parse(msg.text) as string;
+    const safe = this.sanitizer.bypassSecurityTrustHtml(html);
+    this._mdCache.set(msg, safe);
+    return safe;
   }
 
   isOpen = signal(false);
