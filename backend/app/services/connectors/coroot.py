@@ -172,6 +172,9 @@ class CorootConnector(BaseConnector):
                                 "project_name": project_name,
                                 "application_id": app_id,
                                 "application": app_name,
+                                # host = service name from Coroot so cockpit navigation
+                                # and bridge/feed host-filter can resolve the right host.
+                                "host": app_name,
                                 "incident_key": inc_key,
                                 "severity": severity_raw,
                                 "impact": round(impact, 2),
