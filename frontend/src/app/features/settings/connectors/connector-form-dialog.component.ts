@@ -86,8 +86,8 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     { key: 'project_ids', label: '',         type: '_hidden'  },
   ],
   aikb: [
-    { key: 'api_token', label: 'API Token (aikb_…)', type: 'password',
-      hint: 'Token unter /admin/api-tokens in der IT-AIKB Oberfläche anlegen' },
+    { key: 'username', label: 'Benutzername', type: 'text' },
+    { key: 'password', label: 'Passwort', type: 'password' },
   ],
 };
 
