@@ -91,6 +91,11 @@ export const routes: Routes = [
     loadComponent: () => import('./features/news-feed/news-feed.component').then(m => m.NewsFeedComponent),
   },
   {
+    path: 'problems',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin', 'network_technician')],
+    loadComponent: () => import('./features/problems/problems.component').then(m => m.ProblemsComponent),
+  },
+  {
     path: 'help',
     canActivate: [authGuard],
     loadComponent: () => import('./features/help/help.component').then(m => m.HelpComponent),

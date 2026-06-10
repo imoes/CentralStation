@@ -197,6 +197,67 @@ async def host_health(
 # Sort priority: CRIT first, then WARN, UNKNOWN, OK
 _STATE_SORT = {2: 0, 1: 1, 3: 2, 0: 3}
 
+_SEV_SORT = {"critical": 0, "warning": 1, "unknown": 2}
+
+
+def _group_problems(problems: list[dict]) -> dict:
+    """Group flat problem list into domain → host → services tree, sorted by CRIT count."""
+    domains: dict[str, dict] = {}
+    for p in problems:
+        host = p.get("host", "")
+        domain = host.split(".", 1)[1] if "." in host else host
+        host_data = domains.setdefault(domain, {}).setdefault(host, {
+            "host": host,
+            "address": p.get("host_address", ""),
+            "services": [],
+            "counts": {"crit": 0, "warn": 0, "unknown": 0, "total": 0},
+        })
+        severity = p.get("severity", "unknown")
+        host_data["services"].append({
+            "host": host,
+            "service": p.get("service", ""),
+            "severity": severity,
+            "output": p.get("output", ""),
+            "last_state_change": p.get("last_state_change"),
+            "host_address": p.get("host_address", ""),
+        })
+        if severity == "critical":
+            host_data["counts"]["crit"] += 1
+        elif severity == "warning":
+            host_data["counts"]["warn"] += 1
+        else:
+            host_data["counts"]["unknown"] += 1
+        host_data["counts"]["total"] += 1
+
+    result_domains = []
+    for domain, hosts in domains.items():
+        domain_counts: dict = {"crit": 0, "warn": 0, "unknown": 0, "total": 0}
+        host_list = []
+        for host_data in hosts.values():
+            host_data["services"].sort(key=lambda s: _SEV_SORT.get(s["severity"], 3))
+            host_list.append(host_data)
+            for k in domain_counts:
+                domain_counts[k] += host_data["counts"][k]
+        host_list.sort(key=lambda h: (-h["counts"]["crit"], -h["counts"]["total"]))
+        result_domains.append({
+            "domain": domain,
+            "hosts": host_list,
+            "counts": domain_counts,
+            "host_count": len(host_list),
+        })
+    result_domains.sort(key=lambda d: (-d["counts"]["crit"], -d["counts"]["total"]))
+
+    total_counts: dict = {"crit": 0, "warn": 0, "unknown": 0, "total": 0}
+    for d in result_domains:
+        for k in total_counts:
+            total_counts[k] += d["counts"][k]
+
+    return {
+        "domains": result_domains,
+        "counts": total_counts,
+        "host_count": sum(d["host_count"] for d in result_domains),
+    }
+
 
 @router.get("/{hostname}/services")
 async def host_services(
@@ -235,6 +296,62 @@ async def host_services(
         log.warning("host_services for %s: %s", hostname, e)
 
     return {"host": hostname, "services": services, "counts": counts}
+
+
+@router.get("/service-problems")
+async def service_problems(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Live unhandled CheckMK service problems, grouped Domain → Host → Service.
+
+    Applies the requesting user's CheckMK scope filters (location, ve, criticality, os)
+    so the view respects the same visibility rules as the Alert Feed and Worklist.
+    """
+    conn = await _get_checkmk_connector(db)
+    if not conn:
+        return {"domains": [], "counts": {"crit": 0, "warn": 0, "unknown": 0, "total": 0}, "host_count": 0}
+
+    try:
+        problems = await conn.get_problems(include_unknown=True)
+    except Exception as e:
+        log.warning("service_problems: CheckMK query failed: %s", e)
+        return {"domains": [], "counts": {"crit": 0, "warn": 0, "unknown": 0, "total": 0}, "host_count": 0}
+
+    # Apply the user's CheckMK scope (same filters as feed / worklist)
+    try:
+        from sqlalchemy import select as _select
+        from app.models.workflow import UserPreference
+        r = await db.execute(_select(UserPreference).where(UserPreference.user_id == current_user.id))
+        prefs = r.scalar_one_or_none()
+    except Exception:
+        prefs = None
+
+    if prefs:
+        def _to_set(v: list | None) -> set[str] | None:
+            return {x.lower() for x in v if x} if v else None
+
+        pref_loc  = _to_set(prefs.checkmk_locations)
+        pref_ve   = _to_set(prefs.checkmk_ve)
+        pref_crit = _to_set(prefs.checkmk_criticality)
+        pref_os   = _to_set(prefs.checkmk_os)
+
+        if any([pref_loc, pref_ve, pref_crit, pref_os]):
+            filtered = []
+            for p in problems:
+                meta = p.get("metadata") or {}
+                loc  = (meta.get("location")    or "").lower()
+                ve   = (meta.get("ve")           or "").lower()
+                crit = (meta.get("criticality")  or "").lower()
+                os_v = (meta.get("os")           or "").lower()
+                if pref_loc  and loc  and not any(f in loc  for f in pref_loc):  continue
+                if pref_ve   and ve   and not any(f in ve   for f in pref_ve):   continue
+                if pref_crit and crit and not any(f in crit for f in pref_crit): continue
+                if pref_os   and os_v and not any(f in os_v for f in pref_os):   continue
+                filtered.append(p)
+            problems = filtered
+
+    return _group_problems(problems)
 
 
 @router.get("/{hostname}/graph")
