@@ -1058,3 +1058,50 @@ async def search_ai_resolved(
     except Exception as e:
         log.warning("search_ai_resolved failed: %s", e)
         return []
+
+
+async def search_recent_ai_findings(host: str, limit: int = 3) -> list[dict]:
+    """Return recent sysadmin AI findings that match the given host.
+
+    Queries the last 3 AiAnalysis runs (within 4 hours) from PostgreSQL,
+    filters findings where finding["host"] is a substring of `host` or vice versa.
+    Returns up to `limit` dicts with keys: severity, title, description.
+    """
+    from datetime import timedelta
+    from sqlalchemy import select, and_
+    from app.core.database import AsyncSessionLocal
+    from app.models.ai import AiAnalysis
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=4)
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(AiAnalysis)
+                .where(
+                    and_(
+                        AiAnalysis.agent_type == "sysadmin",
+                        AiAnalysis.run_at >= cutoff,
+                    )
+                )
+                .order_by(AiAnalysis.run_at.desc())
+                .limit(3)
+            )
+            analyses = result.scalars().all()
+
+        host_lower = host.lower()
+        findings: list[dict] = []
+        for analysis in analyses:
+            for f in (analysis.findings or []):
+                f_host = (f.get("host") or "").lower()
+                if f_host and (host_lower in f_host or f_host in host_lower):
+                    findings.append({
+                        "severity": f.get("severity", "?"),
+                        "title": f.get("title", ""),
+                        "description": f.get("description", ""),
+                    })
+                    if len(findings) >= limit:
+                        return findings
+        return findings
+    except Exception as e:
+        log.warning("search_recent_ai_findings failed: %s", e)
+        return []

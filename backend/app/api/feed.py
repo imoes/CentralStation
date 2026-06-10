@@ -1101,6 +1101,20 @@ async def alert_hermes_context(
     except Exception as _exc:
         log.debug("hermes-context: past_resolved search failed: %s", _exc)
 
+    # ── Current AI analysis findings for this host ────────────────────────────
+    try:
+        from app.services.feed_index import search_recent_ai_findings
+        ai_findings = await search_recent_ai_findings(host=host, limit=3)
+        if ai_findings:
+            lines.append("## Aktuelle KI-Analyse-Befunde\n")
+            for f in ai_findings:
+                lines.append(f"**[{f['severity'].upper()}]** {f['title']}")
+                if f.get("description"):
+                    lines.append(f"  {f['description'][:200]}")
+            lines.append("")
+    except Exception as _exc:
+        log.debug("hermes-context: ai_findings failed: %s", _exc)
+
     lines.append("## Aufgabe")
     lines.append("1. Analysiere die Diagnosedaten und identifiziere die Ursache")
     if container:

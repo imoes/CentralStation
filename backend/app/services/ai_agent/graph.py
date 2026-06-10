@@ -60,10 +60,15 @@ async def collect_data(state: dict, db: Any) -> dict:
     )
     db_alerts = result.scalars().all()
 
-    raw_alerts: list[dict] = []
+    # Split DB alerts: non-CheckMK stays (dedup-critical for Graylog/Wazuh/Coroot),
+    # CheckMK is replaced by a live fetch below (fresher state, bypasses 10-min cache).
+    _CHECKMK_SEV: dict[str, str] = {"warning": "high", "critical": "critical", "unknown": "medium"}
+
+    db_non_checkmk: list[dict] = []
+    db_checkmk_fallback: list[dict] = []
     for a in db_alerts:
         meta = a.metadata_ or {}
-        raw_alerts.append({
+        entry = {
             "source":        a.source,
             "severity":      a.severity,
             "title":         a.title,
@@ -73,7 +78,49 @@ async def collect_data(state: dict, db: Any) -> dict:
             "metadata":      meta,
             "location_name": a.location_name or "",
             "location_city": a.location_city or "",
-        })
+        }
+        if a.source == "checkmk":
+            db_checkmk_fallback.append(entry)
+        else:
+            db_non_checkmk.append(entry)
+
+    # Try fresh CheckMK live fetch; fall back to DB on any error.
+    live_checkmk: list[dict] = []
+    try:
+        from app.services.settings import get_active_checkmk_connector
+        cmk = await get_active_checkmk_connector(db)
+        if cmk:
+            problems = await cmk.get_problems(time_range_minutes=int(look_back_hours * 60))
+            for p in problems:
+                lsc = p.get("last_state_change")
+                # Skip problems that are too fresh (likely transient) — mirrors min_age_minutes.
+                if lsc and (now.timestamp() - float(lsc)) < (min_age_minutes * 60):
+                    continue
+                meta = dict(p.get("metadata") or {})
+                meta.setdefault("host", p.get("host", ""))
+                meta["service"] = p.get("service")
+                meta["output"] = p.get("output")
+                meta["last_state_change"] = lsc
+                live_checkmk.append({
+                    "source":        "checkmk",
+                    "severity":      _CHECKMK_SEV.get(p.get("severity", ""), "medium"),
+                    "title":         f"{p.get('host','')}: {p.get('service','')} {(p.get('severity') or '').upper()}",
+                    "body":          p.get("output", ""),
+                    "host":          p.get("host", ""),
+                    "agent":         "",
+                    "metadata":      meta,
+                    "location_name": "",
+                    "location_city": "",
+                })
+            log.info("collect_data: fetched %d CheckMK problems live", len(live_checkmk))
+    except Exception as e:
+        log.warning("collect_data: live CheckMK fetch failed, using DB: %s", e)
+        live_checkmk = db_checkmk_fallback
+
+    if not live_checkmk:
+        live_checkmk = db_checkmk_fallback
+
+    raw_alerts: list[dict] = live_checkmk + db_non_checkmk
 
     # Load global agent settings as fallback for filters not provided via state
     from app.services.settings import get_agent_config
@@ -264,6 +311,39 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
                     log.debug("rag_lookup: %d metric points for host '%s'", len(metrics), host)
             except Exception as e:
                 log.debug("rag_lookup: metrics for '%s' failed: %s", host, e)
+
+    # ── Step 0b: Recent Graylog logs for Graylog-affected hosts ─────────────────
+    # Pull the last 5 raw log lines per host to give the LLM concrete evidence
+    # beyond the single deduplicated alert text (max 5 hosts × 5 lines × 200 chars).
+    graylog_hosts = {
+        (a.get("host") or a.get("agent") or "").strip()
+        for a in alerts
+        if a.get("source") == "graylog" and (a.get("host") or a.get("agent") or "").strip()
+    }
+    if graylog_hosts:
+        from app.services.feed_index import search_by_query
+        for gh in list(graylog_hosts)[:5]:
+            try:
+                recent_logs = await search_by_query(
+                    index_pattern="cs-feed-graylog",
+                    query_string=f'metadata.host:"{gh}" OR metadata.container_name:"{gh}"',
+                    size=5,
+                )
+                if recent_logs:
+                    log_lines = [
+                        (l.get("body") or l.get("title") or "")[:200]
+                        for l in recent_logs
+                        if (l.get("body") or l.get("title"))
+                    ]
+                    if log_lines:
+                        rag_context.append({
+                            "source": "graylog-logs",
+                            "query": gh,
+                            "results": [{"title": f"Letzte Graylog-Logs für {gh}", "content": "\n".join(log_lines)}],
+                        })
+                        log.debug("rag_lookup: %d recent log lines for host '%s'", len(log_lines), gh)
+            except Exception as e:
+                log.debug("rag_lookup: graylog logs for '%s' failed: %s", gh, e)
 
     # Build events summary for LLM decision
     events_summary = "\n".join(
