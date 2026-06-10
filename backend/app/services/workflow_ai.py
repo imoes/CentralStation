@@ -381,22 +381,36 @@ WICHTIG — Felder:
 - Verwende AUSSCHLIESSLICH die Felder, die im Prompt als "BEFÜLLT" markiert sind.
 - Das Feld `body` ist bei vielen Quellen (z.B. Graylog) leer — steht es nicht als BEFÜLLT im Prompt, DARF es NICHT im Query verwendet werden.
 - BEFÜLLTE Felder stehen im Prompt mit Wert, LEERE Felder stehen als "(leer)".
+- Verwende NUR Felder aus dieser Liste: title, body, metadata.host, metadata.container_name, metadata.agent, source, severity
+
+WILDCARD-REGEL (KRITISCH):
+- Wildcards (* ?) NIEMALS innerhalb von Anführungszeichen: `title:"*kauditd*"` ist FALSCH
+- Wildcards funktionieren nur OHNE Quotes: `title:*kauditd*` ist korrekt
+- Für einfache Keyword-Suche: `title:kauditd_printk_skb` (kein Wildcard nötig)
+
+TIMESTAMP-REGEL (KRITISCH):
+- Kernel/Syslog-Meldungen enthalten Timestamps im Titel wie `[13175113.937408]`, `Apr 15 12:34:56`, `2026-06-10T19:20:22`
+- Diese sind bei jeder Meldung anders — NIEMALS in die Query aufnehmen
+- Nur den stabilen, charakteristischen Teil verwenden: z.B. `title:kauditd_printk_skb` statt `title:"[13175113.937408] kauditd_printk_skb: 16 callbacks suppressed"`
 
 Regeln:
-- Wähle charakteristische Phrasen oder Muster aus dem Haupttextfeld (z.B. "[php-fpm:access]", "cci:ccitext")
+- Wähle den stabilen, charakteristischen Begriff aus dem Haupttextfeld (z.B. "kauditd_printk_skb", "php-fpm:access", "cci:ccitext")
 - Bei Container-spezifischen Logs: `metadata.container_name:"name"` mit einschließen wenn sinnvoll
 - Nicht zu breit (NICHT nur source:graylog oder severity:info)
-- Nicht zu eng (kein Timestamp, keine exakten numerischen Werte)
+- Nicht zu eng (kein Timestamp, keine wechselnden numerischen Werte, keine spezifischen Zeilennummern)
 - Antworte im JSON-Format: {"query": "...", "name": "Kurzer Name (max 60 Zeichen)"}
 - Antworte NUR mit dem JSON, kein Markdown, keine Erklärung"""
 
 
 def _fix_exclusion_query_fields(query: str, item: dict) -> str:
-    """Auto-correct field references in a generated query against the item's actual data.
+    """Auto-correct field references and common LLM mistakes in generated exclusion queries.
 
-    Fixes the common case where the LLM uses `body:` when body is null/empty
-    and the message text is actually in `title`, or vice-versa.
+    1. Fixes body:/title: field mismatch (body empty → use title, and vice versa).
+    2. Strips kernel/syslog timestamps from quoted title phrases so patterns remain general.
+    3. Removes wildcards inside quoted strings (invalid in OpenSearch phrase queries).
     """
+    import re
+
     body_val = (item.get("body") or "").strip()
     title_val = (item.get("title") or "").strip()
     if not body_val and "body:" in query:
@@ -405,6 +419,31 @@ def _fix_exclusion_query_fields(query: str, item: dict) -> str:
     elif not title_val and "title:" in query:
         query = query.replace("title:", "body:")
         log.debug("exclusion query: title→body rewrite (title is empty)")
+
+    # Strip kernel uptime timestamps like [13175113.937408] from inside quoted phrases.
+    # These timestamps differ on every log line and make the filter useless.
+    def _strip_timestamps(m: re.Match) -> str:
+        phrase = m.group(0)
+        cleaned = re.sub(r"\[\d+\.\d+\]\s*", "", phrase)
+        # Remove leading/trailing whitespace inside quotes
+        cleaned = re.sub(r'"\s+', '"', cleaned)
+        cleaned = re.sub(r'\s+"', '"', cleaned)
+        return cleaned
+
+    query = re.sub(r'"[^"]*\[\d+\.\d+\][^"]*"', _strip_timestamps, query)
+
+    # Wildcards inside quotes are invalid in OpenSearch (treated as literals).
+    # Detect field:"*...*" pattern and convert to field:*...* (unquoted).
+    def _unquote_wildcard(m: re.Match) -> str:
+        field, phrase = m.group(1), m.group(2)
+        if "*" in phrase or "?" in phrase:
+            # Remove quotes so wildcards are interpreted correctly
+            log.debug("exclusion query: unquoted wildcard in %s:%r", field, phrase)
+            return f"{field}:{phrase}"
+        return m.group(0)
+
+    query = re.sub(r'(\w[\w.]*):("(?:[^"\\]|\\.)*")', _unquote_wildcard, query)
+
     return query
 
 
