@@ -286,7 +286,10 @@ const SEV_LABEL: Record<string, string> = {
 
     /* ═══════════════ THEME: LCARS ═══════════════ */
     .t-lcars { background:#000; color:#FF9933; font-family:'Antonio','Eurostile',sans-serif; text-transform:uppercase; }
-    .t-lcars .svc-output, .t-lcars .hh-addr { text-transform:none; }
+    /* Service name + plugin output are message texts → readable Roboto, not condensed Antonio
+       (same convention as Bridge .work-verdict / News Feed .card-body-text). */
+    .t-lcars .svc-name, .t-lcars .svc-output, .t-lcars .hh-addr {
+      text-transform:none; font-family:Roboto,'Helvetica Neue',sans-serif; }
     .t-lcars .cap { background:#FF9933; }
     .t-lcars .cap-tl { border-radius:42px 0 0 0; }
     .t-lcars .cap-tr { border-radius:0 42px 0 0; width:30px; }
