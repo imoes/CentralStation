@@ -1,6 +1,6 @@
 import {
   Component, OnInit, OnDestroy, signal, computed,
-  ViewChild, ElementRef, HostListener, inject,
+  ViewChild, ElementRef, HostListener, inject, NgZone,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -223,6 +223,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private sanitizer = inject(DomSanitizer);
   private computerService = inject(ComputerService);
+  private ngZone = inject(NgZone);
   private apiBase = `${environment.apiUrl}/computer`;
 
   // Maps a host key (e.g. hostname) → session_id so that repeated "Computer, prüfe das"
@@ -291,6 +292,65 @@ export class ComputerComponent implements OnInit, OnDestroy {
     this._handoffSub = this.computerService.handoff$.subscribe(({ prompt, label, hostKey, externalId }) => {
       this._handleHandoff(prompt, label, hostKey, externalId);
     });
+    this.loadSessions();
+  }
+
+  async loadSessions(): Promise<void> {
+    const token = this.auth.getAccessToken();
+    try {
+      const r = await fetch(`${this.apiBase}/sessions`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) return;
+      const list: Array<{
+        session_id: string; label: string; msg_count: number;
+        external_id?: string | null; resolved?: boolean;
+      }> = await r.json();
+      if (!list.length) return;
+
+      this.sessions.update(current => {
+        const inMemory = new Map(current.map(s => [s.session_id, s]));
+        return list.map(s => inMemory.get(s.session_id) ?? {
+          session_id: s.session_id,
+          label: s.label,
+          msg_count: s.msg_count,
+          messages: [],
+          external_id: s.external_id ?? undefined,
+          resolved: s.resolved ?? false,
+        });
+      });
+
+      const ids = list.map(s => s.session_id);
+      if (!this.activeTabId() || !ids.includes(this.activeTabId()!)) {
+        this.activeTabId.set(ids[0]);
+      }
+      await Promise.all(ids.map(sid => this.loadSessionHistory(sid)));
+    } catch (err) {
+      console.debug('loadSessions failed:', err);
+    }
+  }
+
+  async loadSessionHistory(sid: string): Promise<void> {
+    const existing = this.sessions().find(s => s.session_id === sid);
+    if (existing && existing.messages.length > 0) return;
+    const token = this.auth.getAccessToken();
+    try {
+      const r = await fetch(`${this.apiBase}/sessions/${sid}/history`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) return;
+      const raw: Array<{ role: string; content: string }> = await r.json();
+      const messages: HermesMessage[] = raw
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .filter(m => typeof m.content === 'string' && m.content.trim())
+        .map(m => ({ role: m.role as 'user' | 'assistant', text: m.content }));
+      if (!messages.length) return;
+      this.sessions.update(ss => ss.map(s =>
+        s.session_id === sid ? { ...s, messages } : s
+      ));
+    } catch (err) {
+      console.debug('loadSessionHistory failed:', err);
+    }
   }
 
   ngOnDestroy(): void {
@@ -477,6 +537,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
   selectTab(sid: string): void {
     this.activeTabId.set(sid);
     this.scrollToBottom();
+    const session = this.sessions().find(s => s.session_id === sid);
+    if (session && session.messages.length === 0) {
+      this.loadSessionHistory(sid);
+    }
   }
 
   async deleteSession(): Promise<void> {
@@ -565,13 +629,15 @@ export class ComputerComponent implements OnInit, OnDestroy {
           if (!raw || raw === '[DONE]') continue;
           try {
             const data = JSON.parse(raw);
-            if (data.type === 'delta') {
-              fullAssistantText += data.text;
-              this._appendToLast(sid, data.text);
-            }
-            if (data.type === 'error') {
-              this._appendToLast(sid, `\n[Fehler: ${data.text}]`);
-            }
+            this.ngZone.run(() => {
+              if (data.type === 'delta') {
+                fullAssistantText += data.text;
+                this._appendToLast(sid, data.text);
+              }
+              if (data.type === 'error') {
+                this._appendToLast(sid, `\n[Error: ${data.text}]`);
+              }
+            });
           } catch { /* skip malformed */ }
         }
         this.scrollToBottom();
