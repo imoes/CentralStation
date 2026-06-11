@@ -29,6 +29,8 @@ interface TicketTarget {
   label: string;
   projects: { key: string; name: string }[];
   default_project: string;
+  issue_types: string[];
+  default_issue_type: string;
 }
 interface TargetsResponse {
   targets: TicketTarget[];
@@ -89,6 +91,14 @@ interface CreateResponse { ok: boolean; jira_key?: string; url?: string | null; 
             </select>
           </div>
           <div class="tkt-field">
+            <label class="tkt-label">Typ</label>
+            <select class="tkt-input" [(ngModel)]="issueType" [disabled]="creating()">
+              @for (it of issueTypes(); track it) {
+                <option [value]="it">{{ it }}</option>
+              }
+            </select>
+          </div>
+          <div class="tkt-field">
             <label class="tkt-label">Priorität</label>
             <select class="tkt-input" [(ngModel)]="priority" [disabled]="creating()">
               @for (p of priorities(); track p) {
@@ -139,8 +149,13 @@ export class TicketCreateDialogComponent implements OnInit {
 
   project = signal<string>('');
   priority = signal<string>('Normal');
+  issueType = signal<string>('Serviceanfrage');
   summary = signal<string>('');
   description = signal<string>('');
+
+  issueTypes = computed(() =>
+    this.targets().find(t => t.connector_type === this.connectorType())?.issue_types ?? []
+  );
 
   loadingDraft = signal<boolean>(false);
   creating = signal<boolean>(false);
@@ -171,6 +186,7 @@ export class TicketCreateDialogComponent implements OnInit {
         if (pick) {
           this.connectorType.set(pick.connector_type);
           this.project.set(pick.default_project || pick.projects[0]?.key || '');
+          this.issueType.set(pick.default_issue_type || pick.issue_types?.[0] || '');
         }
       },
       error: () => this.loadError.set('Keine Ticket-Ziele verfügbar — Jira/Service-Desk-Connector prüfen.'),
@@ -201,6 +217,7 @@ export class TicketCreateDialogComponent implements OnInit {
     this.connectorType.set(ct);
     const t = this.targets().find(x => x.connector_type === ct);
     this.project.set(t?.default_project || t?.projects[0]?.key || '');
+    this.issueType.set(t?.default_issue_type || t?.issue_types?.[0] || '');
   }
 
   create(): void {
@@ -212,6 +229,7 @@ export class TicketCreateDialogComponent implements OnInit {
       summary: this.summary().trim(),
       description: this.description().trim(),
       priority: this.priority(),
+      issue_type: this.issueType(),
       feed_external_id: this.data.feedExternalId,
     };
     this.http.post<CreateResponse>(`${environment.apiUrl}/tickets/create`, body).subscribe({

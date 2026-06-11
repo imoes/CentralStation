@@ -135,8 +135,20 @@ class JiraConnector(BaseConnector):
             payload["fields"]["labels"] = labels
         async with self._client(timeout=30.0) as client:
             r = await client.post(self._api("/issue"), headers=self._headers(), json=payload)
+            if r.is_error:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "create_issue %s failed %s: %s", project, r.status_code, r.text[:500]
+                )
             r.raise_for_status()
         return r.json()
+
+    async def list_issue_types(self) -> list[str]:
+        """Return non-subtask issue type names available in this Jira instance."""
+        async with self._client(timeout=15.0) as client:
+            r = await client.get(self._api("/issuetype"), headers=self._headers())
+            r.raise_for_status()
+        return [t["name"] for t in r.json() if not t.get("subtask", False)]
 
     async def transition_issue(self, issue_key: str, status_name: str) -> None:
         """Transition an issue to a new status by name."""
