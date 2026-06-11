@@ -120,7 +120,10 @@ async def ticket_draft(
         host = body.host or meta.get("host") or meta.get("agent") or meta.get("container_name") or ""
         application = meta.get("application") or ""
         severity = severity or item.get("severity", "info")
+        service = meta.get("service", "")
         ctx = f"Source: {item.get('source', '')}\nSeverity: {severity}\nHost: {host}\n"
+        if service:
+            ctx += f"Service: {service}\n"
         if application:
             ctx += f"Application: {application}\n"
         ctx += f"Alert: {item.get('title', '')}\n"
