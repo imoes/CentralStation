@@ -4,12 +4,8 @@ import { filter } from 'rxjs/operators';
 import { Subscription } from 'rxjs';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { MatSidenavModule } from '@angular/material/sidenav';
-import { MatToolbarModule } from '@angular/material/toolbar';
-import { MatListModule } from '@angular/material/list';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
-import { MatBadgeModule } from '@angular/material/badge';
 import { AuthService } from './core/auth/auth.service';
 import { WebsocketService } from './core/services/websocket.service';
 import { ThemeService } from './core/services/theme.service';
@@ -28,57 +24,44 @@ interface NavItem {
   standalone: true,
   imports: [
     CommonModule, RouterOutlet, RouterLink, RouterLinkActive,
-    MatSidenavModule, MatToolbarModule, MatListModule,
-    MatIconModule, MatButtonModule, MatBadgeModule,
+    MatIconModule, MatButtonModule,
     ComputerComponent,
   ],
   template: `
     @if (auth.isLoggedIn()) {
-      <mat-sidenav-container class="app-container">
-        @if (!fullscreenRoute()) {
-        <mat-sidenav mode="side" opened class="sidenav" [class.collapsed]="navCollapsed()">
-          <div class="sidenav-header">
-            <button mat-icon-button class="nav-toggle" (click)="toggleNav()" title="Navigation ein-/ausklappen">
-              <mat-icon>menu</mat-icon>
-            </button>
-            <mat-icon class="brand-icon">hub</mat-icon>
-            <span class="brand-label">CentralStation</span>
+
+      <!-- Bridge & Problemboard haben eigene Navbar → App-Hamburger ausblenden -->
+      @if (!fullscreenRoute()) {
+
+      <button class="cs-nav-btn" (click)="navOpen.set(true)" title="Navigation" aria-label="Navigation öffnen">
+        <span></span><span></span><span></span>
+      </button>
+
+      @if (navOpen()) {
+        <div class="cs-nav-backdrop" (click)="navOpen.set(false)"></div>
+        <nav class="cs-nav-menu" aria-label="Hauptnavigation">
+          <div class="cs-nav-head">
+            <mat-icon class="cs-brand-icon">hub</mat-icon>
+            <span class="cs-brand">CentralStation</span>
+            <button class="cs-nav-close" (click)="navOpen.set(false)" title="Schließen">×</button>
           </div>
-          <mat-nav-list>
-            @for (item of visibleNavItems(); track item.path) {
-              @if (item.path === '/feed') {
-                <a mat-list-item [routerLink]="item.path" routerLinkActive="active"
-                   (click)="onFeedClick()" [title]="item.label">
-                  <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                  <span matListItemTitle class="nav-label">
-                    {{ item.label }}
-                    @if (unreadFeedCount() > 0) {
-                      <span class="feed-badge">{{ unreadFeedCount() > 99 ? '99+' : unreadFeedCount() }}</span>
-                    }
-                  </span>
-                </a>
-              } @else if (item.path === '/my-tickets') {
-                <a mat-list-item [routerLink]="item.path" routerLinkActive="active" [title]="item.label">
-                  <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                  <span matListItemTitle class="nav-label">
-                    {{ item.label }}
-                    @if (unreadTicketCount() > 0) {
-                      <span class="feed-badge">{{ unreadTicketCount() > 99 ? '99+' : unreadTicketCount() }}</span>
-                    }
-                  </span>
-                </a>
-              } @else {
-                <a mat-list-item [routerLink]="item.path" routerLinkActive="active" [title]="item.label">
-                  <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                  <span matListItemTitle class="nav-label">{{ item.label }}</span>
-                </a>
+          @for (item of visibleNavItems(); track item.path) {
+            <a class="cs-nav-item" [routerLink]="item.path" routerLinkActive="cs-nav-item-active"
+               (click)="navOpen.set(false)" [title]="item.label">
+              <mat-icon class="cs-nav-icon">{{ item.icon }}</mat-icon>
+              <span class="cs-nav-label">{{ item.label }}</span>
+              @if (item.path === '/feed' && unreadFeedCount() > 0) {
+                <span class="cs-badge">{{ unreadFeedCount() > 99 ? '99+' : unreadFeedCount() }}</span>
               }
-            }
-          </mat-nav-list>
-          <div class="sidenav-footer">
-            <span class="role-chip">{{ auth.userRole() }}</span>
+              @if (item.path === '/my-tickets' && unreadTicketCount() > 0) {
+                <span class="cs-badge">{{ unreadTicketCount() > 99 ? '99+' : unreadTicketCount() }}</span>
+              }
+            </a>
+          }
+          <div class="cs-nav-footer">
+            <span class="cs-role-chip">{{ auth.userRole() }}</span>
             @if (computerEnabled()) {
-              <button mat-icon-button (click)="computer?.toggle()" title="Computer Console (Ctrl+K)">
+              <button mat-icon-button (click)="computer?.toggle(); navOpen.set(false)" title="Computer Console (Ctrl+K)">
                 <mat-icon>smart_toy</mat-icon>
               </button>
             }
@@ -86,12 +69,15 @@ interface NavItem {
               <mat-icon>logout</mat-icon>
             </button>
           </div>
-        </mat-sidenav>
-        }
-        <mat-sidenav-content>
-          <router-outlet></router-outlet>
-        </mat-sidenav-content>
-      </mat-sidenav-container>
+        </nav>
+      }
+
+      } <!-- end @if (!fullscreenRoute()) -->
+
+      <div class="cs-main">
+        <router-outlet></router-outlet>
+      </div>
+
       @if (computerEnabled()) {
         <app-computer #computer></app-computer>
       }
@@ -121,10 +107,8 @@ export class App implements OnInit, OnDestroy {
 
   unreadFeedCount = signal<number>(0);
   unreadTicketCount = signal<number>(0);
-  navCollapsed = signal<boolean>(localStorage.getItem('cs_nav_collapsed') === '1');
-  // Fullscreen takeover views (own hamburger nav) — hide the app sidenav so it
-  // doesn't sit above their position:fixed overlay (mat-sidenav-content forms a
-  // stacking context that would otherwise trap their z-index below the drawer).
+  navOpen = signal(false);
+  // Bridge & Problemboard are position:fixed overlays with their own nav — hide app hamburger there.
   private static readonly FULLSCREEN_ROUTES = ['/bridge', '/problems'];
   fullscreenRoute = signal<boolean>(App.isFullscreen(location.pathname));
   private routerSub?: Subscription;
@@ -164,22 +148,25 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
+  private static isFullscreen(url: string): boolean {
+    const path = (url.split('?')[0] || '').replace(/\/+$/, '');
+    return App.FULLSCREEN_ROUTES.some(r => path === r || path.startsWith(r + '/'));
+  }
+
   ngOnInit() {
     window.addEventListener('message', this._cockpitMsgHandler);
     this.routerSub = this.router.events
       .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd))
-      .subscribe(e => this.fullscreenRoute.set(App.isFullscreen(e.urlAfterRedirects)));
+      .subscribe(e => {
+        this.fullscreenRoute.set(App.isFullscreen(e.urlAfterRedirects));
+        this.navOpen.set(false);
+      });
   }
 
   ngOnDestroy() {
     if (this.badgeInterval) clearInterval(this.badgeInterval);
     this.routerSub?.unsubscribe();
     window.removeEventListener('message', this._cockpitMsgHandler);
-  }
-
-  private static isFullscreen(url: string): boolean {
-    const path = (url.split('?')[0] || '').replace(/\/+$/, '');
-    return App.FULLSCREEN_ROUTES.some(r => path === r || path.startsWith(r + '/'));
   }
 
   startBadgePolling() {
@@ -235,18 +222,5 @@ export class App implements OnInit, OnDestroy {
 
   clearFeedBadge() {
     this.unreadFeedCount.set(0);
-  }
-
-  onFeedClick() {
-    // Badge is cleared by the news-feed component after items load (3s delay)
-    // This just provides immediate visual feedback
-  }
-
-  toggleNav() {
-    this.navCollapsed.update(v => {
-      const next = !v;
-      localStorage.setItem('cs_nav_collapsed', next ? '1' : '0');
-      return next;
-    });
   }
 }
