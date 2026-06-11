@@ -55,13 +55,18 @@ async def ticket_targets(
         if not conn:
             continue
         projects: list[dict] = []
+        issue_types: list[str] = []
         try:
             creds = decrypt_credentials(conn.encrypted_credentials)
             jira = JiraConnector(base_url=conn.base_url, credentials=creds)
             projects = [{"key": p["key"], "name": p["name"]} for p in await jira.list_projects()]
             projects.sort(key=lambda p: p["key"])
+            issue_types = await jira.list_issue_types()
         except Exception as e:
-            log.warning("ticket_targets: %s connector project list failed: %s", ctype, e)
+            log.warning("ticket_targets: %s connector list failed: %s", ctype, e)
+        # Default issue type: prefer "Serviceanfrage" for SD, "Aufgabe" for Jira, else first.
+        preferred = "Serviceanfrage" if ctype == "jira_sd" else "Aufgabe"
+        default_issue_type = preferred if preferred in issue_types else (issue_types[0] if issue_types else "")
         targets.append({
             "connector_type": ctype,
             "label": _CONNECTOR_LABELS.get(ctype, ctype),
@@ -69,6 +74,8 @@ async def ticket_targets(
             "default_project": default_project if any(p["key"] == default_project for p in projects) else (
                 projects[0]["key"] if projects else default_project
             ),
+            "issue_types": issue_types,
+            "default_issue_type": default_issue_type,
         })
 
     if not targets:
