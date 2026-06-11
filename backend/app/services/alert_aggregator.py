@@ -670,7 +670,7 @@ async def run_aggregation(db: AsyncSession) -> int:
         # Enrich new alerts with AI insight in the background (best-effort, only if auto_enrich=true)
         try:
             from app.core.database import AsyncSessionLocal
-            from app.services.settings import get_llm_config, get_agent_config
+            from app.services.settings import get_active_llm_config, get_agent_config
 
             async def _do_enrich(docs_to_enrich: list[dict]) -> None:
                 from app.services.feed_enricher import enrich_batch
@@ -679,7 +679,7 @@ async def run_aggregation(db: AsyncSession) -> int:
                     agent_cfg = await get_agent_config(s)
                     if not agent_cfg.auto_enrich:
                         return
-                    llm_cfg = await get_llm_config(s)
+                    llm_cfg = await get_active_llm_config(s)
                     searxng = await get_searxng_config(s)
                     searxng_url = searxng.base_url if (agent_cfg.workflow_web_search and searxng.is_configured) else ""
                     relevant = await _filter_enrichable_docs(docs_to_enrich, s)

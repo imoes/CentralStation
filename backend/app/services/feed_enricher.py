@@ -49,6 +49,10 @@ async def _web_search(query: str, searxng_url: str, results_count: int = 5) -> s
 
 
 async def _enrich_one(item: dict, llm, searxng_url: str = "") -> str | None:
+    """Generate and store an AI insight for a single feed item.
+
+    `llm` is a coroutine callable: async (system: str, user: str) -> str | None.
+    """
     """Generate and store an AI insight for a single feed item. Returns the insight text."""
     from app.core.opensearch import get_opensearch
     from app.services.feed_index import _index  # type: ignore[attr-defined]
@@ -90,16 +94,11 @@ async def _enrich_one(item: dict, llm, searxng_url: str = "") -> str | None:
             user_content += f"\n\nWeb-Suchergebnisse:\n{web_snippet}"
 
     try:
-        from langchain_core.messages import HumanMessage, SystemMessage
         # Respond in the operator's configured UI language (default English).
         from app.services.ai_language import language_instruction, DEFAULT_LANG
         lang = item.get("_response_lang") or DEFAULT_LANG
         system_content = f"{_EXPLAIN_SYSTEM_PROMPT}\n{language_instruction(lang)}"
-        response = await llm.ainvoke([
-            SystemMessage(content=system_content),
-            HumanMessage(content=user_content),
-        ])
-        insight = (response.content or "").strip()[:1200]
+        insight = (await llm(system_content, user_content) or "").strip()[:1200]
         if not insight:
             return None
 
@@ -141,19 +140,27 @@ async def _enrich_one(item: dict, llm, searxng_url: str = "") -> str | None:
         return None
 
 
-def _build_llm(llm_config, timeout: int = 30):
-    """Build a ChatOpenAI instance with optional thinking mode."""
-    from langchain_openai import ChatOpenAI
-    kwargs: dict = dict(
-        base_url=llm_config.base_url,
-        model=llm_config.model,
-        api_key=llm_config.api_key or "none",
-        max_tokens=450,
-        timeout=timeout,
-    )
-    if getattr(llm_config, "thinking_mode", False):
-        kwargs["model_kwargs"] = {"extra_body": {"enable_thinking": True, "thinking_budget": 512}}
-    return ChatOpenAI(**kwargs)
+def _make_llm_callable(llm_config, timeout: int = 30):
+    """Return an async callable (system, user) -> str | None for any LLM provider.
+
+    Uses generate_text from llm_client so that all api_mode variants
+    (chat_completions, codex_responses, anthropic_messages, responses) work.
+    The timeout is applied by patching a copy of the config.
+    """
+    import dataclasses
+    from app.services.llm_client import generate_text
+
+    cfg = dataclasses.replace(llm_config, timeout_seconds=timeout)
+
+    async def _call(system: str, user: str) -> str | None:
+        raw = await generate_text(
+            cfg,
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            max_output_tokens=450,
+        )
+        return (raw or "").strip() or None
+
+    return _call
 
 
 async def enrich_single(item: dict, llm_config, searxng_url: str = "") -> str | None:
@@ -161,7 +168,7 @@ async def enrich_single(item: dict, llm_config, searxng_url: str = "") -> str | 
     if not llm_config or not llm_config.is_configured:
         return None
     try:
-        llm = _build_llm(llm_config, timeout=60)
+        llm = _make_llm_callable(llm_config, timeout=60)
     except Exception as e:
         log.warning("Could not initialise LLM for on-demand enrichment: %s", e)
         return None
@@ -229,7 +236,7 @@ async def enrich_batch(
         return
 
     try:
-        llm = _build_llm(llm_config)
+        llm = _make_llm_callable(llm_config)
     except Exception as e:
         log.warning("Could not initialise LLM for feed enrichment: %s", e)
         return
