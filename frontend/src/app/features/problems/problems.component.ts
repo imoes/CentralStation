@@ -273,10 +273,10 @@ const SEV_LABEL: Record<string, string> = {
     .cockpit-btn:hover { filter:brightness(1.2); }
 
     .svc-list { display:flex; flex-direction:column; }
-    .svc-row { display:flex; align-items:baseline; gap:12px; padding:6px 14px 6px 30px; font-size:13px; }
-    .svc-state { font-size:10px; font-weight:800; letter-spacing:.06em; width:40px; flex-shrink:0; }
-    .svc-name { min-width:200px; flex-shrink:0; font-weight:600; }
-    .svc-output { font-size:12px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .svc-row { display:flex; align-items:center; gap:12px; padding:6px 14px 6px 30px; font-size:13px; line-height:1.5; min-height:30px; }
+    .svc-state { font-size:10px; font-weight:800; letter-spacing:.06em; width:40px; flex-shrink:0; line-height:1.5; }
+    .svc-name { min-width:200px; flex-shrink:0; font-weight:600; line-height:1.5; }
+    .svc-output { font-size:12px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.5; min-width:0; }
 
     .empty { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; opacity:.7; padding:48px; }
     .empty-ic { font-size:56px; } .empty-tx { font-size:20px; font-weight:800; letter-spacing:.18em; }
