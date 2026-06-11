@@ -1,136 +1,129 @@
-/* ── App shell: hamburger nav overlay, no persistent sidenav ── */
+/* ── App shell: persistent sidebar nav ── */
+$nav-w: 220px;
 
-.cs-main { min-height: 100vh; }
+.cs-shell { min-height: 100vh; }
 
-/* ── Hamburger button: always fixed top-left ── */
-.cs-nav-btn {
-  position: fixed; top: 8px; left: 8px; z-index: 200;
-  width: 46px; height: 46px;
-  border: 0; cursor: pointer;
+/* ── Persistent sidebar ── */
+.cs-nav-sidebar {
+  position: fixed; left: 0; top: 0;
+  width: $nav-w; height: 100vh; z-index: 100;
   display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 5px;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 0 0 8px;
 }
-.cs-nav-btn span { display: block; width: 23px; height: 3px; border-radius: 2px; }
 
-/* ── Nav overlay ── */
-.cs-nav-backdrop { position: fixed; inset: 0; z-index: 205; background: rgba(0,0,0,.35); }
-.cs-nav-menu {
-  position: fixed; z-index: 206;
-  top: 8px; left: 8px;
-  width: min(320px, calc(100vw - 16px));
-  max-height: calc(100vh - 16px);
-  display: flex; flex-direction: column; gap: 6px; padding: 8px;
-  overflow: auto; box-shadow: 0 20px 80px rgba(0,0,0,.55);
-  font-family: Roboto,'Helvetica Neue',sans-serif;
-}
 .cs-nav-head {
-  min-height: 44px; display: flex; align-items: center; gap: 10px;
-  padding: 0 8px 0 14px; font-size: 14px; font-weight: 900; letter-spacing: .1em;
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; min-height: 52px;
+  font-size: 14px; font-weight: 900; letter-spacing: .1em;
+  flex-shrink: 0;
 }
 .cs-brand-icon { font-size: 22px !important; width: 22px !important; height: 22px !important; }
 .cs-brand { flex: 1; }
-.cs-nav-close {
-  width: 40px; height: 40px; border: 0; cursor: pointer;
-  font: inherit; font-size: 24px; font-weight: 900; flex-shrink: 0;
-}
+
 .cs-nav-item {
-  display: flex; align-items: center; gap: 12px; min-height: 42px;
-  border: 0; cursor: pointer; text-decoration: none;
-  font-family: inherit; font-size: 13px; font-weight: 800;
-  letter-spacing: .08em; padding: 0 14px;
+  display: flex; align-items: center; gap: 10px;
+  min-height: 42px; padding: 0 12px 0 14px;
+  text-decoration: none; cursor: pointer;
+  font-size: 13px; font-weight: 700;
+  letter-spacing: .04em;
+  flex-shrink: 0;
 }
 .cs-nav-icon { font-size: 20px !important; width: 20px !important; height: 20px !important; flex-shrink: 0; }
-.cs-nav-label { flex: 1; }
-.cs-nav-footer {
-  display: flex; align-items: center; gap: 8px; padding: 4px 8px;
-  margin-top: 4px;
-}
-.cs-role-chip {
-  flex: 1; font-size: 12px; padding: 4px 10px; border-radius: 12px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+.cs-nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .cs-badge {
-  background: #d32f2f; color: white;
+  background: #d32f2f; color: #fff;
   border-radius: 10px; min-width: 20px; height: 20px;
   font-size: 11px; font-weight: 700;
   display: inline-flex; align-items: center; justify-content: center;
-  padding: 0 5px; line-height: 1;
+  padding: 0 5px; line-height: 1; flex-shrink: 0;
 }
 
-/* ═══════════ THEME: CLASSIC (default) ═══════════ */
-html:not(.cs-theme-lcars):not(.cs-theme-holo) {
-  .cs-nav-btn {
-    background: #fff; border: 1px solid #cdd9e5; border-radius: 14px;
-  }
-  .cs-nav-btn span { background: #1565c0; }
-  .cs-nav-menu {
-    background: #fff; border: 1px solid #d7e0ea;
-    border-radius: 14px; color: #1f2933;
+.cs-nav-footer {
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 8px; margin-top: auto; flex-shrink: 0;
+}
+.cs-role-chip {
+  flex: 1; font-size: 11px; padding: 3px 8px; border-radius: 10px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── Content area ── */
+.cs-main {
+  margin-left: $nav-w;
+  min-height: 100vh;
+}
+.cs-main--full {
+  margin-left: 0;
+}
+
+/* ═══════════ THEME: CLASSIC ═══════════ */
+.t-classic {
+  .cs-nav-sidebar {
+    background: #fff;
+    border-right: 1px solid #d7e0ea;
+    box-shadow: 2px 0 8px rgba(0,0,0,.06);
   }
   .cs-nav-head { color: #1565c0; border-bottom: 1px solid #d7e0ea; }
-  .cs-nav-close { background: #eef4fb; color: #1565c0; border-radius: 12px; }
-  .cs-nav-item {
-    background: #f1f5fa; color: #1f2933; border-radius: 12px;
-    &:hover { background: #e5edf8; }
-  }
+  .cs-nav-item { color: #1f2933; border-radius: 0 12px 12px 0; margin-right: 8px; }
+  .cs-nav-item:hover { background: #eef4fb; }
   .cs-nav-item-active { background: #ddeeff !important; color: #1565c0 !important; }
   .cs-nav-icon { color: #1565c0; }
   .cs-nav-footer { border-top: 1px solid #d7e0ea; }
   .cs-role-chip { background: #eef4fb; color: #5b6b7b; }
-  .cs-main { background: var(--mat-sys-surface, #fafafa); }
+  .cs-main { background: var(--mat-sys-surface, #f5f7fa); }
 }
 
 /* ═══════════ THEME: LCARS ═══════════ */
-html.cs-theme-lcars {
-  .cs-nav-btn { background: #ffcc66; border-radius: 24px 0 0 0; }
-  .cs-nav-btn span { background: #000; }
-  .cs-nav-menu {
-    background: #000; border-left: 18px solid #FF9933;
-    color: #ffcc99; border-radius: 44px 0 18px 0;
+.t-lcars {
+  .cs-nav-sidebar {
+    background: #000;
+    border-right: 18px solid #FF9933;
   }
-  .cs-nav-head { background: #ffcc66; color: #000; border-radius: 24px 0 0 0; }
-  .cs-brand-icon { color: #000 !important; }
-  .cs-nav-close { background: #000; color: #ffcc66; }
-  .cs-nav-item {
-    background: #15120c; color: #ffcc99;
-    border-radius: 0 20px 20px 0;
+  .cs-nav-head {
+    background: #ffcc66; color: #000;
+    border-radius: 44px 0 0 0;
     font-family: 'Antonio','Eurostile',sans-serif;
     text-transform: uppercase;
-    &:nth-child(3n)   { background: #99CCFF; color: #000; }
-    &:nth-child(3n+1) { background: #FF9933; color: #000; }
-    &:hover { filter: brightness(1.14); }
   }
-  .cs-nav-item-active { outline: 2px solid #ffcc66; outline-offset: 2px; }
+  .cs-brand-icon { color: #000 !important; }
+  .cs-nav-item {
+    color: #ffcc99;
+    font-family: 'Antonio','Eurostile',sans-serif;
+    text-transform: uppercase;
+    border-radius: 0 20px 20px 0;
+    margin-right: 8px;
+  }
+  .cs-nav-item:nth-child(3n+2) { background: #15120c; }
+  .cs-nav-item:nth-child(3n+3) { background: #99CCFF; color: #000; }
+  .cs-nav-item:nth-child(3n+4) { background: #FF9933; color: #000; }
+  .cs-nav-item:hover { filter: brightness(1.18); }
+  .cs-nav-item-active { outline: 2px solid #ffcc66; outline-offset: -2px; }
   .cs-nav-icon { color: inherit !important; }
   .cs-nav-footer { border-top: 3px solid #15120c; }
   .cs-role-chip { background: #1e1710; color: #e8a060; }
-  .cs-main { background: #000; }
+  .cs-main { background: #000; margin-left: calc(#{$nav-w} + 18px); }
+  .cs-main--full { margin-left: 0; }
 }
 
 /* ═══════════ THEME: HOLO ═══════════ */
-html.cs-theme-holo {
-  .cs-nav-btn {
-    background: rgba(79,214,255,.15); color: #9fe8ff;
-    border: 1px solid #4fd6ff; border-radius: 8px;
+.t-holo {
+  .cs-nav-sidebar {
+    background: #050d1a;
+    border-right: 1px solid rgba(79,214,255,.35);
+    box-shadow: 2px 0 20px rgba(79,214,255,.08);
   }
-  .cs-nav-btn span { background: #9fe8ff; }
-  .cs-nav-menu {
-    background: #050d1a; border: 1px solid rgba(79,214,255,.4);
-    border-radius: 10px; color: #bfefff;
-  }
-  .cs-nav-head { color: #9fe8ff; border-bottom: 1px solid rgba(79,214,255,.25); }
-  .cs-nav-close { background: rgba(79,214,255,.08); color: #9fe8ff; border-radius: 8px; }
+  .cs-nav-head { color: #9fe8ff; border-bottom: 1px solid rgba(79,214,255,.2); }
   .cs-nav-item {
-    background: rgba(79,214,255,.08); color: #bfefff;
-    border: 1px solid rgba(79,214,255,.12); border-radius: 8px;
-    &:hover { filter: brightness(1.2); }
+    color: #bfefff;
+    border-radius: 0 8px 8px 0;
+    margin-right: 8px;
   }
-  .cs-nav-item-active {
-    background: rgba(79,214,255,.2) !important;
-    border-color: #4fd6ff !important;
-  }
+  .cs-nav-item:hover { background: rgba(79,214,255,.1); }
+  .cs-nav-item-active { background: rgba(79,214,255,.18) !important; color: #9fe8ff !important; }
   .cs-nav-icon { color: #5fc8ee !important; }
   .cs-nav-footer { border-top: 1px solid rgba(79,214,255,.2); }
-  .cs-role-chip { background: rgba(79,214,255,.08); color: #5fc8ee; }
+  .cs-role-chip { background: rgba(79,214,255,.07); color: #5fc8ee; }
   .cs-main { background: #02060f; }
 }

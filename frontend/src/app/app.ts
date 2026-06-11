@@ -29,58 +29,53 @@ interface NavItem {
   ],
   template: `
     @if (auth.isLoggedIn()) {
+      <div class="cs-shell"
+           [class.t-classic]="theme()==='classic'"
+           [class.t-lcars]="theme()==='lcars'"
+           [class.t-holo]="theme()==='holo'">
 
-      <!-- Bridge & Problemboard haben eigene Navbar → App-Hamburger ausblenden -->
-      @if (!fullscreenRoute()) {
-
-      <button class="cs-nav-btn" (click)="navOpen.set(true)" title="Navigation" aria-label="Navigation öffnen">
-        <span></span><span></span><span></span>
-      </button>
-
-      @if (navOpen()) {
-        <div class="cs-nav-backdrop" (click)="navOpen.set(false)"></div>
-        <nav class="cs-nav-menu" aria-label="Hauptnavigation">
-          <div class="cs-nav-head">
-            <mat-icon class="cs-brand-icon">hub</mat-icon>
-            <span class="cs-brand">CentralStation</span>
-            <button class="cs-nav-close" (click)="navOpen.set(false)" title="Schließen">×</button>
-          </div>
-          @for (item of visibleNavItems(); track item.path) {
-            <a class="cs-nav-item" [routerLink]="item.path" routerLinkActive="cs-nav-item-active"
-               (click)="navOpen.set(false)" [title]="item.label">
-              <mat-icon class="cs-nav-icon">{{ item.icon }}</mat-icon>
-              <span class="cs-nav-label">{{ item.label }}</span>
-              @if (item.path === '/feed' && unreadFeedCount() > 0) {
-                <span class="cs-badge">{{ unreadFeedCount() > 99 ? '99+' : unreadFeedCount() }}</span>
-              }
-              @if (item.path === '/my-tickets' && unreadTicketCount() > 0) {
-                <span class="cs-badge">{{ unreadTicketCount() > 99 ? '99+' : unreadTicketCount() }}</span>
-              }
-            </a>
-          }
-          <div class="cs-nav-footer">
-            <span class="cs-role-chip">{{ auth.userRole() }}</span>
-            @if (computerEnabled()) {
-              <button mat-icon-button (click)="computer?.toggle(); navOpen.set(false)" title="Computer Console (Ctrl+K)">
-                <mat-icon>smart_toy</mat-icon>
-              </button>
+        <!-- Bridge & Problemboard sind position:fixed-Fullscreen mit eigener Nav -->
+        @if (!fullscreenRoute()) {
+          <nav class="cs-nav-sidebar" aria-label="Hauptnavigation">
+            <div class="cs-nav-head">
+              <mat-icon class="cs-brand-icon">hub</mat-icon>
+              <span class="cs-brand">CentralStation</span>
+            </div>
+            @for (item of visibleNavItems(); track item.path) {
+              <a class="cs-nav-item" [routerLink]="item.path" routerLinkActive="cs-nav-item-active"
+                 [title]="item.label">
+                <mat-icon class="cs-nav-icon">{{ item.icon }}</mat-icon>
+                <span class="cs-nav-label">{{ item.label }}</span>
+                @if (item.path === '/feed' && unreadFeedCount() > 0) {
+                  <span class="cs-badge">{{ unreadFeedCount() > 99 ? '99+' : unreadFeedCount() }}</span>
+                }
+                @if (item.path === '/my-tickets' && unreadTicketCount() > 0) {
+                  <span class="cs-badge">{{ unreadTicketCount() > 99 ? '99+' : unreadTicketCount() }}</span>
+                }
+              </a>
             }
-            <button mat-icon-button (click)="auth.logout()" title="Abmelden">
-              <mat-icon>logout</mat-icon>
-            </button>
-          </div>
-        </nav>
-      }
+            <div class="cs-nav-footer">
+              <span class="cs-role-chip">{{ auth.userRole() }}</span>
+              @if (computerEnabled()) {
+                <button mat-icon-button (click)="computer?.toggle()" title="Computer Console (Ctrl+K)">
+                  <mat-icon>smart_toy</mat-icon>
+                </button>
+              }
+              <button mat-icon-button (click)="auth.logout()" title="Abmelden">
+                <mat-icon>logout</mat-icon>
+              </button>
+            </div>
+          </nav>
+        }
 
-      } <!-- end @if (!fullscreenRoute()) -->
+        <div class="cs-main" [class.cs-main--full]="fullscreenRoute()">
+          <router-outlet></router-outlet>
+        </div>
 
-      <div class="cs-main">
-        <router-outlet></router-outlet>
+        @if (computerEnabled()) {
+          <app-computer #computer></app-computer>
+        }
       </div>
-
-      @if (computerEnabled()) {
-        <app-computer #computer></app-computer>
-      }
     } @else {
       <router-outlet></router-outlet>
     }
@@ -107,7 +102,6 @@ export class App implements OnInit, OnDestroy {
 
   unreadFeedCount = signal<number>(0);
   unreadTicketCount = signal<number>(0);
-  navOpen = signal(false);
   // Bridge & Problemboard are position:fixed overlays with their own nav — hide app hamburger there.
   private static readonly FULLSCREEN_ROUTES = ['/bridge', '/problems'];
   fullscreenRoute = signal<boolean>(App.isFullscreen(location.pathname));
@@ -115,6 +109,7 @@ export class App implements OnInit, OnDestroy {
   private badgeInterval: ReturnType<typeof setInterval> | null = null;
   private http = inject(HttpClient);
   private themeService = inject(ThemeService);
+  theme = this.themeService.theme;
   private router = inject(Router);
   private _cockpitMsgHandler = (e: MessageEvent) => {
     if (e.origin !== window.location.origin) return;
@@ -159,7 +154,6 @@ export class App implements OnInit, OnDestroy {
       .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd))
       .subscribe(e => {
         this.fullscreenRoute.set(App.isFullscreen(e.urlAfterRedirects));
-        this.navOpen.set(false);
       });
   }
 
