@@ -398,3 +398,14 @@ html.cs-theme-holo {
   overflow: hidden;
   background: transparent;
 }
+
+/* LCARS font for ticket dialog inputs — global override needed because Angular
+   ViewEncapsulation strips parent selectors (.t-lcars .tkt-input → .tkt-input[_ngcontent])
+   and browsers don't inherit font-family into form elements by default. */
+.t-lcars .tkt-input,
+.t-lcars input.tkt-input,
+.t-lcars textarea.tkt-input,
+.t-lcars select.tkt-input {
+  font-family: 'Antonio', 'Eurostile', sans-serif !important;
+  letter-spacing: 0.04em;
+}
