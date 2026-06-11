@@ -134,6 +134,23 @@ interface FeedSearch {
         </mat-form-field>
       }
 
+      @if (widgetType === 'gauge') {
+        <mat-form-field appearance="outline">
+          <mat-label>Gesamt-Query (Nenner)</mat-label>
+          <input matInput [(ngModel)]="totalQueryString" placeholder="* (alle)">
+        </mat-form-field>
+        <div style="display:flex;gap:8px">
+          <mat-form-field appearance="outline" style="flex:1">
+            <mat-label>Warn %</mat-label>
+            <input matInput type="number" min="0" max="100" [(ngModel)]="gaugeWarn">
+          </mat-form-field>
+          <mat-form-field appearance="outline" style="flex:1">
+            <mat-label>Kritisch %</mat-label>
+            <input matInput type="number" min="0" max="100" [(ngModel)]="gaugeCritical">
+          </mat-form-field>
+        </div>
+      }
+
       @if (widgetType === 'timeseries') {
         <!-- Datenquelle -->
         <div class="datasource-tabs">
@@ -308,6 +325,7 @@ export class AddWidgetDialogComponent implements OnInit {
     { value: 'list', label: 'Liste', icon: 'view_list' },
     { value: 'donut', label: 'Donut', icon: 'donut_large' },
     { value: 'bar', label: 'Balken', icon: 'bar_chart' },
+    { value: 'gauge', label: 'Gauge', icon: 'speed' },
     { value: 'ai_summary', label: 'KI-Lage', icon: 'psychology' },
     { value: 'top_hosts', label: 'Top Hosts', icon: 'dns' },
     { value: 'timeseries', label: 'Zeitreihe', icon: 'show_chart' },
@@ -333,6 +351,9 @@ export class AddWidgetDialogComponent implements OnInit {
   step = '1m';
   hours = 4;
   unit = '%';
+  totalQueryString = '*';
+  gaugeWarn = 70;
+  gaugeCritical = 90;
   panelUrl = '';
   dataSource: 'checkmk' | 'prometheus' = 'checkmk';
   cmkHosts: string[] = [''];
@@ -473,6 +494,17 @@ export class AddWidgetDialogComponent implements OnInit {
 
   create() {
     const base = { widget_type: this.widgetType, title: this.title.trim(), gs_w: 4, gs_h: 3 };
+    if (this.widgetType === 'gauge') {
+      this.ref.close({ ...base, gs_w: 3, gs_h: 3, config: {
+        index_pattern: this.indexPattern,
+        query_string: this.queryString,
+        total_query_string: this.totalQueryString || '*',
+        unit: this.unit,
+        warn: Number(this.gaugeWarn),
+        critical: Number(this.gaugeCritical),
+      }});
+      return;
+    }
     if (this.widgetType === 'stat') {
       this.ref.close({ ...base, gs_w: 2, gs_h: 2, config: { index_pattern: this.indexPattern, query_string: this.queryString } });
     } else if (this.widgetType === 'list') {
