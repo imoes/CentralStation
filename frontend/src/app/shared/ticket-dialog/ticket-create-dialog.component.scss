@@ -101,6 +101,15 @@
     font-family: 'Antonio','Eurostile',sans-serif;
     letter-spacing: .04em;
   }
+  /* ::ng-deep forces font onto native form elements (input/textarea/select)
+     which browsers reset to system font by default, ignoring inheritance. */
+  /* stylelint-disable-next-line selector-pseudo-element-no-unknown */
+  ::ng-deep input.tkt-input,
+  ::ng-deep textarea.tkt-input,
+  ::ng-deep select.tkt-input {
+    font-family: 'Antonio','Eurostile',sans-serif !important;
+    letter-spacing: .04em;
+  }
   .tkt-input:focus { border-color: #FF9933; }
   .tkt-target-btn { background: #1a1206; color: #FFCC99; border-color: #5a4423; }
   .tkt-target-btn.active { background: #FF9933; color: #000; border-color: #FF9933; }
