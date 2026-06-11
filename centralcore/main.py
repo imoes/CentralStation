@@ -499,18 +499,26 @@ async def send_message(sid: str, body: MessageBody):
                 preview = cb_args[1] if len(cb_args) > 1 else None
                 label = _tool_label(name)
 
-                # Hard limit: disable the "web" toolset after _WEB_SEARCH_LIMIT calls
-                # so the agent cannot spiral indefinitely. disabled_toolsets is read
-                # dynamically before each tool call, so this takes effect immediately.
+                # Hard limit: remove web tools from agent.tools after _WEB_SEARCH_LIMIT
+                # calls per turn. agent.tools is passed directly to the LLM on every
+                # API call, so this takes effect on the very next request.
+                # (disabled_toolsets is only consulted at agent init, not per-call.)
                 if name == "web_search":
                     _web_search_count += 1
                     if _web_search_count >= _WEB_SEARCH_LIMIT:
-                        cur = list(getattr(agent, "disabled_toolsets", None) or [])
-                        if "web" not in cur:
-                            cur.append("web")
-                            agent.disabled_toolsets = cur
+                        _WEB_TOOL_NAMES = {"web_search", "web_fetch", "web_browser"}
+                        if not getattr(agent, "_web_tools_removed", False):
+                            agent._saved_tools = list(agent.tools or [])
+                            agent._saved_valid_tools = set(agent.valid_tool_names or set())
+                            agent.tools = [
+                                t for t in (agent.tools or [])
+                                if t.get("function", {}).get("name") not in _WEB_TOOL_NAMES
+                            ]
+                            if agent.valid_tool_names:
+                                agent.valid_tool_names = agent.valid_tool_names - _WEB_TOOL_NAMES
+                            agent._web_tools_removed = True
                             log.warning(
-                                "[%s] web_search limit (%d) reached — disabling 'web' toolset for this turn",
+                                "[%s] web_search limit (%d) reached — removed web tools from agent.tools",
                                 sid[:8], _WEB_SEARCH_LIMIT,
                             )
 
@@ -553,9 +561,6 @@ async def send_message(sid: str, body: MessageBody):
             # progress callback on the agent right before the run (requests to a
             # single session are sequential, so this is safe).
             agent.tool_progress_callback = on_tool_progress
-            # Snapshot the current disabled_toolsets so we can restore it after
-            # the turn (the per-turn web_search limiter may have added "web").
-            _saved_disabled = list(getattr(agent, "disabled_toolsets", None) or [])
             try:
                 agent.run_conversation(
                     user_message=body.content,
@@ -563,8 +568,11 @@ async def send_message(sid: str, body: MessageBody):
                     conversation_history=history if history else None,
                 )
             finally:
-                # Always restore so the next turn starts clean.
-                agent.disabled_toolsets = _saved_disabled
+                # Restore agent.tools/valid_tool_names if the web limiter trimmed them.
+                if getattr(agent, "_web_tools_removed", False):
+                    agent.tools = agent._saved_tools
+                    agent.valid_tool_names = agent._saved_valid_tools
+                    del agent._web_tools_removed, agent._saved_tools, agent._saved_valid_tools
             full_response = "".join(response_buf)
             log.info("[%s] response (%d chars): %.300s%s",
                      sid[:8], len(full_response), full_response,
