@@ -989,6 +989,39 @@ async def get_widget_data(
             "run_at": analysis.run_at.isoformat() if analysis.run_at else None,
         }
 
+    elif w.widget_type == "gauge":
+        os_client = feed_index.get_opensearch()
+        total_qs = cfg.get("total_query_string", "*") or "*"
+        unit = cfg.get("unit", "%")
+
+        def _gauge_query(qs: str) -> dict:
+            q: dict = {"query_string": {"query": qs}} if qs and qs != "*" else {"match_all": {}}
+            body: dict = {"bool": {"must": [q], "filter": [{
+                "bool": {
+                    "should": [
+                        {"terms": {"source": ["checkmk", "graylog", "wazuh", "icinga2", "coroot"]}},
+                        {"bool": {"must": [
+                            {"terms": {"source": ["o365", "teams"]}},
+                            {"term": {"user_id": user_id_str}},
+                        ]}},
+                    ],
+                    "minimum_should_match": 1,
+                },
+            }]}}
+            if exclusion_clauses:
+                body["bool"]["must_not"] = exclusion_clauses
+            return body
+
+        try:
+            r_num = await os_client.count(index=index_pattern, body={"query": _gauge_query(query_string or "*")}, ignore_unavailable=True)
+            r_den = await os_client.count(index=index_pattern, body={"query": _gauge_query(total_qs)}, ignore_unavailable=True)
+            value = r_num.get("count", 0)
+            total = r_den.get("count", 0)
+            percent = round(value / total * 100, 1) if total > 0 else 0.0
+            return {"value": value, "total": total, "percent": percent, "unit": unit}
+        except Exception:
+            return {"value": 0, "total": 0, "percent": 0.0, "unit": unit}
+
     elif w.widget_type == "incidents":
         from app.models.workflow import Incident, IncidentMember
         from sqlalchemy import func as sa_func, desc
