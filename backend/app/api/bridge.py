@@ -190,8 +190,20 @@ async def bridge_status(
     # ── 0. User CheckMK scope (OS/location/VE/criticality filter) ─────────────
     # Computed FIRST so every element below (counts, incidents, vitals, logs)
     # respects it. Empty list = no filter active → show everything.
-    from app.services.feed_index import get_user_checkmk_host_scope
+    from app.services.feed_index import get_user_checkmk_host_scope, get_exclusion_must_not_clauses
     host_scope = await get_user_checkmk_host_scope(db, str(user.id))
+
+    # Exclusion FeedSearches (system + this user's personal ignores) — applied to
+    # every query below so the Bridge respects the same hide-filters as the Feed.
+    try:
+        exclusion_must_not = await get_exclusion_must_not_clauses(db, str(user.id))
+    except Exception as e:
+        log.warning("bridge_status: exclusion clauses failed: %s", e)
+        exclusion_must_not = []
+
+    def _must_not() -> list[dict]:
+        """Standard must_not: hide resolved items + all active exclusion filters."""
+        return [{"term": {"status": "resolved"}}, *exclusion_must_not]
 
     def _scope_filter() -> list[dict]:
         """OpenSearch filter clause restricting to the user's CheckMK host scope.
@@ -226,7 +238,7 @@ async def bridge_status(
                     "bool": {
                         "must": [{"range": {"created_at": {"gte": since}}}],
                         "filter": _scope_filter(),
-                        "must_not": [{"term": {"status": "resolved"}}],
+                        "must_not": _must_not(),
                     }
                 },
                 "size": 0,
@@ -315,7 +327,7 @@ async def bridge_status(
                     "bool": {
                         "must": [{"range": {"created_at": {"gte": since}}}],
                         "filter": _scope_filter(),
-                        "must_not": [{"term": {"status": "resolved"}}],
+                        "must_not": _must_not(),
                     }
                 },
                 "size": 8,
@@ -355,7 +367,7 @@ async def bridge_status(
                                 {"term": {"severity": target_sev}},
                             ],
                             "filter": _scope_filter(),
-                            "must_not": [{"term": {"status": "resolved"}}],
+                            "must_not": _must_not(),
                         }
                     },
                     "size": 1,

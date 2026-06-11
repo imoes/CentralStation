@@ -200,7 +200,9 @@ interface BridgeStatus {
           </div>
 
           <div class="block logs">
-            <div class="block-head">LOGS · LIVE</div>
+            <div class="block-head">LOGS · LIVE
+              <button class="log-reload" (click)="load()" [disabled]="loading()" title="Logs neu laden">⟳</button>
+            </div>
             <div class="block-body log-stream">
               @for (e of status()?.logs ?? []; track e.created_at + e.title) {
                 <div class="log-line" [attr.data-sev]="e.severity" (click)="openLog(e)">
@@ -320,7 +322,10 @@ interface BridgeStatus {
     .rightcol { display:flex; flex-direction:column; gap:6px; min-height:0; }
     .block { display:flex; flex-direction:column; min-height:0; border-radius:8px; overflow:hidden; }
     .block.logs { flex:1; }
-    .block-head { font-size:11px; font-weight:800; letter-spacing:.18em; padding:8px 12px; flex-shrink:0; }
+    .block-head { font-size:11px; font-weight:800; letter-spacing:.18em; padding:8px 12px; flex-shrink:0; display:flex; align-items:center; justify-content:space-between; }
+    .log-reload { background:transparent; border:none; cursor:pointer; font-size:15px; line-height:1; color:inherit; opacity:.8; padding:0 2px; }
+    .log-reload:hover { opacity:1; transform:rotate(90deg); transition:transform .15s; }
+    .log-reload:disabled { opacity:.4; cursor:default; }
     .block-body { padding:8px; overflow-y:auto; display:flex; flex-direction:column; gap:5px; }
     .logs .block-body { flex:1; }
 
