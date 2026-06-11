@@ -236,6 +236,16 @@
     margin-top: 2px;
     opacity: 0.8;
   }
+
+  &.ticket-pill {
+    background: #ffcc66;
+    color: #000;
+    margin-top: 2px;
+
+    &:hover {
+      background: #ffdd99;
+    }
+  }
 }
 
 .msg-badge {

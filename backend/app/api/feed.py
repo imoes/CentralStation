@@ -1228,23 +1228,8 @@ async def incident_claude_prompt(
 # AI-assisted Jira ticket creation from a feed item
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _resolve_jira_connector(db: AsyncSession, user_id, connector_type: str = "jira"):
-    """Return the user's Jira connector of the given type (personal preferred, else global).
-
-    connector_type: "jira" (regular Jira, e.g. IMSP) or "jira_sd" (ServiceDesk, e.g. IMIT).
-    """
-    from app.models.connector import ConnectorConfig
-    r = await db.execute(
-        select(ConnectorConfig)
-        .where(
-            ConnectorConfig.type == connector_type,
-            ConnectorConfig.enabled.is_(True),
-            ((ConnectorConfig.owner_user_id == user_id) | ConnectorConfig.owner_user_id.is_(None)),
-        )
-        .order_by(ConnectorConfig.owner_user_id.is_(None), ConnectorConfig.updated_at.desc())
-        .limit(1)
-    )
-    return r.scalar_one_or_none()
+# Shared with the Computer Console via app/services/ticketing.py.
+from app.services.ticketing import resolve_jira_connector as _resolve_jira_connector
 
 
 async def _feed_item_by_external_id(external_id: str) -> dict | None:

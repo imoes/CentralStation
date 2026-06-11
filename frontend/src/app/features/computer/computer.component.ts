@@ -6,6 +6,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
+import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
@@ -13,6 +14,7 @@ import { marked } from 'marked';
 import { AuthService } from '../../core/auth/auth.service';
 import { ComputerService } from '../../core/services/computer.service';
 import { environment } from '../../../environments/environment';
+import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-create-dialog.component';
 
 // Configure marked: no wrapping <p> for simple one-liners, GFM tables + breaks
 marked.setOptions({ gfm: true, breaks: true });
@@ -57,7 +59,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
 @Component({
   selector: 'app-computer',
   standalone: true,
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatDialogModule],
   template: `
     @if (isOpen()) {
       <div class="computer-backdrop" (click)="close()"></div>
@@ -118,6 +120,12 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
           }
           @if (activeSession()?.resolved) {
             <span class="rail-pill resolved-pill">✓ GELÖST</span>
+          }
+          @if (activeMessages().length > 0) {
+            <button class="rail-pill ticket-pill" (click)="createTicket()"
+                    title="Jira/Service-Desk-Ticket aus diesem Gespräch erstellen">
+              🎫 TICKET
+            </button>
           }
         </div>
 
@@ -230,6 +238,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private sanitizer = inject(DomSanitizer);
   private computerService = inject(ComputerService);
+  private dialog = inject(MatDialog);
   private ngZone = inject(NgZone);
   private apiBase = `${environment.apiUrl}/computer`;
 
@@ -440,6 +449,26 @@ export class ComputerComponent implements OnInit, OnDestroy {
     } finally {
       this._resolvingSession = false;
     }
+  }
+
+  /** Open the shared ticket dialog, formulating a ticket from this conversation. */
+  createTicket(): void {
+    const msgs = this.activeMessages();
+    if (!msgs.length) return;
+    const transcript = msgs
+      .map(m => `${m.role === 'user' ? 'Operator' : 'Assistant'}: ${m.text.trim()}`)
+      .join('\n\n');
+    const session = this.activeSession();
+    this.dialog.open(TicketCreateDialogComponent, {
+      data: {
+        mode: 'computer',
+        transcript,
+        host: session?.external_id || session?.label || '',
+      },
+      panelClass: 'tkt-panel',
+      autoFocus: false,
+      maxWidth: '92vw',
+    });
   }
 
   /** Extract the concluding paragraph (Fazit) for TTS.
