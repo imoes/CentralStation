@@ -199,6 +199,10 @@ async def collect_data(state: dict, db: Any) -> dict:
         except Exception as e:
             log.debug("collect_data: scoring failed, using first %d: %s", max_for_llm, e)
             raw_alerts = raw_alerts[:max_for_llm]
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
     log.info(
         "collect_data: %d open alerts (look_back=%dh, min_age=%dmin)",
@@ -220,6 +224,10 @@ async def collect_data(state: dict, db: Any) -> dict:
                     break
     except Exception as e:
         log.debug("collect_data: past_incidents lookup failed: %s", e)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     return {**state, "raw_alerts": raw_alerts, "past_incidents": past_incidents}
 
