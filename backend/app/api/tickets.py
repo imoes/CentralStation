@@ -133,6 +133,28 @@ async def ticket_draft(
         ai_insight = item.get("ai_insight") or ""
         if ai_insight:
             ctx += f"Prior AI insight: {ai_insight}\n"
+
+        # Load AI analysis comments — these contain the evidence block (📎 Belege)
+        # collected by the feed analysis pipeline and are the primary proof source.
+        try:
+            from app.models.workflow import AlertComment
+            com_r = await db.execute(
+                select(AlertComment)
+                .where(
+                    AlertComment.external_id == body.feed_external_id,
+                    AlertComment.kind == "ai",
+                )
+                .order_by(AlertComment.created_at)
+                .limit(3)
+            )
+            ai_comments = com_r.scalars().all()
+            if ai_comments:
+                ctx += "\n## KI-Analyse mit Belegen\n"
+                for c in ai_comments:
+                    ctx += c.body.strip() + "\n\n"
+        except Exception as e:
+            log.debug("ticket_draft: loading AI comments failed: %s", e)
+
         context = ctx
     elif body.transcript:
         host = (body.host or "").strip()
