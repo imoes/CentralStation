@@ -6,7 +6,9 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
+import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
+import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-create-dialog.component';
 import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { marked } from 'marked';
@@ -55,7 +57,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
 @Component({
   selector: 'app-computer',
   standalone: true,
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatDialogModule],
   template: `
     @if (isOpen()) {
       <div class="computer-backdrop" (click)="close()"></div>
@@ -116,6 +118,12 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
           }
           @if (activeSession()?.resolved) {
             <span class="rail-pill resolved-pill">✓ GELÖST</span>
+          }
+          @if (activeMessages().length > 0) {
+            <button class="rail-pill ticket-pill" (click)="createTicket()"
+                    title="Create Jira/Service-Desk ticket from this conversation">
+              🎫 TICKET
+            </button>
           }
         </div>
 
@@ -224,6 +232,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   private sanitizer = inject(DomSanitizer);
   private computerService = inject(ComputerService);
   private ngZone = inject(NgZone);
+  private dialog = inject(MatDialog);
   private apiBase = `${environment.apiUrl}/computer`;
 
   // Maps a host key (e.g. hostname) → session_id so that repeated "Computer, prüfe das"
@@ -412,6 +421,26 @@ export class ComputerComponent implements OnInit, OnDestroy {
     } finally {
       this._resolvingSession = false;
     }
+  }
+
+  /** Open the shared ticket dialog, formulating a ticket from this conversation. */
+  createTicket(): void {
+    const msgs = this.activeMessages();
+    if (!msgs.length) return;
+    const transcript = msgs
+      .map(m => `${m.role === 'user' ? 'Operator' : 'Assistant'}: ${m.text.trim()}`)
+      .join('\n\n');
+    const session = this.activeSession();
+    this.dialog.open(TicketCreateDialogComponent, {
+      data: {
+        mode: 'computer',
+        transcript,
+        host: session?.external_id || session?.label || '',
+      },
+      panelClass: 'tkt-panel',
+      autoFocus: false,
+      maxWidth: '92vw',
+    });
   }
 
   /** Extract the concluding paragraph (Fazit) for TTS.

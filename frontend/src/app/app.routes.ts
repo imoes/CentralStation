@@ -18,6 +18,11 @@ export const routes: Routes = [
     loadComponent: () => import('./features/bridge/bridge.component').then(m => m.BridgeComponent),
   },
   {
+    path: 'problems',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/problems/problems.component').then(m => m.ProblemsComponent),
+  },
+  {
     path: 'alerts',
     canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
     loadComponent: () => import('./features/alerts/alerts.component').then(m => m.AlertsComponent),

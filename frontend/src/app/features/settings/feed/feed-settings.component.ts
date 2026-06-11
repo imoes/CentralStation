@@ -19,8 +19,10 @@ interface RetentionConfig {
   checkmk_days: number;
   graylog_days: number;
   wazuh_days: number;
+  icinga2_days: number;
   o365_days: number;
   teams_days: number;
+  coroot_days: number;
 }
 
 interface FeedSearch {
@@ -36,10 +38,12 @@ interface FeedSearch {
 
 const SOURCE_META = [
   { key: 'checkmk', label: 'CheckMK',  icon: 'monitor_heart', color: '#1565c0', desc: 'Monitoring-Alerts' },
-  { key: 'graylog', label: 'Graylog',  icon: 'article',       color: '#6a1b9a', desc: 'Log-Einträge' },
+  { key: 'graylog', label: 'Graylog',  icon: 'article',       color: '#6a1b9a', desc: 'Log Entries' },
   { key: 'wazuh',   label: 'Wazuh',    icon: 'security',      color: '#b71c1c', desc: 'Security-Alerts' },
+  { key: 'icinga2', label: 'Icinga2',  icon: 'monitor_heart', color: '#06A000', desc: 'Monitoring-Alerts' },
   { key: 'o365',    label: 'E-Mail',   icon: 'mail',          color: '#e65100', desc: 'O365-Nachrichten' },
   { key: 'teams',   label: 'Teams',    icon: 'groups',        color: '#0f4c96', desc: 'Teams-Nachrichten' },
+  { key: 'coroot',  label: 'Coroot',   icon: 'insights',      color: '#00897b', desc: 'APM & Incidents' },
 ];
 
 @Component({
@@ -107,8 +111,11 @@ const SOURCE_META = [
             <div>
               <h3>System-Suchen</h3>
               <p class="hint">
-                Diese gespeicherten OpenSearch-Queries stehen im Feed und in Dashboard-Widgets zur Verfügung.
-                Query-Syntax: Lucene gegen <code>cs-feed-*</code> Indices.
+                These saved OpenSearch queries are available in the Feed and Dashboard widgets.
+                Query syntax: Lucene against <code>cs-feed-*</code> indices.<br>
+                Available fields: <code>title</code>, <code>body</code>, <code>source</code>, <code>severity</code>,
+                <code>status</code>, <code>metadata.container_name</code>, <code>metadata.host</code>.
+                Note: The message text is usually in <code>title</code> (not <code>body</code>).
               </p>
             </div>
           </div>
@@ -142,6 +149,9 @@ const SOURCE_META = [
                     Vorschau
                   </button>
                   <button mat-flat-button color="primary" (click)="saveSearch(search)">Speichern</button>
+                  <button mat-icon-button color="warn" matTooltip="Delete system filter" (click)="deleteSearch(search)">
+                    <mat-icon>delete</mat-icon>
+                  </button>
                 </div>
                 @if (search.is_exclusion) {
                   <div class="exclusion-hint">
@@ -197,12 +207,12 @@ const SOURCE_META = [
             <div>
               <h3>Speicher: OpenSearch</h3>
               <p class="hint">
-                Feed-Nachrichten werden in OpenSearch gespeichert (getrennte Indices pro Quelle:
+                Feed messages are stored in OpenSearch (separate indices per source:
                 <code>cs-feed-checkmk</code>, <code>cs-feed-o365</code>, etc.).<br>
-                Monitoring-Alerts werden beim Import indexiert. E-Mails und Teams-Nachrichten
-                werden beim ersten Abrufen gespeichert.<br>
-                Zugriffskontrolle: E-Mails und Teams-Nachrichten sind immer an den jeweiligen
-                Benutzer gebunden und für andere nicht sichtbar.
+                Monitoring alerts are indexed on import. Emails and Teams messages
+                are stored on first fetch.<br>
+                Access control: emails and Teams messages are always bound to the respective
+                user and not visible to others.
               </p>
             </div>
           </div>
@@ -286,7 +296,7 @@ export class FeedSettingsComponent implements OnInit {
   saving = signal(false);
   retention: Record<string, number> = {
     checkmk_days: 90, graylog_days: 90, wazuh_days: 90,
-    o365_days: 90, teams_days: 90,
+    icinga2_days: 90, o365_days: 90, teams_days: 90, coroot_days: 90,
   };
   searches = signal<FeedSearch[]>([]);
   previewing = signal<string | null>(null);
@@ -368,6 +378,17 @@ export class FeedSettingsComponent implements OnInit {
         this.snackBar.open('System-Suche angelegt', '', { duration: 2000 });
       },
       error: (e) => this.snackBar.open(e?.error?.detail ?? 'Suche konnte nicht angelegt werden', '', { duration: 3000 }),
+    });
+  }
+
+  deleteSearch(search: FeedSearch) {
+    if (!confirm(`System-Filter „${search.name}" wirklich löschen?`)) return;
+    this.http.delete(`${environment.apiUrl}/feed-searches/${search.id}`).subscribe({
+      next: () => {
+        this.searches.update(searches => searches.filter(s => s.id !== search.id));
+        this.snackBar.open('System filter deleted', '', { duration: 2000 });
+      },
+      error: (e) => this.snackBar.open(e?.error?.detail ?? 'Failed to delete filter', 'OK', { duration: 3500 }),
     });
   }
 

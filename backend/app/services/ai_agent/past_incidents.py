@@ -64,6 +64,8 @@ async def find_similar_incidents(
             host_findings = [
                 f for f in findings
                 if host.lower() in (f.get("host") or "").lower()
+                # skip meta-findings that just flag missing raw data — they're noise
+                and not (f.get("title") or "").startswith("UNGEKLÄRT:")
             ]
             if not host_findings:
                 continue  # analysis contains no finding for this host — skip
@@ -75,7 +77,12 @@ async def find_similar_incidents(
                         recs = _json.loads(recs)
                     except Exception:
                         recs = []
-                rec_text = recs[0].get("action", "") if recs else ""
+                # Prefer a recommendation that mentions this host; fall back to first
+                host_rec = next(
+                    (r for r in recs if host.lower() in (r.get("action") or "").lower()),
+                    recs[0] if recs else None,
+                )
+                rec_text = host_rec.get("action", "") if host_rec else ""
                 results.append({
                     "source": "ai_analyses",
                     "run_at": row.run_at.isoformat() if row.run_at else "",
@@ -90,6 +97,12 @@ async def find_similar_incidents(
                 break
     except Exception as e:
         log.debug("past_incidents ai_analyses query failed: %s", e)
+        # A failed query aborts the asyncpg transaction — roll back so the
+        # remaining query blocks (and callers sharing this session) still work.
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     # ── 2. workflow_sessions: ITIL sessions for this host ─────────────────────
     if len(results) < limit:
@@ -125,6 +138,10 @@ async def find_similar_incidents(
                 })
         except Exception as e:
             log.debug("past_incidents workflow_sessions query failed: %s", e)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
     # ── 3. alert_score_adjustments: recurring patterns for this host ──────────
     if len(results) < limit:
@@ -153,6 +170,10 @@ async def find_similar_incidents(
                 })
         except Exception as e:
             log.debug("past_incidents score_adjustments query failed: %s", e)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
     # ── 4. OpenSearch: AI-resolved alerts similar to this host/title ─────────
     if len(results) < limit:

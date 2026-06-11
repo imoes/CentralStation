@@ -5,6 +5,7 @@ import { Router } from '@angular/router';
 import { environment } from '../../../environments/environment';
 import { WebsocketService } from '../../core/services/websocket.service';
 import { ThemeService } from '../../core/services/theme.service';
+import { AuthService } from '../../core/auth/auth.service';
 
 interface SourceStatus { name: string; state: string; critical: number; high: number; total: number; }
 interface SectorStatus { name: string; state: string; critical: number; high: number; total: number; }
@@ -67,9 +68,9 @@ interface BridgeStatus {
         <nav class="bridge-menu" aria-label="Bridge Navigation">
           <div class="bridge-menu-head">
             <span>NAVIGATION</span>
-            <button class="bridge-menu-close" (click)="bridgeMenuOpen.set(false)" title="Schließen">×</button>
+            <button class="bridge-menu-close" (click)="bridgeMenuOpen.set(false)" title="Close">×</button>
           </div>
-          @for (item of bridgeNav; track item.path) {
+          @for (item of bridgeNav(); track item.path) {
             <button class="bridge-menu-item" (click)="go(item.path)">
               <span class="bridge-menu-icon">{{ item.icon }}</span>
               <span>{{ item.label }}</span>
@@ -199,7 +200,9 @@ interface BridgeStatus {
           </div>
 
           <div class="block logs">
-            <div class="block-head">LOGS · LIVE</div>
+            <div class="block-head">LOGS · LIVE
+              <button class="log-reload" (click)="load()" [disabled]="loading()" title="Logs neu laden">⟳</button>
+            </div>
             <div class="block-body log-stream">
               @for (e of status()?.logs ?? []; track e.created_at + e.title) {
                 <div class="log-line" [attr.data-sev]="e.severity" (click)="openLog(e)">
@@ -319,7 +322,10 @@ interface BridgeStatus {
     .rightcol { display:flex; flex-direction:column; gap:6px; min-height:0; }
     .block { display:flex; flex-direction:column; min-height:0; border-radius:8px; overflow:hidden; }
     .block.logs { flex:1; }
-    .block-head { font-size:11px; font-weight:800; letter-spacing:.18em; padding:8px 12px; flex-shrink:0; }
+    .block-head { font-size:11px; font-weight:800; letter-spacing:.18em; padding:8px 12px; flex-shrink:0; display:flex; align-items:center; justify-content:space-between; }
+    .log-reload { background:transparent; border:none; cursor:pointer; font-size:15px; line-height:1; color:inherit; opacity:.8; padding:0 2px; }
+    .log-reload:hover { opacity:1; transform:rotate(90deg); transition:transform .15s; }
+    .log-reload:disabled { opacity:.4; cursor:default; }
     .block-body { padding:8px; overflow-y:auto; display:flex; flex-direction:column; gap:5px; }
     .logs .block-body { flex:1; }
 
@@ -399,7 +405,10 @@ interface BridgeStatus {
 
     /* ═══════════════ THEME: LCARS ═══════════════ */
     .t-lcars { background:#000; color:#FF9933; font-family:'Antonio','Eurostile',sans-serif; text-transform:uppercase; }
-    .t-lcars .work-verdict, .t-lcars .log-title { text-transform:none; }  /* keep prose readable */
+    /* Message/prose texts use the readable Roboto body font — never the condensed
+       LCARS display font (same convention as News Feed .card-body-text + Dashboard). */
+    .t-lcars .work-verdict, .t-lcars .log-title, .t-lcars .ip-title, .t-lcars .ip-insight {
+      text-transform:none; font-family:Roboto,'Helvetica Neue',sans-serif; }
     .t-lcars .seg-a, .t-lcars .hero-title, .t-lcars .rail-pill, .t-lcars .num-cell b, .t-lcars .num-cell span,
     .t-lcars .block-head, .t-lcars .rail-label, .t-lcars .work-host { font-weight:700; letter-spacing:.06em; }
     /* top sweep: orange bar, rounded outer ends = the LCARS elbow caps */
@@ -519,6 +528,7 @@ export class BridgeComponent implements OnInit, OnDestroy {
   private http = inject(HttpClient);
   private router = inject(Router);
   private ws = inject(WebsocketService);
+  private auth = inject(AuthService);
 
   private themeSvc = inject(ThemeService);
   status = signal<BridgeStatus | null>(null);
@@ -528,15 +538,23 @@ export class BridgeComponent implements OnInit, OnDestroy {
   activeSource = signal<string>('');   // '' = no filter, 'checkmk'|'graylog'|'wazuh' = filtered
   bridgeMenuOpen = signal(false);
   theme = this.themeSvc.theme;   // follows the global app theme
-  readonly bridgeNav = [
-    { path: '/dashboard', label: 'Dashboard', icon: '▦' },
-    { path: '/feed', label: 'News Feed', icon: '≋' },
-    { path: '/alerts', label: 'Alerts', icon: '!' },
-    { path: '/my-tickets', label: 'Meine Tickets', icon: '✓' },
-    { path: '/kanban', label: 'Kanban', icon: '▤' },
-    { path: '/ai-insights', label: 'KI-Insights', icon: '◎' },
-    { path: '/settings', label: 'Einstellungen', icon: '⚙' },
+  // Same role-gating as the app sidenav (app.ts navItems); current view (/bridge) excluded.
+  private readonly NAV_ALL = [
+    { path: '/dashboard',   label: 'Dashboard',     icon: '▦', roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/feed',        label: 'News Feed',     icon: '≋', roles: ['admin','sysadmin','network_technician'] },
+    { path: '/problems',    label: 'Problems',      icon: '⚠', roles: ['admin','sysadmin','network_technician'] },
+    { path: '/alerts',      label: 'Alerts',        icon: '!', roles: ['admin'] },
+    { path: '/my-tickets',  label: 'My Tickets',    icon: '✓', roles: ['admin','sysadmin'] },
+    { path: '/kanban',      label: 'Kanban',        icon: '▤', roles: ['admin','sysadmin','network_technician'] },
+    { path: '/ai-insights', label: 'AI Insights',   icon: '◎', roles: ['admin','sysadmin'] },
+    { path: '/settings',    label: 'Settings',      icon: '⚙', roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/help',        label: 'Help',          icon: '?', roles: ['admin','sysadmin','network_technician','viewer'] },
   ];
+
+  bridgeNav = computed(() => {
+    const role = this.auth.userRole();
+    return this.NAV_ALL.filter(i => i.path !== '/bridge' && role && i.roles.includes(role));
+  });
 
   filteredWorklist = computed(() => {
     const src = this.activeSource();
@@ -551,8 +569,8 @@ export class BridgeComponent implements OnInit, OnDestroy {
   alertLabel = computed(() => {
     const s = this.status()?.alert_state;
     if (s === 'red') return '🔴 RED ALERT';
-    if (s === 'yellow') return '🟡 ERHÖHTE WACHSAMKEIT';
-    return '🟢 ALLE SYSTEME NOMINAL';
+    if (s === 'yellow') return '🟡 ELEVATED ALERT';
+    return '🟢 ALL SYSTEMS NOMINAL';
   });
   worklistAge = computed(() => { const u = this.status()?.worklist_updated; return u ? this.relTime(u) : '—'; });
 
