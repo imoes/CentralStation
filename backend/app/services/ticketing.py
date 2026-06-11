@@ -82,9 +82,15 @@ async def ai_ticket_draft(
                 "Produce a concise, professional ticket from the provided context "
                 "(which may be a monitoring alert or a support-chat transcript). "
                 "Return STRICT JSON only: "
-                '{"summary": "<one line, max 120 chars>", "description": "<structured: Problem, '
-                'Affected system, Likely cause if derivable, First steps / what was tried. Use Jira '
-                "wiki markup (*bold*, ---- separators). No invented facts.>\"}. "
+                '{"summary": "<one line, max 120 chars>", "description": "<structured sections using '
+                "Jira wiki markup (*bold*, h3. headings, ---- separators): "
+                "h3. Problem | what failed, symptoms, affected service. "
+                "h3. Betroffenes System | host/service/component. "
+                "h3. Ursache | root cause if identified, else 'Wird untersucht'. "
+                "h3. Lösungsvorschlag | concrete fix or next steps proposed in the conversation — "
+                "this section is REQUIRED and must reflect what the assistant actually recommended. "
+                "h3. Durchgeführte Schritte | what was already tried or investigated. "
+                "No invented facts. If a section has no information, omit it.>\"}. "
                 "The 'log source' field names the collector (Graylog/CheckMK), NOT the failing system.",
                 lang,
             )
