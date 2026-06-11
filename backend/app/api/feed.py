@@ -403,12 +403,12 @@ async def ignore_feed_item(
     index_pattern = index_map.get(source, "cs-feed-*")
 
     search = FeedSearch(
-        user_id=None,
+        user_id=user.id,
         index_pattern=index_pattern,
         name=name,
         query_string=query_string,
         enabled=True,
-        is_system=True,
+        is_system=False,
         is_exclusion=True,
         position=97,
     )

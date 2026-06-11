@@ -1,13 +1,11 @@
 import { Component, computed, effect, inject, OnDestroy, OnInit, signal, ViewChild } from '@angular/core';
-import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
+import { Router, RouterOutlet, RouterLink, RouterLinkActive, NavigationEnd } from '@angular/router';
+import { filter } from 'rxjs/operators';
+import { Subscription } from 'rxjs';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { MatSidenavModule } from '@angular/material/sidenav';
-import { MatToolbarModule } from '@angular/material/toolbar';
-import { MatListModule } from '@angular/material/list';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
-import { MatBadgeModule } from '@angular/material/badge';
 import { AuthService } from './core/auth/auth.service';
 import { WebsocketService } from './core/services/websocket.service';
 import { ThemeService } from './core/services/theme.service';
@@ -26,71 +24,58 @@ interface NavItem {
   standalone: true,
   imports: [
     CommonModule, RouterOutlet, RouterLink, RouterLinkActive,
-    MatSidenavModule, MatToolbarModule, MatListModule,
-    MatIconModule, MatButtonModule, MatBadgeModule,
+    MatIconModule, MatButtonModule,
     ComputerComponent,
   ],
   template: `
     @if (auth.isLoggedIn()) {
-      <mat-sidenav-container class="app-container">
-        <mat-sidenav mode="side" opened class="sidenav" [class.collapsed]="navCollapsed()">
-          <div class="sidenav-header">
-            <button mat-icon-button class="nav-toggle" (click)="toggleNav()" title="Navigation ein-/ausklappen">
-              <mat-icon>menu</mat-icon>
-            </button>
-            <mat-icon class="brand-icon">hub</mat-icon>
-            <span class="brand-label">CentralStation</span>
-          </div>
-          <mat-nav-list>
+      <div class="cs-shell"
+           [class.t-classic]="theme()==='classic'"
+           [class.t-lcars]="theme()==='lcars'"
+           [class.t-holo]="theme()==='holo'">
+
+        <!-- Bridge & Problemboard sind position:fixed-Fullscreen mit eigener Nav -->
+        @if (!fullscreenRoute()) {
+          <nav class="cs-nav-sidebar" aria-label="Hauptnavigation">
+            <div class="cs-nav-head">
+              <mat-icon class="cs-brand-icon">hub</mat-icon>
+              <span class="cs-brand">CentralStation</span>
+            </div>
             @for (item of visibleNavItems(); track item.path) {
-              @if (item.path === '/feed') {
-                <a mat-list-item [routerLink]="item.path" routerLinkActive="active"
-                   (click)="onFeedClick()" [title]="item.label">
-                  <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                  <span matListItemTitle class="nav-label">
-                    {{ item.label }}
-                    @if (unreadFeedCount() > 0) {
-                      <span class="feed-badge">{{ unreadFeedCount() > 99 ? '99+' : unreadFeedCount() }}</span>
-                    }
-                  </span>
-                </a>
-              } @else if (item.path === '/my-tickets') {
-                <a mat-list-item [routerLink]="item.path" routerLinkActive="active" [title]="item.label">
-                  <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                  <span matListItemTitle class="nav-label">
-                    {{ item.label }}
-                    @if (unreadTicketCount() > 0) {
-                      <span class="feed-badge">{{ unreadTicketCount() > 99 ? '99+' : unreadTicketCount() }}</span>
-                    }
-                  </span>
-                </a>
-              } @else {
-                <a mat-list-item [routerLink]="item.path" routerLinkActive="active" [title]="item.label">
-                  <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                  <span matListItemTitle class="nav-label">{{ item.label }}</span>
-                </a>
+              <a class="cs-nav-item" [routerLink]="item.path" routerLinkActive="cs-nav-item-active"
+                 [title]="item.label">
+                <mat-icon class="cs-nav-icon">{{ item.icon }}</mat-icon>
+                <span class="cs-nav-label">{{ item.label }}</span>
+                @if (item.path === '/feed' && unreadFeedCount() > 0) {
+                  <span class="cs-badge">{{ unreadFeedCount() > 99 ? '99+' : unreadFeedCount() }}</span>
+                }
+                @if (item.path === '/my-tickets' && unreadTicketCount() > 0) {
+                  <span class="cs-badge">{{ unreadTicketCount() > 99 ? '99+' : unreadTicketCount() }}</span>
+                }
+              </a>
+            }
+            <div class="cs-nav-footer">
+              <span class="cs-role-chip">{{ auth.userRole() }}</span>
+              @if (computerEnabled()) {
+                <button mat-icon-button (click)="computer?.toggle()" title="Computer Console (Ctrl+K)">
+                  <mat-icon>smart_toy</mat-icon>
+                </button>
               }
-            }
-          </mat-nav-list>
-          <div class="sidenav-footer">
-            <span class="role-chip">{{ auth.userRole() }}</span>
-            @if (computerEnabled()) {
-              <button mat-icon-button (click)="computer?.toggle()" title="Computer Console (Ctrl+K)">
-                <mat-icon>smart_toy</mat-icon>
+              <button mat-icon-button (click)="auth.logout()" title="Abmelden">
+                <mat-icon>logout</mat-icon>
               </button>
-            }
-            <button mat-icon-button (click)="auth.logout()" title="Abmelden">
-              <mat-icon>logout</mat-icon>
-            </button>
-          </div>
-        </mat-sidenav>
-        <mat-sidenav-content>
+            </div>
+          </nav>
+        }
+
+        <div class="cs-main" [class.cs-main--full]="fullscreenRoute()">
           <router-outlet></router-outlet>
-        </mat-sidenav-content>
-      </mat-sidenav-container>
-      @if (computerEnabled()) {
-        <app-computer #computer></app-computer>
-      }
+        </div>
+
+        @if (computerEnabled()) {
+          <app-computer #computer></app-computer>
+        }
+      </div>
     } @else {
       <router-outlet></router-outlet>
     }
@@ -104,22 +89,27 @@ export class App implements OnInit, OnDestroy {
 
   private readonly navItems: NavItem[] = [
     { path: '/dashboard',    label: 'Dashboard',        icon: 'dashboard',    roles: ['admin','sysadmin','network_technician','viewer'] },
-    { path: '/bridge',       label: 'Brücke',           icon: 'rocket_launch',roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/bridge',       label: 'Bridge',           icon: 'rocket_launch',roles: ['admin','sysadmin','network_technician','viewer'] },
     { path: '/feed',         label: 'News Feed',        icon: 'feed',         roles: ['admin','sysadmin','network_technician'] },
-    { path: '/alerts',       label: 'Alerts',           icon: 'notifications',roles: ['admin','sysadmin'] },
-    { path: '/my-tickets',   label: 'Meine Tickets',    icon: 'assignment',   roles: ['admin','sysadmin'] },
+    { path: '/problems',    label: 'Problems',         icon: 'report_problem', roles: ['admin','sysadmin','network_technician'] },
+    { path: '/alerts',       label: 'Alerts',           icon: 'notifications',roles: ['admin'] },
+    { path: '/my-tickets',   label: 'My Tickets',       icon: 'assignment',   roles: ['admin','sysadmin'] },
     { path: '/kanban',       label: 'Kanban',           icon: 'view_kanban',  roles: ['admin','sysadmin','network_technician'] },
-    { path: '/ai-insights',  label: 'KI-Insights',      icon: 'psychology',   roles: ['admin','sysadmin'] },
-    { path: '/settings',     label: 'Einstellungen',    icon: 'settings',     roles: ['admin','sysadmin','network_technician','viewer'] },
-    { path: '/help',         label: 'Hilfe',            icon: 'help',         roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/ai-insights',  label: 'AI Insights',      icon: 'psychology',   roles: ['admin','sysadmin'] },
+    { path: '/settings',     label: 'Settings',         icon: 'settings',     roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/help',         label: 'Help',             icon: 'help',         roles: ['admin','sysadmin','network_technician','viewer'] },
   ];
 
   unreadFeedCount = signal<number>(0);
   unreadTicketCount = signal<number>(0);
-  navCollapsed = signal<boolean>(localStorage.getItem('cs_nav_collapsed') === '1');
+  // Bridge & Problemboard are position:fixed overlays with their own nav — hide app hamburger there.
+  private static readonly FULLSCREEN_ROUTES = ['/bridge', '/problems'];
+  fullscreenRoute = signal<boolean>(App.isFullscreen(location.pathname));
+  private routerSub?: Subscription;
   private badgeInterval: ReturnType<typeof setInterval> | null = null;
   private http = inject(HttpClient);
   private themeService = inject(ThemeService);
+  theme = this.themeService.theme;
   private router = inject(Router);
   private _cockpitMsgHandler = (e: MessageEvent) => {
     if (e.origin !== window.location.origin) return;
@@ -153,12 +143,23 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
+  private static isFullscreen(url: string): boolean {
+    const path = (url.split('?')[0] || '').replace(/\/+$/, '');
+    return App.FULLSCREEN_ROUTES.some(r => path === r || path.startsWith(r + '/'));
+  }
+
   ngOnInit() {
     window.addEventListener('message', this._cockpitMsgHandler);
+    this.routerSub = this.router.events
+      .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd))
+      .subscribe(e => {
+        this.fullscreenRoute.set(App.isFullscreen(e.urlAfterRedirects));
+      });
   }
 
   ngOnDestroy() {
     if (this.badgeInterval) clearInterval(this.badgeInterval);
+    this.routerSub?.unsubscribe();
     window.removeEventListener('message', this._cockpitMsgHandler);
   }
 
@@ -215,18 +216,5 @@ export class App implements OnInit, OnDestroy {
 
   clearFeedBadge() {
     this.unreadFeedCount.set(0);
-  }
-
-  onFeedClick() {
-    // Badge is cleared by the news-feed component after items load (3s delay)
-    // This just provides immediate visual feedback
-  }
-
-  toggleNav() {
-    this.navCollapsed.update(v => {
-      const next = !v;
-      localStorage.setItem('cs_nav_collapsed', next ? '1' : '0');
-      return next;
-    });
   }
 }

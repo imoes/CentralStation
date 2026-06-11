@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 # One index per source for independent retention policies
 INDEX_PREFIX = "cs-feed"
-ALL_SOURCES = ["checkmk", "graylog", "wazuh", "o365", "teams"]
+ALL_SOURCES = ["checkmk", "graylog", "wazuh", "icinga2", "o365", "teams", "coroot"]
 
 _INDEX_MAPPING = {
     "mappings": {
@@ -435,16 +435,25 @@ def matches_exclusion(text: str, matchers: list[dict]) -> bool:
     return False
 
 
-async def get_exclusion_must_not_clauses(db: Any) -> list[dict]:
-    """Return OpenSearch must_not clauses for all active exclusion FeedSearches."""
+async def get_exclusion_must_not_clauses(db: Any, user_id: str | None = None) -> list[dict]:
+    """Return OpenSearch must_not clauses for active exclusion FeedSearches.
+
+    Scope: system exclusions (user_id IS NULL, set by admins — apply to everyone)
+    plus the current user's own personal exclusions. Another user's personal
+    exclusion never affects this user's feed.
+    """
     try:
         from sqlalchemy import select
         from app.models.workflow import FeedSearch
+        scope = FeedSearch.user_id == None  # noqa: E711 — system exclusions
+        if user_id:
+            scope = scope | (FeedSearch.user_id == user_id)
         result = await db.execute(
             select(FeedSearch).where(
                 FeedSearch.is_exclusion == True,  # noqa: E712
                 FeedSearch.enabled == True,  # noqa: E712
                 FeedSearch.query_string != "",
+                scope,
             )
         )
         searches = result.scalars().all()
@@ -461,6 +470,19 @@ async def get_exclusion_must_not_clauses(db: Any) -> list[dict]:
     except Exception as e:
         log.warning("Failed to load exclusion searches: %s", e)
         return []
+
+
+async def count_query_matches(query_string: str, index_pattern: str) -> int:
+    """Return the number of OpenSearch documents matching a query_string."""
+    os = get_opensearch()
+    try:
+        resp = await os.count(
+            index=index_pattern,
+            body={"query": {"query_string": {"query": query_string, "lenient": True}}},
+        )
+        return int(resp.get("count", 0))
+    except Exception:
+        return 0
 
 
 async def search(
@@ -496,7 +518,7 @@ async def search(
 
     # Apply active exclusion FeedSearches (hide matching items)
     if db is not None:
-        exclusion_clauses = await get_exclusion_must_not_clauses(db)
+        exclusion_clauses = await get_exclusion_must_not_clauses(db, user_id)
         must_not.extend(exclusion_clauses)
 
     if severity:
@@ -539,7 +561,7 @@ async def search(
             "bool": {
                 "should": [
                     # shared monitoring sources — no user restriction
-                    {"terms": {"source": ["checkmk", "graylog", "wazuh"]}},
+                    {"terms": {"source": ["checkmk", "graylog", "wazuh", "coroot", "icinga2"]}},
                     # personal sources must match user_id
                     {"bool": {"must": [
                         {"terms": {"source": ["o365", "teams"]}},
@@ -658,6 +680,27 @@ async def delete_old_items(source: str, retention_days: int) -> int:
         return 0
 
 
+async def delete_old_alerts_pg(source: str, retention_days: int, db: Any) -> int:
+    """Delete alerts older than retention_days for the given source from PostgreSQL."""
+    if retention_days <= 0:
+        return 0
+    from sqlalchemy import delete as sa_delete
+    from app.models.alert import Alert
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    try:
+        result = await db.execute(
+            sa_delete(Alert).where(Alert.source == source, Alert.created_at < cutoff)
+        )
+        await db.commit()
+        deleted = result.rowcount
+        if deleted:
+            log.info("Feed housekeeping PG: deleted %d alerts from %s (>%d days)", deleted, source, retention_days)
+        return deleted
+    except Exception as e:
+        log.warning("PostgreSQL alert cleanup failed for %s: %s", source, e)
+        return 0
+
+
 async def get_hosts_metadata(hostnames: list[str]) -> dict[str, dict]:
     """Fetch the latest CheckMK metadata for a list of hostnames from OpenSearch.
 
@@ -728,12 +771,12 @@ async def search_by_query(
     filter_clauses: list[dict] = []
     must_not: list[dict] = []
     if db is not None:
-        must_not.extend(await get_exclusion_must_not_clauses(db))
+        must_not.extend(await get_exclusion_must_not_clauses(db, user_id))
     if user_id:
         filter_clauses.append({
             "bool": {
                 "should": [
-                    {"terms": {"source": ["checkmk", "graylog", "wazuh"]}},
+                    {"terms": {"source": ["checkmk", "graylog", "wazuh", "icinga2", "coroot"]}},
                     {"bool": {"must": [
                         {"terms": {"source": ["o365", "teams"]}},
                         {"term": {"user_id": user_id}},
@@ -847,7 +890,7 @@ async def count_since(
         filter_.append({
             "bool": {
                 "should": [
-                    {"terms": {"source": ["checkmk", "graylog", "wazuh"]}},
+                    {"terms": {"source": ["checkmk", "graylog", "wazuh", "icinga2", "coroot"]}},
                     {"bool": {"must": [
                         {"terms": {"source": ["o365", "teams"]}},
                         {"term": {"user_id": user_id}},
@@ -1023,4 +1066,51 @@ async def search_ai_resolved(
         return results
     except Exception as e:
         log.warning("search_ai_resolved failed: %s", e)
+        return []
+
+
+async def search_recent_ai_findings(host: str, limit: int = 3) -> list[dict]:
+    """Return recent sysadmin AI findings that match the given host.
+
+    Queries the last 3 AiAnalysis runs (within 4 hours) from PostgreSQL,
+    filters findings where finding["host"] is a substring of `host` or vice versa.
+    Returns up to `limit` dicts with keys: severity, title, description.
+    """
+    from datetime import timedelta
+    from sqlalchemy import select, and_
+    from app.core.database import AsyncSessionLocal
+    from app.models.ai import AiAnalysis
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=4)
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(AiAnalysis)
+                .where(
+                    and_(
+                        AiAnalysis.agent_type == "sysadmin",
+                        AiAnalysis.run_at >= cutoff,
+                    )
+                )
+                .order_by(AiAnalysis.run_at.desc())
+                .limit(3)
+            )
+            analyses = result.scalars().all()
+
+        host_lower = host.lower()
+        findings: list[dict] = []
+        for analysis in analyses:
+            for f in (analysis.findings or []):
+                f_host = (f.get("host") or "").lower()
+                if f_host and (host_lower in f_host or f_host in host_lower):
+                    findings.append({
+                        "severity": f.get("severity", "?"),
+                        "title": f.get("title", ""),
+                        "description": f.get("description", ""),
+                    })
+                    if len(findings) >= limit:
+                        return findings
+        return findings
+    except Exception as e:
+        log.warning("search_recent_ai_findings failed: %s", e)
         return []

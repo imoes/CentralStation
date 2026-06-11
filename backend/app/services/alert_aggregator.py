@@ -349,11 +349,39 @@ async def collect_icinga2(connector: ConnectorConfig, time_range_minutes: int = 
         return []
 
 
+async def collect_coroot(connector: ConnectorConfig, time_range_minutes: int = 60) -> list[dict]:
+    """Collect active (unresolved) incidents from Coroot."""
+    from app.services.connectors.coroot import CorootConnector
+    creds = decrypt_credentials(connector.encrypted_credentials)
+    svc = CorootConnector(base_url=connector.base_url, credentials=creds)
+    base = (connector.base_url or "").rstrip("/")
+    try:
+        items = await svc.get_incidents()
+        return [
+            {
+                "source": "coroot",
+                "severity": i["severity"],
+                "title": i["title"],
+                "body": i.get("body", ""),
+                "external_id": i["external_id"],
+                "external_url": (
+                    f"{base}/p/{i['metadata']['project_id']}/incidents"
+                ) if base else None,
+                "metadata": i.get("metadata", {}),
+            }
+            for i in items
+        ]
+    except Exception as e:
+        log.warning("Coroot collection failed: %s", e)
+        return []
+
+
 COLLECTORS = {
     "checkmk": collect_checkmk,
     "graylog": collect_graylog,
     "wazuh": collect_wazuh,
     "icinga2": collect_icinga2,
+    "coroot": collect_coroot,
 }
 
 
@@ -566,7 +594,14 @@ async def run_aggregation(db: AsyncSession) -> int:
                             )
                         )
                     )
-                if existing.scalar_one_or_none():
+                existing_alert = existing.scalar_one_or_none()
+                if existing_alert:
+                    # For Coroot: refresh metadata so newly added fields (e.g. host)
+                    # are written to existing open incidents on the next aggregation.
+                    if source == "coroot":
+                        fresh_meta = dict(item.get("metadata") or {})
+                        if fresh_meta:
+                            existing_alert.metadata_ = fresh_meta
                     continue
 
             meta = dict(item.get("metadata") or {})
@@ -635,7 +670,7 @@ async def run_aggregation(db: AsyncSession) -> int:
         # Enrich new alerts with AI insight in the background (best-effort, only if auto_enrich=true)
         try:
             from app.core.database import AsyncSessionLocal
-            from app.services.settings import get_llm_config, get_agent_config
+            from app.services.settings import get_active_llm_config, get_agent_config
 
             async def _do_enrich(docs_to_enrich: list[dict]) -> None:
                 from app.services.feed_enricher import enrich_batch
@@ -644,7 +679,7 @@ async def run_aggregation(db: AsyncSession) -> int:
                     agent_cfg = await get_agent_config(s)
                     if not agent_cfg.auto_enrich:
                         return
-                    llm_cfg = await get_llm_config(s)
+                    llm_cfg = await get_active_llm_config(s)
                     searxng = await get_searxng_config(s)
                     searxng_url = searxng.base_url if (agent_cfg.workflow_web_search and searxng.is_configured) else ""
                     relevant = await _filter_enrichable_docs(docs_to_enrich, s)
