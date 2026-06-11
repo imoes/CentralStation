@@ -19,6 +19,8 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatSelectModule } from '@angular/material/select';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
+import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-create-dialog.component';
 import { environment } from '../../../environments/environment';
 import { App } from '../../app';
 import { AuthService } from '../../core/auth/auth.service';
@@ -122,6 +124,7 @@ const SEVERITY_COLOR: Record<string, string> = {
     MatProgressSpinnerModule, MatDividerModule, MatTooltipModule,
     MatSnackBarModule, MatBadgeModule, MatSliderModule,
     MatSlideToggleModule, MatSelectModule, MatFormFieldModule, MatInputModule,
+    MatDialogModule,
   ],
   template: `
     @if (showScrollTop()) {
@@ -773,47 +776,6 @@ const SEVERITY_COLOR: Record<string, string> = {
       </div>
     }
 
-    <!-- AI-prefilled ticket draft dialog -->
-    @if (ticketDraft(); as d) {
-      <div class="ticket-overlay" (click)="cancelTicketDraft()"></div>
-      <div class="ticket-dialog">
-        <div class="ticket-dialog-header">
-          <mat-icon>add_task</mat-icon>
-          <span>Jira-Ticket erstellen</span>
-          <span class="ticket-ai-hint">KI-vorausgefüllt · prüfen &amp; anpassen</span>
-          <button mat-icon-button (click)="cancelTicketDraft()"><mat-icon>close</mat-icon></button>
-        </div>
-        <div class="ticket-dialog-body">
-          <label class="ticket-field">
-            <span>Projekt</span>
-            <input class="ticket-input" [(ngModel)]="d.project" placeholder="z.B. IMIT" />
-          </label>
-          <div class="ticket-row">
-            <label class="ticket-field" style="flex:1">
-              <span>Priorität</span>
-              <select class="ticket-input" [(ngModel)]="d.priority">
-                <option>Kritisch</option><option>Hoch</option><option>Normal</option><option>Niedrig</option>
-              </select>
-            </label>
-          </div>
-          <label class="ticket-field">
-            <span>Zusammenfassung</span>
-            <input class="ticket-input" [(ngModel)]="d.summary" maxlength="160" />
-          </label>
-          <label class="ticket-field">
-            <span>Beschreibung</span>
-            <textarea class="ticket-input ticket-textarea" [(ngModel)]="d.description" rows="9"></textarea>
-          </label>
-        </div>
-        <div class="ticket-dialog-actions">
-          <button mat-button (click)="cancelTicketDraft()">Abbrechen</button>
-          <button mat-raised-button color="primary" (click)="submitTicket()" [disabled]="submittingTicket()">
-            @if (submittingTicket()) { <mat-spinner diameter="16"></mat-spinner> Erstelle… }
-            @else { <mat-icon>send</mat-icon> Ticket erstellen }
-          </button>
-        </div>
-      </div>
-    }
   `,
   styles: [`
     .scroll-top-btn {
@@ -1470,6 +1432,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   });
 
   private computerService = inject(ComputerService);
+  private dialog = inject(MatDialog);
 
   constructor(
     private http: HttpClient,
@@ -1986,60 +1949,19 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   // ── AI-assisted ticket creation ───────────────────────────────────────────
   creatingTicketIds = new Set<string>();
   isCreatingTicket(id: string) { return this.creatingTicketIds.has(id); }
-  ticketDraft = signal<{
-    item: FeedItem; summary: string; description: string;
-    priority: string; project: string;
-  } | null>(null);
-  submittingTicket = signal(false);
-
+  /** Open the shared ticket dialog (Jira/Service-Desk choice + AI draft) for a feed item. */
   createTicket(item: FeedItem) {
-    if (!item.external_id || this.creatingTicketIds.has(item.id)) return;
-    this.creatingTicketIds.add(item.id);
-    this.creatingTicketIds = new Set(this.creatingTicketIds);
-    // AI pre-fills the draft (the slow part → spinner on the button)
-    this.http.post<any>(`${environment.apiUrl}/feed/${item.external_id}/ticket-draft`, {}).subscribe({
-      next: draft => {
-        this.creatingTicketIds.delete(item.id);
-        this.creatingTicketIds = new Set(this.creatingTicketIds);
-        this.ticketDraft.set({
-          item,
-          summary: draft.summary || '',
-          description: draft.description || '',
-          priority: draft.priority || 'Normal',
-          project: draft.project || '',
-        });
+    if (!item.external_id) return;
+    this.dialog.open(TicketCreateDialogComponent, {
+      data: {
+        mode: 'feed',
+        feedExternalId: item.external_id,
+        host: item.host || item.metadata?.['host'] || '',
+        severity: item.severity,
       },
-      error: err => {
-        this.creatingTicketIds.delete(item.id);
-        this.creatingTicketIds = new Set(this.creatingTicketIds);
-        this.snackBar.open(err?.error?.detail ?? 'KI-Vorbereitung fehlgeschlagen', 'OK', { duration: 4000 });
-      },
-    });
-  }
-
-  cancelTicketDraft() { this.ticketDraft.set(null); }
-
-  submitTicket() {
-    const d = this.ticketDraft();
-    if (!d || !d.item.external_id) return;
-    if (!d.project.trim()) {
-      this.snackBar.open('Bitte ein Jira-Projekt angeben', 'OK', { duration: 3000 });
-      return;
-    }
-    this.submittingTicket.set(true);
-    this.http.post<any>(`${environment.apiUrl}/feed/${d.item.external_id}/create-ticket`, {
-      summary: d.summary, description: d.description, priority: d.priority, project: d.project,
-    }).subscribe({
-      next: res => {
-        this.submittingTicket.set(false);
-        this.ticketDraft.set(null);
-        const ref = this.snackBar.open(`Ticket erstellt: ${res.jira_key}`, res.url ? 'Öffnen' : 'OK', { duration: 6000 });
-        if (res.url) ref.onAction().subscribe(() => window.open(res.url, '_blank', 'noopener'));
-      },
-      error: err => {
-        this.submittingTicket.set(false);
-        this.snackBar.open(err?.error?.detail ?? 'Ticket konnte nicht erstellt werden', 'OK', { duration: 5000 });
-      },
+      panelClass: 'tkt-panel',
+      autoFocus: false,
+      maxWidth: '92vw',
     });
   }
 
