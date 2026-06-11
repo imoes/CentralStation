@@ -161,7 +161,7 @@ const SEV_LABEL: Record<string, string> = {
             @for (host of visibleHosts(); track host.host) {
               <div class="host-card" [attr.data-sev]="worstSev(host)">
                 <div class="host-head" (click)="toggleHost(host.host)">
-                  <span class="hh-toggle">{{ (expandedHosts().has(host.host) || filterSev() !== 'all' || searchSig()) ? '▾' : '▸' }}</span>
+                  <span class="hh-toggle">{{ expandedHosts().has(host.host) ? '▾' : '▸' }}</span>
                   <span class="hh-name">{{ host.host }}</span>
                   @if (host.address) { <span class="hh-addr">{{ host.address }}</span> }
                   <div class="hh-spacer"></div>
@@ -170,7 +170,7 @@ const SEV_LABEL: Record<string, string> = {
                   @if (host.counts.unknown) { <span class="cnt unk">{{ host.counts.unknown }}</span> }
                   <button class="cockpit-btn" (click)="openCockpit(host.host, $event)" title="Cockpit öffnen">⛶ COCKPIT</button>
                 </div>
-                @if (expandedHosts().has(host.host) || filterSev() !== 'all' || searchSig()) {
+                @if (expandedHosts().has(host.host)) {
                   <div class="svc-list">
                     @for (svc of host.services; track svc.service) {
                       <div class="svc-row" [attr.data-sev]="svc.severity">
@@ -260,8 +260,8 @@ const SEV_LABEL: Record<string, string> = {
     .clear-btn { background:transparent; border:none; cursor:pointer; font-size:13px; }
 
     .host-cards { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:6px; padding-right:4px; }
-    .host-card { border-radius:0 8px 8px 0; overflow:hidden; }
-    .host-head { display:flex; align-items:center; gap:10px; padding:9px 14px; cursor:pointer; }
+    .host-card { border-radius:0 8px 8px 0; }
+    .host-head { display:flex; align-items:center; gap:10px; padding:9px 14px; cursor:pointer; border-radius:0 8px 0 0; }
     .host-head:hover { filter:brightness(1.1); }
     .hh-toggle { font-size:13px; width:14px; flex-shrink:0; }
     .hh-name { font-size:15px; font-weight:700; font-family:'Fira Code',monospace; }
@@ -272,11 +272,11 @@ const SEV_LABEL: Record<string, string> = {
       border-radius:12px; border:none; cursor:pointer; flex-shrink:0; }
     .cockpit-btn:hover { filter:brightness(1.2); }
 
-    .svc-list { display:flex; flex-direction:column; }
-    .svc-row { display:flex; align-items:center; gap:12px; padding:6px 14px 6px 30px; font-size:13px; line-height:1.5; min-height:30px; }
-    .svc-state { font-size:10px; font-weight:800; letter-spacing:.06em; width:40px; flex-shrink:0; line-height:1.5; }
-    .svc-name { min-width:200px; flex-shrink:0; font-weight:600; line-height:1.5; }
-    .svc-output { font-size:12px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.5; min-width:0; }
+    .svc-list { display:flex; flex-direction:column; overflow:hidden; border-radius:0 0 8px 0; }
+    .svc-row { display:flex; align-items:center; gap:12px; padding:5px 14px 5px 30px; font-size:13px; line-height:1.4; min-height:28px; }
+    .svc-state { font-size:10px; font-weight:800; letter-spacing:.06em; width:40px; flex-shrink:0; }
+    .svc-name { min-width:200px; flex-shrink:0; font-weight:600; }
+    .svc-output { font-size:12px; opacity:.7; text-overflow:ellipsis; white-space:nowrap; overflow:hidden; min-width:0; flex:1; }
 
     .empty { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; opacity:.7; padding:48px; }
     .empty-ic { font-size:56px; } .empty-tx { font-size:20px; font-weight:800; letter-spacing:.18em; }
@@ -544,12 +544,11 @@ export class ProblemsComponent implements OnInit, OnDestroy {
     this.http.get<ProblemsResponse>(`${environment.apiUrl}/hosts/service-problems`).subscribe({
       next: (resp) => {
         this.data.set(resp);
-        // Prominence: auto-expand every host that has a CRITICAL on first load,
-        // so the worst problems are visible immediately without clicking.
+        // Auto-expand all hosts on load so problems are visible immediately.
         const expand = new Set(this.expandedHosts());
         for (const dom of resp.domains)
           for (const host of dom.hosts)
-            if (host.counts.crit > 0) expand.add(host.host);
+            expand.add(host.host);
         this.expandedHosts.set(expand);
         this.loading.set(false);
       },
