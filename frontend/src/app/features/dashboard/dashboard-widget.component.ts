@@ -22,6 +22,7 @@ import {
   TimeseriesData,
   TopHostsData,
   ForecastData,
+  GaugeData,
   WarRoomData,
   IncidentsData,
   WidgetData,
@@ -254,6 +255,9 @@ import {
                   }
                 </div>
               }
+            }
+            @case ('gauge') {
+              <div echarts [options]="gaugeOptions()" class="chart"></div>
             }
           }
         }
@@ -713,6 +717,47 @@ export class DashboardWidgetComponent {
 
   readonly warRoomData = computed(() => this.data() as WarRoomData | undefined);
   readonly incidentsData = computed(() => this.data() as IncidentsData | undefined);
+  readonly gaugeData = computed(() => this.data() as GaugeData | undefined);
+  readonly gaugeOptions = computed(() => {
+    const d = this.gaugeData();
+    const pct = d?.percent ?? 0;
+    const txt = this._chartText;
+    const pri = this._chartPrimary;
+    const warn = (this.widget().config['warn'] as number) ?? 70;
+    const crit = (this.widget().config['critical'] as number) ?? 90;
+    const color = pct >= crit ? '#b71c1c' : pct >= warn ? '#f9a825' : pri;
+    return {
+      series: [{
+        type: 'gauge',
+        startAngle: 210,
+        endAngle: -30,
+        min: 0,
+        max: 100,
+        radius: '88%',
+        center: ['50%', '58%'],
+        splitNumber: 5,
+        axisLine: {
+          lineStyle: {
+            width: 14,
+            color: [[warn / 100, pri], [crit / 100, '#f9a825'], [1, '#b71c1c']],
+          },
+        },
+        pointer: { width: 5, length: '65%', itemStyle: { color } },
+        axisTick: { show: false },
+        splitLine: { show: false },
+        axisLabel: { show: false },
+        detail: {
+          fontSize: 22,
+          fontWeight: 700,
+          color,
+          offsetCenter: [0, '20%'],
+          formatter: `{value}%`,
+        },
+        title: { offsetCenter: [0, '45%'], fontSize: 11, color: txt },
+        data: [{ value: pct, name: d ? `${d.value} / ${d.total}` : '' }],
+      }],
+    };
+  });
 
   onWarRoomJira(event: MouseEvent, jiraTitle: string) {
     event.stopPropagation();
