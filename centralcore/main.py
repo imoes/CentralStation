@@ -469,6 +469,10 @@ async def send_message(sid: str, body: MessageBody):
     loop = asyncio.get_running_loop()
     delta_count = 0
     response_buf: list[str] = []
+    # Per-turn web_search counter — enforces the "max 3 searches" system prompt rule
+    # programmatically because qwen3* models regularly ignore it.
+    _web_search_count = 0
+    _WEB_SEARCH_LIMIT = 5
 
     def on_delta(text: str) -> None:
         nonlocal delta_count
@@ -488,11 +492,28 @@ async def send_message(sid: str, body: MessageBody):
         #   ("tool.started",   name, preview, args)
         #   ("tool.completed", name, None, None, duration=, is_error=, result=)
         #   ("reasoning.available", "_thinking", text, None)
+        nonlocal _web_search_count
         try:
             if event_type == "tool.started":
                 name = cb_args[0] if cb_args else ""
                 preview = cb_args[1] if len(cb_args) > 1 else None
                 label = _tool_label(name)
+
+                # Hard limit: disable the "web" toolset after _WEB_SEARCH_LIMIT calls
+                # so the agent cannot spiral indefinitely. disabled_toolsets is read
+                # dynamically before each tool call, so this takes effect immediately.
+                if name == "web_search":
+                    _web_search_count += 1
+                    if _web_search_count >= _WEB_SEARCH_LIMIT:
+                        cur = list(getattr(agent, "disabled_toolsets", None) or [])
+                        if "web" not in cur:
+                            cur.append("web")
+                            agent.disabled_toolsets = cur
+                            log.warning(
+                                "[%s] web_search limit (%d) reached — disabling 'web' toolset for this turn",
+                                sid[:8], _WEB_SEARCH_LIMIT,
+                            )
+
                 # Append the human-readable preview (command, query, host, …) so the
                 # user sees exactly what the agent is doing, not just the tool name.
                 detail = f"{label}: {preview}" if preview else label
@@ -532,11 +553,18 @@ async def send_message(sid: str, body: MessageBody):
             # progress callback on the agent right before the run (requests to a
             # single session are sequential, so this is safe).
             agent.tool_progress_callback = on_tool_progress
-            agent.run_conversation(
-                user_message=body.content,
-                stream_callback=on_delta,
-                conversation_history=history if history else None,
-            )
+            # Snapshot the current disabled_toolsets so we can restore it after
+            # the turn (the per-turn web_search limiter may have added "web").
+            _saved_disabled = list(getattr(agent, "disabled_toolsets", None) or [])
+            try:
+                agent.run_conversation(
+                    user_message=body.content,
+                    stream_callback=on_delta,
+                    conversation_history=history if history else None,
+                )
+            finally:
+                # Always restore so the next turn starts clean.
+                agent.disabled_toolsets = _saved_disabled
             full_response = "".join(response_buf)
             log.info("[%s] response (%d chars): %.300s%s",
                      sid[:8], len(full_response), full_response,
