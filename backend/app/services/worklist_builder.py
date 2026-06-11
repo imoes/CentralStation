@@ -65,7 +65,7 @@ async def build_worklist(db: Any, *, hours: int = 24, size: int = 15, user_id: s
         {"term": {"status": "acknowledged"}},
     ]
     try:
-        must_not.extend(await get_exclusion_must_not_clauses(db))
+        must_not.extend(await get_exclusion_must_not_clauses(db, user_id))
     except Exception as e:
         log.debug("worklist: exclusion clauses failed: %s", e)
     # ── 1. Group open alerts by external_id ──────────────────────────────────
