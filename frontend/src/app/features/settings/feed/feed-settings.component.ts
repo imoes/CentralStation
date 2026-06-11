@@ -149,6 +149,9 @@ const SOURCE_META = [
                     Vorschau
                   </button>
                   <button mat-flat-button color="primary" (click)="saveSearch(search)">Speichern</button>
+                  <button mat-icon-button color="warn" matTooltip="System-Filter löschen" (click)="deleteSearch(search)">
+                    <mat-icon>delete</mat-icon>
+                  </button>
                 </div>
                 @if (search.is_exclusion) {
                   <div class="exclusion-hint">
@@ -375,6 +378,17 @@ export class FeedSettingsComponent implements OnInit {
         this.snackBar.open('System-Suche angelegt', '', { duration: 2000 });
       },
       error: (e) => this.snackBar.open(e?.error?.detail ?? 'Suche konnte nicht angelegt werden', '', { duration: 3000 }),
+    });
+  }
+
+  deleteSearch(search: FeedSearch) {
+    if (!confirm(`System-Filter „${search.name}" wirklich löschen?`)) return;
+    this.http.delete(`${environment.apiUrl}/feed-searches/${search.id}`).subscribe({
+      next: () => {
+        this.searches.update(searches => searches.filter(s => s.id !== search.id));
+        this.snackBar.open('System-Filter gelöscht', '', { duration: 2000 });
+      },
+      error: (e) => this.snackBar.open(e?.error?.detail ?? 'Filter konnte nicht gelöscht werden', 'OK', { duration: 3500 }),
     });
   }
 
