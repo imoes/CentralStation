@@ -176,6 +176,13 @@ export class TicketCreateDialogComponent implements OnInit {
     this.loadDraft();
   }
 
+  private _storedProject(ct: string): string {
+    return localStorage.getItem(`tkt_project_${ct}`) || '';
+  }
+  private _saveProject(ct: string, proj: string): void {
+    if (proj) localStorage.setItem(`tkt_project_${ct}`, proj);
+  }
+
   private loadTargets(): void {
     this.http.get<TargetsResponse>(`${environment.apiUrl}/tickets/targets`).subscribe({
       next: r => {
@@ -185,7 +192,12 @@ export class TicketCreateDialogComponent implements OnInit {
           ?? r.targets?.[0];
         if (pick) {
           this.connectorType.set(pick.connector_type);
-          this.project.set(pick.default_project || pick.projects[0]?.key || '');
+          const saved = this._storedProject(pick.connector_type);
+          const validKeys = pick.projects.map(p => p.key);
+          this.project.set(
+            (saved && validKeys.includes(saved)) ? saved
+              : pick.default_project || validKeys[0] || ''
+          );
           this.issueType.set(pick.default_issue_type || pick.issue_types?.[0] || '');
         }
       },
@@ -216,7 +228,12 @@ export class TicketCreateDialogComponent implements OnInit {
     if (ct === this.connectorType()) return;
     this.connectorType.set(ct);
     const t = this.targets().find(x => x.connector_type === ct);
-    this.project.set(t?.default_project || t?.projects[0]?.key || '');
+    const saved = this._storedProject(ct);
+    const validKeys = (t?.projects ?? []).map(p => p.key);
+    this.project.set(
+      (saved && validKeys.includes(saved)) ? saved
+        : t?.default_project || validKeys[0] || ''
+    );
     this.issueType.set(t?.default_issue_type || t?.issue_types?.[0] || '');
   }
 
@@ -235,6 +252,7 @@ export class TicketCreateDialogComponent implements OnInit {
     this.http.post<CreateResponse>(`${environment.apiUrl}/tickets/create`, body).subscribe({
       next: res => {
         this.creating.set(false);
+        this._saveProject(this.connectorType(), this.project());
         if (res.ok && res.url) {
           window.open(res.url, '_blank', 'noopener');
         }
