@@ -282,7 +282,7 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         # This limit only guards against hard runaway loops (infinite tool chains).
         # 60 is enough for complex multi-tool diagnosis without blocking legitimate
         # workflows (vibemk_* + search_feed + checkmk + SSH + KB = easily 30+ steps).
-        max_iterations=60,
+        max_iterations=25,
         quiet_mode=False,   # print tool calls + responses to stdout → Docker log → Logspout
         verbose_logging=False,
     )
@@ -435,14 +435,19 @@ async def send_message(sid: str, body: MessageBody):
         session = _sessions[sid]
         incoming_model   = (body.llm_model    or "").strip()
         incoming_base    = (body.llm_base_url  or "").strip()
+        incoming_mode    = (body.llm_api_mode  or "").strip()
         stored_model     = (session.get("llm_model",    "") or "").strip()
         stored_base      = (session.get("llm_base_url", "") or "").strip()
-        if (incoming_model or incoming_base) and (
-            incoming_model != stored_model or incoming_base != stored_base
+        stored_mode      = (session.get("llm_api_mode",  "") or "").strip()
+        if (incoming_model or incoming_base or incoming_mode) and (
+            incoming_model != stored_model
+            or incoming_base != stored_base
+            or incoming_mode != stored_mode
         ):
             log.info(
-                "Session %s: LLM config changed (model: %r→%r  base_url: %r→%r) — re-init agent",
+                "Session %s: LLM config changed (model: %r→%r  base_url: %r→%r  mode: %r→%r) — re-init agent",
                 sid[:8], stored_model, incoming_model, stored_base, incoming_base,
+                stored_mode, incoming_mode,
             )
             try:
                 new_cfg = CreateSessionBody(
@@ -457,6 +462,7 @@ async def send_message(sid: str, body: MessageBody):
                 session["agent"]       = new_agent
                 session["llm_model"]   = incoming_model
                 session["llm_base_url"] = incoming_base
+                session["llm_api_mode"] = incoming_mode
             except Exception as exc:
                 log.warning("Session %s: LLM re-init failed, keeping old agent: %s", sid[:8], exc)
 
@@ -473,6 +479,7 @@ async def send_message(sid: str, body: MessageBody):
     # programmatically because qwen3* models regularly ignore it.
     _web_search_count = 0
     _WEB_SEARCH_LIMIT = 5
+    _WEB_TOOL_NAMES = {"web_search", "web_fetch", "web_browser", "web_extract"}
 
     def on_delta(text: str) -> None:
         nonlocal delta_count
@@ -503,10 +510,9 @@ async def send_message(sid: str, body: MessageBody):
                 # calls per turn. agent.tools is passed directly to the LLM on every
                 # API call, so this takes effect on the very next request.
                 # (disabled_toolsets is only consulted at agent init, not per-call.)
-                if name == "web_search":
+                if name in _WEB_TOOL_NAMES:
                     _web_search_count += 1
                     if _web_search_count >= _WEB_SEARCH_LIMIT:
-                        _WEB_TOOL_NAMES = {"web_search", "web_fetch", "web_browser"}
                         if not getattr(agent, "_web_tools_removed", False):
                             agent._saved_tools = list(agent.tools or [])
                             agent._saved_valid_tools = set(agent.valid_tool_names or set())
