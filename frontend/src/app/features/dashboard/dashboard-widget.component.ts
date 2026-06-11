@@ -114,6 +114,13 @@ import {
                         <span class="finding-title">{{ finding.title }}</span>
                         <mat-icon class="finding-arrow">arrow_forward</mat-icon>
                       </div>
+                      @if (finding.host) {
+                        <div class="finding-hosts">
+                          @for (h of splitHosts(finding.host); track h) {
+                            <button class="finding-host-link" (click)="onHostClick($event, h)">{{ h }}</button>
+                          }
+                        </div>
+                      }
                     </div>
                   }
                 </div>
@@ -363,6 +370,9 @@ import {
     .finding:hover { background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent); }
     .finding-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .finding-arrow { font-size: 16px; height: 16px; width: 16px; flex-shrink: 0; color: var(--mat-sys-primary); }
+    .finding-hosts { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 4px 4px 18px; }
+    .finding-host-link { background: none; border: none; padding: 0 4px; font-size: 10px; font-family: monospace; color: var(--mat-sys-primary); cursor: pointer; border-radius: 3px; }
+    .finding-host-link:hover { text-decoration: underline; }
     .finding-detail {
       margin: 2px 4px 6px 18px;
       padding: 8px 10px;
@@ -782,6 +792,10 @@ export class DashboardWidgetComponent {
   hostLabel(item: FeedItem): string {
     const meta = (item.metadata ?? {}) as Record<string, unknown>;
     return (meta['container_name'] as string) || (meta['host'] as string) || '';
+  }
+
+  splitHosts(host: string): string[] {
+    return host.split(',').map(h => h.trim()).filter(Boolean);
   }
 
   removeWidget(event: MouseEvent) {
