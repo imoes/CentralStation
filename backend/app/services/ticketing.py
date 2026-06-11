@@ -150,23 +150,23 @@ async def create_jira_issue(
     creds = decrypt_credentials(conn.encrypted_credentials)
     jira = JiraConnector(base_url=conn.base_url, credentials=creds)
 
-    async def _create(prio: str) -> dict:
+    async def _create(prio: str, send_labels: bool = True) -> dict:
         return await jira.create_issue(
             project=project,
             summary=summary[:200],
             description=description,
             issue_type=issue_type,
             priority=prio,
-            labels=labels or ["centralstation"],
+            labels=(labels or ["centralstation"]) if send_labels else None,
         )
 
     try:
         result = await _create(priority)
     except Exception as e:
-        # A wrong/unknown priority name rejects the whole create → retry without it.
-        log.warning("create_jira_issue failed (%s) — retrying without priority", e)
+        # Priority or labels may not be on the Jira screen → retry without both.
+        log.warning("create_jira_issue failed (%s) — retrying without priority/labels", e)
         try:
-            result = await _create("")
+            result = await _create("", send_labels=False)
         except Exception as e2:
             log.warning("create_jira_issue retry failed: %s", e2)
             return {"ok": False, "error": str(e2)[:200]}
