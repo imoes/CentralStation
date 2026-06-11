@@ -161,7 +161,7 @@ const SEV_LABEL: Record<string, string> = {
             @for (host of visibleHosts(); track host.host) {
               <div class="host-card" [attr.data-sev]="worstSev(host)">
                 <div class="host-head" (click)="toggleHost(host.host)">
-                  <span class="hh-toggle">{{ expandedHosts().has(host.host) ? '▾' : '▸' }}</span>
+                  <span class="hh-toggle">{{ (expandedHosts().has(host.host) || filterSev() !== 'all' || searchSig()) ? '▾' : '▸' }}</span>
                   <span class="hh-name">{{ host.host }}</span>
                   @if (host.address) { <span class="hh-addr">{{ host.address }}</span> }
                   <div class="hh-spacer"></div>
@@ -170,7 +170,7 @@ const SEV_LABEL: Record<string, string> = {
                   @if (host.counts.unknown) { <span class="cnt unk">{{ host.counts.unknown }}</span> }
                   <button class="cockpit-btn" (click)="openCockpit(host.host, $event)" title="Cockpit öffnen">⛶ COCKPIT</button>
                 </div>
-                @if (expandedHosts().has(host.host)) {
+                @if (expandedHosts().has(host.host) || filterSev() !== 'all' || searchSig()) {
                   <div class="svc-list">
                     @for (svc of host.services; track svc.service) {
                       <div class="svc-row" [attr.data-sev]="svc.severity">
