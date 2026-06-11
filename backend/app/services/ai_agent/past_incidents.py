@@ -97,6 +97,12 @@ async def find_similar_incidents(
                 break
     except Exception as e:
         log.debug("past_incidents ai_analyses query failed: %s", e)
+        # A failed query aborts the asyncpg transaction — roll back so the
+        # remaining query blocks (and callers sharing this session) still work.
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     # ── 2. workflow_sessions: ITIL sessions for this host ─────────────────────
     if len(results) < limit:
@@ -132,6 +138,10 @@ async def find_similar_incidents(
                 })
         except Exception as e:
             log.debug("past_incidents workflow_sessions query failed: %s", e)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
     # ── 3. alert_score_adjustments: recurring patterns for this host ──────────
     if len(results) < limit:
@@ -160,6 +170,10 @@ async def find_similar_incidents(
                 })
         except Exception as e:
             log.debug("past_incidents score_adjustments query failed: %s", e)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
     # ── 4. OpenSearch: AI-resolved alerts similar to this host/title ─────────
     if len(results) < limit:

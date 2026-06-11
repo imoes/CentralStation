@@ -194,6 +194,11 @@ async def score_alerts_batch(
                 adjustments[row.pattern_hash] = row.score_delta
         except Exception as e:
             log.debug("alert_scorer: adjustments load failed: %s", e)
+            # Roll back so a failed query doesn't poison the shared session.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
     # ── 4. Score each alert ───────────────────────────────────────────────────
     scored = [
