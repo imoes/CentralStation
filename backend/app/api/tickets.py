@@ -134,9 +134,14 @@ async def ticket_draft(
     elif body.transcript:
         host = (body.host or "").strip()
         prefix = f"Host/System: {host}\n" if host else ""
+        # For long transcripts keep the beginning (problem statement) and the end
+        # (solution/findings) — the middle is mostly tool calls that add no value.
+        tr = body.transcript
+        if len(tr) > 8000:
+            tr = tr[:3000] + "\n\n[... Gesprächsmitte gekürzt ...]\n\n" + tr[-5000:]
         context = (
             f"{prefix}Support-chat transcript between an operator and the AI assistant. "
-            f"Create a ticket capturing the problem and what was discussed:\n\n{body.transcript[:6000]}"
+            f"Create a ticket capturing the problem, investigation and proposed solution:\n\n{tr}"
         )
     else:
         raise HTTPException(400, "feed_external_id oder transcript erforderlich")
