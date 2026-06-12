@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal, computed } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, computed, NgZone } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -139,6 +139,7 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
           [options]="chartOptions()"
           [theme]="chartTheme()"
           class="topo-chart"
+          (chartInit)="onChartInit($event)"
           (chartClick)="onNodeClick($event)"
         ></div>
       }
@@ -254,11 +255,15 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
     }
   `],
 })
-export class TopologyComponent implements OnInit {
+export class TopologyComponent implements OnInit, OnDestroy {
   private http = inject(HttpClient);
   private themeSvc = inject(ThemeService);
   private auth = inject(AuthService);
   private snack = inject(MatSnackBar);
+  private zone = inject(NgZone);
+
+  private _echart: any = null;
+  private _resizeObs: ResizeObserver | null = null;
 
   readonly sources = [
     { value: null,        label: 'Alle' },
@@ -362,6 +367,26 @@ export class TopologyComponent implements OnInit {
     this.load(false);
   }
 
+  onChartInit(ec: any): void {
+    this._echart = ec;
+    // ECharts reads container size at init; if flex layout isn't settled yet the
+    // canvas is undersized and roam only works in the small centre area. Force a
+    // resize on the next frame so we always get the real container dimensions.
+    this.zone.runOutsideAngular(() => {
+      setTimeout(() => ec.resize(), 0);
+      if (typeof ResizeObserver !== 'undefined') {
+        const el = ec.getDom() as HTMLElement;
+        this._resizeObs?.disconnect();
+        this._resizeObs = new ResizeObserver(() => ec.resize());
+        this._resizeObs.observe(el);
+      }
+    });
+  }
+
+  ngOnDestroy(): void {
+    this._resizeObs?.disconnect();
+  }
+
   setSource(src: string | null): void {
     this.activeSource.set(src);
     this.load(false);
@@ -375,7 +400,13 @@ export class TopologyComponent implements OnInit {
     if (src) params.push(`source=${src}`);
     const qs = params.length ? '?' + params.join('&') : '';
     this.http.get<TopologyGraph>(`${environment.apiUrl}/topology/graph${qs}`).subscribe({
-      next: g => { this.graph.set(g); this.loading.set(false); },
+      next: g => {
+        this.graph.set(g);
+        this.loading.set(false);
+        // The echarts div only appears after graph is set; give Angular one tick
+        // to render it, then resize so the canvas fills the full flex container.
+        setTimeout(() => this._echart?.resize(), 50);
+      },
       error: () => { this.loading.set(false); },
     });
   }
