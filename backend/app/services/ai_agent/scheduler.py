@@ -189,6 +189,15 @@ async def run_incident_housekeeping() -> None:
             logger.debug("Incident housekeeping failed: %s", e)
 
 
+async def run_topology_refresh() -> None:
+    """Pre-warm the topology cache so /topology loads instantly."""
+    from app.core.database import AsyncSessionLocal
+    from app.services.topology_builder import build_topology
+    async with AsyncSessionLocal() as db:
+        await build_topology(db, force_refresh=True)
+    logger.info("Topology cache refreshed")
+
+
 async def run_topology_kb_job() -> None:
     from app.core.database import AsyncSessionLocal
     from app.services.topology_builder import run_topology_kb_extraction
@@ -229,6 +238,10 @@ async def start_scheduler() -> None:
                        id="feed_housekeeping", replace_existing=True)
     _scheduler.add_job(run_topology_kb_job, "cron", hour=4, minute=30,
                        id="topology_kb_extraction", replace_existing=True)
+    _scheduler.add_job(run_topology_refresh, "interval",
+                       minutes=config.topology_refresh_interval_minutes,
+                       id="topology_refresh", replace_existing=True,
+                       next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90))
     _scheduler.add_job(run_incident_housekeeping, "interval",
                        minutes=15, id="incident_housekeeping",
                        replace_existing=True,
@@ -268,6 +281,11 @@ async def reschedule_jobs() -> None:
         _scheduler.reschedule_job(
             "generative_refresh",
             trigger=IntervalTrigger(minutes=config.generative_interval_minutes),
+        )
+    if _scheduler.get_job("topology_refresh"):
+        _scheduler.reschedule_job(
+            "topology_refresh",
+            trigger=IntervalTrigger(minutes=config.topology_refresh_interval_minutes),
         )
     logger.info(
         "Jobs rescheduled — aggregation: %dmin, agent: %dmin",
