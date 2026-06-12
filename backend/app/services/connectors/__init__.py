@@ -14,6 +14,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
     from app.services.connectors.icinga2 import Icinga2Connector
     from app.services.connectors.coroot import CorootConnector
     from app.services.connectors.aikb import AIKBConnector
+    from app.services.connectors.smtp import SMTPConnector
 
     mapping = {
         "checkmk": CheckMKConnector,
@@ -29,6 +30,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
         "id_generator": IDGeneratorConnector,
         "coroot": CorootConnector,
         "aikb": AIKBConnector,
+        "smtp": SMTPConnector,
     }
     cls = mapping.get(connector_type)
     if not cls:

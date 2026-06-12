@@ -11,6 +11,7 @@ import { MatChipsModule } from '@angular/material/chips';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatIconModule } from '@angular/material/icon';
+import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { forkJoin } from 'rxjs';
 import { environment } from '../../../../environments/environment';
 import { ThemeService } from '../../../core/services/theme.service';
@@ -23,7 +24,7 @@ import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
     CommonModule, FormsModule,
     MatCardModule, MatFormFieldModule, MatInputModule, MatSelectModule,
     MatButtonModule, MatChipsModule, MatSnackBarModule,
-    MatProgressSpinnerModule, MatIconModule,
+    MatProgressSpinnerModule, MatIconModule, MatSlideToggleModule,
   ],
   template: `
     <div class="page-container">
@@ -208,6 +209,60 @@ import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
           </mat-card-content>
         </mat-card>
       }
+
+      <!-- ── E-Mail-Berichte ── -->
+      <mat-card class="settings-card">
+        <mat-card-header>
+          <mat-card-title>
+            <mat-icon style="vertical-align:middle;margin-right:8px;">email</mat-icon>
+            E-Mail-Berichte
+          </mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <p style="margin:0 0 12px;font-size:13px;color:var(--mat-sys-on-surface-variant);">
+            KI-Insights aus deinen CheckMK-Filter-Einstellungen, gruppiert nach Host und Service.
+          </p>
+
+          <div class="digest-row">
+            <mat-slide-toggle [(ngModel)]="digestDaily">Täglicher Bericht</mat-slide-toggle>
+            @if (digestDaily) {
+              <mat-form-field class="digest-hour-field" appearance="outline">
+                <mat-label>Stunde (UTC)</mat-label>
+                <input matInput type="number" min="0" max="23" [(ngModel)]="digestDailyHour">
+              </mat-form-field>
+              <span class="digest-hint">:00 Uhr UTC</span>
+            }
+          </div>
+
+          <div class="digest-row">
+            <mat-slide-toggle [(ngModel)]="digestWeekly">Wöchentlicher Bericht</mat-slide-toggle>
+            @if (digestWeekly) {
+              <mat-form-field class="digest-select-field" appearance="outline">
+                <mat-label>Wochentag</mat-label>
+                <mat-select [(ngModel)]="digestWeeklyDay">
+                  @for (d of weekdays; track d.value) {
+                    <mat-option [value]="d.value">{{ d.label }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+              <mat-form-field class="digest-hour-field" appearance="outline">
+                <mat-label>Stunde (UTC)</mat-label>
+                <input matInput type="number" min="0" max="23" [(ngModel)]="digestWeeklyHour">
+              </mat-form-field>
+              <span class="digest-hint">:00 Uhr UTC</span>
+            }
+          </div>
+
+          <div style="margin-top:12px;">
+            <button mat-flat-button color="primary" [disabled]="digestSaving()" (click)="saveDigestSettings()">
+              @if (digestSaving()) { <mat-spinner diameter="18"></mat-spinner> }
+              @else { <mat-icon>save</mat-icon> }
+              Speichern
+            </button>
+          </div>
+        </mat-card-content>
+      </mat-card>
+
     </div>
   `,
   styles: [`
@@ -235,6 +290,10 @@ import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
     .pw-hint { font-size: 12px; color: var(--mat-sys-on-surface-variant); }
     .pw-error { display: flex; align-items: center; gap: 6px; color: var(--mat-sys-error); font-size: 13px; margin: 0 0 8px; }
     .pw-error mat-icon { font-size: 16px; height: 16px; width: 16px; }
+    .digest-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 4px 0; }
+    .digest-hour-field { width: 100px; }
+    .digest-select-field { width: 140px; }
+    .digest-hint { font-size: 12px; color: var(--mat-sys-on-surface-variant); }
   `],
 })
 export class MySettingsComponent implements OnInit {
@@ -261,6 +320,23 @@ export class MySettingsComponent implements OnInit {
   selOs:          string[] = [];
   selHostgroups:  string[] = [];
 
+  digestDaily      = false;
+  digestDailyHour  = 7;
+  digestWeekly     = false;
+  digestWeeklyDay  = 0;
+  digestWeeklyHour = 7;
+  digestSaving     = signal(false);
+
+  readonly weekdays = [
+    { value: 0, label: 'Montag' },
+    { value: 1, label: 'Dienstag' },
+    { value: 2, label: 'Mittwoch' },
+    { value: 3, label: 'Donnerstag' },
+    { value: 4, label: 'Freitag' },
+    { value: 5, label: 'Samstag' },
+    { value: 6, label: 'Sonntag' },
+  ];
+
   filterValues: { location: string[]; ve: string[]; criticality: string[]; os: string[]; hostgroups: string[] } = {
     location: [], ve: [], criticality: [], os: [], hostgroups: [],
   };
@@ -284,6 +360,13 @@ export class MySettingsComponent implements OnInit {
         this.selCriticality = prefs?.checkmk_criticality || [];
         this.selOs          = prefs?.checkmk_os          || [];
         this.selHostgroups  = prefs?.checkmk_hostgroups  || [];
+
+        const ns = prefs?.notification_settings || {};
+        this.digestDaily      = !!ns.digest_daily;
+        this.digestDailyHour  = ns.digest_daily_hour  ?? 7;
+        this.digestWeekly     = !!ns.digest_weekly;
+        this.digestWeeklyDay  = ns.digest_weekly_day  ?? 0;
+        this.digestWeeklyHour = ns.digest_weekly_hour ?? 7;
 
         const merge = (saved: string[], avail: string[]) =>
           [...new Set([...saved, ...avail])].sort();
@@ -321,6 +404,28 @@ export class MySettingsComponent implements OnInit {
         this.pwError = err?.error?.detail === 'Current password wrong'
           ? this.i18n.t('settings.my.password.currentWrong')
           : (err?.error?.detail ?? this.i18n.t('settings.my.password.error'));
+      },
+    });
+  }
+
+  saveDigestSettings() {
+    this.digestSaving.set(true);
+    this.http.patch(`${environment.apiUrl}/preferences`, {
+      notification_settings: {
+        digest_daily:       this.digestDaily,
+        digest_daily_hour:  this.digestDailyHour,
+        digest_weekly:      this.digestWeekly,
+        digest_weekly_day:  this.digestWeeklyDay,
+        digest_weekly_hour: this.digestWeeklyHour,
+      },
+    }).subscribe({
+      next: () => {
+        this.digestSaving.set(false);
+        this.snack.open('Gespeichert', 'OK', { duration: 3000 });
+      },
+      error: () => {
+        this.digestSaving.set(false);
+        this.snack.open('Fehler beim Speichern', 'OK', { duration: 3000 });
       },
     });
   }

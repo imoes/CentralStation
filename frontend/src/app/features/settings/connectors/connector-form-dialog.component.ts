@@ -32,6 +32,7 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'id_generator', label: 'ID-Generator' },
   { value: 'coroot',       label: 'Coroot (Observability)' },
   { value: 'aikb',         label: 'IT-AIKB (Wissensdatenbank)' },
+  { value: 'smtp',         label: 'SMTP (E-Mail-Versand)' },
 ];
 
 const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
@@ -90,6 +91,16 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
       hint: 'Token unter /admin/api-tokens anlegen — empfohlen' },
     { key: 'username', label: 'Benutzername (Fallback, wenn kein Token)', type: 'text' },
     { key: 'password', label: 'Passwort (Fallback)', type: 'password' },
+  ],
+  smtp: [
+    { key: 'port',       label: 'Port',             type: 'text',     hint: 'Standard: 587' },
+    { key: 'tls',        label: 'STARTTLS',          type: 'text',     hint: 'true / false' },
+    { key: 'ssl',        label: 'SSL/TLS (implizit)', type: 'text',    hint: 'true / false — nicht mit STARTTLS kombinieren' },
+    { key: 'auth',       label: 'Authentifizierung', type: 'text',     hint: 'true / false' },
+    { key: 'user',       label: 'Benutzername',      type: 'text' },
+    { key: 'password',   label: 'Passwort',          type: 'password' },
+    { key: 'from_email', label: 'Absender-E-Mail',   type: 'text',     hint: 'z.B. centralstation@example.com' },
+    { key: 'from_name',  label: 'Absender-Name',     type: 'text',     hint: 'z.B. CentralStation' },
   ],
 };
 
