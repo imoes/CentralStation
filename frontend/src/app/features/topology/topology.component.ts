@@ -135,17 +135,19 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
     </div>
   `,
   styles: [`
-    :host { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+    :host { display: block; }
 
     .topo-shell {
-      display: flex; flex-direction: column; height: 100%;
+      display: flex; flex-direction: column;
+      height: 100vh;
       background: var(--mat-sys-surface);
       color: var(--mat-sys-on-surface);
+      overflow: hidden;
     }
 
     .topo-topbar {
       display: flex; align-items: center; gap: 8px;
-      padding: 8px 16px; flex-wrap: wrap;
+      padding: 8px 16px; flex-wrap: wrap; flex-shrink: 0;
       border-bottom: 1px solid var(--mat-sys-outline-variant);
     }
 
@@ -176,10 +178,10 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
 
     .topo-refresh mat-spinner, .topo-kbsync mat-spinner { display: inline-flex; }
 
-    .topo-chart { flex: 1; min-height: 0; }
+    .topo-chart { flex: 1; min-height: 0; width: 100%; }
 
     .topo-loading, .topo-empty {
-      flex: 1; display: flex; flex-direction: column;
+      flex: 1; min-height: 0; display: flex; flex-direction: column;
       align-items: center; justify-content: center; gap: 12px;
       color: var(--mat-sys-on-surface-variant);
     }
