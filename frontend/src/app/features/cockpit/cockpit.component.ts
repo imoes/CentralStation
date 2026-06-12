@@ -847,7 +847,8 @@ export class CockpitComponent implements OnInit, OnDestroy {
       backgroundColor: 'transparent',
       series: [{
         type: 'gauge',
-        radius: '88%',
+        center: ['50%', '45%'],
+        radius: '82%',
         startAngle: 210,
         endAngle: -30,
         min: 0,
