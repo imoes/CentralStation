@@ -169,6 +169,30 @@ const SEVERITY_COLOR: Record<string, string> = {
         </div>
       </div>
 
+      <!-- ── Cross-source search bar (all cs-feed-* indices) ────────────────── -->
+      <div class="glog-bar">
+        <mat-icon class="glog-bar-icon">search</mat-icon>
+        <input class="glog-input" type="text" [(ngModel)]="searchQuery"
+               (keyup.enter)="runFeedSearch()"
+               placeholder='Alle Quellen durchsuchen — z.B. metadata.host:"host.example.com" AND severity:high'>
+        <select class="glog-range" [(ngModel)]="searchRangeSec">
+          @for (r of searchRanges; track r.sec) {
+            <option [ngValue]="r.sec">{{ r.label }}</option>
+          }
+        </select>
+        <button mat-flat-button color="primary" class="glog-go"
+                (click)="runFeedSearch()" [disabled]="searching()">
+          @if (searching()) { <mat-spinner diameter="18"></mat-spinner> }
+          @else { <mat-icon>search</mat-icon> }
+          Suchen
+        </button>
+        @if (searchActive()) {
+          <button mat-icon-button class="glog-clear" (click)="clearFeedSearch()" matTooltip="Suche zurücksetzen">
+            <mat-icon>close</mat-icon>
+          </button>
+        }
+      </div>
+
       <!-- ── Filter panel ───────────────────────────────────────────────────── -->
       @if (showFilters()) {
         <mat-card class="settings-card filter-card">
@@ -400,10 +424,19 @@ const SEVERITY_COLOR: Record<string, string> = {
       <!-- ── Feed ────────────────────────────────────────────────────────── -->
       <div class="feed-column">
 
-        @if (loading()) {
+        @if (searchActive()) {
+          <div class="search-active-banner">
+            <mat-icon>search</mat-icon>
+            <span>Suche über alle Quellen: <b>{{ activeSearchQuery() }}</b> · {{ searchRangeLabel() }} · {{ items().length }} Treffer</span>
+            <span class="glog-spacer"></span>
+            <button mat-icon-button (click)="clearFeedSearch()" matTooltip="Suche zurücksetzen"><mat-icon>close</mat-icon></button>
+          </div>
+        }
+
+        @if (loading() || searching()) {
           <div class="refresh-indicator">
             <mat-spinner diameter="24"></mat-spinner>
-            <span>Aktualisiere…</span>
+            <span>{{ searching() ? 'Suche…' : 'Aktualisiere…' }}</span>
           </div>
         }
 
@@ -802,6 +835,36 @@ const SEVERITY_COLOR: Record<string, string> = {
     .feed-topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
     .feed-topbar h2 { margin: 0; font-size: 22px; font-weight: 600; }
     .topbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* ── Cross-source search bar ─────────────────────────────────────── */
+    .glog-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 8px 12px;
+      background: var(--mat-sys-surface-container, #f1f1f4); border-radius: 10px; }
+    .glog-bar-icon { color: var(--mat-sys-on-surface-variant); flex-shrink: 0; }
+    .glog-input { flex: 1; min-width: 120px; border: none; background: transparent; outline: none;
+      font-size: 14px; font-family: inherit; color: var(--mat-sys-on-surface); padding: 6px 4px; }
+    .glog-range { border: 1px solid var(--mat-sys-outline-variant, #ccc); border-radius: 6px; padding: 6px 8px;
+      background: var(--mat-sys-surface, #fff); color: var(--mat-sys-on-surface); font-size: 13px; cursor: pointer; }
+    .glog-go { flex-shrink: 0; }
+    .glog-spacer { flex: 1; }
+    .search-active-banner { display: flex; align-items: center; gap: 8px; padding: 6px 12px; margin-bottom: 12px;
+      border-radius: 8px; font-size: 13px; background: color-mix(in srgb, var(--mat-sys-primary) 10%, transparent);
+      color: var(--mat-sys-on-surface); }
+    .search-active-banner mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--mat-sys-primary); }
+
+    /* LCARS theme */
+    :host-context(html.cs-theme-lcars) .glog-bar { background: #15120c; border: 1px solid #2a1d0a; border-radius: 0 12px 12px 0; border-left: 6px solid #ffcc66; }
+    :host-context(html.cs-theme-lcars) .glog-bar-icon { color: #ffcc66; }
+    :host-context(html.cs-theme-lcars) .glog-input { color: #ffe8a0; font-family: 'Antonio','Eurostile','Roboto Condensed',sans-serif; letter-spacing: .04em; }
+    :host-context(html.cs-theme-lcars) .glog-input::placeholder { color: #8a7a55; }
+    :host-context(html.cs-theme-lcars) .glog-range { background: #0c0a06; color: #ffcc66; border-color: #2a1d0a; }
+    :host-context(html.cs-theme-lcars) .search-active-banner { background: #1c1607; color: #ffe8a0; border-left: 6px solid #ffcc66; border-radius: 0 10px 10px 0; }
+    :host-context(html.cs-theme-lcars) .search-active-banner mat-icon { color: #ffcc66; }
+
+    /* Holo theme */
+    :host-context(html.cs-theme-holo) .glog-bar { background: rgba(13,34,54,.55); border: 1px solid rgba(79,214,255,.18); }
+    :host-context(html.cs-theme-holo) .glog-bar-icon { color: #4fd6ff; }
+    :host-context(html.cs-theme-holo) .glog-input { color: #cfeeff; }
+    :host-context(html.cs-theme-holo) .glog-range { background: rgba(8,20,32,.7); color: #cfeeff; border-color: rgba(79,214,255,.25); }
 
     .active-icon { color: var(--mat-sys-primary) !important; }
 
@@ -1374,6 +1437,21 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   lastSeenAt = signal<Date>(new Date(0));
   loading = signal(false);
   loadingMore = signal(false);
+
+  // ── Cross-source search (all cs-feed-* indices, with time window) ─────
+  searchQuery = '';
+  searchRangeSec = 900;                        // default: 15 minutes
+  searching = signal(false);
+  searchActive = signal(false);                // true → feed shows search results
+  activeSearchQuery = signal('');              // the query currently displayed
+  readonly searchRanges = [                    // Graylog default relative-time presets
+    { label: '5 minutes', sec: 300 },   { label: '15 minutes', sec: 900 },
+    { label: '30 minutes', sec: 1800 }, { label: '1 hour', sec: 3600 },
+    { label: '2 hours', sec: 7200 },    { label: '8 hours', sec: 28800 },
+    { label: '1 day', sec: 86400 },     { label: '2 days', sec: 172800 },
+    { label: '5 days', sec: 432000 },   { label: '7 days', sec: 604800 },
+    { label: '14 days', sec: 1209600 }, { label: '30 days', sec: 2592000 },
+  ];
   showSettings = signal(false);
   showFilters = signal(false);
   showSearchManager = signal(false);
@@ -1770,6 +1848,9 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   load(reset = false, silent = false) {
+    // While a cross-source search is shown, ignore background/auto refreshes so
+    // they don't overwrite the search results. clearFeedSearch() resets first.
+    if (this.searchActive() && silent) return;
     if (reset) {
       this.offset = 0;
       if (!silent) this.loading.set(true);
@@ -2003,6 +2084,35 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     );
   }
   severityColor(sev: string) { return SEVERITY_COLOR[sev] ?? '#757575'; }
+
+  // ── Cross-source search (all cs-feed-* indices, with time window) ─────
+  searchRangeLabel(): string {
+    return this.searchRanges.find(r => r.sec === this.searchRangeSec)?.label ?? '';
+  }
+
+  runFeedSearch() {
+    const q = (this.searchQuery || '').trim();
+    if (!q) { this.clearFeedSearch(); return; }
+    this.searching.set(true);
+    this.searchActive.set(true);
+    this.activeSearchQuery.set(q);
+    const params: any = { q, time_range_seconds: this.searchRangeSec, limit: 200 };
+    this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params }).subscribe({
+      next: data => { this.items.set(data); this.searching.set(false); },
+      error: () => {
+        this.searching.set(false);
+        this.items.set([]);
+        this.snackBar.open('Suche fehlgeschlagen', 'OK', { duration: 5000 });
+      },
+    });
+  }
+
+  clearFeedSearch() {
+    this.searchActive.set(false);
+    this.activeSearchQuery.set('');
+    this.searchQuery = '';
+    this.load(true);
+  }
 
   itemHostLabel(item: FeedItem): string {
     const m = item.metadata;
