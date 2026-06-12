@@ -96,6 +96,7 @@ export class App implements OnInit, OnDestroy {
     { path: '/my-tickets',   label: 'My Tickets',       icon: 'assignment',   roles: ['admin','sysadmin'] },
     { path: '/kanban',       label: 'Kanban',           icon: 'view_kanban',  roles: ['admin','sysadmin','network_technician'] },
     { path: '/ai-insights',  label: 'AI Insights',      icon: 'psychology',   roles: ['admin','sysadmin'] },
+    { path: '/topology',     label: 'Infrastructure Map', icon: 'account_tree', roles: ['admin','sysadmin','network_technician'] },
     { path: '/settings',     label: 'Settings',         icon: 'settings',     roles: ['admin','sysadmin','network_technician','viewer'] },
     { path: '/help',         label: 'Help',             icon: 'help',         roles: ['admin','sysadmin','network_technician','viewer'] },
   ];
