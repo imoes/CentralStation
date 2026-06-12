@@ -109,3 +109,26 @@ class NetBoxConnector(BaseConnector):
             return None
         site = device.get("site")
         return site.get("name") if site else None
+
+    async def _get_all(self, path: str, params: dict | None = None) -> list[dict]:
+        """Fetch all pages of a NetBox list endpoint (follows `next` links)."""
+        out: list[dict] = []
+        url = self._api(path)
+        p: dict | None = {"limit": 500, **(params or {})}
+        async with self._client(timeout=60.0) as client:
+            while url:
+                r = await client.get(url, headers=self._headers(), params=p)
+                r.raise_for_status()
+                data = r.json()
+                out.extend(data.get("results", []))
+                url = data.get("next")
+                p = None  # next-URL already contains query params
+        return out
+
+    async def get_all_devices(self) -> list[dict]:
+        """All physical devices with site, cluster, role, status."""
+        return await self._get_all("/dcim/devices/")
+
+    async def get_all_vms(self) -> list[dict]:
+        """All VMs with device, cluster, status."""
+        return await self._get_all("/virtualization/virtual-machines/")
