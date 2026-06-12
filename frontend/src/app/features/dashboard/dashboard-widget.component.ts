@@ -194,7 +194,13 @@ import {
                       <span class="sev-dot" [style.background]="severityColor(f.severity)"></span>
                       <div class="wr-finding-body">
                         <span class="wr-finding-title">{{ f.title }}</span>
-                        @if (f.host) { <span class="wr-host">{{ f.host }}</span> }
+                        @if (f.host) {
+                          <span class="wr-hosts">
+                            @for (h of splitHosts(f.host); track h) {
+                              <button class="wr-host-link" (click)="onHostClick($event, h)">{{ h }}</button>
+                            }
+                          </span>
+                        }
                         @if (f.description) { <span class="wr-desc">{{ f.description }}</span> }
                       </div>
                     </div>
@@ -205,7 +211,7 @@ import {
                       <div class="wr-blast">
                         <mat-icon>device_hub</mat-icon>
                         <div>
-                          <span class="wr-host">{{ br.host }}</span>
+                          <button class="wr-host-link" (click)="onHostClick($event, br.host)">{{ br.host }}</button>
                           @if (br.location) { <span class="wr-loc"> · {{ br.location }}</span> }
                           @if (br.co_hosted_vms?.length) {
                             <div class="wr-cohost">VMs: {{ br.co_hosted_vms.slice(0,3).join(', ') }}</div>
@@ -345,7 +351,9 @@ import {
     .wr-finding { display: flex; gap: 6px; padding: 4px 6px; background: var(--mat-sys-surface-variant); border-radius: 6px; }
     .wr-finding-body { display: flex; flex-direction: column; min-width: 0; }
     .wr-finding-title { font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .wr-host { font-size: 10px; font-family: monospace; color: var(--mat-sys-primary); }
+    .wr-hosts { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+    .wr-host-link { background: none; border: none; padding: 0 3px; font-size: 10px; font-family: monospace; color: var(--mat-sys-primary); cursor: pointer; border-radius: 3px; }
+    .wr-host-link:hover { text-decoration: underline; }
     .wr-loc { font-size: 10px; color: var(--mat-sys-on-surface-variant); }
     .wr-desc { font-size: 10px; color: var(--mat-sys-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .wr-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--mat-sys-on-surface-variant); padding: 2px 4px; }
@@ -438,7 +446,7 @@ import {
     :host-context(html.cs-theme-holo) .finding-arrow { color: #4fd6ff !important; }
     :host-context(html.cs-theme-holo) .wr-finding { background: rgba(79,214,255,.06) !important; }
     :host-context(html.cs-theme-holo) .wr-finding-title { color: #cfeeff !important; }
-    :host-context(html.cs-theme-holo) .wr-host { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-holo) .wr-host-link { color: #4fd6ff !important; }
     :host-context(html.cs-theme-holo) .wr-section-label { color: #5fc8ee !important; }
     :host-context(html.cs-theme-holo) .forecast-title { color: #8fb8cf !important; }
 
