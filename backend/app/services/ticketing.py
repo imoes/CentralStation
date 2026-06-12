@@ -87,10 +87,15 @@ async def ai_ticket_draft(
                 "h3. Problem | what failed, symptoms, affected service. "
                 "h3. Affected System | host/service/component. "
                 "h3. Root Cause | root cause if identified, else 'Under investigation'. "
+                "h3. Evidence | REQUIRED — quote the specific log lines, metric values, timestamps, "
+                "or alert text from the context that prove the problem and root cause. "
+                "If AI analysis evidence is provided, include the most relevant entries verbatim. "
+                "Never leave this section empty if any evidence exists in the context. "
                 "h3. Proposed Solution | concrete fix or next steps proposed in the conversation — "
                 "this section is REQUIRED and must reflect what the assistant actually recommended. "
                 "h3. Steps Taken | what was already tried or investigated. "
-                "No invented facts. If a section has no information, omit it.>\"}. "
+                "No invented facts. Every claim in Root Cause and Proposed Solution must be backed by "
+                "something in Evidence — no speculation without data.>\"}. "
                 "The 'log source' field names the collector (Graylog/CheckMK), NOT the failing system.",
                 lang,
             )

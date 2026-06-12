@@ -172,10 +172,8 @@ import { WebsocketService } from '../../core/services/websocket.service';
             <span class="ki-strip-sev">{{ (kiInsight()!.severity_summary ?? 'info').toUpperCase() }}</span>
             <span class="ki-strip-text">{{ kiInsight()!.summary_text }}</span>
             <span class="ki-strip-hosts">
-              @for (f of kiInsight()!.findings; track $index) {
-                @if (f.host) {
-                  <span class="ki-strip-host" (click)="openFeedHost(f.host)">{{ f.host }}</span>
-                }
+              @for (h of kiStripHosts(); track h) {
+                <span class="ki-strip-host" (click)="openFeedHost(h)">{{ h }}</span>
               }
             </span>
             <span class="ki-strip-ago">{{ kiInsightAgo() }}</span>
@@ -659,6 +657,18 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     if (mins < 60) return `vor ${mins} Min.`;
     const hrs = Math.floor(mins / 60);
     return hrs < 24 ? `vor ${hrs} Std.` : `vor ${Math.floor(hrs / 24)} T.`;
+  });
+
+  /** Flatten all finding hosts, split comma-separated groups, dedupe. */
+  readonly kiStripHosts = computed((): string[] => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const f of this.kiInsight()?.findings ?? []) {
+      for (const h of (f.host || '').split(',').map(s => s.trim()).filter(Boolean)) {
+        if (!seen.has(h)) { seen.add(h); out.push(h); }
+      }
+    }
+    return out;
   });
 
   readonly rationaleSegments = computed((): RationaleSegment[] => {

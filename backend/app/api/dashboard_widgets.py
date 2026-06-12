@@ -628,7 +628,7 @@ async def get_widget_data(
     query_string = cfg.get("query_string", "")
     user_id_str = str(current_user.id)
     host_scope = await feed_index.get_user_checkmk_host_scope(db, user_id_str)
-    exclusion_clauses = await feed_index.get_exclusion_must_not_clauses(db)
+    exclusion_clauses = await feed_index.get_exclusion_must_not_clauses(db, user_id_str)
 
     def _host_scope_filter() -> dict | None:
         if not host_scope:
@@ -988,6 +988,39 @@ async def get_widget_data(
             "blast_radius": blast_radius,
             "run_at": analysis.run_at.isoformat() if analysis.run_at else None,
         }
+
+    elif w.widget_type == "gauge":
+        os_client = feed_index.get_opensearch()
+        total_qs = cfg.get("total_query_string", "*") or "*"
+        unit = cfg.get("unit", "%")
+
+        def _gauge_query(qs: str) -> dict:
+            q: dict = {"query_string": {"query": qs}} if qs and qs != "*" else {"match_all": {}}
+            body: dict = {"bool": {"must": [q], "filter": [{
+                "bool": {
+                    "should": [
+                        {"terms": {"source": ["checkmk", "graylog", "wazuh"]}},
+                        {"bool": {"must": [
+                            {"terms": {"source": ["o365", "teams"]}},
+                            {"term": {"user_id": user_id_str}},
+                        ]}},
+                    ],
+                    "minimum_should_match": 1,
+                },
+            }]}}
+            if exclusion_clauses:
+                body["bool"]["must_not"] = exclusion_clauses
+            return body
+
+        try:
+            r_num = await os_client.count(index=index_pattern, body={"query": _gauge_query(query_string or "*")}, ignore_unavailable=True)
+            r_den = await os_client.count(index=index_pattern, body={"query": _gauge_query(total_qs)}, ignore_unavailable=True)
+            value = r_num.get("count", 0)
+            total = r_den.get("count", 0)
+            percent = round(value / total * 100, 1) if total > 0 else 0.0
+            return {"value": value, "total": total, "percent": percent, "unit": unit}
+        except Exception:
+            return {"value": 0, "total": 0, "percent": 0.0, "unit": unit}
 
     elif w.widget_type == "incidents":
         from app.models.workflow import Incident, IncidentMember
