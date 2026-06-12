@@ -189,6 +189,14 @@ async def run_incident_housekeeping() -> None:
             logger.debug("Incident housekeeping failed: %s", e)
 
 
+async def run_topology_kb_job() -> None:
+    from app.core.database import AsyncSessionLocal
+    from app.services.topology_builder import run_topology_kb_extraction
+    async with AsyncSessionLocal() as db:
+        count = await run_topology_kb_extraction(db)
+    logger.info("Topology KB extraction: %d edges upserted", count)
+
+
 async def start_scheduler() -> None:
     from app.core.database import AsyncSessionLocal
     from app.services.settings import get_agent_config
@@ -219,6 +227,8 @@ async def start_scheduler() -> None:
                        id="score_housekeeping", replace_existing=True)
     _scheduler.add_job(run_feed_housekeeping, "cron", hour=3, minute=0,
                        id="feed_housekeeping", replace_existing=True)
+    _scheduler.add_job(run_topology_kb_job, "cron", hour=4, minute=30,
+                       id="topology_kb_extraction", replace_existing=True)
     _scheduler.add_job(run_incident_housekeeping, "interval",
                        minutes=15, id="incident_housekeeping",
                        replace_existing=True,
