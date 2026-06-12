@@ -130,9 +130,9 @@ const SEVERITY_COLORS: Record<string, string> = {
                         @if (block.finding.host) {
                           <div class="finding-host">
                             <mat-icon class="host-icon">dns</mat-icon>
-                            <button class="host-link" (click)="openInFeedByHost(block.finding.host)">
-                              {{ block.finding.host }}
-                            </button>
+                            @for (h of splitHosts(block.finding.host); track h) {
+                              <button class="host-link" (click)="openInFeedByHost(h)">{{ h }}</button>
+                            }
                           </div>
                         }
                         @if (block.finding.description) {
@@ -528,6 +528,10 @@ export class AiInsightsComponent implements OnInit, OnDestroy {
   /** Open news feed filtered to a specific host. */
   openInFeedByHost(host: string) {
     if (host) this.router.navigate(['/feed'], { queryParams: { host } });
+  }
+
+  splitHosts(host: string): string[] {
+    return host.split(',').map(h => h.trim()).filter(Boolean);
   }
 
   isUrl(ref: string): boolean {

@@ -22,6 +22,7 @@ import {
   TimeseriesData,
   TopHostsData,
   ForecastData,
+  GaugeData,
   WarRoomData,
   IncidentsData,
   WidgetData,
@@ -113,6 +114,13 @@ import {
                         <span class="finding-title">{{ finding.title }}</span>
                         <mat-icon class="finding-arrow">arrow_forward</mat-icon>
                       </div>
+                      @if (finding.host) {
+                        <div class="finding-hosts">
+                          @for (h of splitHosts(finding.host); track h) {
+                            <button class="finding-host-link" (click)="onHostClick($event, h)">{{ h }}</button>
+                          }
+                        </div>
+                      }
                     </div>
                   }
                 </div>
@@ -186,7 +194,13 @@ import {
                       <span class="sev-dot" [style.background]="severityColor(f.severity)"></span>
                       <div class="wr-finding-body">
                         <span class="wr-finding-title">{{ f.title }}</span>
-                        @if (f.host) { <span class="wr-host">{{ f.host }}</span> }
+                        @if (f.host) {
+                          <span class="wr-hosts">
+                            @for (h of splitHosts(f.host); track h) {
+                              <button class="wr-host-link" (click)="onHostClick($event, h)">{{ h }}</button>
+                            }
+                          </span>
+                        }
                         @if (f.description) { <span class="wr-desc">{{ f.description }}</span> }
                       </div>
                     </div>
@@ -197,7 +211,7 @@ import {
                       <div class="wr-blast">
                         <mat-icon>device_hub</mat-icon>
                         <div>
-                          <span class="wr-host">{{ br.host }}</span>
+                          <button class="wr-host-link" (click)="onHostClick($event, br.host)">{{ br.host }}</button>
                           @if (br.location) { <span class="wr-loc"> · {{ br.location }}</span> }
                           @if (br.co_hosted_vms?.length) {
                             <div class="wr-cohost">VMs: {{ br.co_hosted_vms.slice(0,3).join(', ') }}</div>
@@ -254,6 +268,9 @@ import {
                   }
                 </div>
               }
+            }
+            @case ('gauge') {
+              <div echarts [options]="gaugeOptions()" class="chart"></div>
             }
           }
         }
@@ -334,7 +351,9 @@ import {
     .wr-finding { display: flex; gap: 6px; padding: 4px 6px; background: var(--mat-sys-surface-variant); border-radius: 6px; }
     .wr-finding-body { display: flex; flex-direction: column; min-width: 0; }
     .wr-finding-title { font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .wr-host { font-size: 10px; font-family: monospace; color: var(--mat-sys-primary); }
+    .wr-hosts { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+    .wr-host-link { background: none; border: none; padding: 0 3px; font-size: 10px; font-family: monospace; color: var(--mat-sys-primary); cursor: pointer; border-radius: 3px; }
+    .wr-host-link:hover { text-decoration: underline; }
     .wr-loc { font-size: 10px; color: var(--mat-sys-on-surface-variant); }
     .wr-desc { font-size: 10px; color: var(--mat-sys-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .wr-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--mat-sys-on-surface-variant); padding: 2px 4px; }
@@ -359,6 +378,9 @@ import {
     .finding:hover { background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent); }
     .finding-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .finding-arrow { font-size: 16px; height: 16px; width: 16px; flex-shrink: 0; color: var(--mat-sys-primary); }
+    .finding-hosts { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 4px 4px 18px; }
+    .finding-host-link { background: none; border: none; padding: 0 4px; font-size: 10px; font-family: monospace; color: var(--mat-sys-primary); cursor: pointer; border-radius: 3px; }
+    .finding-host-link:hover { text-decoration: underline; }
     .finding-detail {
       margin: 2px 4px 6px 18px;
       padding: 8px 10px;
@@ -424,7 +446,7 @@ import {
     :host-context(html.cs-theme-holo) .finding-arrow { color: #4fd6ff !important; }
     :host-context(html.cs-theme-holo) .wr-finding { background: rgba(79,214,255,.06) !important; }
     :host-context(html.cs-theme-holo) .wr-finding-title { color: #cfeeff !important; }
-    :host-context(html.cs-theme-holo) .wr-host { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-holo) .wr-host-link { color: #4fd6ff !important; }
     :host-context(html.cs-theme-holo) .wr-section-label { color: #5fc8ee !important; }
     :host-context(html.cs-theme-holo) .forecast-title { color: #8fb8cf !important; }
 
@@ -713,6 +735,47 @@ export class DashboardWidgetComponent {
 
   readonly warRoomData = computed(() => this.data() as WarRoomData | undefined);
   readonly incidentsData = computed(() => this.data() as IncidentsData | undefined);
+  readonly gaugeData = computed(() => this.data() as GaugeData | undefined);
+  readonly gaugeOptions = computed(() => {
+    const d = this.gaugeData();
+    const pct = d?.percent ?? 0;
+    const txt = this._chartText;
+    const pri = this._chartPrimary;
+    const warn = (this.widget().config['warn'] as number) ?? 70;
+    const crit = (this.widget().config['critical'] as number) ?? 90;
+    const color = pct >= crit ? '#b71c1c' : pct >= warn ? '#f9a825' : pri;
+    return {
+      series: [{
+        type: 'gauge',
+        startAngle: 210,
+        endAngle: -30,
+        min: 0,
+        max: 100,
+        radius: '88%',
+        center: ['50%', '58%'],
+        splitNumber: 5,
+        axisLine: {
+          lineStyle: {
+            width: 14,
+            color: [[warn / 100, pri], [crit / 100, '#f9a825'], [1, '#b71c1c']],
+          },
+        },
+        pointer: { width: 5, length: '65%', itemStyle: { color } },
+        axisTick: { show: false },
+        splitLine: { show: false },
+        axisLabel: { show: false },
+        detail: {
+          fontSize: 22,
+          fontWeight: 700,
+          color,
+          offsetCenter: [0, '20%'],
+          formatter: `{value}%`,
+        },
+        title: { offsetCenter: [0, '45%'], fontSize: 11, color: txt },
+        data: [{ value: pct, name: d ? `${d.value} / ${d.total}` : '' }],
+      }],
+    };
+  });
 
   onWarRoomJira(event: MouseEvent, jiraTitle: string) {
     event.stopPropagation();
@@ -772,6 +835,10 @@ export class DashboardWidgetComponent {
   onHostClick(event: MouseEvent, hostName: string) {
     event.stopPropagation();
     if (hostName) this.hostClick.emit(hostName);
+  }
+
+  splitHosts(host: string): string[] {
+    return host.split(',').map(h => h.trim()).filter(Boolean);
   }
 
   toggleFinding(title: string) {

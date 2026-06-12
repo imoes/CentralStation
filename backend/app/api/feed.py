@@ -1260,9 +1260,16 @@ async def ticket_draft(
             system_prompt = with_language(
                 "You are an IT operations engineer creating a Jira ticket from a monitoring alert. "
                 "Produce a concise, professional ticket. Return STRICT JSON only: "
-                '{"summary": "<one line, max 120 chars>", "description": "<structured: Problem, '
-                'Affected system, Likely cause if derivable, First steps. Use Jira wiki markup '
-                '(*bold*, ---- separators). No invented facts.>"}. '
+                '{"summary": "<one line, max 120 chars>", "description": "<structured sections using '
+                "Jira wiki markup (*bold*, h3. headings, ---- separators): "
+                "h3. Problem | what failed, symptoms, affected service. "
+                "h3. Affected System | host/service/component. "
+                "h3. Root Cause | root cause if derivable, else 'Under investigation'. "
+                "h3. Evidence | REQUIRED — quote the specific log lines, metric values, timestamps, "
+                "or alert text from the context that prove the problem. "
+                "If AI analysis evidence is provided, include the most relevant entries verbatim. "
+                "h3. Proposed Solution | concrete next steps. "
+                "No invented facts. Every claim must be backed by something in Evidence.>\"}. "
                 "The 'log source' field names the collector (Graylog/CheckMK), NOT the failing system.",
                 lang,
             )
@@ -1274,6 +1281,24 @@ async def ticket_draft(
                 ctx += f"Details: {body}\n"
             if ai_insight:
                 ctx += f"Prior AI insight: {ai_insight}\n"
+
+            # Load AI analysis comments — these contain the evidence block.
+            try:
+                from app.models.workflow import AlertComment as _AC
+                com_r = await db.execute(
+                    select(_AC)
+                    .where(_AC.external_id == external_id, _AC.kind == "ai")
+                    .order_by(_AC.created_at)
+                    .limit(3)
+                )
+                ai_coms = com_r.scalars().all()
+                if ai_coms:
+                    ctx += "\n## AI analysis with evidence\n"
+                    for c in ai_coms:
+                        ctx += c.body.strip() + "\n\n"
+            except Exception as _e:
+                log.debug("ticket_draft (feed): loading AI comments failed: %s", _e)
+
             raw = await generate_text(
                 llm_cfg,
                 [{"role": "system", "content": system_prompt},
