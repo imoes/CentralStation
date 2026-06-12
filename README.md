@@ -102,6 +102,41 @@ After the first login, create the global system connectors under **Settings → 
 | Wazuh | `wazuh` | security alerts |
 | Prometheus | `prometheus` | time-series widgets |
 
+### Recommended: vibeMK MCP server for the Computer Console
+
+The **Computer Console** (the `centralcore` Hermes agent, see [Computer Console](#computer-console-hermes-ai-panel)) talks to MCP servers for live data. In addition to the built-in CentralStation MCP server we recommend adding **[vibeMK](https://github.com/imoes/vibeMK)** — an MCP server that manages CheckMK monitoring via natural language (host/service status, performance metrics, downtimes, acknowledgements, configuration). With it, operators can query *and act on* CheckMK directly from the Computer panel.
+
+```bash
+# Clone alongside CentralStation (Python 3.8+, standard library only)
+git clone https://github.com/imoes/vibeMK.git
+
+# vibeMK needs a CheckMK automation user + API key:
+#   CHECKMK_SERVER_URL   – e.g. https://checkmk.example.com
+#   CHECKMK_SITE         – the CheckMK site name
+#   CHECKMK_USERNAME     – automation user (e.g. vibemk)
+#   CHECKMK_PASSWORD     – the API key generated in CheckMK
+```
+
+Register it under `mcp_servers:` in `centralcore/hermes_config.yaml` (this fills the optional `checkmk` slot the Hermes agent looks for):
+
+```yaml
+mcp_servers:
+  centralstation:
+    transport: sse
+    url: http://backend:8000/api/mcp/sse
+  checkmk:                       # vibeMK
+    transport: stdio
+    command: python3
+    args: ["/absolute/path/to/vibeMK/main.py"]
+    env:
+      CHECKMK_SERVER_URL: "https://checkmk.example.com"
+      CHECKMK_SITE: "<site>"
+      CHECKMK_USERNAME: "vibemk"
+      CHECKMK_PASSWORD: "<api-key>"
+```
+
+See vibeMK's [INSTALL.md](https://github.com/imoes/vibeMK/blob/main/INSTALL.md) for the authoritative setup and transport options.
+
 ---
 
 ## Architecture
