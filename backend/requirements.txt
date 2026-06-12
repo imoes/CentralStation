@@ -43,6 +43,9 @@ opensearch-py==2.7.1
 # get_asgi_app() existiert nur in 2.x — 3.x hat die API umgebaut
 fastmcp>=2.0,<3
 
+# Email dispatch
+aiosmtplib>=3.0,<4
+
 # Utils
 python-dotenv==1.0.1
 python-dateutil>=2.9

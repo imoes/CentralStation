@@ -208,6 +208,16 @@ async def run_topology_kb_job() -> None:
     logger.info("Topology KB extraction: %d edges upserted", count)
 
 
+async def run_digest_check() -> None:
+    """Hourly check — sends email digests to users whose configured time matches now."""
+    from datetime import datetime, timezone
+    from app.core.database import AsyncSessionLocal
+    from app.services.email_digest import run_digest_for_hour
+    async with AsyncSessionLocal() as db:
+        await run_digest_for_hour(db, datetime.now(timezone.utc))
+    logger.info("Digest hourly check done")
+
+
 async def start_scheduler() -> None:
     from app.core.database import AsyncSessionLocal
     from app.services.settings import get_agent_config
@@ -248,6 +258,8 @@ async def start_scheduler() -> None:
                        minutes=15, id="incident_housekeeping",
                        replace_existing=True,
                        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=60))
+    _scheduler.add_job(run_digest_check, "cron", minute=0,
+                       id="digest_check", replace_existing=True)
     _scheduler.start()
     logger.info(
         "APScheduler started — aggregation: %dmin, agent: %dmin, metrics: 5min",
