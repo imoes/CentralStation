@@ -157,6 +157,7 @@ async def get_feed(
     search_id: _uuid.UUID | None = Query(None),
     index: str | None = Query(None, description="OpenSearch index pattern for direct query mode"),
     q: str | None = Query(None, description="OpenSearch Lucene query string for direct query mode"),
+    time_range_seconds: int | None = Query(None, ge=60, le=2592000, description="Restrict q results to created_at within the last N seconds"),
     highlight_id: str | None = Query(None, description="Fetch this item by ID and pin it at the top"),
 ):
     """Return unified news feed from OpenSearch, sorted by created_at desc."""
@@ -180,6 +181,7 @@ async def get_feed(
             query_string=query_string,
             user_id=str(user.id),
             host_scope=await feed_index.get_user_checkmk_host_scope(db, str(user.id)),
+            since_seconds=time_range_seconds,
             from_=offset,
             size=limit,
         )

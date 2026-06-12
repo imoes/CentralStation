@@ -759,9 +759,13 @@ async def search_by_query(
     from_: int = 0,
     user_id: str | None = None,
     host_scope: list[str] | None = None,
+    since_seconds: int | None = None,
     db: Any = None,
 ) -> list[dict]:
-    """Execute an OpenSearch Lucene query string against an index pattern."""
+    """Execute an OpenSearch Lucene query string against an index pattern.
+
+    since_seconds: when set, restrict results to created_at within the last N seconds.
+    """
     os_client = get_opensearch()
     if query_string:
         query: dict = {"query_string": {"query": _normalise_query_string(query_string), "default_operator": "AND"}}
@@ -769,6 +773,9 @@ async def search_by_query(
         query = {"match_all": {}}
 
     filter_clauses: list[dict] = []
+    if since_seconds and since_seconds > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=since_seconds)
+        filter_clauses.append({"range": {"created_at": {"gte": cutoff.isoformat()}}})
     must_not: list[dict] = []
     if db is not None:
         must_not.extend(await get_exclusion_must_not_clauses(db, user_id))
