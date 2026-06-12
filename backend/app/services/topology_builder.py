@@ -19,7 +19,7 @@ _SEVERITY_ORDER = ["critical", "high", "medium", "low"]
 
 _cache: dict | None = None
 _cache_ts: float = 0.0
-_CACHE_TTL = 60.0
+_CACHE_TTL = 1800.0  # 30 min fallback; scheduler pre-warms every N minutes
 
 
 def _max_severity(buckets: list[dict]) -> str:
