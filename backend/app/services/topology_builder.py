@@ -17,8 +17,8 @@ log = logging.getLogger(__name__)
 
 _SEVERITY_ORDER = ["critical", "high", "medium", "low"]
 
-_cache: dict | None = None
-_cache_ts: float = 0.0
+_cache: dict[str, dict] = {}   # keyed by source_filter (empty string = all sources)
+_cache_ts: dict[str, float] = {}
 _CACHE_TTL = 1800.0  # 30 min fallback; scheduler pre-warms every N minutes
 
 
@@ -30,11 +30,12 @@ def _max_severity(buckets: list[dict]) -> str:
     return "ok"
 
 
-async def build_topology(db: Any, force_refresh: bool = False) -> dict:
+async def build_topology(db: Any, force_refresh: bool = False, source_filter: str | None = None) -> dict:
     global _cache, _cache_ts
+    cache_key = source_filter or ""
 
-    if not force_refresh and _cache is not None and (time.monotonic() - _cache_ts) < _CACHE_TTL:
-        return _cache
+    if not force_refresh and cache_key in _cache and (time.monotonic() - _cache_ts.get(cache_key, 0)) < _CACHE_TTL:
+        return _cache[cache_key]
 
     from sqlalchemy import select
     from app.models.connector import ConnectorConfig
@@ -131,9 +132,15 @@ async def build_topology(db: Any, force_refresh: bool = False) -> dict:
 
         excl = await get_exclusion_must_not_clauses(db)
         os_client = get_opensearch()
+        source_must: list[dict] = []
+        if source_filter:
+            source_must = [{"term": {"source": source_filter}}]
         body: dict = {
             "size": 0,
-            "query": {"bool": {"must_not": [{"term": {"status": "resolved"}}, *excl]}},
+            "query": {"bool": {
+                "must": source_must,
+                "must_not": [{"term": {"status": "resolved"}}, *excl],
+            }},
             "aggs": {
                 "by_host": {
                     "terms": {"field": "metadata.host.keyword", "size": 2000},
@@ -141,7 +148,8 @@ async def build_topology(db: Any, force_refresh: bool = False) -> dict:
                 }
             },
         }
-        resp = await os_client.search(index="cs-feed-*", body=body, ignore_unavailable=True)
+        index = f"cs-feed-{source_filter}" if source_filter else "cs-feed-*"
+        resp = await os_client.search(index=index, body=body, ignore_unavailable=True)
         buckets = (resp.get("aggregations") or {}).get("by_host", {}).get("buckets", [])
         for bucket in buckets:
             host_key: str = (bucket.get("key") or "").lower()
@@ -200,10 +208,11 @@ async def build_topology(db: Any, force_refresh: bool = False) -> dict:
         "nodes": node_list,
         "edges": edges_list,
         "stats": stats,
+        "source_filter": source_filter,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
-    _cache = result
-    _cache_ts = time.monotonic()
+    _cache[cache_key] = result
+    _cache_ts[cache_key] = time.monotonic()
     return result
 
 
