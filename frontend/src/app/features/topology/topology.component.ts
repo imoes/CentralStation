@@ -70,10 +70,19 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
           Infrastruktur-Karte
         </h2>
 
+        <div class="topo-sources">
+          @for (src of sources; track src.value) {
+            <button class="src-chip"
+              [class.src-chip--active]="activeSource() === src.value"
+              (click)="setSource(src.value)"
+              [matTooltip]="src.label + ' Alerts anzeigen'">
+              {{ src.label }}
+            </button>
+          }
+        </div>
+
         @if (graph()?.stats; as s) {
           <div class="topo-stats">
-            <span class="stat-chip">{{ s.sites }} Standorte</span>
-            <span class="stat-chip">{{ s.clusters }} Cluster</span>
             <span class="stat-chip">{{ s.hosts }} Hosts</span>
             <span class="stat-chip">{{ s.vms }} VMs</span>
             @if (s.alerts > 0) {
@@ -101,7 +110,7 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
           </button>
         }
 
-        <button mat-flat-button class="topo-refresh" (click)="load(true)" [disabled]="loading()">
+        <button mat-flat-button class="topo-refresh" (click)="load(false)" [disabled]="loading()">
           @if (loading()) { <mat-spinner diameter="18"></mat-spinner> }
           @else { <mat-icon>refresh</mat-icon> }
           Aktualisieren
@@ -157,6 +166,22 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
       margin: 0; font-size: 1.1rem; font-weight: 600;
     }
 
+    .topo-sources { display: flex; gap: 4px; flex-wrap: wrap; }
+
+    .src-chip {
+      padding: 2px 10px; border-radius: 12px; font-size: 0.75rem; cursor: pointer;
+      border: 1px solid var(--mat-sys-outline);
+      background: transparent;
+      color: var(--mat-sys-on-surface-variant);
+      transition: background 0.15s, color 0.15s;
+      &:hover { background: var(--mat-sys-surface-variant); }
+    }
+    .src-chip--active {
+      background: var(--mat-sys-primary);
+      color: var(--mat-sys-on-primary);
+      border-color: var(--mat-sys-primary);
+    }
+
     .topo-stats { display: flex; gap: 6px; flex-wrap: wrap; }
 
     .stat-chip {
@@ -197,6 +222,13 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
     :host-context(html.cs-theme-lcars) .stat-chip {
       background: #1a0e00; color: #FFCC99; border: 1px solid #FF9933;
     }
+    :host-context(html.cs-theme-lcars) .src-chip {
+      border-color: #FF9933; color: #FFCC99;
+      &:hover { background: #1a0e00; }
+    }
+    :host-context(html.cs-theme-lcars) .src-chip--active {
+      background: #FF9933; color: #000; border-color: #FF9933;
+    }
     :host-context(html.cs-theme-lcars) .topo-search {
       background: #0d0700; color: #FFCC99; border-color: #FF9933;
       &:focus { outline-color: #FF9933; }
@@ -210,6 +242,13 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
     :host-context(html.cs-theme-holo) .stat-chip {
       background: #071420; color: #5fc8ee; border: 1px solid #1a3a5c;
     }
+    :host-context(html.cs-theme-holo) .src-chip {
+      border-color: #1a3a5c; color: #5fc8ee;
+      &:hover { background: #071420; }
+    }
+    :host-context(html.cs-theme-holo) .src-chip--active {
+      background: #4fd6ff; color: #000; border-color: #4fd6ff;
+    }
     :host-context(html.cs-theme-holo) .topo-search {
       background: #040e1a; color: #5fc8ee; border-color: #1a3a5c;
     }
@@ -221,9 +260,19 @@ export class TopologyComponent implements OnInit {
   private auth = inject(AuthService);
   private snack = inject(MatSnackBar);
 
+  readonly sources = [
+    { value: null,        label: 'Alle' },
+    { value: 'checkmk',  label: 'CheckMK' },
+    { value: 'graylog',  label: 'Graylog' },
+    { value: 'wazuh',    label: 'Wazuh' },
+    { value: 'icinga2',  label: 'Icinga2' },
+    { value: 'coroot',   label: 'Coroot' },
+  ] as const;
+
   graph = signal<TopologyGraph | null>(null);
   loading = signal(true);
   syncing = signal(false);
+  activeSource = signal<string | null>(null);
   searchTerm = '';
   searchFilter = signal('');
 
@@ -313,10 +362,19 @@ export class TopologyComponent implements OnInit {
     this.load(false);
   }
 
+  setSource(src: string | null): void {
+    this.activeSource.set(src);
+    this.load(false);
+  }
+
   load(refresh: boolean): void {
     this.loading.set(true);
-    const url = `${environment.apiUrl}/topology/graph${refresh ? '?refresh=true' : ''}`;
-    this.http.get<TopologyGraph>(url).subscribe({
+    const params: string[] = [];
+    if (refresh) params.push('refresh=true');
+    const src = this.activeSource();
+    if (src) params.push(`source=${src}`);
+    const qs = params.length ? '?' + params.join('&') : '';
+    this.http.get<TopologyGraph>(`${environment.apiUrl}/topology/graph${qs}`).subscribe({
       next: g => { this.graph.set(g); this.loading.set(false); },
       error: () => { this.loading.set(false); },
     });
