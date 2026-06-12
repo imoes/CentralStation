@@ -628,7 +628,7 @@ async def get_widget_data(
     query_string = cfg.get("query_string", "")
     user_id_str = str(current_user.id)
     host_scope = await feed_index.get_user_checkmk_host_scope(db, user_id_str)
-    exclusion_clauses = await feed_index.get_exclusion_must_not_clauses(db)
+    exclusion_clauses = await feed_index.get_exclusion_must_not_clauses(db, user_id_str)
 
     def _host_scope_filter() -> dict | None:
         if not host_scope:
