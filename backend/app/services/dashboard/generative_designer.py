@@ -66,6 +66,7 @@ _ALLOWED_CONFIG_KEYS: dict[str, set[str]] = {
     "donut":      {"index_pattern", "query_string"},
     "bar":        {"index_pattern", "query_string", "agg_field", "limit"},
     "top_hosts":  {"index_pattern", "query_string", "limit"},
+    "gauge":      {"index_pattern", "query_string", "total_query_string", "unit", "warn", "critical"},
     "ai_summary": {"agent_type"},
     "war_room":   {"agent_type"},
     "timeseries": {"data_source", "host", "hosts", "service", "metric_id", "graph_index", "hours", "unit"},
@@ -79,6 +80,7 @@ _DEFAULT_SIZE: dict[str, tuple[int, int]] = {
     "list":       (6, 5),
     "bar":        (5, 4),
     "top_hosts":  (4, 4),
+    "gauge":      (3, 3),
     "ai_summary": (6, 4),
     "war_room":   (12, 5),
     "timeseries": (6, 6),
@@ -358,6 +360,7 @@ NUTZE NUR diese Widget-Typen mit exakt diesen config-Schlüsseln:
 - "donut": {"index_pattern":"cs-feed-*","query_string":"<lucene>"}  — Severity-Verteilung
 - "bar": {"index_pattern":"cs-feed-*","query_string":"<lucene>","agg_field":"source","limit":10}  — agg_field MUSS einer dieser Werte sein: "source", "severity", "host"
 - "top_hosts": {"index_pattern":"cs-feed-*","query_string":"<lucene>","limit":8}  — Problem-Hosts
+- "gauge": {"index_pattern":"cs-feed-*","query_string":"<zähler-lucene>","total_query_string":"<nenner-lucene>","warn":70,"critical":90}  — Anteil/Quote in %. query_string = Zähler (z.B. "severity:critical AND NOT status:resolved"), total_query_string = Nenner/Grundgesamtheit (z.B. "NOT status:resolved"). Nur nutzen wenn eine Quote AUSSAGEKRÄFTIG ist (z.B. Anteil kritischer Alerts); sonst "stat" bevorzugen.
 - "ai_summary": {"agent_type":"sysadmin"}  — KI-Lagebericht
 - "war_room": {"agent_type":"sysadmin"}  — Blast-Radius (NUR bei critical/high)
 - "timeseries": {"data_source":"checkmk","host":"<host>","service":"<service>","metric_id":"<metric_id>","hours":4}
@@ -540,6 +543,15 @@ def _validate_widgets(raw_widgets: list, situation: dict) -> list[dict]:
                 _VALID_AGG = {"source", "severity", "host", "metadata.host", "hostgroup"}
                 raw_agg = str(cfg.get("agg_field") or "source")
                 cfg["agg_field"] = raw_agg if raw_agg in _VALID_AGG else "source"
+        elif wtype == "gauge":
+            cfg.setdefault("index_pattern", "cs-feed-*")
+            cfg.setdefault("query_string", "severity:critical AND NOT status:resolved")
+            cfg["total_query_string"] = str(cfg.get("total_query_string") or "NOT status:resolved")
+            cfg["unit"] = str(cfg.get("unit") or "%")
+            warn = int(cfg.get("warn") or 70)
+            crit = int(cfg.get("critical") or 90)
+            cfg["warn"] = min(max(warn, 0), 100)
+            cfg["critical"] = min(max(crit, 0), 100)
         elif wtype in ("ai_summary", "war_room"):
             cfg["agent_type"] = cfg.get("agent_type") or "sysadmin"
         elif wtype == "forecast":
