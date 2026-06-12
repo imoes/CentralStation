@@ -104,7 +104,7 @@ export class App implements OnInit, OnDestroy {
   unreadFeedCount = signal<number>(0);
   unreadTicketCount = signal<number>(0);
   // Bridge & Problemboard are position:fixed overlays with their own nav — hide app hamburger there.
-  private static readonly FULLSCREEN_ROUTES = ['/bridge', '/problems'];
+  private static readonly FULLSCREEN_ROUTES = ['/bridge', '/problems', '/cockpit'];
   fullscreenRoute = signal<boolean>(App.isFullscreen(location.pathname));
   private routerSub?: Subscription;
   private badgeInterval: ReturnType<typeof setInterval> | null = null;

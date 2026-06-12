@@ -84,6 +84,7 @@ class AgentConfig:
     worklist_interval_minutes: int = 15
     worklist_size: int = 15
     generative_interval_minutes: int = 15
+    topology_refresh_interval_minutes: int = 10
 
     def __post_init__(self):
         if self.checkmk_locations is None:
@@ -263,6 +264,7 @@ async def get_agent_config(db: AsyncSession) -> AgentConfig:
         worklist_interval_minutes=int(s.get("agent.worklist_interval_minutes") or 15),
         worklist_size=int(s.get("agent.worklist_size") or 15),
         generative_interval_minutes=int(s.get("agent.generative_interval_minutes") or 15),
+        topology_refresh_interval_minutes=int(s.get("agent.topology_refresh_interval_minutes") or 10),
     )
 
 
