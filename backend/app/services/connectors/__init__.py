@@ -16,6 +16,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
     from app.services.connectors.aikb import AIKBConnector
     from app.services.connectors.smtp import SMTPConnector
     from app.services.connectors.gitlab import GitLabConnector
+    from app.services.connectors.awx import AWXConnector
 
     mapping = {
         "checkmk": CheckMKConnector,
@@ -33,6 +34,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
         "aikb": AIKBConnector,
         "smtp": SMTPConnector,
         "gitlab": GitLabConnector,
+        "awx": AWXConnector,
     }
     cls = mapping.get(connector_type)
     if not cls:

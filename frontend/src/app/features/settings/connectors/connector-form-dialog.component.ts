@@ -34,6 +34,7 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'aikb',         label: 'IT-AIKB (Wissensdatenbank)' },
   { value: 'smtp',         label: 'SMTP (E-Mail-Versand)' },
   { value: 'gitlab',       label: 'GitLab (Versionskontrolle)' },
+  { value: 'awx',          label: 'AWX (Ansible Automation)' },
 ];
 
 const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
@@ -108,6 +109,17 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
       hint: 'PAT mit api-Scope für Schreibzugriff (Branches, MRs, Dateien)' },
     { key: 'default_project_id', label: 'Standard-Projekt-ID (optional)', type: 'text',
       hint: 'Numerische ID des Standard-Projekts (aus GitLab-URL)' },
+  ],
+  awx: [
+    { key: 'token',         label: 'Bearer Token (PAT)',    type: 'password',
+      hint: 'Aus AWX: Benutzer → Token → Hinzufügen' },
+    { key: 'verify_ssl',    label: 'SSL verifizieren',       type: 'text',
+      hint: 'true / false (Standard: false für selbstsignierte Zertifikate)' },
+    { key: 'project_id',    label: 'Standard-Projekt-ID',   type: 'text',
+      hint: 'SCM-Projekt für Playbook-Authoring' },
+    { key: 'inventory_id',  label: 'Standard-Inventory-ID', type: 'text' },
+    { key: 'credential_id', label: 'Standard-Credential-ID', type: 'text',
+      hint: 'Machine Credential für SSH-Zugriff' },
   ],
 };
 
