@@ -137,6 +137,12 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
               🎫 TICKET
             </button>
           }
+          @if (activeTabId()) {
+            <button class="rail-pill workbench-pill" (click)="sendToWorkbench()"
+                    title="Session in die Werkbank übertragen">
+              ⬡ WERKBANK
+            </button>
+          }
         </div>
 
         <!-- Conversation area -->
@@ -290,6 +296,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   private _recognition?: any;
   private _abortController?: AbortController;
   private _handoffSub?: Subscription;
+  private _resumeSub?: Subscription;
   private _resolvingSession = false;
   private _sessionCreating = false;
 
@@ -350,6 +357,11 @@ export class ComputerComponent implements OnInit, OnDestroy {
     this._handoffSub = this.computerService.handoff$.subscribe(({ prompt, label, hostKey, externalId }) => {
       this._handleHandoff(prompt, label, hostKey, externalId);
     });
+    this._resumeSub = this.computerService.resume$.subscribe(async (sid) => {
+      this.isOpen.set(true);
+      await this.loadSessions();
+      this.selectTab(sid);
+    });
     this.loadSessions();
   }
 
@@ -406,6 +418,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
     this._ttsAudio?.pause();
     this._abortController?.abort();
     this._handoffSub?.unsubscribe();
+    this._resumeSub?.unsubscribe();
   }
 
   // ── Panel controls ────────────────────────────────────────────────
@@ -675,6 +688,24 @@ export class ComputerComponent implements OnInit, OnDestroy {
       body: JSON.stringify({ label: v }),
     });
     this.sessions.update(ss => ss.map(s => s.session_id === sid ? { ...s, label: v } : s));
+  }
+
+  async sendToWorkbench(): Promise<void> {
+    const sid = this.activeTabId();
+    if (!sid) return;
+    const token = this.auth.getAccessToken();
+    const r = await fetch(`${this.apiBase}/sessions/${sid}/to-workbench`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (r.ok) {
+      const data = await r.json();
+      if (data.already_linked) {
+        this.router.navigate(['/kanban']);
+      } else {
+        this.router.navigate(['/kanban']);
+      }
+    }
   }
 
   async deleteSession(): Promise<void> {

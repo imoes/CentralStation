@@ -247,6 +247,16 @@
     }
   }
 
+  &.workbench-pill {
+    background: #336699;
+    color: #fff;
+    margin-top: 2px;
+
+    &:hover {
+      background: #4488bb;
+    }
+  }
+
   &.rail-edit {
     background: #222;
     color: #ffcc99;

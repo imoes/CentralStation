@@ -13,8 +13,14 @@ export interface ComputerHandoff {
 @Injectable({ providedIn: 'root' })
 export class ComputerService {
   readonly handoff$ = new Subject<ComputerHandoff>();
+  /** Resume an existing persisted session by its session_id. */
+  readonly resume$ = new Subject<string>();
 
   openWithContext(prompt: string, label?: string, hostKey?: string, externalId?: string): void {
     this.handoff$.next({ prompt, label, hostKey, externalId });
+  }
+
+  resumeSession(sessionId: string): void {
+    this.resume$.next(sessionId);
   }
 }
