@@ -246,6 +246,22 @@
       background: #ffdd99;
     }
   }
+
+  &.rail-edit {
+    background: #222;
+    color: #ffcc99;
+    border: 1px solid #ff9933;
+    outline: none;
+    width: 140px;
+    padding: 5px 10px 5px 12px;
+    font-family: 'Antonio', sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    cursor: text;
+    white-space: nowrap;
+    overflow: hidden;
+  }
 }
 
 .msg-badge {

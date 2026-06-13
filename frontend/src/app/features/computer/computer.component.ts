@@ -94,15 +94,25 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
         <div class="session-rail">
           <div class="rail-head">SESSIONS</div>
           @for (s of sessions(); track s.session_id) {
-            <button class="rail-pill"
-                    [class.active]="s.session_id === activeTabId()"
-                    (click)="selectTab(s.session_id)"
-                    [title]="s.label">
-              {{ s.label }}
-              @if (s.msg_count > 0) {
-                <span class="msg-badge">{{ s.msg_count }}</span>
-              }
-            </button>
+            @if (editingSid() === s.session_id) {
+              <input class="rail-pill rail-edit"
+                     [value]="s.label"
+                     (keydown.enter)="renameSession(s.session_id, $any($event.target).value)"
+                     (keydown.escape)="editingSid.set(null)"
+                     (blur)="renameSession(s.session_id, $any($event.target).value)"
+                     autofocus>
+            } @else {
+              <button class="rail-pill"
+                      [class.active]="s.session_id === activeTabId()"
+                      (click)="selectTab(s.session_id)"
+                      (dblclick)="editingSid.set(s.session_id)"
+                      [title]="s.label + ' (Doppelklick zum Umbenennen)'">
+                {{ s.label }}
+                @if (s.msg_count > 0) {
+                  <span class="msg-badge">{{ s.msg_count }}</span>
+                }
+              </button>
+            }
           }
           <button class="rail-pill new-pill" (click)="newSession()" title="Neue Session">
             + NEU
@@ -266,6 +276,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   isOpen = signal(false);
   sessions = signal<HermesSession[]>([]);
   activeTabId = signal<string | null>(null);
+  editingSid = signal<string | null>(null);
   inputText = '';
   loading = signal(false);
   listening = signal(false);
@@ -648,6 +659,22 @@ export class ComputerComponent implements OnInit, OnDestroy {
     } catch (err) {
       console.debug('loadSessionHistory failed:', err);
     }
+  }
+
+  async renameSession(sid: string, label: string): Promise<void> {
+    this.editingSid.set(null);
+    const v = (label || '').trim().slice(0, 120);
+    if (!v) return;
+    const token = this.auth.getAccessToken();
+    await fetch(`${this.apiBase}/sessions/${sid}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ label: v }),
+    });
+    this.sessions.update(ss => ss.map(s => s.session_id === sid ? { ...s, label: v } : s));
   }
 
   async deleteSession(): Promise<void> {

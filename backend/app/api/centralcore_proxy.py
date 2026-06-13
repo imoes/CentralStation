@@ -142,6 +142,7 @@ class _UpdateSessionBody(BaseModel):
     # Re-point a reused handoff session at a new alert. Setting external_id
     # resets resolved so the "✓ GELÖST" button reappears for the new alert.
     external_id: str | None = None
+    label: str | None = None
 
 
 @router.patch("/sessions/{sid}")
@@ -152,15 +153,25 @@ async def update_session(
     db: Annotated[AsyncSession, Depends(get_db)],
     _: None = _ConsoleEnabled,
 ):
-    """Update a session's alert binding (used when a host session is reused
-    for a new alert) so external_id + resolved survive reloads."""
-    await db.execute(
-        update(ComputerSession)
-        .where(ComputerSession.id == sid, ComputerSession.user_id == user.id)
-        .values(external_id=(body.external_id or None), resolved=False)
-    )
-    await db.commit()
-    return {"ok": True, "external_id": body.external_id or None}
+    """Partial update: rename (label) or re-bind to a new alert (external_id).
+    Only fields present in the request body are written."""
+    values: dict = {}
+    if body.label is not None:
+        lbl = body.label.strip()[:120]
+        if lbl:
+            values["label"] = lbl
+    if body.external_id is not None:
+        # Alert re-bind: reset resolved so "✓ GELÖST" reappears for the new alert.
+        values["external_id"] = body.external_id or None
+        values["resolved"] = False
+    if values:
+        await db.execute(
+            update(ComputerSession)
+            .where(ComputerSession.id == sid, ComputerSession.user_id == user.id)
+            .values(**values)
+        )
+        await db.commit()
+    return {"ok": True, **values}
 
 
 @router.delete("/sessions/{sid}")
