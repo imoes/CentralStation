@@ -23,6 +23,7 @@ class WorkSessionCreate(BaseModel):
     jira_key: str | None = None
     jira_issue_id: str | None = None
     alert_id: str | None = None
+    computer_session_id: str | None = None
     category: str | None = None
     subcategory: str | None = None
     impact: str | None = None
@@ -87,6 +88,7 @@ def _to_dict(s: WorkSession, jira_base_url: str | None = None) -> dict:
         "jira_issue_id": s.jira_issue_id,
         "jira_browse_url": browse_url,
         "alert_id": str(s.alert_id) if s.alert_id else None,
+        "computer_session_id": s.computer_session_id,
         "title": s.title,
         "category": s.category,
         "subcategory": s.subcategory,
@@ -209,6 +211,7 @@ async def create_session(
         jira_key=body.jira_key,
         jira_issue_id=body.jira_issue_id,
         alert_id=uuid.UUID(body.alert_id) if body.alert_id else None,
+        computer_session_id=body.computer_session_id,
         category=body.category,
         subcategory=body.subcategory,
         impact=body.impact,
