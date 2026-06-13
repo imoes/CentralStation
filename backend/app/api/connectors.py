@@ -19,7 +19,7 @@ router = APIRouter(prefix="/connectors", tags=["connectors"])
 VALID_TYPES = {
     "checkmk", "graylog", "wazuh", "icinga2", "jira", "jira_sd",
     "o365", "teams", "prometheus", "netbox", "id_generator", "coroot",
-    "aikb", "smtp", "gitlab",
+    "aikb", "smtp", "gitlab", "awx",
 }  # keep in sync with get_connector() factory
 USER_MANAGED_TYPES = {"o365", "teams", "jira", "jira_sd", "gitlab"}
 
