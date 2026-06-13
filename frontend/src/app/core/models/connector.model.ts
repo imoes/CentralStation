@@ -2,7 +2,7 @@ export type ConnectorType =
   | 'checkmk' | 'graylog' | 'wazuh'
   | 'jira' | 'jira_sd'
   | 'o365' | 'teams' | 'prometheus' | 'netbox'
-  | 'id_generator' | 'coroot' | 'aikb' | 'smtp' | 'gitlab';
+  | 'id_generator' | 'coroot' | 'aikb' | 'smtp' | 'gitlab' | 'awx';
 
 export interface Connector {
   id: string;
