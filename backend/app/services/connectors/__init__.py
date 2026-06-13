@@ -15,6 +15,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
     from app.services.connectors.coroot import CorootConnector
     from app.services.connectors.aikb import AIKBConnector
     from app.services.connectors.smtp import SMTPConnector
+    from app.services.connectors.gitlab import GitLabConnector
 
     mapping = {
         "checkmk": CheckMKConnector,
@@ -31,6 +32,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
         "coroot": CorootConnector,
         "aikb": AIKBConnector,
         "smtp": SMTPConnector,
+        "gitlab": GitLabConnector,
     }
     cls = mapping.get(connector_type)
     if not cls:

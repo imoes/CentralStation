@@ -17,7 +17,7 @@ import { environment } from '../../../../environments/environment';
 
 interface CredField { key: string; label: string; type: 'text' | 'password' | 'textarea' | '_hidden'; hint?: string }
 interface CorootProject { id: string; name: string; selected: boolean }
-const PERSONAL_CONNECTOR_TYPES: ConnectorType[] = ['jira', 'jira_sd', 'o365', 'teams'];
+const PERSONAL_CONNECTOR_TYPES: ConnectorType[] = ['jira', 'jira_sd', 'o365', 'teams', 'gitlab'];
 
 const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'checkmk',      label: 'CheckMK' },
@@ -33,6 +33,7 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'coroot',       label: 'Coroot (Observability)' },
   { value: 'aikb',         label: 'IT-AIKB (Wissensdatenbank)' },
   { value: 'smtp',         label: 'SMTP (E-Mail-Versand)' },
+  { value: 'gitlab',       label: 'GitLab (Versionskontrolle)' },
 ];
 
 const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
@@ -101,6 +102,12 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     { key: 'password',   label: 'Passwort',          type: 'password' },
     { key: 'from_email', label: 'Absender-E-Mail',   type: 'text',     hint: 'z.B. centralstation@example.com' },
     { key: 'from_name',  label: 'Absender-Name',     type: 'text',     hint: 'z.B. CentralStation' },
+  ],
+  gitlab: [
+    { key: 'token',              label: 'Personal Access Token', type: 'password',
+      hint: 'PAT mit api-Scope für Schreibzugriff (Branches, MRs, Dateien)' },
+    { key: 'default_project_id', label: 'Standard-Projekt-ID (optional)', type: 'text',
+      hint: 'Numerische ID des Standard-Projekts (aus GitLab-URL)' },
   ],
 };
 
