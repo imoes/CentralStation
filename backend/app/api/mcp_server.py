@@ -607,6 +607,138 @@ async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
         }
 
 
+# ── GitLab tools ──────────────────────────────────────────────────
+
+async def _get_gitlab_connector(user_id: str | None = None):
+    """Load the first enabled GitLab connector (user-owned if user_id given, else any)."""
+    from sqlalchemy import select
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.gitlab import GitLabConnector
+
+    async with AsyncSessionLocal() as db:
+        q = select(ConnectorConfig).where(
+            ConnectorConfig.type == "gitlab",
+            ConnectorConfig.enabled.is_(True),
+        )
+        if user_id:
+            q = q.where(ConnectorConfig.owner_user_id == user_id)
+        result = await db.execute(q.limit(1))
+        cfg = result.scalar_one_or_none()
+        if not cfg:
+            return None
+        creds = decrypt_credentials(cfg.encrypted_credentials)
+        return GitLabConnector(base_url=cfg.base_url, credentials=creds)
+
+
+@mcp.tool()
+async def gitlab_list_projects(search: str = "") -> dict:
+    """List GitLab projects the configured PAT has access to.
+
+    Args:
+        search: Optional keyword to filter projects by name.
+    """
+    gl = await _get_gitlab_connector()
+    if not gl:
+        return {"error": "No GitLab connector configured"}
+    projects = await gl.list_projects(search=search)
+    return {
+        "count": len(projects),
+        "projects": [{"id": p["id"], "name": p["name_with_namespace"], "web_url": p.get("web_url")} for p in projects],
+    }
+
+
+@mcp.tool()
+async def gitlab_get_file(project: str, path: str, ref: str = "main") -> dict:
+    """Read a file from a GitLab repository.
+
+    Args:
+        project: Numeric project ID or URL-encoded path (e.g. "group/repo").
+        path: File path within the repository (e.g. "README.md").
+        ref: Branch, tag, or commit SHA (default: main).
+    """
+    gl = await _get_gitlab_connector()
+    if not gl:
+        return {"error": "No GitLab connector configured"}
+    import base64
+    data = await gl.get_file(project, path, ref)
+    content = base64.b64decode(data.get("content", "")).decode("utf-8", errors="replace") if data.get("encoding") == "base64" else data.get("content", "")
+    return {"file_name": data.get("file_name"), "ref": ref, "content": content[:4000]}
+
+
+@mcp.tool()
+async def gitlab_list_merge_requests(project: str, state: str = "opened") -> dict:
+    """List merge requests for a GitLab project.
+
+    Args:
+        project: Numeric project ID or URL-encoded path.
+        state: Filter by state: opened, closed, merged, all.
+    """
+    gl = await _get_gitlab_connector()
+    if not gl:
+        return {"error": "No GitLab connector configured"}
+    mrs = await gl.list_merge_requests(project, state=state)
+    return {
+        "count": len(mrs),
+        "merge_requests": [{"iid": m["iid"], "title": m["title"], "state": m["state"], "web_url": m.get("web_url")} for m in mrs],
+    }
+
+
+@mcp.tool()
+async def gitlab_list_pipelines(project: str, ref: str = "main") -> dict:
+    """List recent pipelines for a GitLab project branch.
+
+    Args:
+        project: Numeric project ID or URL-encoded path.
+        ref: Branch or tag name (default: main).
+    """
+    gl = await _get_gitlab_connector()
+    if not gl:
+        return {"error": "No GitLab connector configured"}
+    pipes = await gl.list_pipelines(project, ref=ref)
+    return {
+        "count": len(pipes),
+        "pipelines": [{"id": p["id"], "status": p["status"], "ref": p.get("ref"), "web_url": p.get("web_url")} for p in pipes],
+    }
+
+
+@mcp.tool()
+async def gitlab_create_branch(project: str, branch: str, ref: str = "main") -> dict:
+    """Create a new branch in a GitLab repository.
+
+    SCHREIBOPERATION — nur nach Bestätigung des Nutzers ausführen.
+
+    Args:
+        project: Numeric project ID or URL-encoded path.
+        branch: Name of the new branch.
+        ref: Source branch or commit to branch from (default: main).
+    """
+    gl = await _get_gitlab_connector()
+    if not gl:
+        return {"error": "No GitLab connector configured"}
+    result = await gl.create_branch(project, branch, ref)
+    return {"name": result.get("name"), "commit": result.get("commit", {}).get("id")}
+
+
+@mcp.tool()
+async def gitlab_create_merge_request(project: str, source_branch: str, target_branch: str, title: str) -> dict:
+    """Open a merge request in a GitLab project.
+
+    SCHREIBOPERATION — nur nach Bestätigung des Nutzers ausführen.
+
+    Args:
+        project: Numeric project ID or URL-encoded path.
+        source_branch: Branch to merge from.
+        target_branch: Branch to merge into (e.g. main).
+        title: MR title.
+    """
+    gl = await _get_gitlab_connector()
+    if not gl:
+        return {"error": "No GitLab connector configured"}
+    mr = await gl.create_merge_request(project, source_branch, target_branch, title)
+    return {"iid": mr.get("iid"), "title": mr.get("title"), "web_url": mr.get("web_url"), "state": mr.get("state")}
+
+
 # ── DB session helper ──────────────────────────────────────────────
 
 async def _get_db_session():
