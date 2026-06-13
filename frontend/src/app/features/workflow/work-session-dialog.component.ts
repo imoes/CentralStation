@@ -454,6 +454,76 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
           </div>
         </mat-tab>
 
+        <!-- ── Tab: GitLab ── -->
+        <mat-tab label="GitLab">
+          <div class="tab-content">
+            @if (gitlabStatus()) {
+              @if (gitlabStatus()?.linked) {
+                <div class="gitlab-info">
+                  <div class="info-row">
+                    <mat-icon>call_split</mat-icon>
+                    <span>Branch: <strong>{{ gitlabStatus()?.branch ?? '—' }}</strong></span>
+                  </div>
+                  @if (gitlabStatus()?.mr_url) {
+                    <div class="info-row">
+                      <mat-icon>merge_type</mat-icon>
+                      <a [href]="gitlabStatus()?.mr_url" target="_blank">
+                        MR !{{ gitlabStatus()?.mr_iid }} — {{ gitlabStatus()?.mr_state }}
+                      </a>
+                    </div>
+                  }
+                  @for (p of gitlabStatus()?.pipelines ?? []; track p.id) {
+                    <div class="info-row">
+                      <mat-icon>smart_toy</mat-icon>
+                      <span>Pipeline #{{ p.id }}: <strong>{{ p.status }}</strong></span>
+                    </div>
+                  }
+                </div>
+              }
+            }
+
+            <div class="gitlab-actions">
+              @if (!gitlabStatus()?.branch) {
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>Projekt-ID</mat-label>
+                  <input matInput [(ngModel)]="glProjectId" placeholder="z.B. 211">
+                </mat-form-field>
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>Branch-Name</mat-label>
+                  <input matInput [(ngModel)]="glBranch" placeholder="z.B. fix/my-session">
+                </mat-form-field>
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>Von Branch (ref)</mat-label>
+                  <input matInput [(ngModel)]="glRef" placeholder="main">
+                </mat-form-field>
+                <button mat-flat-button color="primary" (click)="createGitLabBranch()" [disabled]="!glProjectId || !glBranch">
+                  <mat-icon>call_split</mat-icon> Branch anlegen
+                </button>
+              }
+
+              @if (gitlabStatus()?.branch && !gitlabStatus()?.mr_iid) {
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>MR-Titel</mat-label>
+                  <input matInput [(ngModel)]="glMrTitle" placeholder="z.B. Fix: ...">
+                </mat-form-field>
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>Ziel-Branch</mat-label>
+                  <input matInput [(ngModel)]="glTargetBranch" placeholder="main">
+                </mat-form-field>
+                <button mat-flat-button color="accent" (click)="openGitLabMR()" [disabled]="!glMrTitle">
+                  <mat-icon>merge_type</mat-icon> Merge Request öffnen
+                </button>
+              }
+
+              @if (gitlabStatus()?.branch) {
+                <button mat-stroked-button (click)="loadGitLabStatus()" style="margin-top:8px">
+                  <mat-icon>refresh</mat-icon> Status aktualisieren
+                </button>
+              }
+            </div>
+          </div>
+        </mat-tab>
+
       </mat-tab-group>
       }
     </div>
@@ -524,13 +594,24 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
     .solution-section strong { display: block; margin-bottom: 4px; }
     .rag-item { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 0; }
     .rag-item mat-icon { font-size: 14px; width: 14px; height: 14px; }
+    .gitlab-info { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
+    .gitlab-actions { display: flex; flex-direction: column; gap: 8px; }
+    .info-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .info-row mat-icon { font-size: 18px; width: 18px; height: 18px; color: var(--mat-sys-primary); }
   `],
 })
 export class WorkSessionDialogComponent implements OnInit {
   session = signal<any | null>(null);
   jiraDetail = signal<any | null>(null);
+  gitlabStatus = signal<any | null>(null);
   loading = signal(true);
   jiraRefreshing = signal(false);
+
+  glProjectId = '';
+  glBranch = '';
+  glRef = 'main';
+  glMrTitle = '';
+  glTargetBranch = 'main';
 
   form: any = {
     title: '', category: null, subcategory: '', impact: null, urgency: null,
@@ -620,6 +701,9 @@ export class WorkSessionDialogComponent implements OnInit {
       this.http.get<any>(`${environment.apiUrl}/jira-view/issue/${s.jira_key}`)
         .subscribe({ next: d => this.jiraDetail.set(d), error: () => {} });
     }
+    if (s.gitlab_project_id || s.gitlab_branch) {
+      this.loadGitLabStatus();
+    }
     this.form = {
       title: s.title,
       category: s.category,
@@ -631,6 +715,38 @@ export class WorkSessionDialogComponent implements OnInit {
       resolution_type: s.resolution_type ?? 'permanent_fix',
       root_cause: s.root_cause ?? '',
     };
+  }
+
+  loadGitLabStatus() {
+    if (!this.sessionId) return;
+    this.http.get<any>(`${environment.apiUrl}/workflow/${this.sessionId}/gitlab/status`)
+      .subscribe({ next: d => this.gitlabStatus.set(d), error: () => {} });
+  }
+
+  createGitLabBranch() {
+    if (!this.sessionId) return;
+    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/gitlab/branch`, {
+      project_id: this.glProjectId,
+      branch: this.glBranch,
+      ref: this.glRef || 'main',
+    }).subscribe({
+      next: () => { this.snackBar.open('Branch angelegt', '', { duration: 2000 }); this.loadSession(this.sessionId!); },
+      error: (e) => this.snackBar.open('Fehler: ' + (e?.error?.detail ?? e.message), '', { duration: 3000 }),
+    });
+  }
+
+  openGitLabMR() {
+    if (!this.sessionId) return;
+    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/gitlab/mr`, {
+      target_branch: this.glTargetBranch || 'main',
+      title: this.glMrTitle,
+    }).subscribe({
+      next: (d) => {
+        this.snackBar.open('MR erstellt', 'Öffnen', { duration: 4000 }).onAction().subscribe(() => window.open(d.url, '_blank'));
+        this.loadSession(this.sessionId!);
+      },
+      error: (e) => this.snackBar.open('Fehler: ' + (e?.error?.detail ?? e.message), '', { duration: 3000 }),
+    });
   }
 
   saveOverview() {
