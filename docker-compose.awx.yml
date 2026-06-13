@@ -1,0 +1,71 @@
+# AWX (Ansible Automation Platform) — optionaler Override-Stack
+#
+# Starten:
+#   docker compose -f docker-compose.yml -f docker-compose.awx.yml up -d
+#
+# AWX-UI:  http://localhost:8052
+# Default-User: admin / Password aus AWX_ADMIN_PASSWORD (.env)
+#
+# Playbooks: ./playbooks/  wird in AWX als "Local" SCM-Projekt eingehängt.
+# In AWX anlegen: Projekte → Neu → SCM-Typ: Manual → Playbook-Verzeichnis: local
+#
+# Nach dem ersten Start dauert AWX 2–5 Minuten bis es vollständig gestartet ist.
+# Datenbank-Migrations-Log verfolgen:
+#   docker compose -f docker-compose.yml -f docker-compose.awx.yml logs -f awx
+
+services:
+
+  awx-db:
+    image: postgres:14-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: awx
+      POSTGRES_USER: awx
+      POSTGRES_PASSWORD: ${AWX_DB_PASSWORD:-awxdbpass}
+    volumes:
+      - ./data/awx-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U awx"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  awx-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save ""
+
+  awx:
+    image: quay.io/ansible/awx:21.14.0
+    restart: unless-stopped
+    hostname: awxweb
+    user: root
+    ports:
+      - "127.0.0.1:8052:8052"
+    environment:
+      # Datenbank
+      DATABASE_HOST: awx-db
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: awx
+      DATABASE_USER: awx
+      DATABASE_PASSWORD: ${AWX_DB_PASSWORD:-awxdbpass}
+      # Redis
+      REDIS_HOST: awx-redis
+      REDIS_PORT: "6379"
+      # AWX
+      AWX_ADMIN_USER: admin
+      AWX_ADMIN_PASSWORD: ${AWX_ADMIN_PASSWORD:-changeme}
+      SECRET_KEY: ${AWX_SECRET_KEY:-awxsecretkey1234567890abcdef}
+      # Deaktiviert HTTPS-Redirect im Dev-Betrieb
+      DJANGO_SUPERUSER_EMAIL: admin@localhost
+    volumes:
+      # Playbooks — als "Manual" SCM-Projekt in AWX registrieren:
+      # Projekte → Neu → Typ: Manual → Playbook-Verzeichnis: "local"
+      - ./playbooks:/var/lib/awx/projects/local
+      # Persistenter AWX-Storage (Konfiguration, Fact-Cache)
+      - ./data/awx:/var/lib/awx
+    depends_on:
+      awx-db:
+        condition: service_healthy
+      awx-redis:
+        condition: service_started
