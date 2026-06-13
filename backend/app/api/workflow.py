@@ -42,6 +42,10 @@ class WorkSessionUpdate(BaseModel):
     resolution_type: str | None = None
     root_cause: str | None = None
     resolution_summary: str | None = None
+    gitlab_project_id: str | None = None
+    gitlab_branch: str | None = None
+    gitlab_mr_iid: int | None = None
+    gitlab_mr_url: str | None = None
 
 
 class WorkNoteAdd(BaseModel):
@@ -89,6 +93,10 @@ def _to_dict(s: WorkSession, jira_base_url: str | None = None) -> dict:
         "jira_browse_url": browse_url,
         "alert_id": str(s.alert_id) if s.alert_id else None,
         "computer_session_id": s.computer_session_id,
+        "gitlab_project_id": s.gitlab_project_id,
+        "gitlab_branch": s.gitlab_branch,
+        "gitlab_mr_iid": s.gitlab_mr_iid,
+        "gitlab_mr_url": s.gitlab_mr_url,
         "title": s.title,
         "category": s.category,
         "subcategory": s.subcategory,
@@ -470,6 +478,153 @@ async def auto_categorize(
 
 
 # ── Mail Analysis (stateless) ─────────────────────────────────────────────────────
+
+# ── GitLab integration ──────────────────────────────────────────────
+
+class GitLabBranchRequest(BaseModel):
+    project_id: str
+    branch: str
+    ref: str = "main"
+
+
+class GitLabMRRequest(BaseModel):
+    target_branch: str
+    title: str
+
+
+@router.post("/{session_id}/gitlab/branch", status_code=201)
+async def create_gitlab_branch(
+    session_id: uuid.UUID,
+    body: GitLabBranchRequest,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.gitlab import GitLabConnector
+
+    s = await _get_session(session_id, user.id, db)
+
+    result = await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.type == "gitlab",
+            ConnectorConfig.enabled.is_(True),
+        ).where(
+            (ConnectorConfig.owner_user_id == user.id) |
+            (ConnectorConfig.owner_user_id.is_(None))
+        ).limit(1)
+    )
+    cfg = result.scalar_one_or_none()
+    if not cfg:
+        from fastapi import HTTPException
+        raise HTTPException(503, "No GitLab connector configured")
+
+    creds = decrypt_credentials(cfg.encrypted_credentials)
+    gl = GitLabConnector(base_url=cfg.base_url, credentials=creds)
+    branch_data = await gl.create_branch(body.project_id, body.branch, body.ref)
+
+    s.gitlab_project_id = body.project_id
+    s.gitlab_branch = branch_data.get("name", body.branch)
+    await db.commit()
+    return {"branch": s.gitlab_branch, "project_id": s.gitlab_project_id}
+
+
+@router.post("/{session_id}/gitlab/mr", status_code=201)
+async def create_gitlab_mr(
+    session_id: uuid.UUID,
+    body: GitLabMRRequest,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.gitlab import GitLabConnector
+
+    s = await _get_session(session_id, user.id, db)
+    if not s.gitlab_project_id or not s.gitlab_branch:
+        from fastapi import HTTPException
+        raise HTTPException(400, "Session has no GitLab project/branch linked yet")
+
+    result = await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.type == "gitlab",
+            ConnectorConfig.enabled.is_(True),
+        ).where(
+            (ConnectorConfig.owner_user_id == user.id) |
+            (ConnectorConfig.owner_user_id.is_(None))
+        ).limit(1)
+    )
+    cfg = result.scalar_one_or_none()
+    if not cfg:
+        from fastapi import HTTPException
+        raise HTTPException(503, "No GitLab connector configured")
+
+    creds = decrypt_credentials(cfg.encrypted_credentials)
+    gl = GitLabConnector(base_url=cfg.base_url, credentials=creds)
+    mr = await gl.create_merge_request(
+        s.gitlab_project_id, s.gitlab_branch, body.target_branch, body.title
+    )
+
+    s.gitlab_mr_iid = mr.get("iid")
+    s.gitlab_mr_url = mr.get("web_url")
+    await db.commit()
+    return {"iid": s.gitlab_mr_iid, "url": s.gitlab_mr_url, "title": mr.get("title")}
+
+
+@router.get("/{session_id}/gitlab/status")
+async def get_gitlab_status(
+    session_id: uuid.UUID,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.gitlab import GitLabConnector
+
+    s = await _get_session(session_id, user.id, db)
+    if not s.gitlab_project_id:
+        return {"linked": False}
+
+    result = await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.type == "gitlab",
+            ConnectorConfig.enabled.is_(True),
+        ).limit(1)
+    )
+    cfg = result.scalar_one_or_none()
+    if not cfg:
+        return {"linked": True, "error": "No GitLab connector"}
+
+    creds = decrypt_credentials(cfg.encrypted_credentials)
+    gl = GitLabConnector(base_url=cfg.base_url, credentials=creds)
+
+    pipelines = []
+    mr_state = None
+    if s.gitlab_branch:
+        try:
+            pipelines = await gl.list_pipelines(s.gitlab_project_id, ref=s.gitlab_branch)
+            pipelines = pipelines[:3]
+        except Exception:
+            pass
+    if s.gitlab_mr_iid:
+        try:
+            mrs = await gl.list_merge_requests(s.gitlab_project_id, state="all")
+            mr = next((m for m in mrs if m["iid"] == s.gitlab_mr_iid), None)
+            if mr:
+                mr_state = mr.get("state")
+        except Exception:
+            pass
+
+    return {
+        "linked": True,
+        "project_id": s.gitlab_project_id,
+        "branch": s.gitlab_branch,
+        "mr_iid": s.gitlab_mr_iid,
+        "mr_url": s.gitlab_mr_url,
+        "mr_state": mr_state,
+        "pipelines": [{"id": p["id"], "status": p["status"]} for p in pipelines],
+    }
+
 
 @router.post("/analyze-mail")
 async def analyze_mail(
