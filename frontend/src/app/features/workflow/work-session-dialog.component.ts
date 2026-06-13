@@ -1,4 +1,4 @@
-import { Component, Inject, OnInit, signal } from '@angular/core';
+import { Component, Inject, OnInit, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -16,7 +16,10 @@ import { MatExpansionModule } from '@angular/material/expansion';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatBadgeModule } from '@angular/material/badge';
+import { Router } from '@angular/router';
+import { inject } from '@angular/core';
 import { environment } from '../../../environments/environment';
+import { ComputerService } from '../../core/services/computer.service';
 
 const CLOSURE_CODES = [
   { value: 'solved_permanently', label: 'Dauerlösung' },
@@ -73,6 +76,11 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
           <span class="status-badge">{{ statusLabel() }}</span>
         </div>
         <div class="header-right">
+          @if (hasComputerSession()) {
+            <button mat-stroked-button (click)="resumeInComputer()" style="margin-right:8px" title="Session im Computer fortsetzen">
+              <mat-icon>terminal</mat-icon> Im Computer fortsetzen
+            </button>
+          }
           <button mat-icon-button (click)="dialogRef.close()"><mat-icon>close</mat-icon></button>
         </div>
       </div>
@@ -558,6 +566,10 @@ export class WorkSessionDialogComponent implements OnInit {
   ];
 
   private sessionId: string | null = null;
+  private router = inject(Router);
+  private computerService = inject(ComputerService);
+
+  hasComputerSession = computed(() => !!this.session()?.computer_session_id);
 
   constructor(
     public dialogRef: MatDialogRef<WorkSessionDialogComponent>,
@@ -565,6 +577,14 @@ export class WorkSessionDialogComponent implements OnInit {
     private http: HttpClient,
     private snackBar: MatSnackBar,
   ) {}
+
+  resumeInComputer(): void {
+    const sid = this.session()?.computer_session_id;
+    if (!sid) return;
+    this.dialogRef.close();
+    this.computerService.resumeSession(sid);
+    this.router.navigate(['/computer']);
+  }
 
   ngOnInit() {
     if (this.dialogData?.id) {

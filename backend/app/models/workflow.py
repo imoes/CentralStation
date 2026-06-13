@@ -207,6 +207,7 @@ class WorkSession(Base):
     alert_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("alerts.id", ondelete="SET NULL")
     )
+    computer_session_id: Mapped[str | None] = mapped_column(String(64), index=True, default=None)
     title: Mapped[str] = mapped_column(String(512))
     category: Mapped[str | None] = mapped_column(String(100))
     subcategory: Mapped[str | None] = mapped_column(String(100))

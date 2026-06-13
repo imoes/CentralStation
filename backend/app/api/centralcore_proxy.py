@@ -199,6 +199,44 @@ async def delete_session(
     return {"ok": True}
 
 
+@router.post("/sessions/{sid}/to-workbench", status_code=201)
+async def session_to_workbench(
+    sid: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: None = _ConsoleEnabled,
+):
+    """Transfer a Computer session to the Werkbank (Kanban). Idempotent."""
+    from app.models.workflow import WorkSession
+
+    cs = (await db.execute(
+        select(ComputerSession).where(ComputerSession.id == sid, ComputerSession.user_id == user.id)
+    )).scalar_one_or_none()
+    if not cs:
+        raise HTTPException(404, "Session not found")
+
+    existing = (await db.execute(
+        select(WorkSession).where(
+            WorkSession.computer_session_id == sid,
+            WorkSession.user_id == user.id,
+        )
+    )).scalars().first()
+    if existing:
+        return {"id": str(existing.id), "already_linked": True}
+
+    ws = WorkSession(
+        user_id=user.id,
+        title=cs.label,
+        computer_session_id=sid,
+        status="in_progress",
+        work_notes=[],
+    )
+    db.add(ws)
+    await db.commit()
+    await db.refresh(ws)
+    return {"id": str(ws.id), "already_linked": False}
+
+
 @router.get("/sessions/{sid}/history", dependencies=[_ConsoleEnabled])
 async def get_history(sid: str):
     async with httpx.AsyncClient(timeout=10.0) as client:
