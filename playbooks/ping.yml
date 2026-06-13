@@ -1,0 +1,8 @@
+---
+# Minimales Test-Playbook — "Bin ich erreichbar?" Gesundheitscheck
+- name: Ping Test
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Ping
+      ansible.builtin.ping:
