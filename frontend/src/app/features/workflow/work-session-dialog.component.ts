@@ -76,6 +76,9 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
           <span class="status-badge">{{ statusLabel() }}</span>
         </div>
         <div class="header-right">
+          <button mat-stroked-button (click)="openInWorkbench()" style="margin-right:8px" title="IDE, Terminal & Git in der Werkbank öffnen">
+            <mat-icon>construction</mat-icon> In Werkbank öffnen
+          </button>
           @if (hasComputerSession()) {
             <button mat-stroked-button (click)="resumeInComputer()" style="margin-right:8px" title="Session im Computer fortsetzen">
               <mat-icon>terminal</mat-icon> Im Computer fortsetzen
@@ -665,6 +668,13 @@ export class WorkSessionDialogComponent implements OnInit {
     this.dialogRef.close();
     this.computerService.resumeSession(sid);
     this.router.navigate(['/computer']);
+  }
+
+  openInWorkbench(): void {
+    const id = this.session()?.id;
+    if (!id) return;
+    this.dialogRef.close();
+    this.router.navigate(['/workbench', id]);
   }
 
   ngOnInit() {
