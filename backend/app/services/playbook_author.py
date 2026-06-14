@@ -112,7 +112,6 @@ async def publish_playbook(
     )).scalar_one_or_none()
 
     if gl_cfg:
-        project_id = (await get_setting(db, "awx.playbook_repo_project")) or gl_cfg.encrypted_credentials  # fallback
         try:
             project_id = (await get_setting(db, "awx.playbook_repo_project"))
             branch = (await get_setting(db, "awx.playbook_repo_branch")) or "main"

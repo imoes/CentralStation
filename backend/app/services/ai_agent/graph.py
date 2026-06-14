@@ -73,6 +73,7 @@ async def collect_data(state: dict, db: Any) -> dict:
             "severity":      a.severity,
             "title":         a.title,
             "body":          a.body or "",
+            "external_id":   a.external_id,
             "host":          meta.get("host") or meta.get("agent") or meta.get("container_name") or "",
             "agent":         meta.get("agent") or "",
             "metadata":      meta,
@@ -704,14 +705,23 @@ async def act(state: dict, db: Any) -> dict:
     remediation_proposals: list[str] = []
     try:
         from app.services.remediation_matcher import propose_remediation
+        # Map host → external_id from the analyzed alerts so the learning loop
+        # (which keys on external_id) can write back to OpenSearch/AlertComment.
+        host_to_eid: dict[str, str] = {}
+        for a in state.get("enriched_alerts", []):
+            h = (a.get("host") or a.get("agent") or "").strip()
+            eid = a.get("external_id")
+            if h and eid and h not in host_to_eid:
+                host_to_eid[h] = eid
         for finding in analysis.findings:
             if getattr(finding, "severity", "low") not in ("critical", "high"):
                 continue
+            f_host = getattr(finding, "host", "") or ""
             proposal = await propose_remediation(
                 finding_title=getattr(finding, "title", str(finding)[:200]),
                 rationale=getattr(finding, "description", ""),
-                host=getattr(finding, "host", ""),
-                external_id=getattr(finding, "alert_external_id", None),
+                host=f_host,
+                external_id=host_to_eid.get(f_host.strip()),
                 analysis_id=record.id,
                 db=db,
             )

@@ -85,14 +85,14 @@ def _build_summary(proposal: Any, succeeded: bool) -> str:
 
 
 async def _write_alert_comment(external_id: str, text: str, db: Any) -> None:
-    from datetime import datetime, timezone
     from app.models.workflow import AlertComment
 
     db.add(AlertComment(
         external_id=external_id,
-        body=text,
+        user_id=None,
+        user_name="Maschinenraum (KI)",
         kind="ai",
-        created_at=datetime.now(timezone.utc),
+        body=text[:2000],
     ))
     await db.commit()
 
