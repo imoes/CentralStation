@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_db
-from app.models.remediation import RemediationProposal
+from app.models.remediation import PlaybookDraft, RemediationProposal
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/remediations", tags=["remediations"])
@@ -222,6 +222,112 @@ async def _poll_job(proposal_id: str, job_id: int | None, awx) -> None:
 
                 if status in TERMINAL_STATUSES:
                     log.info("remediation %s: job %s finished → %s", proposal_id[:8], job_id, r.status)
+                    try:
+                        from app.services.remediation_learning import record_remediation_outcome
+                        await record_remediation_outcome(uuid.UUID(proposal_id), db)
+                    except Exception as exc:
+                        log.warning("remediation learning failed: %s", exc)
                     return
         except Exception as exc:
             log.warning("remediation poll %s: %s", proposal_id[:8], exc)
+
+
+# ── PlaybookDraft Endpoints ────────────────────────────────────────────────────
+
+def _draft_to_dict(d: PlaybookDraft) -> dict:
+    return {
+        "id": str(d.id),
+        "created_at": d.created_at.isoformat(),
+        "title": d.title,
+        "yaml": d.yaml,
+        "target": d.target,
+        "description": d.description,
+        "status": d.status,
+        "awx_template_id": d.awx_template_id,
+        "created_by": str(d.created_by) if d.created_by else None,
+    }
+
+
+@router.get("/playbooks")
+async def list_playbook_drafts(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    status: str | None = Query(None),
+):
+    _require_sysadmin(user)
+    q = select(PlaybookDraft).order_by(PlaybookDraft.created_at.desc())
+    if status:
+        q = q.where(PlaybookDraft.status == status)
+    result = await db.execute(q.limit(100))
+    return [_draft_to_dict(d) for d in result.scalars().all()]
+
+
+@router.get("/playbooks/{did}")
+async def get_playbook_draft(
+    did: uuid.UUID,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    _require_sysadmin(user)
+    d = (await db.execute(select(PlaybookDraft).where(PlaybookDraft.id == did))).scalar_one_or_none()
+    if not d:
+        raise HTTPException(404, "Not found")
+    return _draft_to_dict(d)
+
+
+class _AuthorBody(BaseModel):
+    task_description: str
+    context: str = ""
+
+
+@router.post("/playbooks", status_code=201)
+async def create_playbook_draft(
+    body: _AuthorBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Ask the LLM to author a new Ansible playbook draft."""
+    _require_sysadmin(user)
+    from app.services.playbook_author import author_playbook
+
+    draft = await author_playbook(
+        task_description=body.task_description,
+        context=body.context,
+        db=db,
+        created_by=user.id,
+    )
+    if not draft:
+        raise HTTPException(503, "LLM not configured or playbook authoring failed")
+    await db.commit()
+    return _draft_to_dict(draft)
+
+
+@router.post("/playbooks/{did}/reject")
+async def reject_playbook_draft(
+    did: uuid.UUID,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    _require_sysadmin(user)
+    d = (await db.execute(select(PlaybookDraft).where(PlaybookDraft.id == did))).scalar_one_or_none()
+    if not d:
+        raise HTTPException(404, "Not found")
+    d.status = "rejected"
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/playbooks/{did}/approve")
+async def approve_playbook_draft(
+    did: uuid.UUID,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Publish the playbook: commit to GitLab → AWX project sync → create job template."""
+    _require_sysadmin(user)
+    from app.services.playbook_author import publish_playbook
+
+    result = await publish_playbook(draft_id=did, db=db, approved_by=user.id)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result

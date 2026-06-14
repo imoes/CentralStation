@@ -1,0 +1,19 @@
+FROM quay.io/ansible/awx:21.14.0
+
+USER root
+
+# Install Ansible system-wide so it's available for ad-hoc use + AWX execution runner
+RUN pip3 install --no-cache-dir \
+    ansible \
+    ansible-lint \
+    ansible-runner \
+    jmespath \
+    netaddr \
+    boto3 \
+    kubernetes
+
+# Symlink AWX's bundled ansible into PATH as fallback
+RUN ln -sf /var/lib/awx/venv/awx/bin/ansible /usr/local/bin/ansible-awx 2>/dev/null || true
+
+# Verify installation
+RUN ansible --version
