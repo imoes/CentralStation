@@ -41,6 +41,15 @@ def create_refresh_token(data: dict) -> str:
     return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
 
 
+def create_ide_token(data: dict, hours: int = 12) -> str:
+    """Long-lived, IDE-scoped token stored in the cs_ide_token cookie. Decoupled
+    from the short access token so the embedded code-server iframe survives."""
+    payload = data.copy()
+    payload["exp"] = datetime.now(timezone.utc) + timedelta(hours=hours)
+    payload["type"] = "ide"
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
+
+
 def decode_token(token: str) -> dict[str, Any]:
     try:
         return jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
