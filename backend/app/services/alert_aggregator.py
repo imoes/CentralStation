@@ -240,6 +240,15 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
                 app_sev = _APP_LEVEL_SEVERITY.get(app_match.group(1).lower(), "")
                 if app_sev and _sev_rank.get(app_sev, 99) < _sev_rank.get(syslog_severity, 0):
                     syslog_severity = app_sev  # correct the over-escalated severity
+
+            # Drop non-actionable noise. Docker GELF stamps ALL container output as
+            # syslog level=3, so info/low lines slip past the level:<=4 query above;
+            # once body-based reclassification reveals their true level we discard them
+            # (the raw logs remain searchable in Graylog itself). Only warning+ (→ medium,
+            # high, critical) belongs in the feed.
+            if syslog_severity in ("info", "low"):
+                continue
+
             base = (connector.base_url or "").rstrip("/")
             from urllib.parse import quote
             src_host = m.get("source", "")

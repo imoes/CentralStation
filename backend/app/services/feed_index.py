@@ -523,6 +523,11 @@ async def search(
 
     if severity:
         filter_.append({"term": {"severity": severity}})
+    else:
+        # Severity floor: info/low are non-actionable noise and are dropped at
+        # ingestion. Exclude them here too as a safety net (covers any legacy docs
+        # or other sources). An explicit severity= filter can still target them.
+        must_not.append({"terms": {"severity": ["info", "low"]}})
     if status:
         filter_.append({"term": {"status": status}})
     if exclude_resolved:
