@@ -47,6 +47,37 @@ def _to_dict(r: RemediationProposal) -> dict:
     }
 
 
+@router.get("/templates")
+async def list_awx_templates(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Proxy to AWX job templates — used by the Engineering frontend."""
+    _require_sysadmin(user)
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.awx import AWXConnector
+
+    result = await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.type == "awx",
+            ConnectorConfig.enabled.is_(True),
+        ).limit(1)
+    )
+    cfg = result.scalar_one_or_none()
+    if not cfg:
+        return {"templates": []}
+
+    creds = decrypt_credentials(cfg.encrypted_credentials)
+    awx = AWXConnector(base_url=cfg.base_url, credentials=creds)
+    try:
+        templates = await awx.list_job_templates()
+        return {"templates": [{"id": t["id"], "name": t["name"], "description": t.get("description", "")} for t in templates]}
+    except Exception as exc:
+        log.warning("list_awx_templates failed: %s", exc)
+        return {"templates": []}
+
+
 @router.get("")
 async def list_remediations(
     user: CurrentUser,
