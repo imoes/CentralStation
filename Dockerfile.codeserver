@@ -1,0 +1,30 @@
+# Per-user code-server (VS Code in the browser) image for the Werkbank.
+# Provides the Web-IDE, the integrated multi-tab terminal (copy/paste), and
+# native Git. One container is started per user by the backend (app/api/ide.py).
+#
+# Build:  docker compose build codeserver   (tags centralstation-codeserver:latest)
+FROM codercom/code-server:latest
+
+USER root
+
+ARG HTTP_PROXY=http://proxy.ippen.media:80
+ARG HTTPS_PROXY=http://proxy.ippen.media:80
+ARG NO_PROXY=localhost,127.0.0.1,.ippen.media
+
+ENV http_proxy=${HTTP_PROXY} \
+    https_proxy=${HTTPS_PROXY} \
+    no_proxy=${NO_PROXY} \
+    HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY}
+
+# git + ssh client for the integrated terminal & Source-Control workflow
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git openssh-client ca-certificates curl jq \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY entrypoint.codeserver.sh /usr/local/bin/cs-entrypoint.sh
+RUN chmod +x /usr/local/bin/cs-entrypoint.sh
+
+USER coder
+ENTRYPOINT ["/usr/local/bin/cs-entrypoint.sh"]

@@ -63,6 +63,14 @@ services:
       HTTP_PROXY: http://proxy.ippen.media:80
       HTTPS_PROXY: http://proxy.ippen.media:80
       NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,centralcore,.ippen.media
+      # Werkbank Web-IDE: backend orchestrates per-user code-server containers.
+      IDE_IMAGE: centralstation-codeserver:latest
+      IDE_NETWORK: centralstation_default
+      IDE_HOST_SSH_DIR: ${HOME}/.ssh
+      IDE_CONTAINER_PORT: "8080"
+    volumes:
+      # Docker socket so the backend can start/stop per-user cs-ide-* containers.
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       db:
         condition: service_healthy
@@ -126,6 +134,21 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # Build-only service: produces the centralstation-codeserver:latest image.
+  # Per-user containers are started at runtime by the backend (app/api/ide.py),
+  # NOT by compose — hence the "ide" profile keeps it out of `up`.
+  codeserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.codeserver
+      args:
+        HTTP_PROXY: http://proxy.ippen.media:80
+        HTTPS_PROXY: http://proxy.ippen.media:80
+        NO_PROXY: localhost,127.0.0.1,.ippen.media
+    image: centralstation-codeserver:latest
+    profiles: ["ide"]
+    command: ["--version"]
 
   nginx:
     image: nginx:alpine

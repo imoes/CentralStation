@@ -46,6 +46,9 @@ fastmcp>=2.0,<3
 # Email dispatch
 aiosmtplib>=3.0,<4
 
+# Docker SDK — Werkbank orchestrates per-user code-server containers
+docker==7.1.0
+
 # Utils
 python-dotenv==1.0.1
 python-dateutil>=2.9

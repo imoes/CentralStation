@@ -40,6 +40,16 @@ class GitLabConnector(BaseConnector):
                 )
             return ConnectorTestResult(success=False, message=f"HTTP {r.status_code}")
 
+    async def get_project(self, project_id: str | int) -> dict:
+        """Fetch a single project (incl. path_with_namespace, http_url_to_repo)."""
+        async with self._client() as c:
+            r = await c.get(
+                f"{self.api}/projects/{self._encode_path(str(project_id))}",
+                headers=self._hdr(),
+            )
+            r.raise_for_status()
+            return r.json()
+
     async def list_projects(self, search: str = "") -> list[dict]:
         params = {"membership": "true", "per_page": "100"}
         if search:

@@ -212,6 +212,8 @@ class WorkSession(Base):
     gitlab_branch: Mapped[str | None] = mapped_column(String(255), default=None)
     gitlab_mr_iid: Mapped[int | None] = mapped_column(default=None)
     gitlab_mr_url: Mapped[str | None] = mapped_column(String(512), default=None)
+    # Werkbank Web-IDE: folder opened in the per-user code-server container.
+    workspace_path: Mapped[str | None] = mapped_column(String(512), default=None)
     title: Mapped[str] = mapped_column(String(512))
     category: Mapped[str | None] = mapped_column(String(100))
     subcategory: Mapped[str | None] = mapped_column(String(100))
