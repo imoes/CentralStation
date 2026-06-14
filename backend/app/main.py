@@ -45,7 +45,7 @@ logger = logging.getLogger("app.main")
 
 from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, audit, preferences, jira_view, workflow, feed, feed_searches, dashboard_widgets, bridge, help as help_router, hosts, tickets, topology
 from app.api import settings as settings_router
-from app.api import oauth_providers, centralcore_proxy
+from app.api import oauth_providers, centralcore_proxy, remediation
 from app.api.mcp_server import mcp
 from app.core.config import settings
 from app.core.opensearch import close_opensearch
@@ -114,6 +114,7 @@ app.include_router(tickets.router, prefix="/api")
 app.include_router(oauth_providers.router, prefix="/api")
 app.include_router(centralcore_proxy.router, prefix="/api")
 app.include_router(topology.router, prefix="/api")
+app.include_router(remediation.router, prefix="/api")
 app.include_router(ws.router)
 
 # fastmcp sse_app() has no HEAD handler — Hermes probes with HEAD before
