@@ -7,6 +7,27 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
 
 
+class PlaybookDraft(Base):
+    __tablename__ = "playbook_drafts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(512))
+    yaml: Mapped[str] = mapped_column(Text)
+    target: Mapped[str | None] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="drafted", index=True)
+    # drafted → approved → published / rejected
+    awx_template_id: Mapped[int | None] = mapped_column(Integer)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
 class RemediationProposal(Base):
     __tablename__ = "remediation_proposals"
 

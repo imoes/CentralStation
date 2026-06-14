@@ -36,7 +36,10 @@ services:
     command: redis-server --save ""
 
   awx:
-    image: quay.io/ansible/awx:21.14.0
+    build:
+      context: .
+      dockerfile: Dockerfile.awx
+    image: centralstation-awx:latest
     restart: unless-stopped
     hostname: awxweb
     user: root

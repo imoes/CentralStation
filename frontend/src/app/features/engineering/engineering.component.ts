@@ -1,5 +1,6 @@
 import { Component, OnInit, OnDestroy, signal, computed, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatButtonModule } from '@angular/material/button';
@@ -24,11 +25,22 @@ interface Remediation {
   created_at: string;
 }
 
+interface PlaybookDraft {
+  id: string;
+  title: string;
+  yaml: string;
+  target: string | null;
+  description: string | null;
+  status: string;
+  awx_template_id: number | null;
+  created_at: string;
+}
+
 @Component({
   selector: 'cs-engineering',
   standalone: true,
   imports: [
-    CommonModule, RouterLink,
+    CommonModule, FormsModule, RouterLink,
     MatButtonModule, MatIconModule, MatSnackBarModule, MatTooltipModule,
   ],
   template: `
@@ -54,6 +66,9 @@ interface Remediation {
             }
             @if (t.id === 'active' && activeCount() > 0) {
               <span class="tab-badge">{{ activeCount() }}</span>
+            }
+            @if (t.id === 'playbooks' && draftCount() > 0) {
+              <span class="tab-badge">{{ draftCount() }}</span>
             }
           </button>
         }
@@ -168,6 +183,77 @@ interface Remediation {
         </div>
       }
 
+      <!-- ── Playbook Drafts ─────────────────────────────────────── -->
+      @if (activeTab() === 'playbooks') {
+        <div class="panel">
+          <div class="panel-head">
+            PLAYBOOK DRAFTS
+            <button class="refresh-btn" (click)="loadDrafts()" title="Aktualisieren">↻</button>
+          </div>
+
+          <!-- Neuen Draft anfordern -->
+          <div class="author-form">
+            <input class="author-input" [(ngModel)]="newTaskDesc"
+                   placeholder="Aufgabe beschreiben (z.B. 'Nginx-Log rotation einrichten')"
+                   (keydown.enter)="authorPlaybook()" />
+            <input class="author-input" [(ngModel)]="newTaskCtx"
+                   placeholder="Kontext (optional: Betriebssystem, Umgebung, …)" />
+            <button mat-flat-button color="primary" (click)="authorPlaybook()"
+                    [disabled]="!newTaskDesc.trim() || authoringInProgress()">
+              <mat-icon>auto_awesome</mat-icon>
+              KI-Playbook generieren
+            </button>
+            @if (authoringInProgress()) {
+              <span class="muted">Generiere…</span>
+            }
+          </div>
+
+          @if (drafts().length === 0) {
+            <div class="status-row muted">Keine Playbook-Drafts vorhanden.</div>
+          } @else {
+            @for (d of drafts(); track d.id) {
+              <div class="draft-card" [class.draft-published]="d.status === 'published'">
+                <div class="remedy-row1">
+                  <span class="status-pill" [class]="'st-draft-' + d.status">{{ d.status.toUpperCase() }}</span>
+                  <span class="remedy-host">{{ d.title }}</span>
+                  @if (d.target) { <span class="muted">· {{ d.target }}</span> }
+                  <span class="remedy-time muted">{{ d.created_at | date:'dd.MM HH:mm' }}</span>
+                </div>
+                @if (d.description) {
+                  <div class="remedy-rationale muted">{{ d.description }}</div>
+                }
+                <!-- YAML Vorschau -->
+                <details class="yaml-details">
+                  <summary class="yaml-summary">YAML anzeigen</summary>
+                  <pre class="yaml-preview">{{ d.yaml }}</pre>
+                </details>
+                @if (d.status === 'drafted') {
+                  <div class="remedy-actions">
+                    <button mat-flat-button color="primary"
+                            (click)="approveDraft(d)"
+                            [disabled]="publishingDraft().has(d.id)"
+                            matTooltip="In GitLab committen &amp; AWX-Template anlegen">
+                      <mat-icon>upload</mat-icon>
+                      Genehmigen &amp; Publizieren
+                    </button>
+                    <button mat-stroked-button (click)="rejectDraft(d)">
+                      <mat-icon>close</mat-icon>
+                      Ablehnen
+                    </button>
+                  </div>
+                }
+                @if (d.awx_template_id) {
+                  <div class="remedy-template">
+                    <mat-icon class="inline-icon">check_circle</mat-icon>
+                    AWX-Template #{{ d.awx_template_id }} angelegt
+                  </div>
+                }
+              </div>
+            }
+          }
+        </div>
+      }
+
       <!-- ── Template Catalog ───────────────────────────────────── -->
       @if (activeTab() === 'catalog') {
         <div class="panel">
@@ -196,6 +282,7 @@ interface Remediation {
         <div class="cap-bl"></div>
         <span class="foot-cell">{{ allItems().length }} EINTRÄGE</span>
         <span class="foot-cell">{{ pendingCount() }} AUSSTEHEND</span>
+        <span class="foot-cell">{{ draftCount() }} DRAFTS</span>
         <div class="cap-br"></div>
       </div>
 
@@ -260,6 +347,11 @@ interface Remediation {
     .st-rejected   { background: #2a2a2a; color: #888; }
     .st-canceled   { background: #2a2a2a; color: #888; }
 
+    /* Draft status pills */
+    .st-draft-drafted   { background: #1a3355; color: #88aaff; }
+    .st-draft-published { background: #1a4a1a; color: #66cc66; }
+    .st-draft-rejected  { background: #2a2a2a; color: #888; }
+
     /* stdout */
     .stdout { background: #0a0a0a; border: 1px solid #222; padding: 8px; font-size: 0.72rem; color: #aaffaa; overflow-x: auto; white-space: pre-wrap; max-height: 200px; overflow-y: auto; margin: 0; }
 
@@ -268,6 +360,18 @@ interface Remediation {
     .tmpl-id { color: #888; font-size: 0.72rem; min-width: 32px; }
     .tmpl-name { font-weight: 600; color: #ffcc99; }
     .tmpl-desc { color: #888; }
+
+    /* ── Playbook Drafts ── */
+    .author-form { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0; border-bottom: 1px solid #222; margin-bottom: 4px; }
+    .author-input { background: #1a1a1a; border: 1px solid #444; color: #ffcc99; padding: 6px 10px; font-family: inherit; font-size: 0.82rem; flex: 1; min-width: 220px; }
+    .author-input::placeholder { color: #555; }
+    .author-input:focus { outline: none; border-color: #ff9933; }
+    .draft-card { background: #1e1e1e; border: 1px solid #333; border-left: 4px solid #5588aa; padding: 10px 12px; display: flex; flex-direction: column; gap: 5px; }
+    .draft-card.draft-published { border-left-color: #44aa44; }
+    .yaml-details { margin-top: 4px; }
+    .yaml-summary { font-size: 0.75rem; color: #888; cursor: pointer; list-style: none; }
+    .yaml-summary:hover { color: #ff9933; }
+    .yaml-preview { background: #0a0a0a; border: 1px solid #222; padding: 8px; font-size: 0.72rem; color: #aaccff; white-space: pre; overflow-x: auto; max-height: 300px; overflow-y: auto; margin: 4px 0 0; }
 
     /* ── Footer ── */
     .eng-footer { display: flex; align-items: stretch; height: 28px; flex-shrink: 0; }
@@ -279,10 +383,11 @@ export class EngineeringComponent implements OnInit, OnDestroy {
   private snack = inject(MatSnackBar);
 
   readonly tabs = [
-    { id: 'pending',  label: 'AUSSTEHEND' },
-    { id: 'active',   label: 'LAUFEND' },
-    { id: 'history',  label: 'VERLAUF' },
-    { id: 'catalog',  label: 'TEMPLATES' },
+    { id: 'pending',   label: 'AUSSTEHEND' },
+    { id: 'active',    label: 'LAUFEND' },
+    { id: 'history',   label: 'VERLAUF' },
+    { id: 'playbooks', label: 'PLAYBOOKS' },
+    { id: 'catalog',   label: 'TEMPLATES' },
   ];
   activeTab = signal<string>('pending');
 
@@ -291,11 +396,18 @@ export class EngineeringComponent implements OnInit, OnDestroy {
   templates = signal<Array<{id: number; name: string; description: string}>>([]);
   approving = signal<Set<string>>(new Set());
 
+  drafts = signal<PlaybookDraft[]>([]);
+  publishingDraft = signal<Set<string>>(new Set());
+  authoringInProgress = signal(false);
+  newTaskDesc = '';
+  newTaskCtx = '';
+
   pendingItems = computed(() => this.allItems().filter(r => r.status === 'proposed'));
   activeItems  = computed(() => this.allItems().filter(r => r.status === 'running'));
   historyItems = computed(() => this.allItems().filter(r => !['proposed','running'].includes(r.status)));
   pendingCount = computed(() => this.pendingItems().length);
   activeCount  = computed(() => this.activeItems().length);
+  draftCount   = computed(() => this.drafts().filter(d => d.status === 'drafted').length);
 
   private _pollInterval?: ReturnType<typeof setInterval>;
 
@@ -304,6 +416,7 @@ export class EngineeringComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.loadAll();
     this.loadTemplates();
+    this.loadDrafts();
     this._pollInterval = setInterval(() => {
       if (this.activeItems().length > 0) this.loadAll();
     }, 10_000);
@@ -315,7 +428,7 @@ export class EngineeringComponent implements OnInit, OnDestroy {
 
   loadAll(): void {
     this.loading.set(true);
-    this.http.get<Remediation[]>(`${environment.apiUrl}/remediations?status=all`)
+    this.http.get<Remediation[]>(`${environment.apiUrl}/remediations`)
       .subscribe({
         next: items => { this.allItems.set(items); this.loading.set(false); },
         error: () => this.loading.set(false),
@@ -325,11 +438,13 @@ export class EngineeringComponent implements OnInit, OnDestroy {
   loadHistory(): void { this.loadAll(); }
 
   loadTemplates(): void {
-    this.http.get<any>(`${environment.apiUrl}/remediations`)  // reuse — templates via AWX
-      .subscribe({ error: () => {} });
-    // Load AWX templates via backend proxy endpoint (if available)
     this.http.get<{templates: Array<{id: number; name: string; description: string}>}>(`${environment.apiUrl}/remediations/templates`)
       .subscribe({ next: d => this.templates.set(d?.templates ?? []), error: () => {} });
+  }
+
+  loadDrafts(): void {
+    this.http.get<PlaybookDraft[]>(`${environment.apiUrl}/remediations/playbooks`)
+      .subscribe({ next: d => this.drafts.set(d), error: () => {} });
   }
 
   approve(r: Remediation): void {
@@ -337,8 +452,8 @@ export class EngineeringComponent implements OnInit, OnDestroy {
     next.add(r.id);
     this.approving.set(next);
     this.http.post<any>(`${environment.apiUrl}/remediations/${r.id}/approve`, {}).subscribe({
-      next: () => {
-        this.snack.open(`Job gestartet — AWX #${r.awx_job_id ?? '…'}`, 'OK', { duration: 3000 });
+      next: res => {
+        this.snack.open(`Job gestartet — AWX #${res?.awx_job_id ?? '…'}`, 'OK', { duration: 3000 });
         this.loadAll();
         this.approving.update(s => { const n = new Set(s); n.delete(r.id); return n; });
       },
@@ -353,6 +468,51 @@ export class EngineeringComponent implements OnInit, OnDestroy {
     this.http.post<any>(`${environment.apiUrl}/remediations/${r.id}/reject`, {}).subscribe({
       next: () => { this.snack.open('Abgelehnt', '', { duration: 2000 }); this.loadAll(); },
       error: () => this.snack.open('Fehler beim Ablehnen', '', { duration: 2000 }),
+    });
+  }
+
+  authorPlaybook(): void {
+    if (!this.newTaskDesc.trim()) return;
+    this.authoringInProgress.set(true);
+    this.http.post<PlaybookDraft>(`${environment.apiUrl}/remediations/playbooks`, {
+      task_description: this.newTaskDesc.trim(),
+      context: this.newTaskCtx.trim(),
+    }).subscribe({
+      next: d => {
+        this.snack.open(`Playbook "${d.title}" erstellt`, 'OK', { duration: 3000 });
+        this.drafts.update(ds => [d, ...ds]);
+        this.newTaskDesc = '';
+        this.newTaskCtx = '';
+        this.authoringInProgress.set(false);
+      },
+      error: e => {
+        this.snack.open('Fehler: ' + (e?.error?.detail ?? e.message), 'OK', { duration: 4000 });
+        this.authoringInProgress.set(false);
+      },
+    });
+  }
+
+  approveDraft(d: PlaybookDraft): void {
+    this.publishingDraft.update(s => { const n = new Set(s); n.add(d.id); return n; });
+    this.http.post<any>(`${environment.apiUrl}/remediations/playbooks/${d.id}/approve`, {}).subscribe({
+      next: res => {
+        const tmpl = res?.awx_template_id ? ` → AWX-Template #${res.awx_template_id}` : '';
+        this.snack.open(`Publiziert${tmpl}`, 'OK', { duration: 4000 });
+        this.loadDrafts();
+        this.loadTemplates();
+        this.publishingDraft.update(s => { const n = new Set(s); n.delete(d.id); return n; });
+      },
+      error: e => {
+        this.snack.open('Fehler: ' + (e?.error?.detail ?? e.message), 'OK', { duration: 4000 });
+        this.publishingDraft.update(s => { const n = new Set(s); n.delete(d.id); return n; });
+      },
+    });
+  }
+
+  rejectDraft(d: PlaybookDraft): void {
+    this.http.post<any>(`${environment.apiUrl}/remediations/playbooks/${d.id}/reject`, {}).subscribe({
+      next: () => { this.snack.open('Draft abgelehnt', '', { duration: 2000 }); this.loadDrafts(); },
+      error: () => {},
     });
   }
 }
