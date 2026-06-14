@@ -115,5 +115,15 @@ export const routes: Routes = [
     canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
     loadComponent: () => import('./features/engineering/engineering.component').then(m => m.EngineeringComponent),
   },
+  {
+    path: 'workbench/:id',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
+    loadComponent: () => import('./features/workbench/workbench.component').then(m => m.WorkbenchComponent),
+  },
+  {
+    path: 'workbench',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
+    loadComponent: () => import('./features/workbench/workbench.component').then(m => m.WorkbenchComponent),
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];
