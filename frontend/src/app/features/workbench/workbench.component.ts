@@ -1,0 +1,183 @@
+import { Component, OnInit, signal, computed, inject } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
+import { ActivatedRoute, RouterLink } from '@angular/router';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
+import { MatButtonModule } from '@angular/material/button';
+import { MatIconModule } from '@angular/material/icon';
+import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { environment } from '../../../environments/environment';
+import { ComputerService } from '../../core/services/computer.service';
+
+interface WorkSession {
+  id: string;
+  title: string;
+  jira_key: string | null;
+  status: string;
+  computer_session_id: string | null;
+  gitlab_project_id: string | null;
+  gitlab_branch: string | null;
+  gitlab_mr_iid: number | null;
+  gitlab_mr_url: string | null;
+}
+
+@Component({
+  selector: 'cs-workbench',
+  standalone: true,
+  imports: [
+    CommonModule, RouterLink,
+    MatButtonModule, MatIconModule, MatTooltipModule, MatSnackBarModule,
+  ],
+  template: `
+    <div class="wb-root">
+      <!-- ── LCARS Header / context strip ───────────────────────── -->
+      <div class="wb-header">
+        <div class="cap-tl"></div>
+        <div class="header-bar">
+          <span class="header-title">WERKBANK</span>
+          @if (session(); as s) {
+            <span class="ctx-title" [title]="s.title">{{ s.title }}</span>
+            @if (s.jira_key) {
+              <span class="ctx-chip">{{ s.jira_key }}</span>
+            }
+            @if (s.gitlab_branch) {
+              <span class="ctx-chip git"><mat-icon class="ic">fork_right</mat-icon>{{ s.gitlab_branch }}</span>
+            }
+            @if (s.gitlab_mr_url) {
+              <a class="ctx-chip mr" [href]="s.gitlab_mr_url" target="_blank" rel="noopener">
+                <mat-icon class="ic">merge</mat-icon>MR !{{ s.gitlab_mr_iid }}
+              </a>
+            }
+          } @else {
+            <span class="ctx-title">Eigener Arbeitsplatz</span>
+          }
+          <span class="spacer"></span>
+          <button mat-stroked-button class="hbtn" (click)="openHermes()" matTooltip="Hermes-Agent öffnen / fortsetzen">
+            <mat-icon>smart_toy</mat-icon> HERMES
+          </button>
+          <button mat-stroked-button class="hbtn" (click)="reload()" matTooltip="IDE neu laden">
+            <mat-icon>refresh</mat-icon>
+          </button>
+        </div>
+        <div class="cap-tr"></div>
+      </div>
+
+      <!-- ── IDE iframe ─────────────────────────────────────────── -->
+      <div class="wb-body">
+        @if (loading()) {
+          <div class="status">IDE wird vorbereitet…</div>
+        } @else if (error()) {
+          <div class="status err">{{ error() }}</div>
+        }
+        @if (ideUrl()) {
+          <iframe class="ide-frame" [src]="ideUrl()" title="Web-IDE"
+                  allow="clipboard-read; clipboard-write"></iframe>
+        }
+      </div>
+
+      <div class="wb-footer">
+        <div class="cap-bl"></div>
+        <span class="foot">VS CODE · TERMINAL · GIT</span>
+        <div class="cap-br"></div>
+      </div>
+    </div>
+  `,
+  styles: [`
+    :host { display: flex; flex-direction: column; height: 100vh; background: #111; color: #ffcc99; font-family: 'Antonio','Roboto',sans-serif; }
+    .wb-root { display: flex; flex-direction: column; height: 100%; }
+    .wb-header { display: flex; align-items: stretch; height: 48px; flex-shrink: 0; }
+    .cap-tl { width: 18px; background: #ff9933; border-radius: 18px 0 0 0; }
+    .cap-tr { width: 18px; background: #ff9933; border-radius: 0 18px 0 0; }
+    .cap-bl { width: 18px; background: #ff9933; border-radius: 0 0 0 18px; }
+    .cap-br { width: 18px; background: #ff9933; border-radius: 0 0 18px 0; }
+    .header-bar { flex: 1; background: #ff9933; display: flex; align-items: center; gap: 12px; padding: 0 14px; }
+    .header-title { font-size: 1.25rem; font-weight: 700; letter-spacing: 0.12em; color: #111; }
+    .ctx-title { font-size: 0.9rem; font-weight: 600; color: #111; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ctx-chip { display: inline-flex; align-items: center; gap: 3px; background: #111; color: #ffcc99; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 10px; text-decoration: none; }
+    .ctx-chip.git { color: #aaccff; }
+    .ctx-chip.mr { color: #66cc66; }
+    .ctx-chip .ic { font-size: 13px; width: 13px; height: 13px; }
+    .spacer { flex: 1; }
+    .hbtn { color: #111 !important; border-color: #111 !important; font-weight: 700; min-width: 0; }
+    .wb-body { flex: 1; position: relative; background: #000; }
+    .ide-frame { width: 100%; height: 100%; border: 0; display: block; }
+    .status { padding: 24px; font-size: 0.95rem; color: #ffcc99; }
+    .status.err { color: #ff6666; }
+    .wb-footer { display: flex; align-items: stretch; height: 24px; flex-shrink: 0; }
+    .foot { background: #ff9933; color: #111; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.12em; padding: 0 12px; display: flex; align-items: center; margin-right: 4px; }
+  `],
+})
+export class WorkbenchComponent implements OnInit {
+  private http = inject(HttpClient);
+  private route = inject(ActivatedRoute);
+  private san = inject(DomSanitizer);
+  private snack = inject(MatSnackBar);
+  private computer = inject(ComputerService);
+
+  loading = signal(true);
+  error = signal<string | null>(null);
+  ideUrl = signal<SafeResourceUrl | null>(null);
+  session = signal<WorkSession | null>(null);
+
+  ngOnInit(): void {
+    const id = this.route.snapshot.paramMap.get('id');
+    if (id) {
+      this.http.get<WorkSession>(`${environment.apiUrl}/workflow/${id}`).subscribe({
+        next: s => { this.session.set(s); this.provision(id); },
+        error: () => { this.error.set('WorkSession nicht gefunden'); this.loading.set(false); },
+      });
+    } else {
+      this.ensureOwn();
+    }
+  }
+
+  /** Standalone IDE (no WorkSession): just ensure the container + open the workspace root. */
+  private ensureOwn(): void {
+    this.http.post<{ ide_base: string }>(`${environment.apiUrl}/ide/session/ensure`, {}, { withCredentials: true })
+      .subscribe({
+        next: r => { this.setIde(`${r.ide_base}?folder=/root/workspaces`); this.loading.set(false); },
+        error: e => { this.error.set(this.msg(e)); this.loading.set(false); },
+      });
+  }
+
+  /** WorkSession context: ensure container, clone repo + checkout branch, open. */
+  private provision(id: string): void {
+    this.http.post<{ ide_url: string }>(`${environment.apiUrl}/ide/workspace/${id}/provision`, {}, { withCredentials: true })
+      .subscribe({
+        next: r => { this.setIde(r.ide_url); this.loading.set(false); },
+        error: e => { this.error.set(this.msg(e)); this.loading.set(false); },
+      });
+  }
+
+  private setIde(url: string): void {
+    this.ideUrl.set(this.san.bypassSecurityTrustResourceUrl(url));
+  }
+
+  reload(): void {
+    const cur = this.ideUrl();
+    if (!cur) return;
+    // Force iframe reload by clearing + re-setting on next tick.
+    this.ideUrl.set(null);
+    setTimeout(() => this.ideUrl.set(cur), 50);
+  }
+
+  /** Seamless Hermes: resume the linked session, or open a context-seeded one. */
+  openHermes(): void {
+    const s = this.session();
+    if (s?.computer_session_id) {
+      this.computer.resumeSession(s.computer_session_id);
+      return;
+    }
+    const seed = s
+      ? `Arbeite an WorkSession "${s.title}"${s.jira_key ? ' (' + s.jira_key + ')' : ''}` +
+        `${s.gitlab_branch ? ', Branch ' + s.gitlab_branch : ''}.`
+      : 'Werkbank-Arbeitsplatz geöffnet.';
+    this.computer.openWithContext(seed, s?.title ?? 'Werkbank');
+    this.snack.open('Hermes geöffnet', '', { duration: 1500 });
+  }
+
+  private msg(e: any): string {
+    return 'IDE-Fehler: ' + (e?.error?.detail ?? e?.message ?? 'unbekannt');
+  }
+}
