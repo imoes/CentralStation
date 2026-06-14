@@ -213,6 +213,18 @@ async def run_topology_kb_job() -> None:
     logger.info("Topology KB extraction: %d edges upserted", count)
 
 
+async def run_ide_reaper() -> None:
+    """Stop idle per-user code-server containers (Werkbank Web-IDE)."""
+    import asyncio
+    from app.services import ide_manager
+    try:
+        stopped = await asyncio.to_thread(ide_manager.reap_idle, 3600.0)  # 60 min idle
+        if stopped:
+            logger.info("IDE reaper: stopped %d idle code-server container(s)", stopped)
+    except Exception as e:
+        logger.debug("IDE reaper skipped: %s", e)
+
+
 async def run_digest_check() -> None:
     """Hourly check — sends email digests to users whose configured time matches now."""
     from datetime import datetime, timezone
@@ -265,6 +277,8 @@ async def start_scheduler() -> None:
                        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=60))
     _scheduler.add_job(run_digest_check, "cron", minute=0,
                        id="digest_check", replace_existing=True)
+    _scheduler.add_job(run_ide_reaper, "interval",
+                       minutes=15, id="ide_reaper", replace_existing=True)
     _scheduler.start()
     logger.info(
         "APScheduler started — aggregation: %dmin, agent: %dmin, metrics: 5min",
