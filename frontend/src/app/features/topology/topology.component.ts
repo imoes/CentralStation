@@ -304,8 +304,14 @@ export class TopologyComponent implements OnInit, OnDestroy {
     const txt = this._chartText;
     const grid = this._chartGrid;
 
+    const large = g.nodes.length >= 600;
+
     return {
       backgroundColor: 'transparent',
+      // Large graphs (the "all sources" view has ~1900 nodes): the enter
+      // animation + continuous force simulation freezes the browser. Disable
+      // both above the threshold so the graph paints once and stays interactive.
+      animation: !large,
       tooltip: {
         formatter: (p: any) =>
           p.dataType === 'node'

@@ -192,12 +192,17 @@ async def run_incident_housekeeping() -> None:
 
 
 async def run_topology_refresh() -> None:
-    """Pre-warm the topology cache so /topology loads instantly."""
+    """Pre-warm the topology cache so /topology loads instantly.
+
+    Warms the "all sources" view (force-rebuilds the shared NetBox skeleton) plus
+    every per-source filter — the latter only adds a cheap alert-overlay query each,
+    since they reuse the cached skeleton.
+    """
     from app.core.database import AsyncSessionLocal
-    from app.services.topology_builder import build_topology
+    from app.services.topology_builder import refresh_all_caches
     async with AsyncSessionLocal() as db:
-        await build_topology(db, force_refresh=True)
-    logger.info("Topology cache refreshed")
+        await refresh_all_caches(db)
+    logger.info("Topology cache refreshed (all sources)")
 
 
 async def run_topology_kb_job() -> None:
