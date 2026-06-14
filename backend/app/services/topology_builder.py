@@ -200,7 +200,13 @@ async def build_topology(db: Any, force_refresh: bool = False, source_filter: st
             "size": 0,
             "query": {"bool": {
                 "must": source_must,
-                "must_not": [{"term": {"status": "resolved"}}, *excl],
+                # Only actionable severities (warning+ → medium/high/critical); info/low
+                # are non-actionable noise and must never colour the map.
+                "must_not": [
+                    {"term": {"status": "resolved"}},
+                    {"terms": {"severity": ["info", "low"]}},
+                    *excl,
+                ],
             }},
             "aggs": {
                 "by_host": {
