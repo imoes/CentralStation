@@ -110,5 +110,10 @@ export const routes: Routes = [
     canActivate: [authGuard, roleGuard('admin', 'sysadmin', 'network_technician')],
     loadComponent: () => import('./features/topology/topology.component').then(m => m.TopologyComponent),
   },
+  {
+    path: 'engineering',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
+    loadComponent: () => import('./features/engineering/engineering.component').then(m => m.EngineeringComponent),
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];
