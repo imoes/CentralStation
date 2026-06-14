@@ -700,6 +700,28 @@ async def act(state: dict, db: Any) -> dict:
     await db.commit()
     await db.refresh(record)
 
+    # Propose AWX remediations for critical/high findings
+    remediation_proposals: list[str] = []
+    try:
+        from app.services.remediation_matcher import propose_remediation
+        for finding in analysis.findings:
+            if getattr(finding, "severity", "low") not in ("critical", "high"):
+                continue
+            proposal = await propose_remediation(
+                finding_title=getattr(finding, "title", str(finding)[:200]),
+                rationale=getattr(finding, "description", ""),
+                host=getattr(finding, "host", ""),
+                external_id=getattr(finding, "alert_external_id", None),
+                analysis_id=record.id,
+                db=db,
+            )
+            if proposal:
+                remediation_proposals.append(str(proposal.id))
+        if remediation_proposals:
+            await db.commit()
+    except Exception as exc:
+        log.warning("act: remediation matcher failed: %s", exc)
+
     # Push via WebSocket to sysadmin/admin clients
     try:
         from app.api.ws import manager
@@ -711,9 +733,15 @@ async def act(state: dict, db: Any) -> dict:
                 "recommendations_count": len(analysis.recommendations),
                 "jira_tickets": tickets_created,
                 "analysis_id": str(record.id),
+                "remediation_proposals": remediation_proposals,
             },
             roles=["admin", "sysadmin"],
         )
+        if remediation_proposals:
+            await manager.broadcast(
+                {"type": "remediation_proposed", "ids": remediation_proposals},
+                roles=["admin", "sysadmin"],
+            )
     except Exception as e:
         log.warning("act: WS broadcast failed: %s", e)
 
