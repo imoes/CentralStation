@@ -19,6 +19,9 @@ IDE_IMAGE = os.getenv("IDE_IMAGE", "centralstation-codeserver:latest")
 IDE_NETWORK = os.getenv("IDE_NETWORK", "centralstation_default")
 IDE_HOST_SSH_DIR = os.getenv("IDE_HOST_SSH_DIR", "")
 IDE_CONTAINER_PORT = os.getenv("IDE_CONTAINER_PORT", "8080")
+# Host-side base dir for workspace bind mounts. The backend container must mount
+# the same path so os.makedirs() creates the directory on the host filesystem.
+IDE_WORKSPACES_BASE = os.getenv("IDE_WORKSPACES_BASE", "/opt/centralstation/ide-workspaces")
 WORKSPACES_DIR = "/root/workspaces"
 
 # In-memory last-activity tracker for the idle reaper (best-effort; resets on
@@ -35,12 +38,18 @@ def container_name(user_id: str) -> str:
     return f"cs-ide-{user_id}"
 
 
-def volume_name(user_id: str) -> str:
-    return f"cs-ide-ws-{user_id}"
+def workspace_dir(user_id: str) -> str:
+    """Absolute host-side path for the per-user workspace bind mount."""
+    return os.path.join(IDE_WORKSPACES_BASE, user_id)
 
 
 def config_volume_name(user_id: str) -> str:
     return f"cs-ide-cfg-{user_id}"
+
+
+def vscode_volume_name(user_id: str) -> str:
+    """Named volume for VS Code extensions + user settings (persistent)."""
+    return f"cs-ide-vsc-{user_id}"
 
 
 def upstream(user_id: str) -> str:
@@ -83,11 +92,16 @@ def ensure_container(user_id: str) -> str:
         # Not found (or unusable) → create fresh
         pass
 
+    ws_path = workspace_dir(user_id)
+    os.makedirs(ws_path, exist_ok=True)
+
     volumes = {
-        volume_name(user_id): {"bind": WORKSPACES_DIR, "mode": "rw"},
-        # Persists Claude Code credentials (CLAUDE_CONFIG_DIR=/root/.claude) and
-        # other per-user dotfiles across container restarts/reaps.
+        # Bind mount so workspaces live on the host filesystem (easy backup/access).
+        ws_path: {"bind": WORKSPACES_DIR, "mode": "rw"},
+        # Persists Claude Code credentials (CLAUDE_CONFIG_DIR=/root/.claude).
         config_volume_name(user_id): {"bind": "/root/.claude", "mode": "rw"},
+        # Persists VS Code extensions + user settings (settings.json, keybindings).
+        vscode_volume_name(user_id): {"bind": "/root/.local/share/code-server", "mode": "rw"},
     }
     if IDE_HOST_SSH_DIR:
         volumes[IDE_HOST_SSH_DIR] = {"bind": "/root/.ssh_host", "mode": "ro"}
