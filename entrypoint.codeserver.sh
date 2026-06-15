@@ -45,9 +45,18 @@ _ext_dir="$HOME/.local/share/code-server/extensions"
 for _ext in "$_ext_dir"/anthropic.claude-code-*/; do
     [ -d "$_ext" ] || continue
     _js="$_ext/extension.js"
+    # CSP: allow data: URIs for codicon font (embedded as base64 in webview CSS)
     if [ -f "$_js" ] && ! grep -qF 'font-src ${e.cspSource} data:' "$_js"; then
         sed -i 's|font-src \${e\.cspSource}`|font-src \${e\.cspSource} data:`|g' "$_js" && \
             echo "cs-entrypoint: patched CSP font-src data: in $_js"
+    fi
+    # Remote sessions: disableRemoteControl in managed-settings is defined but never
+    # checked in the listRemoteSessions handler — it always calls fetchRemoteSessions()
+    # which connects to claude.ai. Cloudflare blocks Node.js requests with 403, causing
+    # "Failed to connect to remote server" spam. Patch to return empty list immediately.
+    if [ -f "$_js" ] && grep -qF 'sessions:await this.teleportService.fetchRemoteSessions()' "$_js"; then
+        sed -i 's|sessions:await this\.teleportService\.fetchRemoteSessions()|sessions:[]|g' "$_js" && \
+            echo "cs-entrypoint: patched listRemoteSessions → empty in $_js"
     fi
 done
 unset _ext_dir _ext _js
