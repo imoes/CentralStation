@@ -37,6 +37,21 @@ fi
 
 mkdir -p "$HOME/workspaces"
 
+# Patch the Claude Code extension webview CSP so the bundled codicon font
+# (data:font/ttf;base64) is not silently blocked by Chromium in code-server.
+# Without this, buttons inside the Claude Code panel show empty squares instead
+# of icons (upstream bug: github.com/anthropics/claude-code/issues/51677).
+# find is a no-op if the extension directory does not exist yet.
+_ext_dir="$HOME/.local/share/code-server/extensions"
+if [ -d "$_ext_dir/anthropic.claude-code-"* ] 2>/dev/null; then
+    find "$_ext_dir"/anthropic.claude-code-* -name "*.html" | while read -r _f; do
+        grep -q "font-src data:" "$_f" && continue
+        sed -i "s/font-src/font-src data:/g" "$_f" && \
+            echo "cs-entrypoint: patched CSP font-src in $_f"
+    done
+fi
+unset _ext_dir _f
+
 exec code-server \
     --auth none \
     --bind-addr 0.0.0.0:8080 \
