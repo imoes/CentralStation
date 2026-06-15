@@ -3,7 +3,6 @@ import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
-import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
@@ -27,7 +26,7 @@ interface WorkSession {
   standalone: true,
   imports: [
     CommonModule, RouterLink,
-    MatButtonModule, MatIconModule, MatTooltipModule, MatSnackBarModule,
+    MatIconModule, MatTooltipModule, MatSnackBarModule,
   ],
   template: `
     <div class="wb-root">
@@ -53,13 +52,13 @@ interface WorkSession {
             <span class="ctx-title">Eigener Arbeitsplatz</span>
           }
           <span class="spacer"></span>
-          <button mat-stroked-button class="hbtn" (click)="openHermes()" matTooltip="Hermes-Agent öffnen / fortsetzen">
+          <button type="button" class="hbtn" (click)="openHermes()" matTooltip="Hermes-Agent öffnen / fortsetzen">
             <mat-icon>smart_toy</mat-icon> HERMES
           </button>
-          <button mat-stroked-button class="hbtn" (click)="openTab()" matTooltip="IDE in neuem Tab öffnen">
+          <button type="button" class="hbtn" (click)="openTab()" matTooltip="IDE in neuem Tab öffnen">
             <mat-icon>open_in_new</mat-icon>
           </button>
-          <button mat-stroked-button class="hbtn" (click)="reload()" matTooltip="IDE neu laden">
+          <button type="button" class="hbtn" (click)="reload()" matTooltip="IDE neu laden">
             <mat-icon>refresh</mat-icon>
           </button>
         </div>
@@ -102,7 +101,10 @@ interface WorkSession {
     .ctx-chip.mr { color: #66cc66; }
     .ctx-chip .ic { font-size: 13px; width: 13px; height: 13px; }
     .spacer { flex: 1; }
-    .hbtn { color: #111 !important; border-color: #111 !important; font-weight: 700; min-width: 0; }
+    /* Plain LCARS pills — dark pill + light text, readable on the orange header */
+    .hbtn { display: inline-flex; align-items: center; gap: 5px; background: #111; color: #ffcc99; border: none; border-radius: 12px; padding: 5px 12px; font-family: inherit; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.04em; cursor: pointer; }
+    .hbtn:hover { background: #2a2a2a; color: #ff9933; }
+    .hbtn mat-icon { font-size: 18px; width: 18px; height: 18px; color: inherit; }
     .wb-body { flex: 1; position: relative; background: #000; }
     .ide-frame { width: 100%; height: 100%; border: 0; display: block; }
     .status { padding: 24px; font-size: 0.95rem; color: #ffcc99; }
