@@ -23,19 +23,21 @@ class SMTPConnector(BaseConnector):
     def __init__(self, base_url: str | None, credentials: dict) -> None:
         super().__init__(base_url, credentials)
         self.port       = int(credentials.get("port") or "587")
-        self.tls        = str(credentials.get("tls",  "false")).lower() == "true"
-        self.ssl        = str(credentials.get("ssl",  "false")).lower() == "true"
-        self.auth       = str(credentials.get("auth", "false")).lower() == "true"
-        self.user       = credentials.get("user", "")
-        self.password   = credentials.get("password", "")
-        self.from_email = credentials.get("from_email", "centralstation@localhost")
-        self.from_name  = credentials.get("from_name", "CentralStation")
+        self.tls          = str(credentials.get("tls",        "false")).lower() == "true"
+        self.ssl          = str(credentials.get("ssl",        "false")).lower() == "true"
+        self.auth         = str(credentials.get("auth",       "false")).lower() == "true"
+        self.verify_ssl   = str(credentials.get("verify_ssl", "false")).lower() == "true"
+        self.user         = credentials.get("user", "")
+        self.password     = credentials.get("password", "")
+        self.from_email   = credentials.get("from_email", "centralstation@localhost")
+        self.from_name    = credentials.get("from_name", "CentralStation")
 
     def _send_kwargs(self) -> dict:
         kw: dict = {
             "hostname": self.base_url or "",
             "port": self.port,
             "timeout": 30,
+            "validate_certs": self.verify_ssl,
         }
         if self.ssl:
             kw["use_tls"] = True
@@ -53,11 +55,12 @@ class SMTPConnector(BaseConnector):
                 hostname=self.base_url or "",
                 port=self.port,
                 use_tls=self.ssl,
+                validate_certs=self.verify_ssl,
                 timeout=10,
             )
             await smtp.connect()
             if self.tls and not self.ssl:
-                await smtp.starttls()
+                await smtp.starttls(validate_certs=self.verify_ssl)
             if self.auth and self.user:
                 await smtp.login(self.user, self.password)
             await smtp.quit()
