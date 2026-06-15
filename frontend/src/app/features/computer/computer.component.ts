@@ -700,10 +700,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
     });
     if (r.ok) {
       const data = await r.json();
-      if (data.already_linked) {
-        this.router.navigate(['/kanban']);
-      } else {
-        this.router.navigate(['/kanban']);
+      // Open the new Werkbank (Web-IDE + terminal + git + Hermes) for this
+      // WorkSession — not the Kanban board.
+      if (data.id) {
+        this.router.navigate(['/workbench', data.id]);
       }
     }
   }
