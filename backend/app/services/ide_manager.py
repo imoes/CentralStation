@@ -39,6 +39,10 @@ def volume_name(user_id: str) -> str:
     return f"cs-ide-ws-{user_id}"
 
 
+def config_volume_name(user_id: str) -> str:
+    return f"cs-ide-cfg-{user_id}"
+
+
 def upstream(user_id: str) -> str:
     return f"{container_name(user_id)}:{IDE_CONTAINER_PORT}"
 
@@ -81,6 +85,9 @@ def ensure_container(user_id: str) -> str:
 
     volumes = {
         volume_name(user_id): {"bind": WORKSPACES_DIR, "mode": "rw"},
+        # Persists Claude Code credentials (CLAUDE_CONFIG_DIR=/root/.claude) and
+        # other per-user dotfiles across container restarts/reaps.
+        config_volume_name(user_id): {"bind": "/root/.claude", "mode": "rw"},
     }
     if IDE_HOST_SSH_DIR:
         volumes[IDE_HOST_SSH_DIR] = {"bind": "/root/.ssh_host", "mode": "ro"}
