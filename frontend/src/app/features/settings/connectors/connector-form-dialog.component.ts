@@ -15,7 +15,7 @@ import { ConnectorService } from '../../../core/services/connector.service';
 import { Connector, ConnectorType } from '../../../core/models/connector.model';
 import { environment } from '../../../../environments/environment';
 
-interface CredField { key: string; label: string; type: 'text' | 'password' | 'textarea' | '_hidden'; hint?: string }
+interface CredField { key: string; label: string; type: 'text' | 'password' | 'textarea' | '_hidden' | 'checkbox'; hint?: string }
 interface CorootProject { id: string; name: string; selected: boolean }
 const PERSONAL_CONNECTOR_TYPES: ConnectorType[] = ['jira', 'jira_sd', 'o365', 'teams', 'gitlab'];
 
@@ -95,14 +95,14 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     { key: 'password', label: 'Passwort (Fallback)', type: 'password' },
   ],
   smtp: [
-    { key: 'port',       label: 'Port',             type: 'text',     hint: 'Standard: 587' },
-    { key: 'tls',        label: 'STARTTLS',          type: 'text',     hint: 'true / false' },
-    { key: 'ssl',        label: 'SSL/TLS (implizit)', type: 'text',    hint: 'true / false — nicht mit STARTTLS kombinieren' },
-    { key: 'auth',       label: 'Authentifizierung', type: 'text',     hint: 'true / false' },
-    { key: 'user',       label: 'Benutzername',      type: 'text' },
-    { key: 'password',   label: 'Passwort',          type: 'password' },
-    { key: 'from_email', label: 'Absender-E-Mail',   type: 'text',     hint: 'z.B. centralstation@example.com' },
-    { key: 'from_name',  label: 'Absender-Name',     type: 'text',     hint: 'z.B. CentralStation' },
+    { key: 'port',       label: 'Port',                                     type: 'text',     hint: '25 (Relay), 587 (STARTTLS), 465 (SSL)' },
+    { key: 'tls',        label: 'STARTTLS aktivieren (Port 587)',            type: 'checkbox' },
+    { key: 'ssl',        label: 'SSL/TLS implizit (Port 465)',               type: 'checkbox' },
+    { key: 'auth',       label: 'Authentifizierung (Benutzername/Passwort)', type: 'checkbox' },
+    { key: 'user',       label: 'Benutzername',                             type: 'text' },
+    { key: 'password',   label: 'Passwort',                                 type: 'password' },
+    { key: 'from_email', label: 'Absender-E-Mail',                          type: 'text',     hint: 'z.B. centralstation@example.com' },
+    { key: 'from_name',  label: 'Absender-Name',                            type: 'text',     hint: 'z.B. CentralStation' },
   ],
   gitlab: [
     { key: 'token',              label: 'Personal Access Token', type: 'password',
@@ -156,7 +156,11 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
         </mat-form-field>
 
         @for (field of credFields(); track field.key) {
-          @if (field.type !== '_hidden') {
+          @if (field.type === 'checkbox') {
+            <mat-checkbox [formControlName]="'cred_' + field.key" class="cred-checkbox">
+              {{ field.label }}
+            </mat-checkbox>
+          } @else if (field.type !== '_hidden') {
             <mat-form-field appearance="outline" class="full-width">
               <mat-label>{{ field.label }}</mat-label>
               @if (field.type === 'textarea') {
@@ -277,6 +281,7 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
   styles: [`
     .form-grid { display: flex; flex-direction: column; gap: 4px; min-width: 460px; padding-top: 8px; }
     .full-width { width: 100%; }
+    .cred-checkbox { margin: 6px 0; }
     mat-spinner { display: inline-block; }
 
     .ms-auth-section {
@@ -443,9 +448,9 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
       .filter(k => k.startsWith('cred_'))
       .forEach(k => this.form.removeControl(k));
 
-    // Add new ones
+    // Add new ones (checkboxes start as false, text fields as '')
     for (const field of fields) {
-      this.form.addControl(`cred_${field.key}`, this.fb.control(''));
+      this.form.addControl(`cred_${field.key}`, this.fb.control(field.type === 'checkbox' ? false : ''));
     }
   }
 
@@ -566,12 +571,16 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
     const credentials: Record<string, string | string[]> = {};
     for (const field of this.credFields()) {
       const val = v[`cred_${field.key}`];
+      if (field.type === 'checkbox') {
+        // Always include boolean flags so false values are persisted correctly.
+        credentials[field.key] = val ? 'true' : 'false';
+        continue;
+      }
       if (!val) continue;
       if (field.type === 'textarea') {
         const lines = (val as string).split('\n').map((s: string) => s.trim()).filter(Boolean);
         if (lines.length) credentials[field.key] = lines;
       } else {
-        // '_hidden' fields (e.g. project_ids) are stored as plain strings
         credentials[field.key] = val;
       }
     }

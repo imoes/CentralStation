@@ -23,7 +23,7 @@ class SMTPConnector(BaseConnector):
     def __init__(self, base_url: str | None, credentials: dict) -> None:
         super().__init__(base_url, credentials)
         self.port       = int(credentials.get("port") or "587")
-        self.tls        = str(credentials.get("tls",  "true")).lower()  == "true"
+        self.tls        = str(credentials.get("tls",  "false")).lower() == "true"
         self.ssl        = str(credentials.get("ssl",  "false")).lower() == "true"
         self.auth       = str(credentials.get("auth", "false")).lower() == "true"
         self.user       = credentials.get("user", "")
