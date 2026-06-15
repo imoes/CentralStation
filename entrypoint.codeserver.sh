@@ -65,6 +65,20 @@ if [ -f "$_ep_js" ] && grep -qF 'vscode-extensions/navigator' "$_ep_js" && \
 fi
 unset _ep_js
 
+# Disable Claude Code remote-control / remote-sessions feature.
+# In a containerised code-server the extension host cannot reach claude.ai
+# (Cloudflare blocks non-browser requests with 403). Without this flag the
+# extension calls fetchRemoteSessions on every panel open → "Failed to connect
+# to remote server" error spam. autoUploadSessions=false prevents session mirroring.
+_managed="$HOME/.claude/managed-settings.json"
+if ! grep -q '"disableRemoteControl"' "$_managed" 2>/dev/null; then
+    mkdir -p "$HOME/.claude"
+    printf '{\n  "disableRemoteControl": true,\n  "autoUploadSessions": false\n}\n' \
+        > "$_managed"
+    echo "cs-entrypoint: wrote Claude Code managed-settings.json"
+fi
+unset _managed
+
 exec code-server \
     --auth none \
     --bind-addr 0.0.0.0:8080 \
