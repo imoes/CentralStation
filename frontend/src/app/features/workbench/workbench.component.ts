@@ -1,7 +1,7 @@
 import { Component, OnInit, signal, computed, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
@@ -116,6 +116,7 @@ interface WorkSession {
 export class WorkbenchComponent implements OnInit {
   private http = inject(HttpClient);
   private route = inject(ActivatedRoute);
+  private router = inject(Router);
   private san = inject(DomSanitizer);
   private snack = inject(MatSnackBar);
   private computer = inject(ComputerService);
@@ -131,6 +132,15 @@ export class WorkbenchComponent implements OnInit {
     // it serves extension webview CSS/JS (Claude Code panel etc.). The blank-on-
     // reload issue it used to cause is now fixed via the Service-Worker-Allowed
     // header in nginx (coder/code-server#2106 + #2038).
+
+    // Hermes handoff: router state carries a pre-computed IDE URL (file already written).
+    const stateUrl = (history.state as { ideUrl?: string })?.ideUrl;
+    if (stateUrl) {
+      this.setIde(stateUrl);
+      this.loading.set(false);
+      return;
+    }
+
     const id = this.route.snapshot.paramMap.get('id');
     if (id) {
       this.http.get<WorkSession>(`${environment.apiUrl}/workflow/${id}`).subscribe({

@@ -691,22 +691,26 @@ export class ComputerComponent implements OnInit, OnDestroy {
   }
 
   async sendToWorkbench(): Promise<void> {
-    const sid = this.activeTabId();
-    if (!sid) return;
+    const session = this.activeSession();
+    if (!session) return;
     const token = this.auth.getAccessToken();
-    const r = await fetch(`${this.apiBase}/sessions/${sid}/to-workbench`, {
+    const r = await fetch(`${environment.apiUrl}/ide/open-chat`, {
       method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        session_id: session.session_id,
+        extension_type: 'none',
+        session_label: session.label,
+        messages: session.messages.map(m => ({ role: m.role, text: m.text })),
+      }),
     });
     if (r.ok) {
       const data = await r.json();
-      // Open the new Werkbank (Web-IDE + terminal + git + Hermes) for this
-      // WorkSession — not the Kanban board. Close the console overlay first,
-      // otherwise its fixed panel + backdrop cover the Werkbank (black screen).
-      if (data.id) {
-        this.close();
-        this.router.navigate(['/workbench', data.id]);
-      }
+      this.close();
+      this.router.navigate(['/workbench'], { state: { ideUrl: data.ide_url } });
     }
   }
 
