@@ -52,6 +52,19 @@ for _ext in "$_ext_dir"/anthropic.claude-code-*/; do
 done
 unset _ext_dir _ext _js
 
+# Patch the code-server extension host so accessing `navigator` in the Node.js
+# extension host returns a minimal browser-like object instead of throwing
+# PendingMigrationError. Claude Code 2.1+ accesses navigator at module init time;
+# without this shim the extension loads with errors and some UI state is broken.
+# Idempotent — the grep guard prevents double-patching.
+_ep_js="/usr/lib/code-server/lib/vscode/out/vs/workbench/api/node/extensionHostProcess.js"
+if [ -f "$_ep_js" ] && grep -qF 'vscode-extensions/navigator' "$_ep_js" && \
+   ! grep -qF 'userAgent:"node"' "$_ep_js"; then
+    sed -i 's|get:()=>{ea(new Zs("navigator is now a global in nodejs, please see https://aka.ms/vscode-extensions/navigator for additional info on this error."))}|get:()=>({userAgent:"node",platform:process.platform,language:"en-US",languages:["en-US"],onLine:!0,hardwareConcurrency:2,cookieEnabled:!1,appName:"Netscape",appVersion:"5.0",product:"Gecko"})|g' "$_ep_js" && \
+        echo "cs-entrypoint: patched navigator shim in extensionHostProcess.js"
+fi
+unset _ep_js
+
 exec code-server \
     --auth none \
     --bind-addr 0.0.0.0:8080 \
