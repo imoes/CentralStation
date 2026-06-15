@@ -56,6 +56,9 @@ interface WorkSession {
           <button mat-stroked-button class="hbtn" (click)="openHermes()" matTooltip="Hermes-Agent öffnen / fortsetzen">
             <mat-icon>smart_toy</mat-icon> HERMES
           </button>
+          <button mat-stroked-button class="hbtn" (click)="openTab()" matTooltip="IDE in neuem Tab öffnen">
+            <mat-icon>open_in_new</mat-icon>
+          </button>
           <button mat-stroked-button class="hbtn" (click)="reload()" matTooltip="IDE neu laden">
             <mat-icon>refresh</mat-icon>
           </button>
@@ -118,6 +121,7 @@ export class WorkbenchComponent implements OnInit {
   loading = signal(true);
   error = signal<string | null>(null);
   ideUrl = signal<SafeResourceUrl | null>(null);
+  rawIdeUrl = signal<string | null>(null);
   session = signal<WorkSession | null>(null);
 
   ngOnInit(): void {
@@ -151,7 +155,13 @@ export class WorkbenchComponent implements OnInit {
   }
 
   private setIde(url: string): void {
+    this.rawIdeUrl.set(url);
     this.ideUrl.set(this.san.bypassSecurityTrustResourceUrl(url));
+  }
+
+  openTab(): void {
+    const u = this.rawIdeUrl();
+    if (u) window.open(u, '_blank', 'noopener');
   }
 
   reload(): void {
