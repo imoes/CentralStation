@@ -45,10 +45,20 @@ _ext_dir="$HOME/.local/share/code-server/extensions"
 for _ext in "$_ext_dir"/anthropic.claude-code-*/; do
     [ -d "$_ext" ] || continue
     _js="$_ext/extension.js"
-    # CSP: allow data: URIs for codicon font (embedded as base64 in webview CSS)
+    # CSP font-src: allow data: URIs for codicon font (embedded as base64 in webview CSS)
     if [ -f "$_js" ] && ! grep -qF 'font-src ${e.cspSource} data:' "$_js"; then
         sed -i 's|font-src \${e\.cspSource}`|font-src \${e\.cspSource} data:`|g' "$_js" && \
             echo "cs-entrypoint: patched CSP font-src data: in $_js"
+    fi
+    # CSP style-src: cspSource = 'self' https://*.vscode-cdn.net, but the actual
+    # webview CSS URL is at https://uuid+localhost.vscode-resource.vscode-cdn.net
+    # (two subdomain levels). CSP wildcards only match one level, so the CSS is
+    # blocked and CSS-module class names have no effect → huge ✓, concatenated text.
+    # Adding https: allows any HTTPS stylesheet (same approach as font-src data:).
+    if [ -f "$_js" ] && grep -qF "style-src \${e.cspSource} 'unsafe-inline'" "$_js" && \
+       ! grep -qF "style-src \${e.cspSource} 'unsafe-inline' https:" "$_js"; then
+        sed -i "s|style-src \${e\.cspSource} 'unsafe-inline'|style-src \${e.cspSource} 'unsafe-inline' https:|g" "$_js" && \
+            echo "cs-entrypoint: patched CSP style-src https: in $_js"
     fi
     # Remote sessions: disableRemoteControl in managed-settings is defined but never
     # checked in the listRemoteSessions handler — it always calls fetchRemoteSessions()
