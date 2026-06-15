@@ -38,18 +38,22 @@ def container_name(user_id: str) -> str:
     return f"cs-ide-{user_id}"
 
 
-def workspace_dir(user_id: str) -> str:
-    """Absolute host-side path for the per-user workspace bind mount."""
+def _user_base(user_id: str) -> str:
+    """Host-side directory that holds all bind-mount subdirs for one user."""
     return os.path.join(IDE_WORKSPACES_BASE, user_id)
+
+
+def workspace_dir(user_id: str) -> str:
+    return os.path.join(_user_base(user_id), "workspaces")
+
+
+def vscode_dir(user_id: str) -> str:
+    """VS Code extensions + settings — bind-mount so it's easy to back up."""
+    return os.path.join(_user_base(user_id), "vscode")
 
 
 def config_volume_name(user_id: str) -> str:
     return f"cs-ide-cfg-{user_id}"
-
-
-def vscode_volume_name(user_id: str) -> str:
-    """Named volume for VS Code extensions + user settings (persistent)."""
-    return f"cs-ide-vsc-{user_id}"
 
 
 def upstream(user_id: str) -> str:
@@ -93,15 +97,18 @@ def ensure_container(user_id: str) -> str:
         pass
 
     ws_path = workspace_dir(user_id)
+    vs_path = vscode_dir(user_id)
     os.makedirs(ws_path, exist_ok=True)
+    os.makedirs(vs_path, exist_ok=True)
 
     volumes = {
-        # Bind mount so workspaces live on the host filesystem (easy backup/access).
+        # All per-user bind mounts live under IDE_WORKSPACES_BASE/<uid>/ so a
+        # single rsync/tar of that directory backs up workspaces + VS Code state.
         ws_path: {"bind": WORKSPACES_DIR, "mode": "rw"},
-        # Persists Claude Code credentials (CLAUDE_CONFIG_DIR=/root/.claude).
+        vs_path: {"bind": "/root/.local/share/code-server", "mode": "rw"},
+        # Claude Code credentials on a named volume (contains auth tokens, not
+        # user-created content — no backup value, keep separate).
         config_volume_name(user_id): {"bind": "/root/.claude", "mode": "rw"},
-        # Persists VS Code extensions + user settings (settings.json, keybindings).
-        vscode_volume_name(user_id): {"bind": "/root/.local/share/code-server", "mode": "rw"},
     }
     if IDE_HOST_SSH_DIR:
         volumes[IDE_HOST_SSH_DIR] = {"bind": "/root/.ssh_host", "mode": "ro"}
