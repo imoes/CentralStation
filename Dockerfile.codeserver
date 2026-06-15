@@ -33,6 +33,13 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
 # Persist Claude Code credentials on the per-user config volume (mounted at runtime).
 ENV CLAUDE_CONFIG_DIR=/root/.claude
 
+# The backend writes /root/.cs-agent-env.sh at container start with the Claude /
+# OpenAI OAuth tokens (pulled from the CentralStation DB). Source it from .bashrc
+# so every integrated-terminal session has `claude` / `codex` pre-authenticated —
+# no loopback OAuth callback (which is unreachable inside a container).
+RUN touch /root/.bashrc \
+    && printf '\n# CentralStation agent tokens (written at container start)\n[ -f /root/.cs-agent-env.sh ] && . /root/.cs-agent-env.sh\n' >> /root/.bashrc
+
 COPY entrypoint.codeserver.sh /usr/local/bin/cs-entrypoint.sh
 RUN chmod +x /usr/local/bin/cs-entrypoint.sh
 
