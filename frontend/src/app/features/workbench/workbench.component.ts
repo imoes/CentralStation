@@ -126,7 +126,12 @@ export class WorkbenchComponent implements OnInit {
   rawIdeUrl = signal<string | null>(null);
   session = signal<WorkSession | null>(null);
 
-  ngOnInit(): void {
+  async ngOnInit(): Promise<void> {
+    // Remove any code-server service worker registered before the self-
+    // unregistering SW fix — a stale SW under /ide/ intercepts and blacks out
+    // the iframe on reload. Same-origin SPA can unregister it for the user.
+    await this.purgeIdeServiceWorkers();
+
     const id = this.route.snapshot.paramMap.get('id');
     if (id) {
       this.http.get<WorkSession>(`${environment.apiUrl}/workflow/${id}`).subscribe({
@@ -164,6 +169,16 @@ export class WorkbenchComponent implements OnInit {
   openTab(): void {
     const u = this.rawIdeUrl();
     if (u) window.open(u, '_blank', 'noopener');
+  }
+
+  private async purgeIdeServiceWorkers(): Promise<void> {
+    try {
+      if (!('serviceWorker' in navigator)) return;
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(
+        regs.filter(r => (r.scope || '').includes('/ide/')).map(r => r.unregister()),
+      );
+    } catch { /* best-effort */ }
   }
 
   reload(): void {
