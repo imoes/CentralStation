@@ -37,20 +37,20 @@ fi
 
 mkdir -p "$HOME/workspaces"
 
-# Patch the Claude Code extension webview CSP so the bundled codicon font
-# (data:font/ttf;base64) is not silently blocked by Chromium in code-server.
-# Without this, buttons inside the Claude Code panel show empty squares instead
-# of icons (upstream bug: github.com/anthropics/claude-code/issues/51677).
-# find is a no-op if the extension directory does not exist yet.
+# Patch the Claude Code extension so the bundled codicon font (data:font/ttf;base64)
+# is not blocked by CSP. The extension builds font-src dynamically in extension.js
+# (not in static HTML), so we patch extension.js directly. Idempotent — already-
+# patched files are skipped via the grep guard.
 _ext_dir="$HOME/.local/share/code-server/extensions"
-if [ -d "$_ext_dir/anthropic.claude-code-"* ] 2>/dev/null; then
-    find "$_ext_dir"/anthropic.claude-code-* -name "*.html" | while read -r _f; do
-        grep -q "font-src data:" "$_f" && continue
-        sed -i "s/font-src/font-src data:/g" "$_f" && \
-            echo "cs-entrypoint: patched CSP font-src in $_f"
-    done
-fi
-unset _ext_dir _f
+for _ext in "$_ext_dir"/anthropic.claude-code-*/; do
+    [ -d "$_ext" ] || continue
+    _js="$_ext/extension.js"
+    if [ -f "$_js" ] && ! grep -qF 'font-src ${e.cspSource} data:' "$_js"; then
+        sed -i 's|font-src \${e\.cspSource}`|font-src \${e\.cspSource} data:`|g' "$_js" && \
+            echo "cs-entrypoint: patched CSP font-src data: in $_js"
+    fi
+done
+unset _ext_dir _ext _js
 
 exec code-server \
     --auth none \
