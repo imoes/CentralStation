@@ -68,9 +68,14 @@ services:
       IDE_NETWORK: centralstation_default
       IDE_HOST_SSH_DIR: ${HOME}/.ssh
       IDE_CONTAINER_PORT: "8080"
+      # Workspaces are bind-mounted from this host path into each cs-ide container.
+      # The backend also mounts this path so os.makedirs() creates dirs on the host.
+      IDE_WORKSPACES_BASE: ${IDE_WORKSPACES_BASE:-/opt/centralstation/ide-workspaces}
     volumes:
       # Docker socket so the backend can start/stop per-user cs-ide-* containers.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Workspace bind-mount base — same path inside backend = same path on host.
+      - ${IDE_WORKSPACES_BASE:-/opt/centralstation/ide-workspaces}:${IDE_WORKSPACES_BASE:-/opt/centralstation/ide-workspaces}
     depends_on:
       db:
         condition: service_healthy
