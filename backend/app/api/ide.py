@@ -6,6 +6,9 @@
 
 code-server runs with --auth none and no published port; nginx only proxies /ide/
 after authz returns 2xx. The cs_ide_token cookie (type "ide") is the credential.
+For /ws WebSocket connections (Claude Code extension) the cs_ide_token cookie is
+not sent (path="/ide" mismatch); the endpoint also accepts the CentralStation access
+token extracted from the X-Original-URI query string as a fallback.
 """
 from __future__ import annotations
 
@@ -14,6 +17,7 @@ import logging
 import re
 import uuid
 from typing import Annotated
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
@@ -43,11 +47,21 @@ def _set_ide_cookie(resp: Response, user_id: str) -> None:
 @router.get("/authz")
 async def ide_authz(request: Request, response: Response):
     """For nginx auth_request. Validates the cs_ide_token cookie and that the
-    requested /ide/<uid>/ matches the token's user. Returns X-IDE-Upstream."""
+    requested /ide/<uid>/ matches the token's user. Returns X-IDE-Upstream.
+
+    Fallback: for /ws WebSocket requests (Claude Code extension) the browser
+    sends the CentralStation access token as ?token= in the URL instead of the
+    IDE cookie (path mismatch). We extract it from X-Original-URI."""
     token = request.cookies.get(COOKIE_NAME)
     payload = decode_token(token) if token else {}
     if not payload or payload.get("type") != "ide":
-        raise HTTPException(401, "IDE auth required")
+        # Fallback: extract ?token= from the original request URI
+        original_uri = request.headers.get("X-Original-URI", "")
+        qs = parse_qs(urlparse(original_uri).query)
+        uri_token = qs.get("token", [None])[0]
+        payload = (decode_token(uri_token) or {}) if uri_token else {}
+        if payload.get("type") not in ("access", "ide"):
+            raise HTTPException(401, "IDE auth required")
     uid = payload.get("sub")
     if not uid:
         raise HTTPException(401, "Invalid IDE token")
