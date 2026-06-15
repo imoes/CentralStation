@@ -701,8 +701,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
     if (r.ok) {
       const data = await r.json();
       // Open the new Werkbank (Web-IDE + terminal + git + Hermes) for this
-      // WorkSession — not the Kanban board.
+      // WorkSession — not the Kanban board. Close the console overlay first,
+      // otherwise its fixed panel + backdrop cover the Werkbank (black screen).
       if (data.id) {
+        this.close();
         this.router.navigate(['/workbench', data.id]);
       }
     }
