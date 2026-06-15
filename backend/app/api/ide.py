@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import uuid
 from typing import Annotated
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +75,112 @@ async def ide_authz(request: Request, response: Response):
 
     ide_manager.touch(uid)
     return Response(status_code=200, headers={"X-IDE-Upstream": ide_manager.upstream(uid)})
+
+
+_IDE_EXT_KNOWN = {
+    "anthropic.claude-code": {"type": "claude-code", "name": "Claude Code"},
+    "github.copilot-chat":   {"type": "copilot-chat", "name": "GitHub Copilot Chat"},
+    "continue.continue":     {"type": "continue",     "name": "Continue (OpenAI)"},
+}
+
+
+@router.get("/extensions")
+async def list_ide_extensions(user: CurrentUser):
+    """Return AI coding extensions installed in the user's code-server.
+
+    Reads the host-side bind-mount of /root/.local/share/code-server/extensions/
+    so no docker exec is needed.  Returns an empty list when the container has
+    never been started (directory absent) — the frontend treats that as
+    'no extensions found'."""
+    uid = str(user.id)
+    ext_dir = os.path.join(ide_manager.vscode_dir(uid), "extensions")
+    found: list[dict] = []
+    try:
+        if os.path.isdir(ext_dir):
+            for entry in os.listdir(ext_dir):
+                for prefix, meta in _IDE_EXT_KNOWN.items():
+                    if entry.startswith(prefix):
+                        found.append({"id": entry, **meta})
+                        break
+    except Exception as exc:
+        log.debug("extension list failed for %s: %s", uid, exc)
+    return {"extensions": found}
+
+
+class OpenChatRequest(BaseModel):
+    session_id: str
+    extension_type: str = "none"  # 'claude-code' | 'continue' | 'copilot-chat' | 'none'
+    session_label: str
+    messages: list[dict]          # [{"role": "user"|"assistant", "text": str}]
+
+
+@router.post("/open-chat")
+async def open_chat_in_ide(
+    body: OpenChatRequest,
+    user: CurrentUser,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Write the Hermes session as a markdown context file into the workspace,
+    set the IDE cookie, and return the code-server URL that opens the file."""
+    uid = str(user.id)
+    claude, codex = await _agent_tokens(db)
+    try:
+        await asyncio.to_thread(ide_manager.ensure_container, uid, claude, codex)
+    except Exception as e:
+        raise HTTPException(503, f"IDE could not be started: {e}") from e
+
+    filename = f"hermes-{body.session_id[:8]}.md"
+    ws_dir = ide_manager.workspace_dir(uid)
+    os.makedirs(ws_dir, exist_ok=True)
+
+    from datetime import datetime, timezone
+
+    last_asst = next(
+        (m.get("text", "").strip() for m in reversed(body.messages) if m.get("role") == "assistant"),
+        "",
+    )
+    summary = (last_asst[:600] + " …") if len(last_asst) > 600 else last_asst
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    lines = [
+        f"# {body.session_label}",
+        "",
+        f"> Exportiert aus Hermes · {now}",
+        "",
+        "## Zusammenfassung",
+        "",
+        summary or "_Keine Assistenz-Antwort vorhanden._",
+        "",
+        "## Aktionsschritte",
+        "",
+        "- [ ] ",
+        "",
+        "## Anmerkungen",
+        "",
+        "",
+        "---",
+        "",
+        "<details>",
+        "<summary>Vollständiger Hermes-Dialog</summary>",
+        "",
+    ]
+    for msg in body.messages:
+        role = "**▶ Nutzer**" if msg.get("role") == "user" else "**◎ Hermes**"
+        lines.append(f"### {role}\n{(msg.get('text') or '').strip()}\n")
+    lines += ["</details>", ""]
+
+    filepath_host = os.path.join(ws_dir, filename)
+    with open(filepath_host, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+
+    filepath_container = f"{ide_manager.WORKSPACES_DIR}/{filename}"
+    _set_ide_cookie(response, uid)
+    return {
+        "ide_url":  f"/ide/{uid}/?file={filepath_container}",
+        "filepath": filepath_container,
+        "filename": filename,
+    }
 
 
 async def _agent_tokens(db: AsyncSession) -> tuple[str | None, str | None]:
