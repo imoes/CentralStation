@@ -247,7 +247,7 @@ Since OS/location/VE/criticality are CheckMK-native concepts, the filter accesse
 | **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung, KI-Ignorieren; Hostname anklickbar → Feed-Filter; Severity-Filter ignoriert aktive Saved-Searches korrekt |
 | **KI-Insights** | Befunde + zugehörige Empfehlungen direkt zusammen (kein getrenntes Panel); Datenquelle-Badge je Befund; Hostname/Feed-Links; Empfehlungen fließen in generatives Dashboard ein |
 | **Fehler-Cluster (Root-Cause)** | Die KI fasst im selben Analyse-Lauf mehrere Befunde mit gemeinsamer Ursache zu einer Diagnose zusammen (z.B. „Core-Switch in MUE-0 ausgefallen" erklärt 10 nicht erreichbare Hosts); nutzt Blast-Radius-Topologie; sichtbar in KI-Insights, Hermes-Konsole und Brücke |
-| **Werkbank (Web-IDE)** | Pro-User code-server (VS Code im Browser) unter `/workbench`; integriertes Terminal, Git/GitLab, SSH zu `*.ippen.media`; **vorinstallierte KI-Agenten-Extensions** (Claude Code + OpenAI Codex); Ansible-Playbooks editierbar (geteiltes `playbooks/`-Verzeichnis, sofort in AWX sichtbar); Hermes-Analyse als Markdown übergeben |
+| **Werkbank (Web-IDE)** | Pro-User code-server (VS Code im Browser) unter `/workbench`; integriertes Terminal, Git/GitLab, SSH zu `*.ippen.media`; **vorinstallierte KI-Agenten-Extensions** (Claude Code + OpenAI Codex); Ansible editierbar (geteiltes `ansible/`-Verzeichnis im Standard-Layout: playbooks/roles/host_vars/group_vars/inventory, sofort in AWX sichtbar); Hermes-Analyse als Markdown übergeben |
 | **Maschinenraum (Remediation)** | Engineering-Cockpit unter `/engineering`; KI-gestützte Ansible-Remediation mit Human-in-the-Loop: `playbook_author` → AWX Job Template → `remediation_matcher` → Lern-Loop; cs-meta-Konvention im Playbook-Kopf (`matches`/`params`); Pending/Active/History/Catalog |
 | **AI War Room** | Blast-Radius-Analyse bei Critical/High; Ko-VMs, Ko-lokalisierte Hosts; Empfehlungen mit Ein-Klick-Jira |
 | **CheckMK Metriken** | Collector schreibt CPU/RAM/Disk/Agent-Zeit in `cs-metrics-checkmk`; Bridge zeigt Fleet-Vitals + Forecasts (lineare Regression); stabile Metriken (< 90 % ohne Trend) werden aus generativem Kontext gefiltert |
@@ -1039,12 +1039,25 @@ extensions are left untouched). The entrypoint also applies several Claude-Code
 compatibility patches (CSP font/style, manual OAuth flow, navigator shim, webview CSS
 inlining) needed to run the extension inside a proxied code-server.
 
-### Ansible playbooks
+### Ansible
 
-The shared `playbooks/` directory is bind-mounted into every IDE container at
-`/root/workspaces/playbooks` (same host path that AWX mounts as its Manual SCM
-project). Edit a playbook in VS Code → **AWX sees the change immediately**, no Git sync.
-The folder appears directly in the VS Code Explorer. (`IDE_PLAYBOOKS_PATH` env on the
+The shared `ansible/` directory follows the standard Ansible layout and is bind-mounted
+into every IDE container at `/root/workspaces/ansible` (same host path that AWX mounts as
+its Manual SCM project root):
+
+```
+ansible/
+  ansible.cfg          # roles_path=./roles, inventory=./inventory/hosts
+  inventory/hosts      # static inventory placeholder (AWX usually supplies its own)
+  group_vars/all.yml   # vars for all hosts (group_vars/<group>.yml per group)
+  host_vars/           # per-host vars: host_vars/<hostname>.yml
+  roles/               # roles (auto-discovered via roles_path)
+  playbooks/           # the playbooks + .cs-validate.py
+```
+
+Edit anything in VS Code → **AWX sees the change immediately**, no Git sync. AWX job
+templates reference playbooks as `playbooks/<name>.yml` (relative to the project root).
+The folder appears directly in the VS Code Explorer. (`IDE_ANSIBLE_PATH` env on the
 backend; see [Maschinenraum](#maschinenraum-ansible-remediation).)
 
 > **Note:** existing `cs-ide-*` containers are reused as-is; after changing the image

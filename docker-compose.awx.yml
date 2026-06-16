@@ -6,7 +6,9 @@
 # AWX-UI:  http://localhost:8052
 # Default-User: admin / Password aus AWX_ADMIN_PASSWORD (.env)
 #
-# Playbooks: ./playbooks/  wird in AWX als "Local" SCM-Projekt eingehängt.
+# Ansible: ./ansible/ (Standard-Layout: playbooks/, roles/, group_vars/, host_vars/,
+# inventory/) wird in AWX als "Local" SCM-Projekt eingehängt. Playbooks liegen unter
+# playbooks/<name>.yml (relativ zur Projekt-Wurzel), Rollen unter roles/ (auto-discovery).
 # In AWX anlegen: Projekte → Neu → SCM-Typ: Manual → Playbook-Verzeichnis: local
 #
 # Nach dem ersten Start dauert AWX 2–5 Minuten bis es vollständig gestartet ist.
@@ -64,7 +66,7 @@ services:
     volumes:
       # Playbooks — als "Manual" SCM-Projekt in AWX registrieren:
       # Projekte → Neu → Typ: Manual → Playbook-Verzeichnis: "local"
-      - ./playbooks:/var/lib/awx/projects/local
+      - ./ansible:/var/lib/awx/projects/local
       # Named volume für AWX-Laufzeit-Daten (rsyslog, fact-cache, receptor).
       # KEIN Bind-Mount auf ./data/awx — das würde /var/lib/awx überlagern und
       # die AWX-Venv (/var/lib/awx/venv/) verstecken → awx-manage nicht erreichbar.
