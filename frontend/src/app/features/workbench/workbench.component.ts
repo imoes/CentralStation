@@ -53,7 +53,22 @@ interface WorkSession {
           }
           <span class="spacer"></span>
           <button type="button" class="hbtn" (click)="openHermes()" matTooltip="Hermes-Agent öffnen / fortsetzen">
-            <mat-icon>smart_toy</mat-icon> HERMES
+            <svg width="18" height="18" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="29" y="29" width="42" height="42" rx="7"/>
+              <text x="50" y="56" text-anchor="middle" font-family="Arial,sans-serif" font-size="15" font-weight="700" letter-spacing="1" fill="currentColor" stroke="none">AI</text>
+              <line x1="39" y1="29" x2="39" y2="19"/><line x1="50" y1="29" x2="50" y2="12"/><line x1="61" y1="29" x2="61" y2="19"/>
+              <polyline points="34,29 34,20 20,20"/><polyline points="66,29 66,20 80,20"/>
+              <line x1="39" y1="71" x2="39" y2="81"/><line x1="50" y1="71" x2="50" y2="88"/><line x1="61" y1="71" x2="61" y2="81"/>
+              <polyline points="34,71 34,80 20,80"/><polyline points="66,71 66,80 80,80"/>
+              <line x1="29" y1="39" x2="19" y2="39"/><line x1="29" y1="50" x2="12" y2="50"/><line x1="29" y1="61" x2="19" y2="61"/>
+              <polyline points="29,34 20,34 20,20"/><polyline points="29,66 20,66 20,80"/>
+              <line x1="71" y1="39" x2="81" y2="39"/><line x1="71" y1="50" x2="88" y2="50"/><line x1="71" y1="61" x2="81" y2="61"/>
+              <polyline points="71,34 80,34 80,20"/><polyline points="71,66 80,66 80,80"/>
+              <rect x="37" y="17" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="48" y="10" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="59" y="17" width="4" height="4" rx="1" fill="currentColor" stroke="none"/>
+              <rect x="37" y="79" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="48" y="86" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="59" y="79" width="4" height="4" rx="1" fill="currentColor" stroke="none"/>
+              <rect x="17" y="37" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="10" y="48" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="17" y="59" width="4" height="4" rx="1" fill="currentColor" stroke="none"/>
+              <rect x="79" y="37" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="86" y="48" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="79" y="59" width="4" height="4" rx="1" fill="currentColor" stroke="none"/>
+            </svg> HERMES
           </button>
           <button type="button" class="hbtn" (click)="openTab()" matTooltip="IDE in neuem Tab öffnen">
             <mat-icon>open_in_new</mat-icon>
