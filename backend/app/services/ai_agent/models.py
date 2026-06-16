@@ -70,6 +70,28 @@ class Recommendation(BaseModel):
         return mapped if mapped in ("critical", "high", "medium", "low") else "low"
 
 
+class Cluster(BaseModel):
+    """A root-cause grouping of several findings under a single diagnosis.
+
+    The LLM produces clusters when multiple findings plausibly share one cause
+    (e.g. a network device down → many downstream hosts unreachable). Clusters
+    are an additive higher-level layer; findings/recommendations stay as-is.
+    """
+    diagnosis: str
+    severity: Literal["critical", "high", "medium", "low"] = "high"
+    root_cause_host: str | None = None
+    affected_hosts: list[str] = Field(default_factory=list)
+    explanation: str = ""
+    recommendation: str | None = None
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def normalise_severity(cls, v: str) -> str:
+        mapped = _SEV_ALIAS.get(str(v).lower(), str(v).lower())
+        # cluster severity has no "info" — clamp to "low"
+        return mapped if mapped in ("critical", "high", "medium", "low") else "low"
+
+
 class AnalysisResult(BaseModel):
     severity_summary: Literal["critical", "high", "medium", "low", "info", "none"] = "none"
 
@@ -80,6 +102,7 @@ class AnalysisResult(BaseModel):
         return mapped if mapped in ("critical", "high", "medium", "low", "info", "none") else "none"
     findings: list[Finding] = Field(default_factory=list)
     recommendations: list[Recommendation] = Field(default_factory=list)
+    clusters: list[Cluster] = Field(default_factory=list)
     rag_queries_used: list[dict] = Field(default_factory=list)
     token_usage: dict = Field(default_factory=dict)
     jira_tickets_created: list[str] = Field(default_factory=list)

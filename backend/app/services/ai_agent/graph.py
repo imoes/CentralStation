@@ -17,7 +17,7 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from app.services.llm_client import generate_text
-from app.services.ai_agent.models import AgentState, AnalysisResult, Finding, Recommendation
+from app.services.ai_agent.models import AgentState, AnalysisResult, Cluster, Finding, Recommendation
 from app.services.ai_agent.prompts import (
     RAG_DECISION_PROMPT, SEARXNG_HYDE_PROMPT, SYSADMIN_SYSTEM,
 )
@@ -587,15 +587,24 @@ async def analyze(state: dict, llm_config: Any) -> dict:
                 raw = raw[4:]
         parsed = json.loads(raw)
 
+        # Parse clusters leniently — a single malformed cluster must not kill the analysis.
+        clusters: list[Cluster] = []
+        for c in parsed.get("clusters", []):
+            try:
+                clusters.append(Cluster(**c))
+            except Exception as ce:
+                log.debug("analyze: skipping malformed cluster: %s", ce)
+
         result = AnalysisResult(
             severity_summary=parsed.get("severity_summary", "none"),
             findings=[Finding(**f) for f in parsed.get("findings", [])],
             recommendations=[Recommendation(**r) for r in parsed.get("recommendations", [])],
+            clusters=clusters,
             rag_queries_used=state.get("rag_context", []),
             token_usage={},
         )
-        log.info("analyze: severity=%s, findings=%d, duration=%.1fs",
-                 result.severity_summary, len(result.findings), duration)
+        log.info("analyze: severity=%s, findings=%d, clusters=%d, duration=%.1fs",
+                 result.severity_summary, len(result.findings), len(result.clusters), duration)
     except Exception as e:
         log.error("analyze: failed: %s", e)
         result = AnalysisResult(severity_summary="none", error=str(e))
@@ -621,6 +630,7 @@ async def act(state: dict, db: Any) -> dict:
         sources_checked={"alert_count": len(state.get("raw_alerts", []))},
         findings=[f.model_dump() for f in analysis.findings],
         recommendations=[r.model_dump() for r in analysis.recommendations],
+        clusters=[c.model_dump() for c in analysis.clusters],
         severity_summary=analysis.severity_summary,
         rag_queries_used=analysis.rag_queries_used,
         token_usage=analysis.token_usage,

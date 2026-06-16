@@ -19,6 +19,8 @@ class AiAnalysis(Base):
     sources_checked: Mapped[dict | None] = mapped_column(JSON)
     findings: Mapped[list | None] = mapped_column(JSON)
     recommendations: Mapped[list | None] = mapped_column(JSON)
+    # Root-cause groupings of findings under a single diagnosis (per-run snapshot)
+    clusters: Mapped[list | None] = mapped_column(JSON)
     severity_summary: Mapped[str | None] = mapped_column(String(20))
     jira_tickets_created: Mapped[list | None] = mapped_column(JSON)
     rag_queries_used: Mapped[list | None] = mapped_column(JSON)

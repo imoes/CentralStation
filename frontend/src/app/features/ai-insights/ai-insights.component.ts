@@ -86,6 +86,9 @@ const SEVERITY_COLORS: Record<string, string> = {
                 <div class="analysis-counts">
                   <span>{{ analysis.findings_count }} Befunde</span>
                   <span>{{ analysis.recommendations_count }} Empfehlungen</span>
+                  @if (analysis.clusters?.length) {
+                    <span class="cluster-count">{{ analysis.clusters.length }} Fehler-Cluster</span>
+                  }
                   @if (analysis.jira_tickets_created?.length) {
                     <span class="jira-count">{{ analysis.jira_tickets_created.length }} Jira-Tickets</span>
                   }
@@ -93,6 +96,46 @@ const SEVERITY_COLORS: Record<string, string> = {
               </div>
             </mat-card-header>
             <mat-card-content>
+              <!-- ── Fehler-Cluster (root-cause Diagnosen) ── -->
+              @if (analysis.clusters?.length) {
+                <div class="cluster-section">
+                  <div class="cluster-section-title">
+                    <mat-icon>hub</mat-icon> Diagnose / Fehler-Cluster
+                  </div>
+                  @for (cl of analysis.clusters; track $index) {
+                    <div class="cluster-item" [style.border-left-color]="sevColor(cl.severity)">
+                      <div class="cluster-head">
+                        <span class="cluster-sev" [style.color]="sevColor(cl.severity)">
+                          [{{ cl.severity | uppercase }}]
+                        </span>
+                        <span class="cluster-diagnosis">{{ cl.diagnosis }}</span>
+                      </div>
+                      @if (cl.root_cause_host) {
+                        <div class="cluster-root">
+                          <mat-icon class="host-icon">my_location</mat-icon>
+                          <span>Ursache: </span>
+                          <button class="host-link" (click)="openInFeedByHost(cl.root_cause_host)">{{ cl.root_cause_host }}</button>
+                        </div>
+                      }
+                      @if (cl.affected_hosts?.length) {
+                        <div class="cluster-hosts">
+                          @for (h of cl.affected_hosts; track h) {
+                            <button class="host-chip" (click)="openInFeedByHost(h)">{{ h }}</button>
+                          }
+                        </div>
+                      }
+                      @if (cl.explanation) {
+                        <div class="cluster-expl">{{ cl.explanation }}</div>
+                      }
+                      @if (cl.recommendation) {
+                        <div class="cluster-rec">
+                          <mat-icon class="rec-arrow">arrow_forward</mat-icon>{{ cl.recommendation }}
+                        </div>
+                      }
+                    </div>
+                  }
+                </div>
+              }
               <mat-accordion>
                 @if (analysis.findings?.length || analysis.recommendations?.length) {
                   <mat-expansion-panel [expanded]="analysis.id === highlightId()">
@@ -245,6 +288,43 @@ const SEVERITY_COLORS: Record<string, string> = {
     .analysis-meta { display: flex; align-items: center; gap: 10px; }
     .analysis-counts { display: flex; gap: 16px; font-size: 12px; color: var(--mat-sys-on-surface-variant); }
     .jira-count { color: #0052cc; font-weight: 600; }
+    .cluster-count { color: #b8860b; font-weight: 600; }
+    /* ── Fehler-Cluster (root-cause diagnoses) ── */
+    .cluster-section { margin-bottom: 12px; }
+    .cluster-section-title {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+      color: var(--mat-sys-on-surface); margin: 4px 0 8px;
+    }
+    .cluster-section-title mat-icon { font-size: 18px; height: 18px; width: 18px; color: #b8860b; }
+    .cluster-item {
+      border-left: 4px solid #9e9e9e; padding: 8px 12px; margin-bottom: 8px;
+      background: var(--mat-sys-surface-container-low); border-radius: 0 6px 6px 0;
+    }
+    .cluster-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .cluster-sev { font-weight: 700; font-size: 11px; flex-shrink: 0; }
+    .cluster-diagnosis { font-size: 14px; font-weight: 600; }
+    .cluster-root {
+      display: flex; align-items: center; gap: 4px; margin-top: 4px;
+      font-size: 12px; color: var(--mat-sys-on-surface-variant);
+    }
+    .cluster-hosts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .host-chip {
+      background: var(--mat-sys-surface-container-high); border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: 10px; padding: 1px 8px; cursor: pointer;
+      font-family: 'Fira Code', monospace; font-size: 11px; color: var(--mat-sys-primary);
+    }
+    .host-chip:hover { background: var(--mat-sys-surface-container-highest); }
+    .cluster-expl { font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-top: 6px; line-height: 1.5; }
+    .cluster-rec {
+      display: flex; align-items: center; gap: 4px; margin-top: 6px;
+      font-size: 12px; font-weight: 500;
+    }
+    .cluster-rec .rec-arrow { font-size: 14px; height: 14px; width: 14px; color: #b8860b; }
+    :host-context(html.cs-theme-lcars) .cluster-count { color: #FFCC99; }
+    :host-context(html.cs-theme-lcars) .cluster-section-title mat-icon,
+    :host-context(html.cs-theme-lcars) .cluster-rec .rec-arrow { color: #FFCC99; }
+    :host-context(html.cs-theme-lcars) .host-chip { color: #FF9933; }
     .severity-badge { padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
     .run-time { font-size: 12px; color: var(--mat-sys-on-surface-variant); }
     .agent-chip { font-size: 10px; min-height: 18px; }
