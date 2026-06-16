@@ -62,7 +62,7 @@ services:
       CENTRALCORE_URL: http://centralcore:8001
       HTTP_PROXY: http://proxy.ippen.media:80
       HTTPS_PROXY: http://proxy.ippen.media:80
-      NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,centralcore,.ippen.media
+      NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,centralcore,awx,awx-db,awx-redis,.ippen.media
       # Werkbank Web-IDE: backend orchestrates per-user code-server containers.
       IDE_IMAGE: centralstation-codeserver:latest
       IDE_NETWORK: centralstation_default
@@ -71,11 +71,17 @@ services:
       # Workspaces are bind-mounted from this host path into each cs-ide container.
       # The backend also mounts this path so os.makedirs() creates dirs on the host.
       IDE_WORKSPACES_BASE: ${IDE_WORKSPACES_BASE:-/opt/centralstation/ide-workspaces}
+      # Shared Ansible playbooks dir — same host path AWX mounts as Manual SCM project.
+      # Mounted read-write into each IDE container at /root/workspaces/playbooks.
+      # Edit in VS Code → AWX sees the change immediately (no Git sync).
+      IDE_PLAYBOOKS_PATH: ${IDE_PLAYBOOKS_PATH:-/home/mutkluge/Dev/code/CentralStation/playbooks}
     volumes:
       # Docker socket so the backend can start/stop per-user cs-ide-* containers.
       - /var/run/docker.sock:/var/run/docker.sock
       # Workspace bind-mount base — same path inside backend = same path on host.
       - ${IDE_WORKSPACES_BASE:-/opt/centralstation/ide-workspaces}:${IDE_WORKSPACES_BASE:-/opt/centralstation/ide-workspaces}
+      # Playbooks dir — same path so backend can write files during publish_playbook().
+      - ${IDE_PLAYBOOKS_PATH:-/home/mutkluge/Dev/code/CentralStation/playbooks}:${IDE_PLAYBOOKS_PATH:-/home/mutkluge/Dev/code/CentralStation/playbooks}
     depends_on:
       db:
         condition: service_healthy

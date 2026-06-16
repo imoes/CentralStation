@@ -22,6 +22,10 @@ IDE_CONTAINER_PORT = os.getenv("IDE_CONTAINER_PORT", "8080")
 # Host-side base dir for workspace bind mounts. The backend container must mount
 # the same path so os.makedirs() creates the directory on the host filesystem.
 IDE_WORKSPACES_BASE = os.getenv("IDE_WORKSPACES_BASE", "/opt/centralstation/ide-workspaces")
+# Shared playbooks directory (same host path AWX mounts as Manual project).
+# When set, mounted into each IDE container at /root/workspaces/playbooks so
+# edits are immediately visible to AWX without any sync step.
+IDE_PLAYBOOKS_PATH = os.getenv("IDE_PLAYBOOKS_PATH", "")
 WORKSPACES_DIR = "/root/workspaces"
 # In-memory last-activity tracker for the idle reaper (best-effort; resets on
 # backend restart, which is fine — the reaper just won't reap until next touch).
@@ -116,6 +120,8 @@ def ensure_container(user_id: str) -> str:
     }
     if IDE_HOST_SSH_DIR:
         volumes[IDE_HOST_SSH_DIR] = {"bind": "/root/.ssh_host", "mode": "ro"}
+    if IDE_PLAYBOOKS_PATH:
+        volumes[IDE_PLAYBOOKS_PATH] = {"bind": f"{WORKSPACES_DIR}/playbooks", "mode": "rw"}
 
     environment = {
         "HOME": "/root",
