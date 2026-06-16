@@ -44,7 +44,7 @@ services:
     hostname: awxweb
     user: root
     ports:
-      - "127.0.0.1:8052:8052"
+      - "127.0.0.1:8052:80"
     environment:
       # Datenbank
       DATABASE_HOST: awx-db
@@ -65,10 +65,15 @@ services:
       # Playbooks — als "Manual" SCM-Projekt in AWX registrieren:
       # Projekte → Neu → Typ: Manual → Playbook-Verzeichnis: "local"
       - ./playbooks:/var/lib/awx/projects/local
-      # Persistenter AWX-Storage (Konfiguration, Fact-Cache)
-      - ./data/awx:/var/lib/awx
+      # Named volume für AWX-Laufzeit-Daten (rsyslog, fact-cache, receptor).
+      # KEIN Bind-Mount auf ./data/awx — das würde /var/lib/awx überlagern und
+      # die AWX-Venv (/var/lib/awx/venv/) verstecken → awx-manage nicht erreichbar.
+      - awx-data:/var/lib/awx
     depends_on:
       awx-db:
         condition: service_healthy
       awx-redis:
         condition: service_started
+
+volumes:
+  awx-data:
