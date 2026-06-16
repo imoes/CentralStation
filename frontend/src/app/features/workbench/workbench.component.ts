@@ -84,6 +84,7 @@ interface WorkSession {
         <div class="cap-br"></div>
       </div>
     </div>
+
   `,
   styles: [`
     :host { display: flex; flex-direction: column; height: 100vh; background: #111; color: #ffcc99; font-family: 'Antonio','Roboto',sans-serif; }

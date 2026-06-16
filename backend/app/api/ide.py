@@ -124,9 +124,8 @@ async def open_chat_in_ide(
     """Write the Hermes session as a markdown context file into the workspace,
     set the IDE cookie, and return the code-server URL that opens the file."""
     uid = str(user.id)
-    claude, codex = await _agent_tokens(db)
     try:
-        await asyncio.to_thread(ide_manager.ensure_container, uid, claude, codex)
+        await asyncio.to_thread(ide_manager.ensure_container, uid)
     except Exception as e:
         raise HTTPException(503, f"IDE could not be started: {e}") from e
 
@@ -183,19 +182,6 @@ async def open_chat_in_ide(
     }
 
 
-async def _agent_tokens(db: AsyncSession) -> tuple[str | None, str | None]:
-    """Pull the Claude + Codex OAuth tokens (auto-refreshed) so the IDE terminal's
-    CLI agents are authenticated without a browser OAuth flow. Best-effort."""
-    claude = codex = None
-    try:
-        from app.api.oauth_providers import get_claude_access_token, get_codex_access_token
-        claude = await get_claude_access_token(db)
-        codex = await get_codex_access_token(db)
-    except Exception as e:
-        log.debug("agent token fetch failed (non-fatal): %s", e)
-    return claude, codex
-
-
 @router.post("/session/ensure")
 async def ensure_session(
     user: CurrentUser,
@@ -206,9 +192,8 @@ async def ensure_session(
     if user.role not in _ALLOWED_ROLES:
         raise HTTPException(403, "IDE requires admin or sysadmin role")
     uid = str(user.id)
-    claude, codex = await _agent_tokens(db)
     try:
-        await asyncio.to_thread(ide_manager.ensure_container, uid, claude, codex)
+        await asyncio.to_thread(ide_manager.ensure_container, uid)
     except Exception as e:
         log.warning("ide ensure failed for %s: %s", uid, e)
         raise HTTPException(503, f"IDE could not be started: {e}") from e
@@ -254,9 +239,8 @@ async def provision_workspace(
     if not s:
         raise HTTPException(404, "WorkSession not found")
 
-    claude, codex = await _agent_tokens(db)
     try:
-        await asyncio.to_thread(ide_manager.ensure_container, uid, claude, codex)
+        await asyncio.to_thread(ide_manager.ensure_container, uid)
     except Exception as e:
         raise HTTPException(503, f"IDE could not be started: {e}") from e
 

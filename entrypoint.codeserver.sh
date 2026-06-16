@@ -68,6 +68,53 @@ for _ext in "$_ext_dir"/anthropic.claude-code-*/; do
         sed -i 's|sessions:await this\.teleportService\.fetchRemoteSessions()|sessions:[]|g' "$_js" && \
             echo "cs-entrypoint: patched listRemoteSessions → empty in $_js"
     fi
+    # Inline the webview CSS. The chat panel links its stylesheet via
+    # <link href="${asWebviewUri(index.css)}">, which the browser loads as an external
+    # vscode-resource URL routed through the webview service worker. In this proxied
+    # subpath setup that resource never applies (SW cache / CSP host match / cross-origin
+    # iframe), so CSS-module classes render unstyled — the mode-picker shows a giant ✓ and
+    # concatenated labels. Inlining the file contents as a <style> block sidesteps the SW,
+    # CSP host matching, resource URL scheme and caching entirely; CSP already allows
+    # 'unsafe-inline' for styles, so the rules always apply. Idempotent: once the <link>
+    # is gone the guard skips. node is used for an exact (non-regex) string replace.
+    if [ -f "$_js" ] && grep -qF '<link href="${l}" rel="stylesheet">' "$_js"; then
+        # code-server ships its own node; it is not on PATH in this entrypoint shell.
+        "/usr/lib/code-server/lib/node" -e '
+            const fs=require("fs"), p=process.argv[1];
+            let s=fs.readFileSync(p,"utf8");
+            s=s.replace(
+                "<link href=\"${l}\" rel=\"stylesheet\">",
+                "<style>${(()=>{try{return require(\"fs\").readFileSync(c.fsPath,\"utf8\")}catch(_){return\"\"}})()}</style>"
+            );
+            fs.writeFileSync(p,s);
+        ' "$_js" && echo "cs-entrypoint: inlined webview CSS as <style> in $_js"
+    fi
+    # Force manual OAuth flow: open manualUrl (platform.claude.com/oauth/code/callback)
+    # instead of automaticUrl (http://localhost:PORT/callback — loopback, unreachable from
+    # the user's browser to the container). After auth the user copies a CODE#STATE string
+    # from platform.claude.com and pastes it into the extension's webview input.
+    # Variable names are extracted dynamically from the minified destructuring so the patch
+    # survives version updates that rename single-letter variables.
+    if [ -f "$_js" ] && ! grep -qF '/* cs-oauth-manual-patch */' "$_js"; then
+        "/usr/lib/code-server/lib/node" -e '
+            const fs=require("fs"),p=process.argv[1];
+            let s=fs.readFileSync(p,"utf8");
+            const dm=s.match(/\{manualUrl:([a-z]),automaticUrl:([a-z])\}/);
+            if(!dm){process.exit(0);}
+            const mu=dm[1],au=dm[2];
+            const ctxKey="type:\"auth_url\",url:"+mu+",method:";
+            const toReplace="this.openURL("+au+")";
+            const patched="this.openURL("+mu+")";
+            const ci=s.indexOf(ctxKey);
+            if(ci<0||!s.includes(toReplace)){process.exit(0);}
+            const ce=s.indexOf("}catch(",ci)+1;
+            const sec=s.slice(ci,ce);
+            if(!sec.includes(toReplace)){process.exit(0);}
+            s=s.slice(0,ci)+sec.replace(toReplace,patched)+s.slice(ce)
+             +"\n/* cs-oauth-manual-patch */";
+            fs.writeFileSync(p,s);
+        ' "$_js" && echo "cs-entrypoint: patched OAuth to manual flow (manualUrl) in $_js"
+    fi
 done
 unset _ext_dir _ext _js
 
