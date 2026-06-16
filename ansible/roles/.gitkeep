@@ -1,0 +1,3 @@
+# Role definitions live here (one subdir per role: tasks/, handlers/, templates/, defaults/, ...).
+# AWX auto-discovers them via roles_path=./roles in ansible.cfg.
+# Install external roles with: ansible-galaxy role install -r requirements.yml -p roles/

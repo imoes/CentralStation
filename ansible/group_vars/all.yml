@@ -1,0 +1,6 @@
+---
+# Variables applied to ALL hosts. Group-specific vars go in group_vars/<group>.yml,
+# host-specific vars in host_vars/<hostname>.yml.
+#
+# Example:
+# ansible_user: marvin

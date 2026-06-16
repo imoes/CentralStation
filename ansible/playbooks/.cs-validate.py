@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Validiert alle Playbooks im aktuellen Verzeichnis auf gültige cs-meta-Blöcke.
 
-Aufruf:
-    python3 playbooks/.cs-validate.py          # alle *.yml
+Aufruf (aus dem ansible/-Verzeichnis):
+    python3 playbooks/.cs-validate.py          # alle *.yml in playbooks/
     python3 playbooks/.cs-validate.py disk_resize.yml ping.yml
 
 Exit-Code 0 = alle OK, Exit-Code 1 = Verstöße gefunden (CI-tauglich).
@@ -10,14 +10,15 @@ Exit-Code 0 = alle OK, Exit-Code 1 = Verstöße gefunden (CI-tauglich).
 import sys
 import os
 
-# Damit der Import auch aus dem Repo-Root funktioniert
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+# Liegt unter ansible/playbooks/ → Repo-Root ist zwei Ebenen höher.
+_REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 
 try:
+    sys.path.insert(0, os.path.join(_REPO_ROOT, "backend"))
     from app.services.playbook_meta import parse_meta, validate_meta
 except ImportError:
-    # Fallback: inline-Import wenn backend nicht im Pfad
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend", "app", "services"))
+    # Fallback: direkter Import des Moduls, wenn backend nicht als Paket im Pfad ist
+    sys.path.insert(0, os.path.join(_REPO_ROOT, "backend", "app", "services"))
     from playbook_meta import parse_meta, validate_meta  # type: ignore
 
 SKIP = {".cs-validate.py"}
