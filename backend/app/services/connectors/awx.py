@@ -144,17 +144,31 @@ class AWXConnector(BaseConnector):
         inventory_id: int | str | None = None,
         credential_id: int | str | None = None,
         ask_vars: bool = True,
+        description: str = "",
+        matches: list[str] | None = None,
+        survey_spec: dict | None = None,
     ) -> dict:
+        """Create an AWX Job Template.
+
+        description — rich text (from cs-meta) used by remediation_matcher for LLM matching.
+        matches     — list of alert patterns (cs-meta.matches), stored as AWX labels.
+        survey_spec — AWX survey spec dict (from meta_to_survey_spec), enables prompted params.
+        """
         payload: dict = {
             "name": name,
             "job_type": "run",
             "playbook": playbook,
+            "description": description,
             "ask_variables_on_launch": ask_vars,
+            "ask_inventory_on_launch": not bool(inventory_id or self.inventory_id),
             "project": project_id or self.project_id,
             "inventory": inventory_id or self.inventory_id,
         }
         if credential_id or self.credential_id:
             payload["credential"] = credential_id or self.credential_id
+        if survey_spec:
+            payload["survey_enabled"] = True
+
         async with self._client(verify=self.verify) as c:
             r = await c.post(
                 f"{self.base_url}{self.API}/job_templates/",
@@ -162,4 +176,39 @@ class AWXConnector(BaseConnector):
                 json=payload,
             )
             r.raise_for_status()
-            return r.json()
+            tmpl = r.json()
+            tmpl_id = tmpl.get("id")
+
+            # Attach survey spec
+            if survey_spec and tmpl_id:
+                try:
+                    await c.post(
+                        f"{self.base_url}{self.API}/job_templates/{tmpl_id}/survey_spec/",
+                        headers=self._hdr(),
+                        json=survey_spec,
+                    )
+                except Exception:
+                    pass
+
+            # Attach labels (one per match pattern — used as deterministischer Vorfilter)
+            if matches and tmpl_id:
+                for pattern in matches:
+                    try:
+                        # Create or get label
+                        lr = await c.post(
+                            f"{self.base_url}{self.API}/labels/",
+                            headers=self._hdr(),
+                            json={"name": pattern[:512], "organization": 1},
+                        )
+                        if lr.status_code in (200, 201):
+                            label_id = lr.json().get("id")
+                            if label_id:
+                                await c.post(
+                                    f"{self.base_url}{self.API}/job_templates/{tmpl_id}/labels/",
+                                    headers=self._hdr(),
+                                    json={"id": label_id},
+                                )
+                    except Exception:
+                        pass
+
+            return tmpl

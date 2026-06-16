@@ -1,0 +1,51 @@
+# ─── cs-meta ───────────────────────────────────────────────
+# id: disk-resize
+# title: Disk vergrößern (LVM)
+# description: Vergrößert ein LVM Logical Volume und das Dateisystem online ohne Downtime
+# matches:
+#   - "checkmk:Filesystem*"
+#   - "no space left on device"
+#   - "Disk usage"
+#   - "filesystem full"
+# target: linux
+# risk: medium
+# params:
+#   - {name: lv_path,  description: "Pfad zum Logical Volume", example: "/dev/vg0/root"}
+#   - {name: add_size, description: "Größe die hinzugefügt wird (z.B. +10G)", example: "+10G"}
+# ─── /cs-meta ──────────────────────────────────────────────
+---
+- name: Disk vergrößern (LVM)
+  hosts: "{{ target_host }}"
+  become: true
+  vars:
+    lv_path: "{{ lv_path }}"
+    add_size: "{{ add_size }}"
+
+  tasks:
+    - name: Prüfe ob LV existiert
+      ansible.builtin.stat:
+        path: "{{ lv_path }}"
+      register: lv_stat
+
+    - name: Abbruch wenn LV nicht gefunden
+      ansible.builtin.fail:
+        msg: "Logical Volume {{ lv_path }} nicht gefunden"
+      when: not lv_stat.stat.exists
+
+    - name: LV vergrößern und Dateisystem online resizen
+      community.general.lvol:
+        lv: "{{ lv_path | basename }}"
+        vg: "{{ lv_path | dirname | basename }}"
+        size: "{{ add_size }}"
+        resizefs: true
+      register: lvol_result
+
+    - name: Neue Größe anzeigen
+      ansible.builtin.command:
+        cmd: "df -h {{ lv_path }}"
+      register: df_out
+      changed_when: false
+
+    - name: Ergebnis ausgeben
+      ansible.builtin.debug:
+        msg: "{{ df_out.stdout_lines }}"

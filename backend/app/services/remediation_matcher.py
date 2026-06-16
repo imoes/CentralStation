@@ -61,7 +61,78 @@ async def propose_remediation(
         for t in templates
     ]
 
-    # ── 3. LLM picks the best match ───────────────────────────────
+    # ── 3a. Deterministischer Label-Vorfilter ─────────────────────
+    # cs-meta.matches-Patterns werden als AWX-Labels gespeichert.
+    # Wenn ein Template-Label exakt im finding_title oder rationale vorkommt,
+    # nehmen wir dieses Template direkt — kein LLM nötig.
+    title_lower    = finding_title.lower()
+    rationale_lower = rationale.lower()
+
+    for t in templates:
+        labels: list[dict] = t.get("related", {}).get("labels", {}).get("results", [])
+        if not labels:
+            # Fallback: parse matches from description field ("Matches: pattern1, pattern2")
+            desc = t.get("description", "")
+            if "Matches:" in desc:
+                match_line = desc.split("Matches:", 1)[1].split("\n")[0]
+                labels = [{"name": p.strip()} for p in match_line.split(",") if p.strip()]
+
+        for label in labels:
+            pattern = label.get("name", "").lower()
+            if not pattern:
+                continue
+            # Wildcard suffix: "checkmk:filesystem*" → prefix match
+            if pattern.endswith("*"):
+                prefix = pattern[:-1]
+                if prefix in title_lower or prefix in rationale_lower:
+                    log.info(
+                        "remediation_matcher: label-prefilter hit '%s' → template '%s' (id=%s)",
+                        label.get("name"), t["name"], t["id"],
+                    )
+                    template_id = t["id"]
+                    template_name = t["name"]
+                    # Skip LLM, persist directly
+                    from app.models.remediation import RemediationProposal
+                    proposal = RemediationProposal(
+                        external_id=external_id,
+                        host=host,
+                        finding_title=finding_title,
+                        rationale=f"{rationale}\n\nLabel-match: {label.get('name')}",
+                        awx_template_id=template_id,
+                        awx_template_name=template_name,
+                        extra_vars={},
+                        risk="medium",
+                        status="proposed",
+                        analysis_id=analysis_id,
+                    )
+                    db.add(proposal)
+                    await db.flush()
+                    return proposal
+            else:
+                if pattern in title_lower or pattern in rationale_lower:
+                    log.info(
+                        "remediation_matcher: label-prefilter hit '%s' → template '%s' (id=%s)",
+                        label.get("name"), t["name"], t["id"],
+                    )
+                    template_id = t["id"]
+                    from app.models.remediation import RemediationProposal
+                    proposal = RemediationProposal(
+                        external_id=external_id,
+                        host=host,
+                        finding_title=finding_title,
+                        rationale=f"{rationale}\n\nLabel-match: {label.get('name')}",
+                        awx_template_id=template_id,
+                        awx_template_name=t["name"],
+                        extra_vars={},
+                        risk="medium",
+                        status="proposed",
+                        analysis_id=analysis_id,
+                    )
+                    db.add(proposal)
+                    await db.flush()
+                    return proposal
+
+    # ── 3b. LLM picks the best match (Fallback) ───────────────────
     llm_cfg = await get_llm_config(db)
     if not llm_cfg.is_configured:
         return None
