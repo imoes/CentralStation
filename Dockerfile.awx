@@ -108,6 +108,18 @@ $AWX_MANAGE provision_instance --hostname="${HOSTNAME:-awxweb}" --node_type=hybr
 $AWX_MANAGE register_queue --queuename=default --instance_percent=100 2>/dev/null || true
 $AWX_MANAGE register_default_execution_environments 2>/dev/null || true
 
+# Patch the React bundle to add missing German locale alias (falls back to English).
+# AWX 21.x ships en/es/fr/ja/ko/nl/zh/zu but not 'de'; Firefox with German UI
+# crashes with "Cannot find module './de/messages'". sed is idempotent.
+BUNDLE=/var/lib/awx/public/static/js/main.9996ba55.js
+if [ -f "$BUNDLE" ] && ! grep -q '"./de/messages"' "$BUNDLE"; then
+    EN_REF=$(grep -o '"./en/messages":\[[0-9]*,[0-9]*\]' "$BUNDLE" | head -1)
+    if [ -n "$EN_REF" ]; then
+        DE_REF=$(echo "$EN_REF" | sed 's|en/messages|de/messages|')
+        sed -i "s|$EN_REF|$DE_REF,$EN_REF|" "$BUNDLE" 2>/dev/null || true
+    fi
+fi
+
 # Ensure the instance is actually in the default instance group
 # (register_queue creates the group but sometimes doesn't associate the instance)
 $AWX_MANAGE shell -c "
