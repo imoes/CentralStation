@@ -88,6 +88,45 @@ AWX_ADMIN_PASSWORD = os.environ.get("AWX_ADMIN_PASSWORD", "changeme")
 AWX_ADMIN_EMAIL = os.environ.get("DJANGO_SUPERUSER_EMAIL", "admin@localhost")
 SETTINGS
 
+# Override launch_awx.sh to run instance provisioning after migrations (idempotent)
+RUN cat > /usr/bin/launch_awx.sh << 'LAUNCH'
+#!/usr/bin/env bash
+if [ `id -u` -ge 500 ]; then
+    echo "awx:x:`id -u`:`id -g`:,,,:/var/lib/awx:/bin/bash" >> /tmp/passwd
+    cat /tmp/passwd > /etc/passwd
+    rm /tmp/passwd
+fi
+
+set -e
+
+wait-for-migrations
+
+AWX_MANAGE=/var/lib/awx/venv/awx/bin/awx-manage
+
+# Register the AWX web/execution node (idempotent — safe every start)
+$AWX_MANAGE provision_instance --hostname="${HOSTNAME:-awxweb}" --node_type=hybrid 2>/dev/null || true
+$AWX_MANAGE register_queue --queuename=default --instance_percent=100 2>/dev/null || true
+$AWX_MANAGE register_default_execution_environments 2>/dev/null || true
+
+# Create admin user from env (idempotent)
+if [ -n "${AWX_ADMIN_USER}" ] && [ -n "${AWX_ADMIN_PASSWORD}" ]; then
+    $AWX_MANAGE shell -c "
+from django.contrib.auth.models import User
+import os
+u, _ = User.objects.get_or_create(username=os.environ['AWX_ADMIN_USER'])
+u.is_superuser = True; u.is_staff = True
+u.set_password(os.environ['AWX_ADMIN_PASSWORD']); u.save()
+" 2>/dev/null || true
+fi
+
+cat << EOF > /var/lib/awx/rsyslog/rsyslog.conf
+action(type="omfile" file="/dev/null")
+EOF
+
+exec supervisord -c /etc/supervisord.conf
+LAUNCH
+RUN chmod +x /usr/bin/launch_awx.sh
+
 # AWX nginx proxy config — routes all requests to uwsgi (port 8050) and WebSocket to daphne (8051)
 # The base nginx.conf includes /etc/nginx/default.d/*.conf inside its server {} block.
 RUN cat > /etc/nginx/default.d/awx.conf << 'NGINX'

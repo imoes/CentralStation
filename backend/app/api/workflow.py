@@ -119,13 +119,38 @@ def _to_dict(s: WorkSession, jira_base_url: str | None = None) -> dict:
     }
 
 
-async def _get_jira_base_url(db: AsyncSession) -> str | None:
+async def _get_jira_base_url(db: AsyncSession, jira_key: str | None = None) -> str | None:
+    """Return the base URL of the Jira connector that owns this issue key.
+
+    Checks both 'jira' and 'jira_sd' connector types. When multiple connectors
+    exist and a jira_key is provided, tries each connector until one returns the
+    issue, so ServiceDesk tickets (e.g. IMIT-*) get the correct browse URL
+    instead of the regular Jira URL.
+    """
     from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
     result = await db.execute(
-        select(ConnectorConfig).where(ConnectorConfig.type == "jira", ConnectorConfig.enabled == True)
+        select(ConnectorConfig).where(
+            ConnectorConfig.type.in_(["jira", "jira_sd"]),
+            ConnectorConfig.enabled == True,
+        )
     )
-    c = result.scalars().first()
-    return c.base_url if c else None
+    connectors = result.scalars().all()
+    if not connectors:
+        return None
+    if not jira_key or len(connectors) == 1:
+        return connectors[0].base_url
+    for conn in connectors:
+        try:
+            creds = decrypt_credentials(conn.encrypted_credentials)
+            jira = JiraConnector(base_url=conn.base_url, credentials=creds)
+            await jira.get_issue_detail(jira_key)
+            return conn.base_url
+        except Exception:
+            pass
+    return connectors[0].base_url
 
 
 async def _get_session(session_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> WorkSession:
@@ -236,7 +261,7 @@ async def create_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
-    return _to_dict(session, await _get_jira_base_url(db))
+    return _to_dict(session, await _get_jira_base_url(db, session.jira_key))
 
 
 @router.get("/{session_id}")
@@ -245,8 +270,9 @@ async def get_session(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    jira_url = await _get_jira_base_url(db)
-    return _to_dict(await _get_session(session_id, user.id, db), jira_url)
+    s = await _get_session(session_id, user.id, db)
+    jira_url = await _get_jira_base_url(db, s.jira_key)
+    return _to_dict(s, jira_url)
 
 
 @router.patch("/{session_id}")
