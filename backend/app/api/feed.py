@@ -1046,6 +1046,7 @@ async def alert_hermes_context(
     severity = ""
     source_name = ""
     container = ""
+    raw_item: dict = {}
     try:
         from app.services.feed_index import search_by_query
         items = await search_by_query(
@@ -1054,18 +1055,39 @@ async def alert_hermes_context(
             size=1,
         )
         if items:
-            item = items[0]
-            meta = item.get("metadata") or {}
-            host = meta.get("host") or meta.get("agent") or meta.get("container_name") or ""
-            title = item.get("title", "")
-            severity = item.get("severity", "")
-            source_name = item.get("source", "")
+            raw_item = items[0]
+            meta = raw_item.get("metadata") or {}
+            # Try multiple metadata fields where hostname might live
+            host = (meta.get("host") or meta.get("agent") or meta.get("container_name")
+                    or meta.get("hostname") or meta.get("source_host")
+                    or raw_item.get("host") or "")
+            # Extract hostname from title if it contains an FQDN-like pattern
+            if not host:
+                import re as _re
+                m = _re.search(r'\b([\w.-]+\.(?:media|internal|local|ippen\.media))\b',
+                               raw_item.get("title", ""))
+                if m:
+                    host = m.group(1)
+            title = raw_item.get("title", "")
+            severity = raw_item.get("severity", "")
+            source_name = raw_item.get("source", "")
             container = meta.get("container_name", "")
     except Exception as e:
         log.warning("hermes-context: search failed: %s", e)
 
     if not host:
-        raise HTTPException(400, "Host nicht ermittelbar — kein Hostname im Alert-Datensatz.")
+        # Build a best-effort prompt without host-specific diagnostics
+        prompt = (
+            f"Untersuche diesen Alert:\n\n"
+            f"**Alert:** {title or '(unbekannt)'}\n"
+            f"**Schweregrad:** {severity or '?'}\n"
+            f"**Quelle:** {source_name or '?'}\n\n"
+            "Hinweis: Kein spezifischer Hostname im Alert-Datensatz — "
+            "bitte prüfe den Alert manuell und recherchiere den betroffenen Host."
+        )
+        return {"prompt": prompt, "host": title or "Alert"}
+
+    results = await run_diagnostics(host, db)
 
     results = await run_diagnostics(host, db)
 
