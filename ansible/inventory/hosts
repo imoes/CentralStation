@@ -1,0 +1,11 @@
+# Static inventory placeholder.
+#
+# In production AWX supplies the inventory (its own DB-managed inventories /
+# dynamic sources), so this file is mostly relevant for local testing in the
+# Werkbank, e.g.:
+#
+#   ansible-playbook -i "localhost," -c local playbooks/ping.yml
+#
+# Add static groups/hosts here if you need them for local runs.
+[local]
+localhost ansible_connection=local

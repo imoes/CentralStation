@@ -90,8 +90,11 @@ async def publish_playbook(
     """Commit playbook to the Manual AWX project directory, create AWX job template.
 
     For the Manual SCM project the playbook file is written directly to the local
-    filesystem (./playbooks/ bind-mounted into AWX at /var/lib/awx/projects/local/).
-    No Git sync needed — AWX sees changes immediately.
+    filesystem: the shared ./ansible/ tree (standard Ansible layout) is bind-mounted
+    into AWX at /var/lib/awx/projects/local/, so the playbook goes to
+    ansible/playbooks/<name>.yml and the job template references it as
+    playbooks/<name>.yml (relative to the project root). No Git sync needed — AWX
+    sees changes immediately.
 
     Returns a dict with status information.
     """
@@ -119,12 +122,17 @@ async def publish_playbook(
         result["meta_warnings"] = errors
 
     safe_name = (meta.get("id") or draft.title.lower().replace(" ", "_")[:50]) + ".yml"
+    # AWX job-template playbook path is relative to the project root (= the ansible/
+    # dir), so playbooks live under the playbooks/ subdir.
+    template_playbook = f"playbooks/{safe_name}"
 
-    # ── 1. Write to local playbooks dir (Manual AWX project) ──
-    playbooks_path = os.getenv("IDE_PLAYBOOKS_PATH", "/opt/centralstation/playbooks")
-    if os.path.isdir(playbooks_path):
+    # ── 1. Write to local ansible/playbooks dir (Manual AWX project) ──
+    ansible_path = os.getenv("IDE_ANSIBLE_PATH", "/opt/centralstation/ansible")
+    playbooks_dir = os.path.join(ansible_path, "playbooks")
+    if os.path.isdir(ansible_path):
         try:
-            dest = os.path.join(playbooks_path, safe_name)
+            os.makedirs(playbooks_dir, exist_ok=True)
+            dest = os.path.join(playbooks_dir, safe_name)
             with open(dest, "w", encoding="utf-8") as fh:
                 fh.write(draft.yaml)
             result["file"] = dest
@@ -133,7 +141,7 @@ async def publish_playbook(
             log.warning("publish_playbook: file write failed: %s", exc)
             result["file_error"] = str(exc)
     else:
-        result["file_warning"] = f"IDE_PLAYBOOKS_PATH '{playbooks_path}' not found, skipped file write"
+        result["file_warning"] = f"IDE_ANSIBLE_PATH '{ansible_path}' not found, skipped file write"
 
     # ── 2. AWX job template ───────────────────────────────────
     awx_cfg = (await db.execute(
@@ -155,7 +163,7 @@ async def publish_playbook(
 
             tmpl = await awx.create_job_template(
                 name=f"[CS] {draft.title}",
-                playbook=safe_name,
+                playbook=template_playbook,
                 description=description,
                 matches=matches,
                 survey_spec=survey_spec,
