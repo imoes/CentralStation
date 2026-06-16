@@ -173,6 +173,27 @@ async def open_chat_in_ide(
     with open(filepath_host, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
 
+    # CLAUDE.md — auto-discovered by Claude Code as project context on every chat.
+    # Keeps only the latest Hermes session summary so the file stays concise.
+    claude_lines = [
+        f"# {body.session_label}",
+        "",
+        f"> Übertragen aus Hermes · {now}",
+        "",
+        "## Aktueller Stand",
+        "",
+        summary or "_Kein Assistenz-Kontext vorhanden._",
+        "",
+        "## Aktionsschritte",
+        "",
+        "- [ ] ",
+        "",
+        f"_Vollständiger Dialog: `{filename}` im Workspace-Root_",
+        "",
+    ]
+    with open(os.path.join(ws_dir, "CLAUDE.md"), "w", encoding="utf-8") as fh:
+        fh.write("\n".join(claude_lines))
+
     filepath_container = f"{ide_manager.WORKSPACES_DIR}/{filename}"
     _set_ide_cookie(response, uid)
     return {
