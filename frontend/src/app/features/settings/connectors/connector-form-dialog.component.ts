@@ -15,7 +15,12 @@ import { ConnectorService } from '../../../core/services/connector.service';
 import { Connector, ConnectorType } from '../../../core/models/connector.model';
 import { environment } from '../../../../environments/environment';
 
-interface CredField { key: string; label: string; type: 'text' | 'password' | 'textarea' | '_hidden' | 'checkbox'; hint?: string }
+interface CredField {
+  key: string; label: string;
+  type: 'text' | 'password' | 'textarea' | '_hidden' | 'checkbox' | 'select';
+  hint?: string;
+  options?: { value: string; label: string }[];
+}
 interface CorootProject { id: string; name: string; selected: boolean }
 const PERSONAL_CONNECTOR_TYPES: ConnectorType[] = ['jira', 'jira_sd', 'o365', 'teams', 'gitlab'];
 
@@ -95,15 +100,18 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     { key: 'password', label: 'Passwort (Fallback)', type: 'password' },
   ],
   smtp: [
-    { key: 'port',       label: 'Port',                                          type: 'text',     hint: '25 (Relay), 587 (STARTTLS), 465 (SSL)' },
-    { key: 'tls',        label: 'STARTTLS aktivieren (Port 587)',                type: 'checkbox' },
-    { key: 'ssl',        label: 'SSL/TLS implizit (Port 465)',                   type: 'checkbox' },
+    { key: 'port',       label: 'Port',            type: 'text',  hint: '25 (Relay), 587 (STARTTLS), 465 (SSL)' },
+    { key: 'encryption', label: 'Verschlüsselung', type: 'select', options: [
+        { value: 'none',     label: 'Keine (Port 25 / Relay)' },
+        { value: 'starttls', label: 'STARTTLS (Port 587)' },
+        { value: 'ssl',      label: 'SSL/TLS implizit (Port 465)' },
+    ]},
     { key: 'verify_ssl', label: 'SSL-Zertifikat prüfen (deaktivieren bei self-signed)', type: 'checkbox' },
     { key: 'auth',       label: 'Authentifizierung (Benutzername/Passwort)',     type: 'checkbox' },
-    { key: 'user',       label: 'Benutzername',                                 type: 'text' },
-    { key: 'password',   label: 'Passwort',                                     type: 'password' },
-    { key: 'from_email', label: 'Absender-E-Mail',                              type: 'text',     hint: 'z.B. centralstation@example.com' },
-    { key: 'from_name',  label: 'Absender-Name',                                type: 'text',     hint: 'z.B. CentralStation' },
+    { key: 'user',       label: 'Benutzername',    type: 'text' },
+    { key: 'password',   label: 'Passwort',        type: 'password' },
+    { key: 'from_email', label: 'Absender-E-Mail', type: 'text', hint: 'z.B. centralstation@example.com' },
+    { key: 'from_name',  label: 'Absender-Name',   type: 'text', hint: 'z.B. CentralStation' },
   ],
   gitlab: [
     { key: 'token',              label: 'Personal Access Token', type: 'password',
@@ -161,6 +169,15 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
             <mat-checkbox [formControlName]="'cred_' + field.key" class="cred-checkbox">
               {{ field.label }}
             </mat-checkbox>
+          } @else if (field.type === 'select') {
+            <mat-form-field appearance="outline" class="full-width">
+              <mat-label>{{ field.label }}</mat-label>
+              <mat-select [formControlName]="'cred_' + field.key">
+                @for (opt of field.options!; track opt.value) {
+                  <mat-option [value]="opt.value">{{ opt.label }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
           } @else if (field.type !== '_hidden') {
             <mat-form-field appearance="outline" class="full-width">
               <mat-label>{{ field.label }}</mat-label>
@@ -171,7 +188,7 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
               } @else {
                 <input matInput [type]="field.type"
                        [formControlName]="'cred_' + field.key"
-                       [placeholder]="isEdit ? '(unverändert lassen = leer)' : ''">
+                       [placeholder]="isEdit && field.type === 'password' ? '(leer = unverändert)' : ''">
               }
               @if (field.hint && field.type !== 'textarea') {
                 <mat-hint>{{ field.hint }}</mat-hint>
@@ -334,6 +351,7 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
   form!: FormGroup;
   saving = signal(false);
   credFields = signal<CredField[]>([]);
+  private _existingCreds: Record<string, string> = {};
 
   // Coroot project selector state
   corootProjects = signal<CorootProject[]>([]);
@@ -437,21 +455,50 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
     });
 
     this.form.get('type')!.valueChanges.subscribe(type => this.updateCredFields(type as ConnectorType));
-    this.updateCredFields((c?.type ?? defaultType) as ConnectorType);
+
+    if (this.isEdit && c?.id) {
+      this.http.get<{ credentials: Record<string, string> }>(
+        `${environment.apiUrl}/connectors/${c.id}/credentials`
+      ).subscribe({
+        next: res => {
+          this._existingCreds = res.credentials ?? {};
+          this.updateCredFields((c?.type ?? defaultType) as ConnectorType);
+        },
+        error: () => this.updateCredFields((c?.type ?? defaultType) as ConnectorType),
+      });
+    } else {
+      this.updateCredFields((c?.type ?? defaultType) as ConnectorType);
+    }
   }
 
   updateCredFields(type: ConnectorType) {
     const fields = CRED_FIELDS[type] ?? [];
     this.credFields.set(fields);
 
-    // Remove old credential controls
     Object.keys(this.form.controls)
       .filter(k => k.startsWith('cred_'))
       .forEach(k => this.form.removeControl(k));
 
-    // Add new ones (checkboxes start as false, text fields as '')
+    const creds = this._existingCreds;
     for (const field of fields) {
-      this.form.addControl(`cred_${field.key}`, this.fb.control(field.type === 'checkbox' ? false : ''));
+      let initial: string | boolean;
+      if (field.type === 'checkbox') {
+        initial = creds[field.key] === 'true' || (!(field.key in creds) ? false : false);
+      } else if (field.type === 'select') {
+        // SMTP encryption: derive from tls/ssl booleans
+        if (field.key === 'encryption') {
+          initial = creds['ssl'] === 'true' ? 'ssl'
+                  : creds['tls'] === 'true' ? 'starttls'
+                  : (creds['encryption'] ?? 'none');
+        } else {
+          initial = creds[field.key] ?? (field.options?.[0]?.value ?? '');
+        }
+      } else if (field.type === 'password') {
+        initial = '';  // never pre-fill passwords
+      } else {
+        initial = creds[field.key] ?? '';
+      }
+      this.form.addControl(`cred_${field.key}`, this.fb.control(initial));
     }
   }
 
@@ -573,11 +620,17 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
     for (const field of this.credFields()) {
       const val = v[`cred_${field.key}`];
       if (field.type === 'checkbox') {
-        // Always include boolean flags so false values are persisted correctly.
         credentials[field.key] = val ? 'true' : 'false';
         continue;
       }
-      if (!val) continue;
+      // Map virtual 'encryption' select to tls/ssl boolean fields
+      if (field.key === 'encryption') {
+        credentials['tls'] = val === 'starttls' ? 'true' : 'false';
+        credentials['ssl'] = val === 'ssl'      ? 'true' : 'false';
+        continue;
+      }
+      // Skip empty fields and masked placeholder (password unchanged)
+      if (!val || val === '••••••••') continue;
       if (field.type === 'textarea') {
         const lines = (val as string).split('\n').map((s: string) => s.trim()).filter(Boolean);
         if (lines.length) credentials[field.key] = lines;

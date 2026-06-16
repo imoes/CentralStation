@@ -223,7 +223,8 @@ async def update_connector(
     if data.base_url is not None:
         connector.base_url = data.base_url
     if data.credentials is not None:
-        connector.encrypted_credentials = encrypt_credentials(data.credentials)
+        existing = decrypt_credentials(connector.encrypted_credentials)
+        connector.encrypted_credentials = encrypt_credentials({**existing, **data.credentials})
     if data.enabled is not None:
         connector.enabled = data.enabled
 
@@ -232,6 +233,24 @@ async def update_connector(
     await db.commit()
     await db.refresh(connector)
     return connector
+
+
+_SECRET_KEY_PATTERNS = ("password", "secret", "token", "api_key", "private")
+
+
+@router.get("/{connector_id}/credentials", dependencies=[RequireAdmin])
+async def get_connector_credentials(
+    connector_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return decrypted credentials for the edit dialog. Secret fields are masked."""
+    connector = await _get_connector_or_404(db, connector_id)
+    raw = decrypt_credentials(connector.encrypted_credentials)
+    masked = {
+        k: ("••••••••" if any(p in k.lower() for p in _SECRET_KEY_PATTERNS) and v else v)
+        for k, v in raw.items()
+    }
+    return {"credentials": masked}
 
 
 @router.delete("/{connector_id}", status_code=status.HTTP_204_NO_CONTENT,
