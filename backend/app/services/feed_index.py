@@ -1126,3 +1126,67 @@ async def search_recent_ai_findings(host: str, limit: int = 3) -> list[dict]:
     except Exception as e:
         log.warning("search_recent_ai_findings failed: %s", e)
         return []
+
+
+async def search_recent_ai_clusters(host: str, limit: int = 3) -> list[dict]:
+    """Return recent AI error-clusters (root-cause groupings) involving `host`.
+
+    Queries the last few sysadmin AiAnalysis runs (within 4 hours) and returns
+    clusters where `host` appears in affected_hosts (bidirectional substring
+    match) or equals root_cause_host. Mirrors search_recent_ai_findings so
+    Hermes sees that a host is part of a larger correlated incident.
+    Returns dicts: diagnosis, severity, root_cause_host, affected_hosts,
+    explanation, recommendation.
+    """
+    from datetime import timedelta
+    from sqlalchemy import select, and_
+    from app.core.database import AsyncSessionLocal
+    from app.models.ai import AiAnalysis
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=4)
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(AiAnalysis)
+                .where(
+                    and_(
+                        AiAnalysis.agent_type == "sysadmin",
+                        AiAnalysis.run_at >= cutoff,
+                    )
+                )
+                .order_by(AiAnalysis.run_at.desc())
+                .limit(3)
+            )
+            analyses = result.scalars().all()
+
+        host_lower = host.lower()
+
+        def _host_matches(candidate: str) -> bool:
+            c = (candidate or "").lower()
+            return bool(c) and (host_lower in c or c in host_lower)
+
+        clusters: list[dict] = []
+        seen: set[str] = set()
+        for analysis in analyses:
+            for c in (analysis.clusters or []):
+                affected = c.get("affected_hosts") or []
+                root = c.get("root_cause_host") or ""
+                if _host_matches(root) or any(_host_matches(h) for h in affected):
+                    diag = c.get("diagnosis", "")
+                    if diag in seen:
+                        continue
+                    seen.add(diag)
+                    clusters.append({
+                        "diagnosis": diag,
+                        "severity": c.get("severity", "?"),
+                        "root_cause_host": root,
+                        "affected_hosts": affected,
+                        "explanation": c.get("explanation", ""),
+                        "recommendation": c.get("recommendation", ""),
+                    })
+                    if len(clusters) >= limit:
+                        return clusters
+        return clusters
+    except Exception as e:
+        log.warning("search_recent_ai_clusters failed: %s", e)
+        return []

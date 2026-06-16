@@ -26,6 +26,13 @@ interface OpenIncident {
   member_count: number;
   updated_at: string;
 }
+interface ErrorCluster {
+  diagnosis: string;
+  severity: string;
+  root_cause_host: string | null;
+  affected_hosts: string[];
+  recommendation: string;
+}
 
 interface BridgeStatus {
   alert_state: 'red' | 'yellow' | 'green';
@@ -40,6 +47,7 @@ interface BridgeStatus {
   worklist_updated: string | null;
   primary_incident?: PrimaryIncident | null;
   open_incidents?: OpenIncident[];
+  error_clusters?: ErrorCluster[];
   server_time: string;
 }
 
@@ -114,6 +122,28 @@ interface BridgeStatus {
             <span class="hero-sub">KI-vorsortiert · {{ status()?.worklist_open_count ?? 0 }} offene Probleme · akt. {{ worklistAge() }}</span>
             <button class="pill-btn refresh" (click)="refreshWorklist()" [disabled]="refreshing()">⟳ NEU</button>
           </div>
+
+          <!-- ── KI-Fehler-Cluster (root-cause Diagnosen) ── -->
+          @if ((status()?.error_clusters ?? []).length) {
+            @for (cl of status()!.error_clusters!; track $index) {
+              <div class="cluster-banner" [attr.data-sev]="cl.severity">
+                <div class="cb-head">
+                  <span class="cb-label">DIAGNOSE</span>
+                  <span class="cb-sev">{{ cl.severity | uppercase }}</span>
+                  @if (cl.affected_hosts?.length) {
+                    <span class="cb-count">{{ cl.affected_hosts.length }} Hosts betroffen</span>
+                  }
+                </div>
+                <div class="cb-diagnosis">{{ cl.diagnosis }}</div>
+                @if (cl.root_cause_host) {
+                  <div class="cb-root">Ursache: <b (click)="openHost(cl.root_cause_host)">{{ cl.root_cause_host }}</b></div>
+                }
+                @if (cl.recommendation) {
+                  <div class="cb-rec">→ {{ cl.recommendation }}</div>
+                }
+              </div>
+            }
+          }
 
           @if (status()?.primary_incident) {
             <div class="incident-panel" [attr.data-sev]="status()!.primary_incident!.severity"
@@ -278,6 +308,14 @@ interface BridgeStatus {
     .pill-btn.refresh { height:28px; border-radius:14px; }
 
     /* primary incident panel */
+    .cluster-banner { display:flex; flex-direction:column; gap:4px; padding:10px 14px; border-radius:8px; flex-shrink:0; }
+    .cb-head { display:flex; align-items:center; gap:10px; }
+    .cb-label { font-size:10px; font-weight:800; letter-spacing:.18em; }
+    .cb-sev { font-size:10px; font-weight:800; padding:2px 8px; border-radius:4px; }
+    .cb-count { font-size:11px; font-weight:600; opacity:.85; }
+    .cb-diagnosis { font-size:15px; font-weight:700; line-height:1.3; }
+    .cb-root { font-size:12px; } .cb-root b { cursor:pointer; text-decoration:underline dotted; }
+    .cb-rec { font-size:12px; font-weight:600; }
     .incident-panel { display:flex; flex-direction:column; gap:5px; padding:10px 14px; border-radius:8px; cursor:pointer; flex-shrink:0; }
     .incident-panel:hover { filter:brightness(1.1); }
     .ip-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -382,6 +420,13 @@ interface BridgeStatus {
     .t-classic .ip-label { color:#90a4b8; } .t-classic .ip-sev { background:#c62828; color:#fff; }
     .t-classic .incident-panel[data-sev="high"] .ip-sev { background:#ef6c00; }
     .t-classic .ip-title { color:#1f2933; } .t-classic .ip-insight { color:#37474f; }
+    .t-classic .cluster-banner { background:#fff7ed; border:1px solid #fbbf77; border-left:5px solid #b8860b; }
+    .t-classic .cluster-banner[data-sev="critical"] { border-left-color:#c62828; }
+    .t-classic .cluster-banner[data-sev="high"] { border-left-color:#ef6c00; }
+    .t-classic .cb-label { color:#b8860b; } .t-classic .cb-sev { background:#b8860b; color:#fff; }
+    .t-classic .cluster-banner[data-sev="critical"] .cb-sev { background:#c62828; }
+    .t-classic .cluster-banner[data-sev="high"] .cb-sev { background:#ef6c00; }
+    .t-classic .cb-diagnosis { color:#1f2933; } .t-classic .cb-root, .t-classic .cb-rec { color:#5d4037; }
     .t-classic .forecast-strip { background:#fff7e6; border:1px solid #ffc107; }
     .t-classic .fc-icon { color:#ef6c00; } .t-classic .fc-pill { background:#ffecb3; color:#5d4037; }
     .t-classic .work-row { background:#fff; border:1px solid #dde6ef; border-radius:14px; box-shadow:0 2px 6px rgba(0,0,0,.06); }
@@ -450,6 +495,15 @@ interface BridgeStatus {
     .t-lcars .ip-sev { background:#ff5544; color:#000; }
     .t-lcars .incident-panel[data-sev="high"] .ip-sev { background:#ffcc00; }
     .t-lcars .ip-title { color:#ffcc99; } .t-lcars .ip-insight { color:#e8a060; }
+    .t-lcars .cluster-banner { background:#1a1206; border-left:7px solid #FFCC99; border-radius:0 8px 8px 0; }
+    .t-lcars .cluster-banner[data-sev="critical"] { border-left-color:#ff5544; }
+    .t-lcars .cluster-banner[data-sev="high"] { border-left-color:#ffcc00; }
+    .t-lcars .cb-label { color:#FF9933; letter-spacing:.15em; }
+    .t-lcars .cb-sev { background:#FFCC99; color:#000; }
+    .t-lcars .cluster-banner[data-sev="critical"] .cb-sev { background:#ff5544; }
+    .t-lcars .cluster-banner[data-sev="high"] .cb-sev { background:#ffcc00; }
+    .t-lcars .cb-diagnosis { color:#ffcc99; text-transform:none; font-family:Roboto,'Helvetica Neue',sans-serif; }
+    .t-lcars .cb-root, .t-lcars .cb-rec { color:#e8a060; text-transform:none; font-family:Roboto,'Helvetica Neue',sans-serif; }
     .t-lcars .forecast-strip { background:#2a1d0a; border:1px solid #ffcc00; }
     .t-lcars .fc-icon { color:#ffcc00; } .t-lcars .fc-pill { background:#ffcc00; color:#000; }
     .t-lcars .work-row { background:#15120c; border-left:7px solid #ffcc66; border-radius:0 8px 8px 0; }

@@ -1089,8 +1089,6 @@ async def alert_hermes_context(
 
     results = await run_diagnostics(host, db)
 
-    results = await run_diagnostics(host, db)
-
     lines: list[str] = [
         "Untersuche diesen Alert und handle entsprechend:\n",
         f"**Alert:** {title}",
@@ -1124,6 +1122,31 @@ async def alert_hermes_context(
             lines.append("")
     except Exception as _exc:
         log.debug("hermes-context: past_resolved search failed: %s", _exc)
+
+    # ── AI error-clusters: is this host part of a larger correlated incident? ──
+    try:
+        from app.services.feed_index import search_recent_ai_clusters
+        ai_clusters = await search_recent_ai_clusters(host=host, limit=3)
+        if ai_clusters:
+            lines.append("## KI-Fehler-Cluster (Case-Analyse)\n")
+            lines.append(
+                "Dieser Host ist Teil eines größeren, korrelierten Vorfalls. "
+                "Berücksichtige die gemeinsame Ursache, bevor du den Host isoliert betrachtest:\n"
+            )
+            for c in ai_clusters:
+                lines.append(f"**[{(c.get('severity') or '?').upper()}] Diagnose:** {c.get('diagnosis','')}")
+                if c.get("root_cause_host"):
+                    lines.append(f"  Vermutete Ursache (Host): {c['root_cause_host']}")
+                affected = c.get("affected_hosts") or []
+                if affected:
+                    lines.append(f"  Betroffene Hosts: {', '.join(affected[:12])}")
+                if c.get("explanation"):
+                    lines.append(f"  {c['explanation'][:300]}")
+                if c.get("recommendation"):
+                    lines.append(f"  → Empfehlung: {c['recommendation']}")
+            lines.append("")
+    except Exception as _exc:
+        log.debug("hermes-context: ai_clusters failed: %s", _exc)
 
     # ── Current AI analysis findings for this host ────────────────────────────
     try:
