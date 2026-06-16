@@ -151,6 +151,9 @@ async def latest_summary(
     top = findings[:3]
     summary_parts = [f.get("title", "") for f in top if f.get("title")]
     summary_text = " · ".join(summary_parts[:2]) if summary_parts else ""
+    clusters = a.clusters or []
+    # Top cluster diagnosis headlines the Insight strip when a root cause was found
+    top_diagnosis = clusters[0].get("diagnosis", "") if clusters else ""
     return {
         "analysis_id": str(a.id),
         "severity_summary": a.severity_summary,
@@ -159,6 +162,8 @@ async def latest_summary(
             {"title": f.get("title", ""), "severity": f.get("severity", "info"), "host": f.get("host", "")}
             for f in top
         ],
+        "clusters": clusters,
+        "top_diagnosis": top_diagnosis,
         "summary_text": summary_text,
     }
 
@@ -187,6 +192,7 @@ async def list_analyses(
             "jira_tickets_created": a.jira_tickets_created or [],
             "findings": a.findings or [],
             "recommendations": a.recommendations or [],
+            "clusters": a.clusters or [],
             "rag_queries_used": a.rag_queries_used or [],
             "token_usage": a.token_usage or {},
         }
@@ -308,6 +314,7 @@ async def get_analysis(
         "severity_summary": a.severity_summary,
         "findings": a.findings or [],
         "recommendations": a.recommendations or [],
+        "clusters": a.clusters or [],
         "rag_queries_used": a.rag_queries_used or [],
         "jira_tickets_created": a.jira_tickets_created or [],
         "token_usage": a.token_usage or {},

@@ -480,6 +480,42 @@ async def bridge_status(
     except Exception as e:
         log.debug("bridge: open_incidents failed: %s", e)
 
+    # ── 6b. AI error-clusters (root-cause diagnoses) from the latest run ────────
+    error_clusters: list[dict] = []
+    try:
+        from app.models.ai import AiAnalysis
+        _ai_q = (
+            _sel(AiAnalysis)
+            .where(AiAnalysis.agent_type == "sysadmin")
+            .order_by(_desc(AiAnalysis.run_at))
+            .limit(1)
+        )
+        _ai_row = await db.execute(_ai_q)
+        _latest = _ai_row.scalar_one_or_none()
+        if _latest and _latest.clusters:
+            _scope_set = set(host_scope) if host_scope else None
+
+            def _in_scope(c: dict) -> bool:
+                if not _scope_set:
+                    return True
+                hosts = list(c.get("affected_hosts") or [])
+                if c.get("root_cause_host"):
+                    hosts.append(c["root_cause_host"])
+                return any(h in _scope_set for h in hosts)
+
+            for c in _latest.clusters:
+                if not _in_scope(c):
+                    continue
+                error_clusters.append({
+                    "diagnosis": c.get("diagnosis", ""),
+                    "severity": c.get("severity", "high"),
+                    "root_cause_host": c.get("root_cause_host"),
+                    "affected_hosts": c.get("affected_hosts") or [],
+                    "recommendation": c.get("recommendation", ""),
+                })
+    except Exception as e:
+        log.debug("bridge: error_clusters failed: %s", e)
+
     return {
         "alert_state": alert_state,
         "counts": {
@@ -491,6 +527,7 @@ async def bridge_status(
         "sources": source_list,
         "sectors": sector_list,
         "primary_incident": primary_incident,
+        "error_clusters": error_clusters,
         "logs": sensor_log,
         "vitals": vitals,
         "forecasts": forecasts,
