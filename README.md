@@ -23,14 +23,17 @@ assists with the entire ITIL-compliant work documentation using AI.
 10. [Incident Correlation](#incident-correlation)
 11. [Kanban and Jira](#kanban-and-jira)
 12. [AI Features](#ai-features)
-13. [Prometheus Metrics & PromQL](#prometheus-metrics--promql)
-14. [Connectors](#connectors)
-15. [User Management and RBAC](#user-management-and-rbac)
-16. [Settings and Preferences](#settings-and-preferences)
-17. [API Reference](#api-reference)
-18. [Database Migrations](#database-migrations)
-19. [Deployment](#deployment)
-20. [Upgrading](#upgrading)
+13. [Computer Console (Hermes AI Panel)](#computer-console-hermes-ai-panel)
+14. [Werkbank (Web-IDE)](#werkbank-web-ide)
+15. [Maschinenraum (Ansible Remediation)](#maschinenraum-ansible-remediation)
+16. [Prometheus Metrics & PromQL](#prometheus-metrics--promql)
+17. [Connectors](#connectors)
+18. [User Management and RBAC](#user-management-and-rbac)
+19. [Settings and Preferences](#settings-and-preferences)
+20. [API Reference](#api-reference)
+21. [Database Migrations](#database-migrations)
+22. [Deployment](#deployment)
+23. [Upgrading](#upgrading)
 
 ---
 
@@ -243,6 +246,9 @@ Since OS/location/VE/criticality are CheckMK-native concepts, the filter accesse
 | **Alert-Aggregation** | CheckMK, Graylog, Wazuh — zentrale Timeline, Acknowledge, Severity-Filter; Graylog: Python-Loglevel-Erkennung (INFO→low, ERROR→high, verhindert Docker-GELF-Fehleinstufung) |
 | **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung, KI-Ignorieren; Hostname anklickbar → Feed-Filter; Severity-Filter ignoriert aktive Saved-Searches korrekt |
 | **KI-Insights** | Befunde + zugehörige Empfehlungen direkt zusammen (kein getrenntes Panel); Datenquelle-Badge je Befund; Hostname/Feed-Links; Empfehlungen fließen in generatives Dashboard ein |
+| **Fehler-Cluster (Root-Cause)** | Die KI fasst im selben Analyse-Lauf mehrere Befunde mit gemeinsamer Ursache zu einer Diagnose zusammen (z.B. „Core-Switch in MUE-0 ausgefallen" erklärt 10 nicht erreichbare Hosts); nutzt Blast-Radius-Topologie; sichtbar in KI-Insights, Hermes-Konsole und Brücke |
+| **Werkbank (Web-IDE)** | Pro-User code-server (VS Code im Browser) unter `/workbench`; integriertes Terminal, Git/GitLab, SSH zu `*.ippen.media`; **vorinstallierte KI-Agenten-Extensions** (Claude Code + OpenAI Codex); Ansible-Playbooks editierbar (geteiltes `playbooks/`-Verzeichnis, sofort in AWX sichtbar); Hermes-Analyse als Markdown übergeben |
+| **Maschinenraum (Remediation)** | Engineering-Cockpit unter `/engineering`; KI-gestützte Ansible-Remediation mit Human-in-the-Loop: `playbook_author` → AWX Job Template → `remediation_matcher` → Lern-Loop; cs-meta-Konvention im Playbook-Kopf (`matches`/`params`); Pending/Active/History/Catalog |
 | **AI War Room** | Blast-Radius-Analyse bei Critical/High; Ko-VMs, Ko-lokalisierte Hosts; Empfehlungen mit Ein-Klick-Jira |
 | **CheckMK Metriken** | Collector schreibt CPU/RAM/Disk/Agent-Zeit in `cs-metrics-checkmk`; Bridge zeigt Fleet-Vitals + Forecasts (lineare Regression); stabile Metriken (< 90 % ohne Trend) werden aus generativem Kontext gefiltert |
 | **OpenAI Codex OAuth** | Browser-initiierter Device-Code-Flow (kein CLI nötig); Provider umschaltbar zwischen lokalem LLM und OpenAI Codex (GPT-5.x); Token verschlüsselt in DB, automatischer Refresh |
@@ -778,8 +784,8 @@ Node 3: rag_lookup
 
 Node 4: analyze
   → correlate events + web/metrics context
-  → findings + recommendations (structured, Pydantic AnalysisResult)
-  → store in PostgreSQL (ai_analyses table)
+  → findings + recommendations + error clusters (structured, Pydantic AnalysisResult)
+  → store in PostgreSQL (ai_analyses table; findings, recommendations, clusters)
 
 Node 5: act
   → critical findings → Jira ticket (JQL dedup prevents duplicate tickets)
@@ -804,6 +810,33 @@ Node 4: act
   → findings → PostgreSQL
   → WebSocket push → Network Technician clients
 ```
+
+### Error clusters (root-cause grouping)
+
+In the `analyze` node the SysAdmin agent sees all open alerts at once (plus the
+blast-radius topology). When several findings plausibly share **one** root cause,
+it groups them into an **error cluster** with a single diagnosis instead of
+reporting each symptom in isolation. Typical patterns:
+
+- A network device (router/switch/uplink) down → many downstream hosts unreachable.
+- A shared storage / hypervisor / Proxmox node down → multiple VM or filesystem alerts.
+- A site-wide outage (power, uplink, DNS) → many hosts at the same location at once.
+
+Each cluster carries `diagnosis`, `severity`, `root_cause_host`, `affected_hosts`,
+`explanation` and a `recommendation`. Clusters are a per-run snapshot stored
+alongside the analysis (`ai_analyses.clusters`) — there is no cross-run lifecycle.
+The same anti-hallucination/evidence rules apply: an uncertain diagnosis must start
+with `"Vermutete Korrelation — unbestätigt:"`.
+
+Clusters surface in three places (all read the latest sysadmin run):
+
+- **KI-Insights** view — a "Diagnose / Fehler-Cluster" section above the findings.
+- **Hermes console** ("Computer, prüfe das") — a "KI-Fehler-Cluster (Case-Analyse)"
+  section, shown when the inspected host is in a cluster's `affected_hosts` or is the
+  `root_cause_host`, so Hermes considers the shared cause before looking at the host
+  in isolation (`search_recent_ai_clusters` in `feed_index.py`).
+- **Bridge** (`/bridge`) — a cluster-diagnosis banner above the primary incident
+  (`error_clusters` in `GET /api/bridge/status`, filtered by the user's host scope).
 
 ### AI chat endpoints
 
@@ -911,8 +944,9 @@ MCP server  (/api/mcp/sse)  →  CentralStation tools
 When the user clicks **"Computer"** on a News Feed alert, `GET /api/feed/{id}/hermes-context` runs automatically:
 1. Looks up the alert in OpenSearch to get host, severity, container name
 2. Runs `run_diagnostics(host)` — CheckMK status, recent logs, metrics, topology, past incidents
-3. Searches for **past AI-resolved similar alerts** (see below) and prepends them as context
-4. Returns a structured prompt that is sent directly to the Hermes session
+3. Adds **AI error-clusters** for the host (`search_recent_ai_clusters`) so Hermes sees the shared root cause if the host is part of a larger correlated incident (see [Error clusters](#error-clusters-root-cause-grouping))
+4. Searches for **past AI-resolved similar alerts** (see below) and prepends them as context
+5. Returns a structured prompt that is sent directly to the Hermes session
 
 ### Computer learns — AI resolution notes
 
@@ -965,6 +999,110 @@ The Computer system prompt (`centralcore/main.py:SYSTEM_PROMPT`) defines the age
 - Searches Graylog (via `search_feed`) for container logs — no SSH needed (Logspout sends all container output to Graylog)
 - Always asks before executing write operations (Jira ticket creation, alert acknowledgement)
 - Appends `[FEED:host=<hostname>]` markers that the frontend renders as clickable feed-filter buttons
+
+---
+
+## Werkbank (Web-IDE)
+
+The **Werkbank** (`/workbench`) is a full VS Code instance in the browser — one
+[code-server](https://github.com/coder/code-server) container per user, started on
+demand by the backend (`ide_manager.ensure_container`). It is the place to write code,
+run commands in an integrated terminal, use Git/GitLab, and edit Ansible playbooks.
+
+### Architecture
+
+```
+Browser  ──/ide/<uid>/──▶  nginx  ──auth_request──▶  backend /api/ide/authz
+                            │  (validates the session cookie, returns the
+                            │   per-user upstream in X-IDE-Upstream)
+                            ▼
+                       cs-ide-<uid>  (code-server, --auth none, no published port)
+```
+
+- **No published host port.** The nginx `auth_request` gate is load-bearing: every
+  request to `/ide/<uid>/` (and the Claude Code WebSocket at `/ws`) is authorised by
+  the backend before being proxied to the user's container.
+- **Per-user bind mounts** under `IDE_WORKSPACES_BASE/<uid>/` (workspaces + VS Code
+  state) so a single `tar`/`rsync` of that directory backs up everything. Claude Code
+  credentials live on a separate named volume.
+- **SSH** to `*.ippen.media` is wired up from the host `~/.ssh` mount (marvin key)
+  by the entrypoint.
+
+### Bundled AI coding-agent extensions
+
+The image (`Dockerfile.codeserver`) pre-installs two extensions from Open VSX into a
+staging dir `/opt/cs-extensions` (Claude Code `Anthropic.claude-code`, OpenAI Codex
+`openai.chatgpt`). Because `/root/.local/share/code-server` is a **per-user bind mount**
+at runtime, build-time-installed extensions there would be masked — so the entrypoint
+**seeds** them into each user's extensions dir on first start (idempotent; existing
+extensions are left untouched). The entrypoint also applies several Claude-Code
+compatibility patches (CSP font/style, manual OAuth flow, navigator shim, webview CSS
+inlining) needed to run the extension inside a proxied code-server.
+
+### Ansible playbooks
+
+The shared `playbooks/` directory is bind-mounted into every IDE container at
+`/root/workspaces/playbooks` (same host path that AWX mounts as its Manual SCM
+project). Edit a playbook in VS Code → **AWX sees the change immediately**, no Git sync.
+The folder appears directly in the VS Code Explorer. (`IDE_PLAYBOOKS_PATH` env on the
+backend; see [Maschinenraum](#maschinenraum-ansible-remediation).)
+
+> **Note:** existing `cs-ide-*` containers are reused as-is; after changing the image
+> or the mount set, remove the user's container (`docker rm -f cs-ide-<uid>`) so the
+> backend recreates it with the new image, the playbook mount and the seeded extensions.
+
+### Hermes → Werkbank handoff
+
+From the Computer Console the current Hermes analysis can be exported as an editable
+Markdown file into the user's workspace (`POST /api/ide/open-chat`), and a `CLAUDE.md`
+is injected so Claude Code in the terminal starts with full context.
+
+---
+
+## Maschinenraum (Ansible Remediation)
+
+The **Maschinenraum** (`/engineering`) is the ops cockpit for AI-assisted, Ansible-based
+remediation with a human in the loop. AWX (`docker-compose.awx.yml`) executes the
+playbooks; CentralStation orchestrates matching, approval and learning.
+
+### Remediation loop
+
+```
+alert ─▶ playbook_author (LLM drafts a playbook)
+     ─▶ publish_playbook → AWX Job Template (description + labels + survey)
+     ─▶ remediation_matcher: deterministic label pre-filter, then LLM fallback
+     ─▶ human approves (Pending → Active)  ─▶ AWX runs the job
+     ─▶ remediation_learning: OpenSearch + AlertComment + AIKB runbook
+```
+
+The Maschinenraum has Pending / Active / History / Catalog views for the
+alert-triggered remediations.
+
+### cs-meta convention
+
+Every playbook carries a commented YAML metadata block in its header — the single
+source of truth, parsed by `playbook_meta.parse_meta()` and synced into the AWX Job
+Template (`description`, `labels` from `matches`, `survey` from `params`):
+
+```yaml
+# ─── cs-meta ───────────────────────────────────────────────
+# id: disk-resize
+# title: Disk vergrößern (LVM)
+# description: Vergrößert ein LVM Logical Volume und das Dateisystem online
+# matches: ["checkmk:Filesystem*", "no space left on device"]
+# target: linux            # linux | windows | network | generic
+# risk: medium             # low | medium | high
+# params:
+#   - {name: lv_path,  example: "/dev/vg0/root"}
+#   - {name: add_size, example: "+10G"}
+# ─── /cs-meta ──────────────────────────────────────────────
+```
+
+Required fields: `id, title, description, matches, target, risk`. The `matches` field
+answers *"which alerts does this playbook handle"* — so the matcher uses an exact label
+pre-filter before falling back to the LLM. Authors write/validate playbooks in the
+Werkbank (`.cs-validate.py`, `ansible-lint`); the `~/skills/ansible-playbooks/SKILL.md`
+skill documents the convention.
 
 ---
 
@@ -1449,6 +1587,15 @@ All settings are stored encrypted in the database and managed via `GET/PATCH /ap
 | `0019` | `dashboards.rationale`, `dashboards.generated_at` — Generatives Dashboard mit KI-Lagebild |
 | `0020` | `alert_collaboration` + `alert_comments` — kollaboratives Alert-Handling (Claim/Status/Timeline) |
 | `0021` | `incidents` + `incident_members` — automatische Incident-Korrelation (FQDN-only, 30-Min-Zeitfenster, Cross-Source) |
+| `0022` | `user_preferences.computer_console_enabled` + `ui_language` (Computer Console freischalten, per-User UI/KI-Sprache) |
+| `0023` | `computer_sessions` — Persistenz der Computer-Console-Sessions |
+| `0024` | `computer_sessions.external_id` + `resolved` (GELÖST-Button-Persistenz) |
+| `0025` | `work_sessions.computer_session_id` — Verknüpfung Work Session ↔ Computer-Session |
+| `0026` | `work_sessions` GitLab-Spalten — GitLab-Integration |
+| `0027` | `remediation_proposals` — AWX-Remediation-Pipeline (Human-in-the-Loop) |
+| `0028` | `playbook_drafts` — KI-Playbook-Authoring |
+| `0029` | `work_sessions.workspace_path` — Werkbank Web-IDE |
+| `0030` | `ai_analyses.clusters` — KI-Insights Fehler-Cluster (Root-Cause-Diagnosen) |
 
 ---
 
