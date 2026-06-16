@@ -108,6 +108,16 @@ $AWX_MANAGE provision_instance --hostname="${HOSTNAME:-awxweb}" --node_type=hybr
 $AWX_MANAGE register_queue --queuename=default --instance_percent=100 2>/dev/null || true
 $AWX_MANAGE register_default_execution_environments 2>/dev/null || true
 
+# Ensure the instance is actually in the default instance group
+# (register_queue creates the group but sometimes doesn't associate the instance)
+$AWX_MANAGE shell -c "
+from awx.main.models import Instance, InstanceGroup
+ig = InstanceGroup.objects.filter(name='default').first()
+inst = Instance.objects.filter(hostname='${HOSTNAME:-awxweb}').first()
+if ig and inst and inst not in ig.instances.all():
+    ig.instances.add(inst); ig.save()
+" 2>/dev/null || true
+
 # Create admin user from env (idempotent)
 if [ -n "${AWX_ADMIN_USER}" ] && [ -n "${AWX_ADMIN_PASSWORD}" ]; then
     $AWX_MANAGE shell -c "
@@ -136,6 +146,12 @@ location /static/ {
     add_header Cache-Control public;
 }
 
+# Locale fallback script — lives outside the awx-data volume in the image.
+location = /static/js/locale-fix.js {
+    alias /usr/share/awx-custom/locale-fix.js;
+    add_header Cache-Control "public, max-age=86400";
+}
+
 location /favicon.ico {
     alias /var/lib/awx/public/static/favicon.ico;
 }
@@ -158,5 +174,22 @@ location / {
     client_max_body_size 25m;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+
+    # AWX 21.x supports en/es/fr/ja/ko/nl/zh/zu — no 'de'.
+    # Firefox with German locale crashes the React app with
+    # "Cannot find module './de/messages'". Inject an external script
+    # (allowed by CSP script-src 'self') that overrides navigator.language
+    # to 'en' for unsupported locales. Must NOT use defer so it runs
+    # synchronously before the deferred main.js bundle executes.
+    sub_filter '</head>' '<script src="/static/js/locale-fix.js"></script></head>';
+    sub_filter_once on;
+    sub_filter_types text/html;
 }
 NGINX
+
+# Locale fallback script — stored OUTSIDE the awx-data volume (/var/lib/awx)
+# so it isn't hidden by the bind-mount. nginx serves it via an exact-match
+# location so it appears at /static/js/locale-fix.js (same 'self' origin).
+RUN mkdir -p /usr/share/awx-custom && \
+    echo '!function(){var s=["en","es","fr","ja","ko","nl","zh","zu"];var l=(navigator.language||"").split("-")[0];if(!s.includes(l)){Object.defineProperty(navigator,"language",{get:function(){return"en"},configurable:true})}}();' \
+    > /usr/share/awx-custom/locale-fix.js
