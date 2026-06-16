@@ -23,11 +23,6 @@ IDE_CONTAINER_PORT = os.getenv("IDE_CONTAINER_PORT", "8080")
 # the same path so os.makedirs() creates the directory on the host filesystem.
 IDE_WORKSPACES_BASE = os.getenv("IDE_WORKSPACES_BASE", "/opt/centralstation/ide-workspaces")
 WORKSPACES_DIR = "/root/workspaces"
-# Env file sourced by /root/.bashrc — carries the auth tokens for the CLI agents
-# (claude, codex) so the integrated terminal works without an OAuth browser flow.
-# Rewritten on every ensure so token refreshes reach freshly opened terminals.
-AGENT_ENV_FILE = "/root/.cs-agent-env.sh"
-
 # In-memory last-activity tracker for the idle reaper (best-effort; resets on
 # backend restart, which is fine — the reaper just won't reap until next touch).
 _last_used: dict[str, float] = {}
@@ -83,14 +78,12 @@ def _wait_ready(container, timeout: float = 25.0) -> bool:
     return False
 
 
-def ensure_container(user_id: str, claude_token: str | None = None, codex_token: str | None = None) -> str:
+def ensure_container(user_id: str) -> str:
     """Ensure the user's code-server container is running. Returns the upstream
     host:port for nginx. Raises on failure.
 
-    claude_token / codex_token, if given, are written into AGENT_ENV_FILE so the
-    integrated terminal's `claude` / `codex` CLIs are authenticated without an
-    interactive OAuth browser flow (the loopback callback is unreachable from a
-    containerised IDE)."""
+    Extensions (Claude Code, OpenAI) authenticate natively via their own OAuth
+    flows. Credentials are stored on named volumes and survive container restarts."""
     cli = _client()
     name = container_name(user_id)
 
@@ -105,7 +98,6 @@ def ensure_container(user_id: str, claude_token: str | None = None, codex_token:
             existing.start()
             _wait_ready(existing)
         touch(user_id)
-        _write_agent_env(user_id, claude_token, codex_token)
         return upstream(user_id)
 
     ws_path = workspace_dir(user_id)
@@ -135,9 +127,6 @@ def ensure_container(user_id: str, claude_token: str | None = None, codex_token:
         "https_proxy": os.getenv("HTTPS_PROXY", ""),
         "no_proxy": "localhost,127.0.0.1,.ippen.media",
     }
-    if claude_token:
-        environment["CLAUDE_CODE_OAUTH_TOKEN"] = claude_token
-
     c = cli.containers.run(
         IDE_IMAGE,
         name=name,
@@ -151,37 +140,9 @@ def ensure_container(user_id: str, claude_token: str | None = None, codex_token:
     )
     _wait_ready(c)
     touch(user_id)
-    _write_agent_env(user_id, claude_token, codex_token)
     log.info("ide_manager: started %s", name)
     return upstream(user_id)
 
-
-def _write_agent_env(user_id: str, claude_token: str | None, codex_token: str | None) -> None:
-    """Write AGENT_ENV_FILE (mode 600) inside the container with the agent CLI
-    tokens. Sourced by /root/.bashrc → every new terminal is authenticated.
-    Best-effort: a failure here must not break IDE startup."""
-    if not claude_token and not codex_token:
-        return
-    # Tokens are passed via exec env (never argv) and single-quoted in the file.
-    # Claude/OpenAI OAuth tokens are [A-Za-z0-9._-], so single-quoting is safe.
-    lines = ["umask 077"]
-    env: dict[str, str] = {}
-    if claude_token:
-        env["CS_CLAUDE_TOKEN"] = claude_token
-        lines.append(f"printf \"export CLAUDE_CODE_OAUTH_TOKEN='%s'\\n\" \"$CS_CLAUDE_TOKEN\" >  {AGENT_ENV_FILE}")
-    else:
-        lines.append(f": > {AGENT_ENV_FILE}")
-    if codex_token:
-        env["CS_CODEX_TOKEN"] = codex_token
-        lines.append(f"printf \"export OPENAI_API_KEY='%s'\\n\" \"$CS_CODEX_TOKEN\" >> {AGENT_ENV_FILE}")
-    lines.append(f"chmod 600 {AGENT_ENV_FILE}")
-    script = "; ".join(lines)
-    try:
-        code, out = exec_sh(user_id, script, env)
-        if code != 0:
-            log.warning("ide_manager: agent-env write failed (%s): %s", code, out[-200:])
-    except Exception as e:
-        log.warning("ide_manager: agent-env write error: %s", e)
 
 
 def exec_sh(user_id: str, script: str, environment: dict | None = None) -> tuple[int, str]:
