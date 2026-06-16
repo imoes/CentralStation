@@ -40,6 +40,17 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
 # Persist Claude Code credentials on the per-user config volume (mounted at runtime).
 ENV CLAUDE_CONFIG_DIR=/root/.claude
 
+# Pre-install the AI coding-agent VS Code extensions (from Open VSX, code-server's
+# default registry): Claude Code + OpenAI Codex. They are installed into a staging
+# dir baked into the image — NOT /root/.local/share/code-server, which is a per-user
+# bind mount at runtime and would mask anything installed there at build time. The
+# entrypoint seeds these into each user's extensions dir on first start.
+RUN code-server \
+        --extensions-dir /opt/cs-extensions \
+        --install-extension Anthropic.claude-code \
+        --install-extension openai.chatgpt \
+    && ls -1 /opt/cs-extensions
+
 RUN touch /root/.bashrc
 
 COPY entrypoint.codeserver.sh /usr/local/bin/cs-entrypoint.sh

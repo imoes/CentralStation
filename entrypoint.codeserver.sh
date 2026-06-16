@@ -37,6 +37,29 @@ fi
 
 mkdir -p "$HOME/workspaces"
 
+# Seed image-baked VS Code extensions (Claude Code + OpenAI Codex) into the
+# per-user extensions dir. /root/.local/share/code-server is a per-user bind
+# mount, so extensions installed at build time live in /opt/cs-extensions and
+# are copied in here on first start. Idempotent: existing extension dirs are
+# left untouched; the manifest is rebuilt by code-server when we add something.
+_bundled_ext="/opt/cs-extensions"
+_user_ext="$HOME/.local/share/code-server/extensions"
+if [ -d "$_bundled_ext" ]; then
+    mkdir -p "$_user_ext"
+    _seeded=0
+    for _src in "$_bundled_ext"/*/; do
+        [ -d "$_src" ] || continue
+        _name=$(basename "$_src")
+        if [ ! -d "$_user_ext/$_name" ]; then
+            cp -a "$_src" "$_user_ext/$_name" && _seeded=1 && \
+                echo "cs-entrypoint: seeded extension $_name"
+        fi
+    done
+    # Drop the manifest cache so code-server rescans the dir (incl. seeded ones).
+    [ "$_seeded" = "1" ] && rm -f "$_user_ext/extensions.json"
+fi
+unset _bundled_ext _user_ext _src _name _seeded
+
 # Patch the Claude Code extension so the bundled codicon font (data:font/ttf;base64)
 # is not blocked by CSP. The extension builds font-src dynamically in extension.js
 # (not in static HTML), so we patch extension.js directly. Idempotent — already-
