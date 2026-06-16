@@ -111,14 +111,24 @@ def meta_to_awx_description(meta: dict) -> str:
 def meta_to_survey_spec(meta: dict) -> dict | None:
     """Konvertiert meta.params in ein AWX Survey-Spec-Objekt.
 
-    Gibt None zurück wenn keine params vorhanden.
+    Jedes Playbook nutzt `hosts: "{{ target_host }}"`, daher steht `target_host`
+    immer als erste Survey-Frage — so funktionieren auch manuelle Läufe in der
+    AWX-UI. Im alert-getriggerten Flow überschreibt der per extra_vars gesetzte
+    target_host den Survey-Default (höchste Präzedenz), das Pflichtfeld bleibt
+    erfüllt. Gibt immer ein Spec zurück (mindestens target_host).
     """
-    params = meta.get("params")
-    if not params:
-        return None
+    questions = [{
+        "question_name": "Zielhost (FQDN)",
+        "question_description": "Host auf dem das Playbook läuft, z.B. web01.ippen.media",
+        "required": True,
+        "type": "text",
+        "variable": "target_host",
+        "default": "",
+        "min": 0,
+        "max": 253,
+    }]
 
-    questions = []
-    for p in params:
+    for p in (meta.get("params") or []):
         name = p.get("name", "")
         if not name:
             continue
@@ -132,9 +142,6 @@ def meta_to_survey_spec(meta: dict) -> dict | None:
             "min": 0,
             "max": 1024,
         })
-
-    if not questions:
-        return None
 
     return {
         "name": "Parameter",
