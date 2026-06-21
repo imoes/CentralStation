@@ -1,4 +1,44 @@
+import httpx
+
+from app.schemas.connector import ConnectorTestResult
 from app.services.connectors.base import BaseConnector
+
+
+class _GenericConnector(BaseConnector):
+    """Simple HTTP reachability check — used for mcp_server connectors."""
+
+    async def test_connection(self) -> ConnectorTestResult:
+        if not self.base_url:
+            return ConnectorTestResult(success=False, message="Base URL fehlt")
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+                r = await client.get(self.base_url)
+            return ConnectorTestResult(success=True, message=f"Erreichbar (HTTP {r.status_code})")
+        except Exception as exc:
+            return ConnectorTestResult(success=False, message=str(exc))
+
+
+class _AwxNgConnector(BaseConnector):
+    """Basic-Auth health check for AWX-NG MCP connectors."""
+
+    async def test_connection(self) -> ConnectorTestResult:
+        if not self.base_url:
+            return ConnectorTestResult(success=False, message="Base URL fehlt")
+        username = self.credentials.get("username", "")
+        password = self.credentials.get("password", "")
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+                r = await client.get(
+                    f"{self.base_url}/api/v2/ping/",
+                    auth=(username, password) if username else None,
+                )
+            if r.status_code == 200:
+                return ConnectorTestResult(success=True, message="AWX-NG erreichbar")
+            if r.status_code == 401:
+                return ConnectorTestResult(success=False, message="Authentifizierung fehlgeschlagen (Benutzername/Passwort prüfen)")
+            return ConnectorTestResult(success=False, message=f"HTTP {r.status_code}")
+        except Exception as exc:
+            return ConnectorTestResult(success=False, message=str(exc))
 
 
 def get_connector(connector_type: str, base_url: str | None, credentials: dict) -> BaseConnector:
@@ -17,6 +57,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
     from app.services.connectors.smtp import SMTPConnector
     from app.services.connectors.gitlab import GitLabConnector
     from app.services.connectors.awx import AWXConnector
+    from app.services.connectors.llm import LLMConnector
 
     mapping = {
         "checkmk": CheckMKConnector,
@@ -35,6 +76,9 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
         "smtp": SMTPConnector,
         "gitlab": GitLabConnector,
         "awx": AWXConnector,
+        "llm": LLMConnector,
+        "awx_ng": _AwxNgConnector,
+        "mcp_server": _GenericConnector,
     }
     cls = mapping.get(connector_type)
     if not cls:
