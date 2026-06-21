@@ -1,181 +1,47 @@
-"""Per-user code-server container orchestration for the Werkbank Web-IDE.
+"""Werkbank Web-IDE — thin shim that delegates to userenv_manager.
 
-The backend starts/stops one `cs-ide-<user_id>` container per user via the Docker
-SDK (docker.sock mounted into the backend). Each container runs code-server
-(--auth none, no published port — nginx auth_request is the gate), as root with
-HOME=/root so it can read the mounted marvin SSH key (same pattern as centralcore).
-
-All Docker SDK calls are synchronous; callers wrap them in asyncio.to_thread.
+All per-user containers are now unified (code-server + Hermes in one container).
+This module keeps the same public API so app/api/ide.py needs no changes.
+Old cs-ide-* containers are reaped during the migration period.
 """
 from __future__ import annotations
 
 import logging
-import os
-import time
+
+from app.services.userenv_manager import (
+    WORKSPACES_DIR,
+    container_name,
+    config_volume_name,
+    workspace_dir,
+    vscode_dir,
+    ide_upstream as upstream,
+    touch,
+    ensure_container,
+    exec_sh,
+)
 
 log = logging.getLogger(__name__)
 
-IDE_IMAGE = os.getenv("IDE_IMAGE", "centralstation-codeserver:latest")
-IDE_NETWORK = os.getenv("IDE_NETWORK", "centralstation_default")
-IDE_HOST_SSH_DIR = os.getenv("IDE_HOST_SSH_DIR", "")
-IDE_CONTAINER_PORT = os.getenv("IDE_CONTAINER_PORT", "8080")
-# Host-side base dir for workspace bind mounts. The backend container must mount
-# the same path so os.makedirs() creates the directory on the host filesystem.
-IDE_WORKSPACES_BASE = os.getenv("IDE_WORKSPACES_BASE", "/opt/centralstation/ide-workspaces")
-# Shared Ansible directory (standard layout: playbooks/, roles/, group_vars/,
-# host_vars/, inventory/) — same host path AWX mounts as its Manual project.
-# When set, mounted into each IDE container at /root/workspaces/ansible so edits
-# are immediately visible to AWX without any sync step.
-IDE_ANSIBLE_PATH = os.getenv("IDE_ANSIBLE_PATH", "")
-WORKSPACES_DIR = "/root/workspaces"
-# In-memory last-activity tracker for the idle reaper (best-effort; resets on
-# backend restart, which is fine — the reaper just won't reap until next touch).
-_last_used: dict[str, float] = {}
-
-
-def _client():
-    import docker  # lazy import so the backend still boots if SDK/socket absent
-    return docker.from_env()
-
-
-def container_name(user_id: str) -> str:
-    return f"cs-ide-{user_id}"
-
-
-def _user_base(user_id: str) -> str:
-    """Host-side directory that holds all bind-mount subdirs for one user."""
-    return os.path.join(IDE_WORKSPACES_BASE, user_id)
-
-
-def workspace_dir(user_id: str) -> str:
-    return os.path.join(_user_base(user_id), "workspaces")
-
-
-def vscode_dir(user_id: str) -> str:
-    """VS Code extensions + settings — bind-mount so it's easy to back up."""
-    return os.path.join(_user_base(user_id), "vscode")
-
-
-def config_volume_name(user_id: str) -> str:
-    return f"cs-ide-cfg-{user_id}"
-
-
-def upstream(user_id: str) -> str:
-    return f"{container_name(user_id)}:{IDE_CONTAINER_PORT}"
-
-
-def touch(user_id: str) -> None:
-    _last_used[container_name(user_id)] = time.monotonic()
-
-
-def _wait_ready(container, timeout: float = 25.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            code, _ = container.exec_run(
-                ["curl", "-sf", "-o", "/dev/null", f"http://localhost:{IDE_CONTAINER_PORT}/healthz"]
-            )
-            if code == 0:
-                return True
-        except Exception:
-            pass
-        time.sleep(1.0)
-    return False
-
-
-def ensure_container(user_id: str) -> str:
-    """Ensure the user's code-server container is running. Returns the upstream
-    host:port for nginx. Raises on failure.
-
-    Extensions (Claude Code, OpenAI) authenticate natively via their own OAuth
-    flows. Credentials are stored on named volumes and survive container restarts."""
-    cli = _client()
-    name = container_name(user_id)
-
-    existing = None
-    try:
-        existing = cli.containers.get(name)
-    except Exception:
-        existing = None  # not found → create fresh below
-
-    if existing is not None:
-        if existing.status != "running":
-            existing.start()
-            _wait_ready(existing)
-        touch(user_id)
-        return upstream(user_id)
-
-    ws_path = workspace_dir(user_id)
-    vs_path = vscode_dir(user_id)
-    os.makedirs(ws_path, exist_ok=True)
-    os.makedirs(vs_path, exist_ok=True)
-
-    volumes = {
-        # All per-user bind mounts live under IDE_WORKSPACES_BASE/<uid>/ so a
-        # single rsync/tar of that directory backs up workspaces + VS Code state.
-        ws_path: {"bind": WORKSPACES_DIR, "mode": "rw"},
-        vs_path: {"bind": "/root/.local/share/code-server", "mode": "rw"},
-        # Claude Code credentials on a named volume (contains auth tokens, not
-        # user-created content — no backup value, keep separate).
-        config_volume_name(user_id): {"bind": "/root/.claude", "mode": "rw"},
-    }
-    if IDE_HOST_SSH_DIR:
-        volumes[IDE_HOST_SSH_DIR] = {"bind": "/root/.ssh_host", "mode": "ro"}
-    if IDE_ANSIBLE_PATH:
-        volumes[IDE_ANSIBLE_PATH] = {"bind": f"{WORKSPACES_DIR}/ansible", "mode": "rw"}
-
-    environment = {
-        "HOME": "/root",
-        "HTTP_PROXY": os.getenv("HTTP_PROXY", ""),
-        "HTTPS_PROXY": os.getenv("HTTPS_PROXY", ""),
-        # gitlab.ippen.media must bypass the proxy for git push/pull.
-        "NO_PROXY": "localhost,127.0.0.1,.ippen.media",
-        "http_proxy": os.getenv("HTTP_PROXY", ""),
-        "https_proxy": os.getenv("HTTPS_PROXY", ""),
-        "no_proxy": "localhost,127.0.0.1,.ippen.media",
-    }
-    c = cli.containers.run(
-        IDE_IMAGE,
-        name=name,
-        detach=True,
-        user="0:0",
-        environment=environment,
-        volumes=volumes,
-        network=IDE_NETWORK,
-        labels={"cs-ide": "1", "cs-ide-uid": user_id},
-        restart_policy={"Name": "no"},
-    )
-    _wait_ready(c)
-    touch(user_id)
-    log.info("ide_manager: started %s", name)
-    return upstream(user_id)
-
-
-
-def exec_sh(user_id: str, script: str, environment: dict | None = None) -> tuple[int, str]:
-    """Run a /bin/sh -c script as root inside the user's container."""
-    cli = _client()
-    c = cli.containers.get(container_name(user_id))
-    code, out = c.exec_run(["sh", "-c", script], user="root", environment=environment or {})
-    return code, (out.decode(errors="replace") if isinstance(out, (bytes, bytearray)) else str(out))
-
 
 def reap_idle(max_idle_seconds: float) -> int:
-    """Stop cs-ide-* containers idle longer than the threshold. Returns count stopped."""
-    cli = _client()
-    stopped = 0
-    now = time.monotonic()
-    for c in cli.containers.list(filters={"label": "cs-ide=1"}):
-        last = _last_used.get(c.name)
-        # Unknown last-use (e.g. after backend restart): seed now, skip this round.
-        if last is None:
-            _last_used[c.name] = now
-            continue
-        if now - last > max_idle_seconds:
+    """Stop idle userenv containers; also clean up legacy cs-ide-* containers."""
+    from app.services import userenv_manager
+    import docker
+    import time
+
+    stopped = userenv_manager.reap_idle(max_idle_seconds)
+
+    # Migration cleanup: stop any remaining old-style cs-ide-* containers.
+    try:
+        cli = docker.from_env()
+        for c in cli.containers.list(filters={"label": "cs-ide=1"}):
             try:
                 c.stop(timeout=10)
                 stopped += 1
-                log.info("ide_manager: reaped idle %s", c.name)
-            except Exception as e:
-                log.warning("ide_manager: reap %s failed: %s", c.name, e)
+                log.info("ide_manager: stopped legacy container %s", c.name)
+            except Exception as exc:
+                log.warning("ide_manager: could not stop legacy %s: %s", c.name, exc)
+    except Exception:
+        pass
+
     return stopped

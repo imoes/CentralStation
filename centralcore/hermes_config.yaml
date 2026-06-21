@@ -25,6 +25,3 @@ mcp_servers:
   centralstation:
     transport: sse
     url: http://backend:8000/api/mcp/sse
-  checkmk:
-    transport: streamable-http
-    url: http://llamacpp03.ippen.media:8000/mcp

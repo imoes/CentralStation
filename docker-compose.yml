@@ -76,6 +76,11 @@ services:
       # into each IDE container at /root/workspaces/ansible. Edit in VS Code → AWX sees
       # the change immediately (no Git sync). publish_playbook writes to ansible/playbooks/.
       IDE_ANSIBLE_PATH: ${IDE_ANSIBLE_PATH:-/home/mutkluge/Dev/code/CentralStation/ansible}
+      # Unified per-user Werkbank+Hermes container image.
+      USERENV_IMAGE: centralstation-userenv:latest
+      USERENV_NETWORK: centralstation_default
+      # Backend URL passed into per-user containers so Hermes finds the MCP SSE endpoint.
+      CENTRALSTATION_BACKEND_URL: http://backend:8000
     volumes:
       # Docker socket so the backend can start/stop per-user cs-ide-* containers.
       - /var/run/docker.sock:/var/run/docker.sock
@@ -146,6 +151,21 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # Build-only service: produces the centralstation-userenv:latest image.
+  # Per-user containers (code-server + Hermes in one) are started at runtime by the
+  # backend. Profile "userenv" keeps this out of `compose up`.
+  userenv:
+    build:
+      context: .
+      dockerfile: userenv/Dockerfile
+      args:
+        HTTP_PROXY: http://proxy.ippen.media:80
+        HTTPS_PROXY: http://proxy.ippen.media:80
+        NO_PROXY: localhost,127.0.0.1,.ippen.media
+    image: centralstation-userenv:latest
+    profiles: ["userenv"]
+    command: ["--version"]
 
   # Build-only service: produces the centralstation-codeserver:latest image.
   # Per-user containers are started at runtime by the backend (app/api/ide.py),

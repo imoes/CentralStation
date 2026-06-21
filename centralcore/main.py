@@ -253,6 +253,8 @@ class CreateSessionBody(BaseModel):
     # Per-session extra MCP servers (user-personal connectors).
     # Each entry: {name, url, transport?, token?}
     extra_mcp_servers: list[dict] | None = None
+    # SSH username from user's SSH connector (overwrites "marvin" in system prompt).
+    ssh_username: str | None = None
 
 
 def _make_agent(sid: str, cfg: CreateSessionBody):
@@ -291,6 +293,15 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
              sid[:8], model or "(default)", base_url or "(default)", api_mode,
              searxng_url or "(none)", f"{timeout_seconds}s" if timeout_seconds else "(default)")
 
+    # Build final system prompt — replace default SSH user if user configured their own.
+    ssh_user = (cfg.ssh_username or "").strip() or "marvin"
+    system_prompt = SYSTEM_PROMPT
+    if ssh_user != "marvin":
+        system_prompt = system_prompt.replace(
+            "ssh marvin@<hostname>.ippen.media",
+            f"ssh {ssh_user}@<hostname>.ippen.media",
+        )
+
     agent = AIAgent(
         session_id=sid,
         # SessionDB persists conversation to ~/.hermes/state.db (mounted from
@@ -306,7 +317,7 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         provider="anthropic" if api_mode == "anthropic_messages" else None,
         model=model or None,
         enabled_toolsets=["terminal", "web", "mcp-centralstation", "mcp-checkmk"],
-        ephemeral_system_prompt=SYSTEM_PROMPT,
+        ephemeral_system_prompt=system_prompt,
         # Cap tool/LLM iterations per user turn. Web search spirals are bounded by
         # the system prompt rule (max 3 web_search per question), not this limit.
         # This limit only guards against hard runaway loops (infinite tool chains).
