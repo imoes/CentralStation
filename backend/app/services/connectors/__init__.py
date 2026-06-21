@@ -26,7 +26,9 @@ class _GenericConnector(BaseConnector):
                 else:
                     # streamable-http: POST with minimal MCP initialize ping
                     headers["Content-Type"] = "application/json"
-                    headers["Accept"] = "application/json, application/jsonl"
+                    # MCP streamable-http spec requires text/event-stream in Accept
+                    # (server may respond with SSE stream for long-running ops).
+                    headers["Accept"] = "application/json, text/event-stream"
                     r = await client.post(
                         self.base_url, headers=headers,
                         json={"jsonrpc": "2.0", "method": "initialize", "id": 1,
