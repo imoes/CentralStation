@@ -167,6 +167,9 @@ def ensure_container(user_id: str) -> str:
         volumes[USERENV_ANSIBLE_PATH] = {"bind": f"{WORKSPACES_DIR}/ansible", "mode": "rw"}
 
     _no_proxy = os.getenv("NO_PROXY", "localhost,127.0.0.1,backend,redis,db,opensearch,.ippen.media")
+    # Ensure internal Docker hostnames are never proxied, regardless of the parent NO_PROXY value.
+    if "backend" not in _no_proxy:
+        _no_proxy = f"backend,{_no_proxy}"
     environment = {
         "HOME": "/root",
         "CENTRALSTATION_BACKEND_URL": os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000"),
