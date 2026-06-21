@@ -260,9 +260,14 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
     from hermes_state import SessionDB
 
     base_url   = cfg.llm_base_url or os.getenv("LLM_BASE_URL", "")
-    model      = cfg.llm_model    or os.getenv("LLM_MODEL", "")
+    model      = (cfg.llm_model    or os.getenv("LLM_MODEL", "")).strip()
     api_key    = cfg.llm_api_key  or os.getenv("LLM_API_KEY")
     api_mode   = cfg.llm_api_mode or os.getenv("LLM_API_MODE", "chat_completions")
+
+    # Hermes requires api_key AND base_url for explicit-creds path.
+    # Local endpoints have no key — use a placeholder so the condition holds.
+    if base_url and not api_key:
+        api_key = "none"
     searxng_url     = cfg.searxng_url or os.getenv("SEARXNG_URL", "")
     timeout_seconds = cfg.llm_timeout_seconds or int(os.getenv("HERMES_API_TIMEOUT", 0)) or None
 
