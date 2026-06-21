@@ -49,6 +49,18 @@ export class ConnectorService {
     return this.http.delete<void>(`${this.api}/my/${type}`);
   }
 
+  createMine(data: ConnectorCreate) {
+    return this.http.post<Connector>(`${this.api}/my/`, data);
+  }
+
+  updateMineById(id: string, data: ConnectorUpdate) {
+    return this.http.patch<Connector>(`${this.api}/my/id/${id}`, data);
+  }
+
+  deleteMineById(id: string) {
+    return this.http.delete<void>(`${this.api}/my/id/${id}`);
+  }
+
   getSettings() {
     return this.http.get<SettingsResponse>(`${this.settingsApi}/`);
   }
