@@ -139,6 +139,83 @@ async def upsert_my_connector(
 
         _aio.ensure_future(_apply_ssh())
 
+    # MCP-Server Konnektor: per-user hermes_config.yaml neu schreiben + Container neu starten.
+    # Die Config wird beim nächsten Session-Create auch automatisch neu geschrieben;
+    # der Neustart hier aktiviert die Änderung sofort ohne neue Session anlegen zu müssen.
+    if connector_type in ("mcp_server", "awx_ng"):
+        import asyncio as _aio
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+
+        async def _restart_for_mcp() -> None:
+            try:
+                from app.models.connector import ConnectorConfig as _CC
+                from app.core.security import decrypt_credentials as _dec
+                import base64 as _b64
+                from sqlalchemy import select as _sel
+                from app.core.database import AsyncSessionLocal
+                from app.services.userenv_manager import write_hermes_config
+                import docker as _docker
+
+                async with AsyncSessionLocal() as _db:
+                    # Alle MCP-Konnektoren laden um vollständige Config zu schreiben
+                    _extra_servers: dict = {}
+                    _mcp_rows = (await _db.execute(
+                        _sel(_CC).where(
+                            _CC.type == "mcp_server",
+                            _CC.owner_user_id == current_user.id,
+                            _CC.enabled.is_(True),
+                        )
+                    )).scalars().all()
+                    for _c in _mcp_rows:
+                        _cr = _dec(_c.encrypted_credentials)
+                        _srv: dict = {
+                            "transport": _cr.get("transport", "streamable-http"),
+                            "url": _c.base_url.rstrip("/"),
+                        }
+                        if _cr.get("token"):
+                            _srv["headers"] = {"Authorization": _cr["token"]}
+                        _extra_servers[_c.name.lower().replace(" ", "-") or "mcp-user"] = _srv
+
+                    _awx = (await _db.execute(
+                        _sel(_CC).where(
+                            _CC.type == "awx_ng",
+                            _CC.owner_user_id == current_user.id,
+                            _CC.enabled.is_(True),
+                        ).limit(1)
+                    )).scalar_one_or_none()
+                    if _awx:
+                        _cr2 = _dec(_awx.encrypted_credentials)
+                        _b = _b64.b64encode(
+                            f"{_cr2.get('username','')}:{_cr2.get('password','')}".encode()
+                        ).decode()
+                        _extra_servers["awx-ng"] = {
+                            "transport": "streamable-http",
+                            "url": _awx.base_url.rstrip("/") + "/mcp/",
+                            "headers": {"Authorization": f"Basic {_b}"},
+                        }
+
+                # Neue Config schreiben
+                import asyncio as _asyncio
+                await _asyncio.to_thread(write_hermes_config, str(current_user.id), _extra_servers)
+
+                # Container neustarten
+                def _do_restart() -> None:
+                    from app.services.userenv_manager import container_name as _cn
+                    cli = _docker.from_env()
+                    try:
+                        c = cli.containers.get(_cn(str(current_user.id)))
+                        c.restart(timeout=15)
+                        _log.info("MCP config changed — restarted container %s", c.name)
+                    except _docker.errors.NotFound:
+                        pass  # kein Container läuft gerade — Config wird beim nächsten Start gelesen
+
+                await _asyncio.to_thread(_do_restart)
+            except Exception as _exc:
+                _log.warning("MCP connector change: config/restart failed: %s", _exc)
+
+        _aio.ensure_future(_restart_for_mcp())
+
     return connector
 
 

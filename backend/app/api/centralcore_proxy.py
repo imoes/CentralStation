@@ -115,13 +115,14 @@ async def create_session(
                  searxng.base_url if searxng.is_configured else "(none)",
                  llm.timeout_seconds or "default")
 
-        # Collect extra MCP servers from user's personal connectors.
-        extra_mcp: list[dict] = []
+        # Build per-user MCP server config from personal connectors.
+        # Written to {workspaces_base}/{user_id}/hermes_config.yaml and mounted
+        # into the container as /root/.hermes/config.yaml (read by Hermes at startup).
+        extra_servers: dict = {}
         from sqlalchemy import select as _sel
         from app.core.security import decrypt_credentials as _dec
         import base64 as _b64
 
-        # Alle aktiven mcp_server-Konnektoren des Users (unterstützt mehrere)
         mcp_res = await db.execute(
             _sel(ConnectorConfig).where(
                 ConnectorConfig.type == "mcp_server",
@@ -131,15 +132,15 @@ async def create_session(
         )
         for conn in mcp_res.scalars().all():
             creds = _dec(conn.encrypted_credentials)
-            transport = creds.get("transport", "streamable-http")
-            extra_mcp.append({
-                "name": f"mcp-{conn.name.lower().replace(' ', '-') or 'user'}",
+            srv: dict = {
+                "transport": creds.get("transport", "streamable-http"),
                 "url": conn.base_url.rstrip("/"),
-                "transport": transport,
-                "token": creds.get("token", ""),
-            })
+            }
+            if creds.get("token"):
+                srv["headers"] = {"Authorization": creds["token"]}
+            srv_name = conn.name.lower().replace(" ", "-") or "mcp-user"
+            extra_servers[srv_name] = srv
 
-        # AWX-NG (nur einer pro User)
         awx_res = await db.execute(
             _sel(ConnectorConfig).where(
                 ConnectorConfig.type == "awx_ng",
@@ -153,15 +154,11 @@ async def create_session(
             username = creds.get("username", "")
             password = creds.get("password", "")
             b64 = _b64.b64encode(f"{username}:{password}".encode()).decode()
-            extra_mcp.append({
-                "name": "mcp-awx-ng",
-                "url": awx_conn.base_url.rstrip("/") + "/mcp/",
+            extra_servers["awx-ng"] = {
                 "transport": "streamable-http",
-                "token": f"Basic {b64}",
-            })
-
-        if extra_mcp:
-            llm_payload["extra_mcp_servers"] = extra_mcp
+                "url": awx_conn.base_url.rstrip("/") + "/mcp/",
+                "headers": {"Authorization": f"Basic {b64}"},
+            }
 
         # Load SSH settings and inject username into session (for system prompt override)
         _ssh_creds = await _load_ssh_creds(db, user.id)
@@ -171,8 +168,15 @@ async def create_session(
         log.warning("Could not load LLM config, using CentralCore defaults: %s", exc)
         llm_payload = {}
 
-    # Ensure per-user container is running (idempotent, ~0ms if already up).
-    from app.services.userenv_manager import ensure_container, configure_ssh
+    # Write per-user hermes_config.yaml (centralstation + personal connectors).
+    # Done BEFORE ensure_container so the file is ready when the container starts
+    # and mounts it as /root/.hermes/config.yaml.
+    from app.services.userenv_manager import ensure_container, configure_ssh, write_hermes_config
+    try:
+        await asyncio.to_thread(write_hermes_config, str(user.id), extra_servers)
+    except Exception as exc:
+        log.warning("write_hermes_config failed for %s: %s", user.id, exc)
+
     try:
         await asyncio.to_thread(ensure_container, str(user.id))
         if _ssh_creds:
@@ -344,6 +348,12 @@ async def get_history(
 ):
     async with _internal_client(timeout=10.0) as client:
         r = await client.get(f"{_target_url(user.id)}/sessions/{sid}/history")
+    if r.status_code == 404:
+        # Session exists in PostgreSQL but not in the Hermes container (e.g. old sessions
+        # from a previous container). Return empty history so the UI shows a blank chat
+        # instead of an error screen. The first message will trigger a proper 404 with
+        # "Session nicht mehr vorhanden" guidance.
+        return []
     _check(r)
     return r.json()
 
@@ -372,51 +382,6 @@ async def send_message(
         # Admin toggle: show the model's reasoning in the session (default ON).
         show_reasoning = (await get_setting(db, "computer.show_reasoning") or "true") != "false"
         body_data = _json.loads(body)
-        # Collect extra MCP servers (needed for session restore after container restart)
-        extra_mcp_msg: list[dict] = []
-        try:
-            from sqlalchemy import select as _sel2
-            from app.models.connector import ConnectorConfig as _CC
-            from app.core.security import decrypt_credentials as _dec2
-            import base64 as _b64m
-            mcp_res2 = await db.execute(
-                _sel2(_CC).where(
-                    _CC.type == "mcp_server",
-                    _CC.owner_user_id == user.id,
-                    _CC.enabled.is_(True),
-                )
-            )
-            for conn2 in mcp_res2.scalars().all():
-                creds2 = _dec2(conn2.encrypted_credentials)
-                transport2 = creds2.get("transport", "streamable-http")
-                extra_mcp_msg.append({
-                    "name": f"mcp-{conn2.name.lower().replace(' ', '-') or 'user'}",
-                    "url": conn2.base_url.rstrip("/"),
-                    "transport": transport2,
-                    "token": creds2.get("token", ""),
-                })
-
-            awx_res2 = await db.execute(
-                _sel2(_CC).where(
-                    _CC.type == "awx_ng",
-                    _CC.owner_user_id == user.id,
-                    _CC.enabled.is_(True),
-                ).limit(1)
-            )
-            awx_conn2 = awx_res2.scalar_one_or_none()
-            if awx_conn2:
-                creds2 = _dec2(awx_conn2.encrypted_credentials)
-                b64m = _b64m.b64encode(
-                    f"{creds2.get('username','')}:{creds2.get('password','')}".encode()
-                ).decode()
-                extra_mcp_msg.append({
-                    "name": "mcp-awx-ng",
-                    "url": awx_conn2.base_url.rstrip("/") + "/mcp/",
-                    "transport": "streamable-http",
-                    "token": f"Basic {b64m}",
-                })
-        except Exception:
-            pass
         body_data.update({
             "llm_base_url": llm.base_url or None,
             "llm_model": llm.model or None,
@@ -425,7 +390,6 @@ async def send_message(
             "searxng_url": searxng.base_url if searxng.is_configured else None,
             "llm_timeout_seconds": llm.timeout_seconds or None,
             "show_reasoning": show_reasoning,
-            "extra_mcp_servers": extra_mcp_msg or None,
         })
         body = _json.dumps(body_data).encode()
     except Exception as exc:

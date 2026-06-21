@@ -138,10 +138,16 @@ fi
 unset _managed
 
 # ── Hermes/CentralCore on :8001 (background) ──────────────────────────
-# Config is generated from CENTRALSTATION_BACKEND_URL env var so the MCP SSE
-# URL doesn't need to hardcode the backend container name.
+# Per-user hermes_config.yaml is bind-mounted to /app/hermes_config.yaml by
+# userenv_manager.py (written from the user's DB connectors). We always copy it
+# to ~/.hermes/config.yaml so it takes precedence over any stale config inside
+# the hermes-state volume (which Docker volume mounts shadow file bind-mounts).
+# Fallback: generate minimal config from env var if no per-user file is mounted.
 _hermes_cfg="$HOME/.hermes/config.yaml"
-if [ ! -f "$_hermes_cfg" ]; then
+if [ -f "/app/hermes_config.yaml" ]; then
+    cp /app/hermes_config.yaml "$_hermes_cfg"
+    echo "cs-entrypoint: loaded per-user hermes_config.yaml ($(grep -c 'transport:' /app/hermes_config.yaml) servers)"
+else
     _backend_url="${CENTRALSTATION_BACKEND_URL:-http://backend:8000}"
     cat > "$_hermes_cfg" <<YAML
 mcp_servers:
@@ -149,9 +155,10 @@ mcp_servers:
     transport: sse
     url: ${_backend_url}/api/mcp/sse
 YAML
-    echo "cs-entrypoint: wrote hermes_config.yaml (backend=${_backend_url})"
+    echo "cs-entrypoint: wrote fallback hermes_config.yaml (backend=${_backend_url})"
+    unset _backend_url
 fi
-unset _hermes_cfg _backend_url
+unset _hermes_cfg
 
 cd /app && uvicorn main:app --host 0.0.0.0 --port 8001 &
 echo "cs-entrypoint: hermes started on :8001 (pid $!)"

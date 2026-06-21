@@ -25,3 +25,6 @@ mcp_servers:
   centralstation:
     transport: sse
     url: http://backend:8000/api/mcp/sse
+# User-specific MCP servers (vibemk, awx-ng, etc.) are written to a
+# per-user hermes_config.yaml at {workspaces_base}/{user_id}/hermes_config.yaml
+# and mounted over this file when a per-user container starts.
