@@ -155,6 +155,11 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     { key: 'password', label: 'Passwort',     type: 'password' },
   ],
   mcp_server: [
+    { key: 'transport', label: 'Transport', type: 'select', options: [
+        { value: 'streamable-http', label: 'Streamable HTTP (Standard)' },
+        { value: 'sse',             label: 'SSE (Server-Sent Events)' },
+        { value: 'stdio',           label: 'Stdio (lokales Subprocess)' },
+    ]},
     { key: 'token', label: 'Bearer Token (optional)', type: 'password' },
   ],
 };
