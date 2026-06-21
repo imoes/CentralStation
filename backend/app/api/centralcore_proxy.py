@@ -334,7 +334,37 @@ async def session_to_workbench(
     db.add(ws)
     await db.commit()
     await db.refresh(ws)
+
+    # Write agents.md entry in the user workspace so the Werkbank IDE sees the link.
+    await asyncio.to_thread(_append_agents_md, str(user.id), sid, cs.label)
+
     return {"id": str(ws.id), "already_linked": False}
+
+
+def _append_agents_md(user_id: str, session_id: str, label: str) -> None:
+    """Append a transfer entry to {workspace}/agents.md on the host."""
+    import datetime
+    from app.services.userenv_manager import workspace_dir
+
+    ws_dir = workspace_dir(user_id)
+    agents_md = os.path.join(ws_dir, "agents.md")
+    today = datetime.date.today().isoformat()
+    sid_short = session_id[:8]
+
+    header_needed = not os.path.exists(agents_md)
+    try:
+        os.makedirs(ws_dir, exist_ok=True)
+        with open(agents_md, "a", encoding="utf-8") as f:
+            if header_needed:
+                f.write("# Agents Log\n\n"
+                        "Automatisch gepflegt von Hermes. Enthält Session-Artefakte und Quelldateien.\n\n")
+            f.write(f"## [{today}] {label} ({sid_short}…)\n")
+            f.write(f"- Quelle: Hermes Computer-Session `{session_id}`\n")
+            f.write(f"- In Werkbank übertragen: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC\n")
+            f.write(f"- Workspace: `/root/workspaces/`\n\n")
+        log.info("agents.md updated for user %s session %s", user_id, sid_short)
+    except Exception as exc:
+        log.warning("agents.md write failed for %s: %s", user_id, exc)
 
 
 @router.get("/sessions/{sid}/history")
