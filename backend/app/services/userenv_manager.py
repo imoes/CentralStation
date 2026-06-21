@@ -166,13 +166,18 @@ def ensure_container(user_id: str) -> str:
     if USERENV_ANSIBLE_PATH:
         volumes[USERENV_ANSIBLE_PATH] = {"bind": f"{WORKSPACES_DIR}/ansible", "mode": "rw"}
 
-    _no_proxy = os.getenv("NO_PROXY", "localhost,127.0.0.1,backend,redis,db,opensearch,.ippen.media")
-    # Ensure internal Docker hostnames are never proxied, regardless of the parent NO_PROXY value.
-    if "backend" not in _no_proxy:
-        _no_proxy = f"backend,{_no_proxy}"
+    # Extract the backend hostname from the URL so it is always excluded from the proxy.
+    # The hostname can vary (e.g. "backend", "centralstation-backend", ...) depending on
+    # the Docker Compose service name, so we derive it dynamically instead of hardcoding.
+    _backend_url = os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000")
+    from urllib.parse import urlparse as _urlparse
+    _backend_host = _urlparse(_backend_url).hostname or "backend"
+    _no_proxy = os.getenv("NO_PROXY", "localhost,127.0.0.1,.ippen.media")
+    if _backend_host not in _no_proxy:
+        _no_proxy = f"{_backend_host},{_no_proxy}"
     environment = {
         "HOME": "/root",
-        "CENTRALSTATION_BACKEND_URL": os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000"),
+        "CENTRALSTATION_BACKEND_URL": _backend_url,
         "HTTP_PROXY": os.getenv("HTTP_PROXY", ""),
         "HTTPS_PROXY": os.getenv("HTTPS_PROXY", ""),
         "NO_PROXY": _no_proxy,
