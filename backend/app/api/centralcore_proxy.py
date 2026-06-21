@@ -533,6 +533,38 @@ async def text_to_speech(body: _TTSBody) -> PlainResponse:
         raise HTTPException(502, f"Google TTS: {exc}")
 
 
+# ── Container management ───────────────────────────────────────────
+
+@router.post("/userenv/restart", status_code=202)
+async def restart_userenv(
+    user: CurrentUser,
+    _: None = _ConsoleEnabled,
+):
+    """Restart the per-user Hermes container.
+
+    Call this after changing SSH settings, MCP connectors, or LLM settings
+    so that all in-container daemons pick up the new configuration.
+    Note: all in-memory Hermes sessions are lost on restart.
+    """
+    from app.services.userenv_manager import container_name as _cname
+    import docker as _docker
+
+    def _do_restart() -> bool:
+        try:
+            cli = _docker.from_env()
+            c = cli.containers.get(_cname(str(user.id)))
+            c.restart(timeout=15)
+            return True
+        except _docker.errors.NotFound:
+            return False
+
+    found = await asyncio.to_thread(_do_restart)
+    if not found:
+        return {"restarted": False, "info": "Kein laufender Container gefunden"}
+    log.info("userenv container restarted for user %s", user.id)
+    return {"restarted": True}
+
+
 # ── Helpers ────────────────────────────────────────────────────────
 
 def _check(r: httpx.Response) -> None:
