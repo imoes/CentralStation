@@ -166,15 +166,15 @@ def ensure_container(user_id: str) -> str:
     if USERENV_ANSIBLE_PATH:
         volumes[USERENV_ANSIBLE_PATH] = {"bind": f"{WORKSPACES_DIR}/ansible", "mode": "rw"}
 
-    _no_proxy = "localhost,127.0.0.1,backend,centralcore,redis,db,opensearch,.ippen.media"
+    _no_proxy = os.getenv("NO_PROXY", "localhost,127.0.0.1,backend,redis,db,opensearch,.ippen.media")
     environment = {
         "HOME": "/root",
         "CENTRALSTATION_BACKEND_URL": os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000"),
         "HTTP_PROXY": os.getenv("HTTP_PROXY", ""),
         "HTTPS_PROXY": os.getenv("HTTPS_PROXY", ""),
         "NO_PROXY": _no_proxy,
-        "http_proxy": os.getenv("HTTP_PROXY", ""),
-        "https_proxy": os.getenv("HTTPS_PROXY", ""),
+        "http_proxy": os.getenv("http_proxy", os.getenv("HTTP_PROXY", "")),
+        "https_proxy": os.getenv("https_proxy", os.getenv("HTTPS_PROXY", "")),
         "no_proxy": _no_proxy,
     }
 

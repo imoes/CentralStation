@@ -59,10 +59,6 @@ services:
       OPENSEARCH_URL: https://opensearch:9200
       OPENSEARCH_USER: admin
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
-      CENTRALCORE_URL: http://centralcore:8001
-      HTTP_PROXY: http://proxy.ippen.media:80
-      HTTPS_PROXY: http://proxy.ippen.media:80
-      NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,centralcore,awx,awx-db,awx-redis,.ippen.media
       # Werkbank Web-IDE: backend orchestrates per-user code-server containers.
       IDE_IMAGE: centralstation-codeserver:latest
       IDE_NETWORK: centralstation_default
@@ -82,7 +78,7 @@ services:
       # Backend URL passed into per-user containers so Hermes finds the MCP SSE endpoint.
       CENTRALSTATION_BACKEND_URL: http://backend:8000
     volumes:
-      # Docker socket so the backend can start/stop per-user cs-ide-* containers.
+      # Docker socket so the backend can start/stop per-user cs-userenv-* containers.
       - /var/run/docker.sock:/var/run/docker.sock
       # Workspace bind-mount base — same path inside backend = same path on host.
       - ${IDE_WORKSPACES_BASE:-/opt/centralstation/ide-workspaces}:${IDE_WORKSPACES_BASE:-/opt/centralstation/ide-workspaces}
@@ -114,44 +110,6 @@ services:
     ports:
       - "127.0.0.1:4200:80"
 
-  centralcore:
-    build:
-      context: ./centralcore
-      # Hermes is git-cloned + pip-installed during docker build.
-      # Rebuild to update Hermes: docker compose build centralcore
-    restart: unless-stopped
-    environment:
-      CENTRALCORE_URL: http://centralcore:8001
-      HTTP_PROXY: http://proxy.ippen.media:80
-      HTTPS_PROXY: http://proxy.ippen.media:80
-      NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
-    volumes:
-      # Project-local .hermes dir (session state, skills); config.yaml is
-      # overlaid below so the container uses llamacpp03 as its LLM provider.
-      # Relative path (not ${PWD}) so it always resolves to the compose-file
-      # directory — ${PWD} created a stray root-owned frontend/.hermes when
-      # compose was invoked from a subdirectory.
-      - ./.hermes:/root/.hermes
-      - ./centralcore/hermes_config.yaml:/root/.hermes/config.yaml:ro
-      # SSH config from the project directory — no system-wide changes needed
-      - ./centralcore/ssh_config:/root/.ssh_project_config:ro
-      # SSH keys from the host (read-only)
-      - ${HOME}/.ssh:/root/.ssh_host:ro
-      # Claude & OpenAI OAuth tokens are stored in the DB and injected per session
-      # via the centralcore proxy — no credential file mount needed.
-    ports:
-      - "127.0.0.1:8001:8001"
-    cap_add:
-      - NET_RAW
-    depends_on:
-      backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
   # Build-only service: produces the centralstation-userenv:latest image.
   # Per-user containers (code-server + Hermes in one) are started at runtime by the
   # backend. Profile "userenv" keeps this out of `compose up`.
@@ -159,10 +117,6 @@ services:
     build:
       context: .
       dockerfile: userenv/Dockerfile
-      args:
-        HTTP_PROXY: http://proxy.ippen.media:80
-        HTTPS_PROXY: http://proxy.ippen.media:80
-        NO_PROXY: localhost,127.0.0.1,.ippen.media
     image: centralstation-userenv:latest
     profiles: ["userenv"]
     command: ["--version"]
@@ -174,10 +128,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.codeserver
-      args:
-        HTTP_PROXY: http://proxy.ippen.media:80
-        HTTPS_PROXY: http://proxy.ippen.media:80
-        NO_PROXY: localhost,127.0.0.1,.ippen.media
     image: centralstation-codeserver:latest
     profiles: ["ide"]
     command: ["--version"]
@@ -194,4 +144,3 @@ services:
     depends_on:
       - backend
       - frontend
-

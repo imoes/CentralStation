@@ -29,16 +29,13 @@ from app.models.workflow import ComputerSession, UserPreference
 router = APIRouter(prefix="/computer", tags=["computer"])
 log = logging.getLogger(__name__)
 
-CENTRALCORE_URL = os.environ.get("CENTRALCORE_URL", "http://centralcore:8001")
-
-
 def _internal_client(**kwargs) -> httpx.AsyncClient:
     """httpx client for intra-Docker requests (bypasses HTTP_PROXY env var)."""
     return httpx.AsyncClient(trust_env=False, **kwargs)
 
 
 def _target_url(user_id: str) -> str:
-    """Return the per-user Hermes URL when USERENV_IMAGE is set, else the shared CENTRALCORE_URL."""
+    """Return the per-user Hermes container URL (http://cs-userenv-{uid}:8001)."""
     from app.services.userenv_manager import hermes_url
     return hermes_url(str(user_id))
 

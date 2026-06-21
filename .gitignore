@@ -27,6 +27,7 @@ frontend/node_modules/
 
 # Docker
 *.log
+docker-compose.override.yml
 
 # Bind mount data directories (persistent volumes)
 data/postgres/
