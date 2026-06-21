@@ -1064,7 +1064,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
       } else if (last.toolCalls?.length) {
         // Mark the last running call as done
         const calls = [...last.toolCalls];
-        const idx = calls.findLastIndex(c => !c.done);
+        const idx = calls.findLastIndex((c: ToolCall) => !c.done);
         if (idx >= 0) calls[idx] = { ...calls[idx], done: true };
         last.toolCalls = calls;
       }
