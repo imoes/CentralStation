@@ -213,9 +213,15 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
         return
 
     if key_pem and key_pem.strip():
-        # Write key via environment variable to avoid shell injection
+        # Normalise key: strip trailing whitespace, then add exactly one trailing newline.
+        # printf '%s' suppresses newlines which breaks OpenSSH ("error in libcrypto").
+        # The sed strips any existing trailing blank lines before we append the required \n.
         c.exec_run(
-            ["sh", "-c", "mkdir -p /root/.ssh && printf '%s' \"$KEY\" > /root/.ssh/user.key && chmod 600 /root/.ssh/user.key"],
+            ["sh", "-c",
+             "mkdir -p /root/.ssh && "
+             "printf '%s' \"$KEY\" | sed 's/[[:space:]]*$//' > /root/.ssh/user.key && "
+             "printf '\\n' >> /root/.ssh/user.key && "
+             "chmod 600 /root/.ssh/user.key"],
             environment={"KEY": key_pem},
         )
 
