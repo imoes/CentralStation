@@ -7,6 +7,7 @@ creation so Hermes always uses the same model as the rest of CentralStation.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Annotated
@@ -29,6 +30,35 @@ router = APIRouter(prefix="/computer", tags=["computer"])
 log = logging.getLogger(__name__)
 
 CENTRALCORE_URL = os.environ.get("CENTRALCORE_URL", "http://centralcore:8001")
+
+
+def _internal_client(**kwargs) -> httpx.AsyncClient:
+    """httpx client for intra-Docker requests (bypasses HTTP_PROXY env var)."""
+    return httpx.AsyncClient(trust_env=False, **kwargs)
+
+
+def _target_url(user_id: str) -> str:
+    """Return the per-user Hermes URL when USERENV_IMAGE is set, else the shared CENTRALCORE_URL."""
+    from app.services.userenv_manager import hermes_url
+    return hermes_url(str(user_id))
+
+
+async def _load_ssh_creds(db: AsyncSession, user_id) -> dict | None:
+    """Load the user's SSH connector credentials, or None if not configured."""
+    from sqlalchemy import select as _sel
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials as _dec
+    res = await db.execute(
+        _sel(ConnectorConfig).where(
+            ConnectorConfig.type == "ssh",
+            ConnectorConfig.owner_user_id == user_id,
+            ConnectorConfig.enabled.is_(True),
+        ).limit(1)
+    )
+    conn = res.scalar_one_or_none()
+    if not conn:
+        return None
+    return _dec(conn.encrypted_credentials)
 
 
 async def _require_console(
@@ -68,6 +98,7 @@ async def create_session(
     """Create a new Hermes session, persist metadata in PostgreSQL."""
     from app.services.settings import get_active_llm_config, get_searxng_config
     from app.models.connector import ConnectorConfig
+    _ssh_creds: dict | None = None
     try:
         llm = await get_active_llm_config(db, user_id=user.id)
         searxng = await get_searxng_config(db)
@@ -90,45 +121,72 @@ async def create_session(
         from app.core.security import decrypt_credentials as _dec
         import base64 as _b64
 
-        for ctype, ttype in (("mcp_server", "streamable-http"), ("awx_ng", "streamable-http")):
-            res = await db.execute(
-                _sel(ConnectorConfig).where(
-                    ConnectorConfig.type == ctype,
-                    ConnectorConfig.owner_user_id == user.id,
-                    ConnectorConfig.enabled.is_(True),
-                ).limit(1)
+        # Alle aktiven mcp_server-Konnektoren des Users (unterstützt mehrere)
+        mcp_res = await db.execute(
+            _sel(ConnectorConfig).where(
+                ConnectorConfig.type == "mcp_server",
+                ConnectorConfig.owner_user_id == user.id,
+                ConnectorConfig.enabled.is_(True),
             )
-            conn = res.scalar_one_or_none()
-            if not conn:
-                continue
+        )
+        for conn in mcp_res.scalars().all():
             creds = _dec(conn.encrypted_credentials)
-            if ctype == "mcp_server":
-                token = creds.get("token", "")
-                extra_mcp.append({
-                    "name": f"mcp-{conn.name.lower().replace(' ', '-') or 'user'}",
-                    "url": conn.base_url.rstrip("/"),
-                    "transport": ttype,
-                    "token": token,
-                })
-            elif ctype == "awx_ng":
-                username = creds.get("username", "")
-                password = creds.get("password", "")
-                b64 = _b64.b64encode(f"{username}:{password}".encode()).decode()
-                extra_mcp.append({
-                    "name": "mcp-awx-ng",
-                    "url": conn.base_url.rstrip("/") + "/mcp/",
-                    "transport": ttype,
-                    "token": f"Basic {b64}",
-                })
+            transport = creds.get("transport", "streamable-http")
+            extra_mcp.append({
+                "name": f"mcp-{conn.name.lower().replace(' ', '-') or 'user'}",
+                "url": conn.base_url.rstrip("/"),
+                "transport": transport,
+                "token": creds.get("token", ""),
+            })
+
+        # AWX-NG (nur einer pro User)
+        awx_res = await db.execute(
+            _sel(ConnectorConfig).where(
+                ConnectorConfig.type == "awx_ng",
+                ConnectorConfig.owner_user_id == user.id,
+                ConnectorConfig.enabled.is_(True),
+            ).limit(1)
+        )
+        awx_conn = awx_res.scalar_one_or_none()
+        if awx_conn:
+            creds = _dec(awx_conn.encrypted_credentials)
+            username = creds.get("username", "")
+            password = creds.get("password", "")
+            b64 = _b64.b64encode(f"{username}:{password}".encode()).decode()
+            extra_mcp.append({
+                "name": "mcp-awx-ng",
+                "url": awx_conn.base_url.rstrip("/") + "/mcp/",
+                "transport": "streamable-http",
+                "token": f"Basic {b64}",
+            })
 
         if extra_mcp:
             llm_payload["extra_mcp_servers"] = extra_mcp
+
+        # Load SSH settings and inject username into session (for system prompt override)
+        _ssh_creds = await _load_ssh_creds(db, user.id)
+        if _ssh_creds:
+            llm_payload["ssh_username"] = _ssh_creds.get("username", "")
     except Exception as exc:
         log.warning("Could not load LLM config, using CentralCore defaults: %s", exc)
         llm_payload = {}
 
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        r = await client.post(f"{CENTRALCORE_URL}/sessions", json=llm_payload)
+    # Ensure per-user container is running (idempotent, ~0ms if already up).
+    from app.services.userenv_manager import ensure_container, configure_ssh
+    try:
+        await asyncio.to_thread(ensure_container, str(user.id))
+        if _ssh_creds:
+            await asyncio.to_thread(
+                configure_ssh, str(user.id),
+                _ssh_creds.get("username", ""), _ssh_creds.get("private_key", ""),
+                _ssh_creds.get("password", ""),
+            )
+    except Exception as exc:
+        log.warning("Could not ensure userenv container for %s: %s — falling back to shared centralcore", user.id, exc)
+
+    target = _target_url(user.id)
+    async with _internal_client(timeout=90.0) as client:
+        r = await client.post(f"{target}/sessions", json=llm_payload)
     _check(r)
     data = r.json()
     sid = data["session_id"]
@@ -224,8 +282,8 @@ async def delete_session(
 ):
     # Delete from centralcore (best-effort — may already be gone after restart)
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.delete(f"{CENTRALCORE_URL}/sessions/{sid}")
+        async with _internal_client(timeout=10.0) as client:
+            await client.delete(f"{_target_url(user.id)}/sessions/{sid}")
     except Exception as exc:
         log.debug("centralcore delete %s: %s (ignored)", sid[:8], exc)
 
@@ -278,10 +336,14 @@ async def session_to_workbench(
     return {"id": str(ws.id), "already_linked": False}
 
 
-@router.get("/sessions/{sid}/history", dependencies=[_ConsoleEnabled])
-async def get_history(sid: str):
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(f"{CENTRALCORE_URL}/sessions/{sid}/history")
+@router.get("/sessions/{sid}/history")
+async def get_history(
+    sid: str,
+    user: CurrentUser,
+    _: None = _ConsoleEnabled,
+):
+    async with _internal_client(timeout=10.0) as client:
+        r = await client.get(f"{_target_url(user.id)}/sessions/{sid}/history")
     _check(r)
     return r.json()
 
@@ -317,35 +379,42 @@ async def send_message(
             from app.models.connector import ConnectorConfig as _CC
             from app.core.security import decrypt_credentials as _dec2
             import base64 as _b64m
-            for ctype, ttype in (("mcp_server", "streamable-http"), ("awx_ng", "streamable-http")):
-                res2 = await db.execute(
-                    _sel2(_CC).where(
-                        _CC.type == ctype,
-                        _CC.owner_user_id == user.id,
-                        _CC.enabled.is_(True),
-                    ).limit(1)
+            mcp_res2 = await db.execute(
+                _sel2(_CC).where(
+                    _CC.type == "mcp_server",
+                    _CC.owner_user_id == user.id,
+                    _CC.enabled.is_(True),
                 )
-                conn2 = res2.scalar_one_or_none()
-                if not conn2:
-                    continue
+            )
+            for conn2 in mcp_res2.scalars().all():
                 creds2 = _dec2(conn2.encrypted_credentials)
-                if ctype == "mcp_server":
-                    extra_mcp_msg.append({
-                        "name": f"mcp-{conn2.name.lower().replace(' ', '-') or 'user'}",
-                        "url": conn2.base_url.rstrip("/"),
-                        "transport": ttype,
-                        "token": creds2.get("token", ""),
-                    })
-                elif ctype == "awx_ng":
-                    b64m = _b64m.b64encode(
-                        f"{creds2.get('username','')}:{creds2.get('password','')}".encode()
-                    ).decode()
-                    extra_mcp_msg.append({
-                        "name": "mcp-awx-ng",
-                        "url": conn2.base_url.rstrip("/") + "/mcp/",
-                        "transport": ttype,
-                        "token": f"Basic {b64m}",
-                    })
+                transport2 = creds2.get("transport", "streamable-http")
+                extra_mcp_msg.append({
+                    "name": f"mcp-{conn2.name.lower().replace(' ', '-') or 'user'}",
+                    "url": conn2.base_url.rstrip("/"),
+                    "transport": transport2,
+                    "token": creds2.get("token", ""),
+                })
+
+            awx_res2 = await db.execute(
+                _sel2(_CC).where(
+                    _CC.type == "awx_ng",
+                    _CC.owner_user_id == user.id,
+                    _CC.enabled.is_(True),
+                ).limit(1)
+            )
+            awx_conn2 = awx_res2.scalar_one_or_none()
+            if awx_conn2:
+                creds2 = _dec2(awx_conn2.encrypted_credentials)
+                b64m = _b64m.b64encode(
+                    f"{creds2.get('username','')}:{creds2.get('password','')}".encode()
+                ).decode()
+                extra_mcp_msg.append({
+                    "name": "mcp-awx-ng",
+                    "url": awx_conn2.base_url.rstrip("/") + "/mcp/",
+                    "transport": "streamable-http",
+                    "token": f"Basic {b64m}",
+                })
         except Exception:
             pass
         body_data.update({
@@ -363,10 +432,10 @@ async def send_message(
         log.debug("LLM config inject for message failed (non-fatal): %s", exc)
 
     async def stream_gen():
-        async with httpx.AsyncClient(timeout=None) as client:
+        async with _internal_client(timeout=None) as client:
             async with client.stream(
                 "POST",
-                f"{CENTRALCORE_URL}/sessions/{sid}/message",
+                f"{_target_url(user.id)}/sessions/{sid}/message",
                 content=body,
                 headers={"Content-Type": "application/json"},
             ) as resp:
@@ -402,7 +471,6 @@ async def send_message(
         except Exception as exc:
             log.debug("msg_count bump for %s failed: %s", sid[:8], exc)
 
-    import asyncio
     asyncio.ensure_future(_bump_msg_count())
 
     return StreamingResponse(
@@ -414,13 +482,17 @@ async def send_message(
 
 # ── Whisper STT ────────────────────────────────────────────────────
 
-@router.post("/transcribe", dependencies=[_ConsoleEnabled])
-async def transcribe(request: Request):
+@router.post("/transcribe")
+async def transcribe(
+    request: Request,
+    user: CurrentUser,
+    _: None = _ConsoleEnabled,
+):
     body = await request.body()
     content_type = request.headers.get("content-type", "application/octet-stream")
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with _internal_client(timeout=60.0) as client:
         r = await client.post(
-            f"{CENTRALCORE_URL}/transcribe",
+            f"{_target_url(user.id)}/transcribe",
             content=body,
             headers={"Content-Type": content_type},
         )
