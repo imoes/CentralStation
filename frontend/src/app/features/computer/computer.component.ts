@@ -184,7 +184,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                      [innerHTML]="renderMarkdown(msg)"></div>
                 @if (msg.toolCalls?.length) {
                   <div class="tool-log">
-                    @for (tc of msg.toolCalls!; track tc) {
+                    @for (tc of msg.toolCalls!; track $index) {
                       <div class="tool-log-entry" [class.running]="!tc.done">
                         <span class="tool-icon">{{ tc.done ? '✓' : '⟳' }}</span>
                         <span class="tool-name">{{ tc.tool }}</span>
@@ -863,16 +863,16 @@ export class ComputerComponent implements OnInit, OnDestroy {
               if (data.type === 'delta') {
                 fullAssistantText += data.text;
                 this._appendToLast(sid, data.text);
-                this._setActiveTool(sid, undefined);
+                this._clearActiveTool(sid);
               }
               if (data.type === 'tool_start') {
                 this._setActiveTool(sid, data.tool);
               }
               if (data.type === 'tool_done') {
-                this._setActiveTool(sid, undefined);
+                this._markToolDone(sid);
               }
               if (data.type === 'reasoning') {
-                this._setActiveTool(sid, `💭 ${data.text}`);
+                this._clearActiveTool(sid);
               }
               if (data.type === 'error') {
                 this._appendToLast(sid, `\n[Fehler: ${data.text}]`);
@@ -1052,23 +1052,47 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }));
   }
 
-  private _setActiveTool(sid: string, tool: string | undefined): void {
+  /** Start a new tool call: show spinner + add permanent log entry. */
+  private _setActiveTool(sid: string, tool: string): void {
     this.sessions.update(ss => ss.map(s => {
       if (s.session_id !== sid) return s;
       const msgs = [...s.messages];
       if (msgs.length === 0 || msgs[msgs.length - 1].role !== 'assistant') return s;
-      const last = { ...msgs[msgs.length - 1], activeTool: tool };
-      if (tool) {
-        // Append to permanent log
-        last.toolCalls = [...(last.toolCalls ?? []), { tool, done: false }];
-      } else if (last.toolCalls?.length) {
-        // Mark the last running call as done
-        const calls = [...last.toolCalls];
-        const idx = calls.findLastIndex((c: ToolCall) => !c.done);
-        if (idx >= 0) calls[idx] = { ...calls[idx], done: true };
-        last.toolCalls = calls;
+      const prev = msgs[msgs.length - 1];
+      msgs[msgs.length - 1] = {
+        ...prev,
+        activeTool: tool,
+        toolCalls: [...(prev.toolCalls ?? []), { tool, done: false }],
+      };
+      return { ...s, messages: msgs };
+    }));
+  }
+
+  /** Mark the last running tool call as done and clear spinner. */
+  private _markToolDone(sid: string): void {
+    this.sessions.update(ss => ss.map(s => {
+      if (s.session_id !== sid) return s;
+      const msgs = [...s.messages];
+      if (msgs.length === 0 || msgs[msgs.length - 1].role !== 'assistant') return s;
+      const prev = msgs[msgs.length - 1];
+      const calls = [...(prev.toolCalls ?? [])];
+      let lastRunning = -1;
+      for (let i = calls.length - 1; i >= 0; i--) {
+        if (!calls[i].done) { lastRunning = i; break; }
       }
-      msgs[msgs.length - 1] = last;
+      if (lastRunning >= 0) calls[lastRunning] = { ...calls[lastRunning], done: true };
+      msgs[msgs.length - 1] = { ...prev, activeTool: undefined, toolCalls: calls };
+      return { ...s, messages: msgs };
+    }));
+  }
+
+  /** Clear the active-tool spinner without touching the permanent log. */
+  private _clearActiveTool(sid: string): void {
+    this.sessions.update(ss => ss.map(s => {
+      if (s.session_id !== sid) return s;
+      const msgs = [...s.messages];
+      if (msgs.length === 0 || msgs[msgs.length - 1].role !== 'assistant') return s;
+      msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], activeTool: undefined };
       return { ...s, messages: msgs };
     }));
   }
