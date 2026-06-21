@@ -158,7 +158,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
           }
 
           <div class="messages" #msgContainer>
-            @for (msg of activeMessages(); track $index) {
+            @for (msg of completedMessages(); track msg) {
               <div class="msg" [class.user]="msg.role === 'user'"
                                [class.agent]="msg.role === 'assistant'">
                 <div class="msg-header">
@@ -182,6 +182,19 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                 }
               </div>
             }
+            @if (streamingMsg(); as sm) {
+              <div class="msg agent">
+                <div class="msg-header">
+                  <span class="msg-label">◎ COMPUTER</span>
+                </div>
+                <div class="msg-text streaming">{{ sm.text }}</div>
+                @if (sm.activeTool) {
+                  <div class="tool-status">
+                    <span class="tool-spinner">⟳</span> {{ sm.activeTool }}
+                  </div>
+                }
+              </div>
+            }
             @if (loading()) {
               <div class="thinking">
                 VERARBEITE<span class="cursor">_</span>
@@ -198,13 +211,13 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
 
           <!-- Input -->
           <div class="input-row">
-            <input #inputEl
-                   class="lcars-input"
-                   [(ngModel)]="inputText"
-                   placeholder="Computer, ...  (Leertaste = Mikrofon)"
-                   [disabled]="loading()"
-                   (keydown.enter)="send()"
-                   (keydown.escape)="close()" />
+            <textarea #inputEl
+                      class="lcars-input"
+                      [(ngModel)]="inputText"
+                      placeholder="Computer, ...  (Leertaste = Mikrofon)"
+                      [disabled]="loading()"
+                      (input)="resizeInput()"
+                      (keydown)="onInputKeydown($event)"></textarea>
             <button class="icon-btn"
                     [class.active]="listening()"
                     (click)="toggleVoice()"
@@ -248,7 +261,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
 })
 export class ComputerComponent implements OnInit, OnDestroy {
   @ViewChild('msgContainer') private msgContainer?: ElementRef<HTMLDivElement>;
-  @ViewChild('inputEl') private inputEl?: ElementRef<HTMLInputElement>;
+  @ViewChild('inputEl') private inputEl?: ElementRef<HTMLTextAreaElement>;
 
   private auth = inject(AuthService);
   private router = inject(Router);
@@ -303,6 +316,21 @@ export class ComputerComponent implements OnInit, OnDestroy {
   activeMessages = computed<HermesMessage[]>(() => {
     const sid = this.activeTabId();
     return this.sessions().find(s => s.session_id === sid)?.messages ?? [];
+  });
+
+  // The last assistant message while loading — rendered as plain text to avoid
+  // innerHTML replacement (which destroys DOM nodes and clears text selections).
+  streamingMsg = computed<HermesMessage | null>(() => {
+    if (!this.loading()) return null;
+    const last = this.activeMessages().at(-1);
+    return last?.role === 'assistant' ? last : null;
+  });
+
+  // All messages except the one currently streaming, rendered with markdown.
+  // Tracked by object identity so Angular skips stable messages entirely.
+  completedMessages = computed<HermesMessage[]>(() => {
+    const msgs = this.activeMessages();
+    return this.streamingMsg() ? msgs.slice(0, -1) : msgs;
   });
 
   activeSession = computed<HermesSession | null>(() => {
@@ -429,6 +457,19 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   focusInput(): void {
     setTimeout(() => this.inputEl?.nativeElement.focus(), 50);
+  }
+
+  resizeInput(): void {
+    const el = this.inputEl?.nativeElement;
+    if (!el) return;
+    // '0' statt 'auto': scrollHeight misst so den reinen Inhalt ohne rows-Attribut-Offset
+    el.style.height = '0';
+    el.style.height = Math.min(el.scrollHeight, 180) + 'px';
+  }
+
+  onInputKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Escape') { this.close(); return; }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); }
   }
 
   // ── TTS controls ──────────────────────────────────────────────────
@@ -756,6 +797,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }
 
     this.inputText = '';
+    setTimeout(() => this.resizeInput(), 0);
     this.loading.set(true);
     this._addMessage(sid, 'user', text);
     this._addMessage(sid, 'assistant', '');
