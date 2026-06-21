@@ -277,6 +277,98 @@ interface PlaybookDraft {
         </div>
       }
 
+      <!-- ── AWX-NG Ansible Manager ───────────────────────────────── -->
+      @if (activeTab() === 'awxng') {
+        <div class="panel">
+
+          <!-- Sub-tabs -->
+          <div class="awxng-subtabs">
+            @for (s of awxngSubtabs; track s.id) {
+              <button class="awxng-subtab" [class.active]="awxngTab() === s.id" (click)="switchAwxngTab(s.id)">{{ s.label }}</button>
+            }
+          </div>
+
+          <!-- Jobs -->
+          @if (awxngTab() === 'jobs') {
+            <div class="panel-head">
+              LETZTE JOBS
+              <button class="refresh-btn" (click)="loadAwxngJobs()" title="Aktualisieren">↻</button>
+            </div>
+            @if (awxngLoading()) {
+              <div class="status-row">Lade…</div>
+            } @else if (awxngJobs().length === 0) {
+              <div class="status-row muted">Kein AWX-NG Konnektor konfiguriert oder keine Jobs.</div>
+            } @else {
+              @for (j of awxngJobs(); track j.id) {
+                <div class="remedy-card compact">
+                  <div class="remedy-row1">
+                    <span class="status-pill" [class]="'st-' + j.status">{{ j.status }}</span>
+                    <span class="remedy-host">{{ j.job_template || '#' + j.id }}</span>
+                    @if (j.limit) { <span class="muted">→ {{ j.limit }}</span> }
+                    <span class="remedy-time muted" style="margin-left:auto">{{ j.started | date:'dd.MM HH:mm' }}</span>
+                    @if (['running','pending','waiting'].includes(j.status)) {
+                      <button class="refresh-btn" style="margin-left:4px" (click)="cancelAwxJob(j.id)" title="Abbrechen">✕</button>
+                    }
+                  </div>
+                  @if (j.elapsed) {
+                    <div class="muted" style="font-size:0.72rem">Dauer: {{ j.elapsed | number:'1.0-0' }}s · {{ j.launched_by }}</div>
+                  }
+                </div>
+              }
+            }
+          }
+
+          <!-- Hosts -->
+          @if (awxngTab() === 'hosts') {
+            <div class="panel-head">
+              HOSTS
+              <button class="refresh-btn" (click)="loadAwxngHosts()" title="Aktualisieren">↻</button>
+            </div>
+            @if (awxngLoading()) {
+              <div class="status-row">Lade…</div>
+            } @else if (awxngHosts().length === 0) {
+              <div class="status-row muted">Keine Hosts oder kein AWX-NG Konnektor konfiguriert.</div>
+            } @else {
+              <div class="status-row muted" style="padding:4px 0">{{ awxngHostCount() }} Hosts gesamt</div>
+              @for (h of awxngHosts(); track h.id) {
+                <div class="tmpl-card">
+                  <span class="tmpl-id" [style.color]="h.enabled ? '#66cc66' : '#888'">{{ h.enabled ? '●' : '○' }}</span>
+                  <span class="tmpl-name">{{ h.name }}</span>
+                  @if (h.inventory) { <span class="tmpl-desc muted">{{ h.inventory }}</span> }
+                  @if (h.last_job?.status) { <span class="status-pill" [class]="'st-' + h.last_job.status" style="margin-left:auto">{{ h.last_job.status }}</span> }
+                </div>
+              }
+            }
+          }
+
+          <!-- Job Templates -->
+          @if (awxngTab() === 'templates') {
+            <div class="panel-head">
+              JOB TEMPLATES
+              <button class="refresh-btn" (click)="loadAwxngTemplates()" title="Aktualisieren">↻</button>
+            </div>
+            @if (awxngLoading()) {
+              <div class="status-row">Lade…</div>
+            } @else if (awxngTemplates().length === 0) {
+              <div class="status-row muted">Keine Templates oder kein AWX-NG Konnektor konfiguriert.</div>
+            } @else {
+              @for (t of awxngTemplates(); track t.id) {
+                <div class="tmpl-card">
+                  <span class="tmpl-id">#{{ t.id }}</span>
+                  <span class="tmpl-name">{{ t.name }}</span>
+                  @if (t.description) { <span class="tmpl-desc muted">{{ t.description }}</span> }
+                  @if (t.playbook) { <span class="muted" style="margin-left:auto;font-size:0.72rem">{{ t.playbook }}</span> }
+                  <button mat-flat-button style="margin-left:8px;font-size:0.72rem;padding:0 8px;min-width:0;height:24px" (click)="launchAwxTemplate(t.id)" [disabled]="awxngLaunching()">
+                    ▶ Starten
+                  </button>
+                </div>
+              }
+            }
+          }
+
+        </div>
+      }
+
       <!-- ── LCARS Bottom ───────────────────────────────────────── -->
       <div class="eng-footer">
         <div class="cap-bl"></div>
@@ -376,6 +468,12 @@ interface PlaybookDraft {
     /* ── Footer ── */
     .eng-footer { display: flex; align-items: stretch; height: 28px; flex-shrink: 0; }
     .foot-cell { background: #ff9933; color: #111; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.1em; padding: 0 12px; display: flex; align-items: center; margin-right: 4px; }
+
+    /* ── AWX-NG sub-tabs ── */
+    .awxng-subtabs { display: flex; gap: 2px; margin-bottom: 6px; }
+    .awxng-subtab { background: #2a2a2a; color: #888; border: 1px solid #333; padding: 3px 10px; font-family: inherit; font-size: 0.72rem; letter-spacing: 0.06em; cursor: pointer; }
+    .awxng-subtab.active { background: #333; color: #ffcc99; border-color: #ff9933; }
+    .awxng-subtab:hover:not(.active) { color: #ffcc99; }
   `],
 })
 export class EngineeringComponent implements OnInit, OnDestroy {
@@ -388,6 +486,7 @@ export class EngineeringComponent implements OnInit, OnDestroy {
     { id: 'history',   label: 'VERLAUF' },
     { id: 'playbooks', label: 'PLAYBOOKS' },
     { id: 'catalog',   label: 'TEMPLATES' },
+    { id: 'awxng',     label: 'ANSIBLE MGR' },
   ];
   activeTab = signal<string>('pending');
 
@@ -409,6 +508,20 @@ export class EngineeringComponent implements OnInit, OnDestroy {
   activeCount  = computed(() => this.activeItems().length);
   draftCount   = computed(() => this.drafts().filter(d => d.status === 'drafted').length);
 
+  // AWX-NG
+  readonly awxngSubtabs = [
+    { id: 'jobs', label: 'JOBS' },
+    { id: 'hosts', label: 'HOSTS' },
+    { id: 'templates', label: 'TEMPLATES' },
+  ];
+  awxngTab = signal<string>('jobs');
+  awxngLoading = signal(false);
+  awxngLaunching = signal(false);
+  awxngJobs = signal<any[]>([]);
+  awxngHosts = signal<any[]>([]);
+  awxngHostCount = signal(0);
+  awxngTemplates = signal<any[]>([]);
+
   private _pollInterval?: ReturnType<typeof setInterval>;
 
   objectKeys = Object.keys;
@@ -417,6 +530,7 @@ export class EngineeringComponent implements OnInit, OnDestroy {
     this.loadAll();
     this.loadTemplates();
     this.loadDrafts();
+    this.loadAwxngJobs();
     this._pollInterval = setInterval(() => {
       if (this.activeItems().length > 0) this.loadAll();
     }, 10_000);
@@ -513,6 +627,62 @@ export class EngineeringComponent implements OnInit, OnDestroy {
     this.http.post<any>(`${environment.apiUrl}/remediations/playbooks/${d.id}/reject`, {}).subscribe({
       next: () => { this.snack.open('Draft abgelehnt', '', { duration: 2000 }); this.loadDrafts(); },
       error: () => {},
+    });
+  }
+
+  // ── AWX-NG Methods ──────────────────────────────────────────────────
+
+  switchAwxngTab(id: string): void {
+    this.awxngTab.set(id);
+    if (id === 'jobs') this.loadAwxngJobs();
+    else if (id === 'hosts') this.loadAwxngHosts();
+    else if (id === 'templates') this.loadAwxngTemplates();
+  }
+
+  loadAwxngJobs(): void {
+    this.awxngLoading.set(true);
+    this.http.get<any>(`${environment.apiUrl}/awx-ng/jobs?limit=30`).subscribe({
+      next: d => { this.awxngJobs.set(d?.results ?? []); this.awxngLoading.set(false); },
+      error: () => { this.awxngJobs.set([]); this.awxngLoading.set(false); },
+    });
+  }
+
+  loadAwxngHosts(): void {
+    this.awxngLoading.set(true);
+    this.http.get<any>(`${environment.apiUrl}/awx-ng/hosts?page_size=100`).subscribe({
+      next: d => { this.awxngHosts.set(d?.results ?? []); this.awxngHostCount.set(d?.count ?? 0); this.awxngLoading.set(false); },
+      error: () => { this.awxngHosts.set([]); this.awxngLoading.set(false); },
+    });
+  }
+
+  loadAwxngTemplates(): void {
+    this.awxngLoading.set(true);
+    this.http.get<any>(`${environment.apiUrl}/awx-ng/job-templates`).subscribe({
+      next: d => { this.awxngTemplates.set(d?.results ?? []); this.awxngLoading.set(false); },
+      error: () => { this.awxngTemplates.set([]); this.awxngLoading.set(false); },
+    });
+  }
+
+  launchAwxTemplate(templateId: number): void {
+    this.awxngLaunching.set(true);
+    this.http.post<any>(`${environment.apiUrl}/awx-ng/job-templates/${templateId}/launch`, {}).subscribe({
+      next: d => {
+        this.awxngLaunching.set(false);
+        this.snack.open(`Job #${d?.job_id ?? '?'} gestartet`, 'OK', { duration: 3000 });
+        this.awxngTab.set('jobs');
+        setTimeout(() => this.loadAwxngJobs(), 1000);
+      },
+      error: e => {
+        this.awxngLaunching.set(false);
+        this.snack.open('Fehler: ' + (e?.error?.detail ?? e.message), 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  cancelAwxJob(jobId: number): void {
+    this.http.post<any>(`${environment.apiUrl}/awx-ng/jobs/${jobId}/cancel`, {}).subscribe({
+      next: () => { this.snack.open(`Job #${jobId} abgebrochen`, '', { duration: 2000 }); this.loadAwxngJobs(); },
+      error: () => this.snack.open('Abbrechen fehlgeschlagen', '', { duration: 2000 }),
     });
   }
 }

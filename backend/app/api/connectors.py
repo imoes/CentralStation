@@ -20,8 +20,10 @@ VALID_TYPES = {
     "checkmk", "graylog", "wazuh", "icinga2", "jira", "jira_sd",
     "o365", "teams", "prometheus", "netbox", "id_generator", "coroot",
     "aikb", "smtp", "gitlab", "awx",
+    # user-personal connectors
+    "llm", "mcp_server", "awx_ng",
 }  # keep in sync with get_connector() factory
-USER_MANAGED_TYPES = {"o365", "teams", "jira", "jira_sd", "gitlab"}
+USER_MANAGED_TYPES = {"o365", "teams", "jira", "jira_sd", "gitlab", "llm", "mcp_server", "awx_ng"}
 
 
 def _is_admin(user) -> bool:
@@ -142,6 +144,31 @@ async def delete_my_connector(
         user_id=current_user.id,
     ))
     await db.commit()
+
+
+@router.get("/my/{connector_type}/credentials")
+async def get_my_connector_credentials(
+    connector_type: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """Return masked credentials for the user's personal connector edit dialog."""
+    _assert_can_manage_personal(connector_type)
+    result = await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.owner_user_id == current_user.id,
+            ConnectorConfig.type == connector_type,
+        )
+    )
+    connector = result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(404, "Persönlicher Connector nicht gefunden")
+    raw = decrypt_credentials(connector.encrypted_credentials)
+    masked = {
+        k: ("••••••••" if any(p in k.lower() for p in _SECRET_KEY_PATTERNS) and v else v)
+        for k, v in raw.items()
+    }
+    return {"credentials": masked}
 
 
 @router.post("/my/{connector_type}/test", response_model=ConnectorTestResult)

@@ -101,6 +101,7 @@ export class App implements OnInit, OnDestroy {
   @ViewChild('computer') computer?: ComputerComponent;
 
   computerEnabled = computed(() => this.auth.user()?.computer_console_enabled ?? false);
+  hasAwxNg = computed(() => this.auth.user()?.has_awx_ng ?? false);
 
   private readonly navItems: NavItem[] = [
     { path: '/dashboard',    label: 'Dashboard',        icon: 'dashboard',    roles: ['admin','sysadmin','network_technician','viewer'] },
@@ -112,7 +113,6 @@ export class App implements OnInit, OnDestroy {
     { path: '/kanban',       label: 'Kanban',           icon: 'view_kanban',  roles: ['admin','sysadmin','network_technician'] },
     { path: '/ai-insights',  label: 'KI-Insights',      icon: 'psychology',   roles: ['admin','sysadmin'] },
     { path: '/topology',     label: 'Infrastruktur-Karte', icon: 'account_tree', roles: ['admin','sysadmin','network_technician'] },
-    { path: '/engineering',  label: 'Maschinenraum',    icon: 'engineering',  roles: ['admin','sysadmin'] },
     { path: '/workbench',    label: 'Werkbank',         icon: 'construction', roles: ['admin','sysadmin'] },
     { path: '/settings',     label: 'Einstellungen',    icon: 'settings',     roles: ['admin','sysadmin','network_technician','viewer'] },
     { path: '/help',         label: 'Hilfe',            icon: 'help',         roles: ['admin','sysadmin','network_technician','viewer'] },
@@ -138,7 +138,17 @@ export class App implements OnInit, OnDestroy {
 
   visibleNavItems = computed(() => {
     const role = this.auth.userRole();
-    return this.navItems.filter(i => role && i.roles.includes(role));
+    const items = this.navItems.filter(i => role && i.roles.includes(role));
+    if (this.hasAwxNg()) {
+      const engineeringItem: NavItem = { path: '/engineering', label: 'Maschinenraum', icon: 'engineering', roles: ['admin','sysadmin'] };
+      const workbenchIdx = items.findIndex(i => i.path === '/workbench');
+      if (workbenchIdx >= 0) {
+        items.splice(workbenchIdx, 0, engineeringItem);
+      } else {
+        items.push(engineeringItem);
+      }
+    }
+    return items;
   });
 
   constructor(public auth: AuthService, private ws: WebsocketService) {

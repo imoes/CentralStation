@@ -159,11 +159,20 @@ async def ticket_draft(
     elif body.transcript:
         host = (body.host or "").strip()
         prefix = f"Host/System: {host}\n" if host else ""
-        # For long transcripts keep the beginning (problem statement) and the end
-        # (solution/findings) — the middle is mostly tool calls that add no value.
+        # Keep the full transcript as-is so no log entries are silently dropped.
+        # Only truncate at a high limit; when forced, extract code/log blocks first
+        # so the AI always receives the verbatim evidence even in long sessions.
         tr = body.transcript
-        if len(tr) > 8000:
-            tr = tr[:3000] + "\n\n[... Gesprächsmitte gekürzt ...]\n\n" + tr[-5000:]
+        MAX_TR = 24000
+        if len(tr) > MAX_TR:
+            import re as _re
+            # Pull out every code/log block from the full transcript before truncating.
+            log_blocks = _re.findall(r'```[\s\S]*?```|`[^`\n]{40,}`', tr)
+            tr = tr[:6000] + "\n\n[... Gesprächsmitte gekürzt ...]\n\n" + tr[-14000:]
+            if log_blocks:
+                unique_blocks = list(dict.fromkeys(log_blocks))[:30]
+                tr += "\n\n## Vollständige Log-Blöcke (aus dem Gespräch extrahiert)\n"
+                tr += "\n\n".join(unique_blocks)
         context = (
             f"{prefix}Support-chat transcript between an operator and the AI assistant. "
             f"Create a ticket capturing the problem, investigation and proposed solution:\n\n{tr}"
