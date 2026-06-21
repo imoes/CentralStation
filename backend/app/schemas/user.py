@@ -26,6 +26,7 @@ class UserResponse(BaseModel):
     is_active: bool
     created_at: datetime
     computer_console_enabled: bool = False
+    has_awx_ng: bool = False
 
     model_config = {"from_attributes": True}
 

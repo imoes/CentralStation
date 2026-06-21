@@ -155,6 +155,16 @@ SYSTEM_PROMPT = (
     "  ssh marvin@<host> 'df -h; du -sh /var/log/* | sort -rh | head -5'\n"
     "  ssh marvin@<host> 'free -h; top -bn1 | head -20'\n"
     "  ssh marvin@<host> 'systemctl status <service>; journalctl -u <service> -n 50 --no-pager'\n\n"
+    "## KRITISCHE REGEL: TIMEOUTS BEI SUBPROCESS/SSH\n"
+    "Wenn du Python-Scripts im Terminal ausführst, die SSH oder andere Netzwerkbefehle verwenden:\n"
+    "→ subprocess.run() IMMER mit timeout=120 aufrufen — NIEMALS ohne Timeout.\n"
+    "→ Bei mehreren Hosts in einer Schleife: jeden SSH-Aufruf einzeln mit timeout=120 absichern.\n"
+    "→ ConnectTimeout=10 (SSH-Option) schützt nur den TCP-Handshake, NICHT die Remote-Laufzeit.\n"
+    "→ Ohne timeout= blockiert subprocess.run() unbegrenzt wenn der Remote-Befehl hängt.\n"
+    "Beispiel:\n"
+    "  p = subprocess.run(['ssh', '-o', 'ConnectTimeout=10', host, cmd],\n"
+    "                     capture_output=True, text=True, timeout=120)\n"
+    "Bei TimeoutExpired Exception: Host als 'timeout' markieren und mit nächstem weitermachen.\n\n"
 
     "## DOCKER-LOGS (Container-Diagnose via Graylog):\n"
     "Container-Logs landen via Logspout automatisch in Graylog — kein SSH nötig.\n"
@@ -163,6 +173,18 @@ SYSTEM_PROMPT = (
     "  list_alerts(source='graylog')                → Graylog-Alerts aller Container\n"
     "  search_feed('container_name:\"<container>\" AND level:<=3')  → nur Fehler\n"
     "SSH für Docker-Logs NICHT verwenden — die Daten sind bereits in Graylog.\n\n"
+
+    "## LOG-AUSGABE: IMMER VOLLSTÄNDIG UND WORTGENAU\n"
+    "Wenn du Log-Einträge, Fehlermeldungen, Stack-Traces oder journalctl-Ausgaben ausgibst:\n"
+    "→ Zeige ALLE relevanten Log-Zeilen WORTGENAU und VOLLSTÄNDIG — niemals kürzen, \n"
+    "  umschreiben oder mit '...' abbrechen.\n"
+    "→ Verwende immer Code-Blöcke (```log ... ```) für Log-Ausgaben.\n"
+    "→ Relevante Zeilen = alle mit ERROR, WARN, CRIT, Exception, Traceback, OOM, \n"
+    "  Timeout, Connection refused, Exit-Code != 0, sowie die umliegenden Kontext-Zeilen.\n"
+    "→ Zeige Zeitstempel, Hostname/Container, Service und die vollständige Meldung je Zeile.\n"
+    "→ Interpretiere Log-Inhalte ERST NACH den vollständigen Log-Zeilen im Code-Block —\n"
+    "  NIEMALS statt ihnen. Reihenfolge: Code-Block mit allen Zeilen → deine Analyse.\n"
+    "→ 'Kurz und direkt' gilt für deine Analyse-Texte, NICHT für Log-Zeilen selbst.\n\n"
 
     "## FEED-NAVIGATION (am Ende deiner Antwort, wenn du Hosts/Alerts gezeigt hast):\n"
     "Füge EXAKT eine dieser Zeilen ans Ende wenn du Infrastruktur-Daten ausgibst:\n"
@@ -228,6 +250,9 @@ class CreateSessionBody(BaseModel):
     llm_api_mode: str | None = None   # "chat_completions" | "responses" | "codex_responses"
     searxng_url: str | None = None
     llm_timeout_seconds: int | None = None
+    # Per-session extra MCP servers (user-personal connectors).
+    # Each entry: {name, url, transport?, token?}
+    extra_mcp_servers: list[dict] | None = None
 
 
 def _make_agent(sid: str, cfg: CreateSessionBody):
@@ -289,6 +314,31 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
     # Give MCP discovery a generous window to complete before the first turn.
     from hermes_cli.mcp_startup import wait_for_mcp_discovery
     wait_for_mcp_discovery(timeout=8.0)
+
+    # Register per-session extra MCP servers (user-personal connectors).
+    # register_mcp_servers() is idempotent — already-connected names are skipped.
+    if cfg.extra_mcp_servers:
+        try:
+            from tools.mcp_tool import register_mcp_servers
+            extra = {}
+            for srv in cfg.extra_mcp_servers:
+                name = srv.get("name", "")
+                url = srv.get("url", "")
+                token = srv.get("token", "")
+                transport = srv.get("transport", "streamable-http")
+                if not name or not url:
+                    continue
+                srv_cfg: dict = {"url": url, "transport": transport}
+                if token:
+                    srv_cfg["headers"] = {"Authorization": token}
+                extra[name] = srv_cfg
+            if extra:
+                registered = register_mcp_servers(extra)
+                log.info("[%s] Extra MCP servers registered: %s → %d tool(s)",
+                         sid[:8], list(extra.keys()), len(registered))
+        except Exception as exc:
+            log.warning("[%s] Extra MCP server registration failed: %s", sid[:8], exc)
+
     return agent
 
 
@@ -380,6 +430,7 @@ class MessageBody(BaseModel):
     searxng_url: str | None = None
     llm_timeout_seconds: int | None = None
     show_reasoning: bool = True
+    extra_mcp_servers: list[dict] | None = None
 
 
 def _restore_session(sid: str, cfg: CreateSessionBody | None = None) -> bool:
@@ -423,6 +474,7 @@ async def send_message(sid: str, body: MessageBody):
             llm_api_mode=body.llm_api_mode,
             searxng_url=body.searxng_url,
             llm_timeout_seconds=body.llm_timeout_seconds,
+            extra_mcp_servers=body.extra_mcp_servers,
         )
         if not _restore_session(sid, llm_cfg):
             log.warning("Restore failed for session %s — not found in SessionDB", sid[:8])

@@ -67,8 +67,9 @@ async def create_session(
 ):
     """Create a new Hermes session, persist metadata in PostgreSQL."""
     from app.services.settings import get_active_llm_config, get_searxng_config
+    from app.models.connector import ConnectorConfig
     try:
-        llm = await get_active_llm_config(db)
+        llm = await get_active_llm_config(db, user_id=user.id)
         searxng = await get_searxng_config(db)
         llm_payload = {
             "llm_base_url": llm.base_url or None,
@@ -82,6 +83,46 @@ async def create_session(
                  llm.model or "(not set)", llm.api_mode,
                  searxng.base_url if searxng.is_configured else "(none)",
                  llm.timeout_seconds or "default")
+
+        # Collect extra MCP servers from user's personal connectors.
+        extra_mcp: list[dict] = []
+        from sqlalchemy import select as _sel
+        from app.core.security import decrypt_credentials as _dec
+        import base64 as _b64
+
+        for ctype, ttype in (("mcp_server", "streamable-http"), ("awx_ng", "streamable-http")):
+            res = await db.execute(
+                _sel(ConnectorConfig).where(
+                    ConnectorConfig.type == ctype,
+                    ConnectorConfig.owner_user_id == user.id,
+                    ConnectorConfig.enabled.is_(True),
+                ).limit(1)
+            )
+            conn = res.scalar_one_or_none()
+            if not conn:
+                continue
+            creds = _dec(conn.encrypted_credentials)
+            if ctype == "mcp_server":
+                token = creds.get("token", "")
+                extra_mcp.append({
+                    "name": f"mcp-{conn.name.lower().replace(' ', '-') or 'user'}",
+                    "url": conn.base_url.rstrip("/"),
+                    "transport": ttype,
+                    "token": token,
+                })
+            elif ctype == "awx_ng":
+                username = creds.get("username", "")
+                password = creds.get("password", "")
+                b64 = _b64.b64encode(f"{username}:{password}".encode()).decode()
+                extra_mcp.append({
+                    "name": "mcp-awx-ng",
+                    "url": conn.base_url.rstrip("/") + "/mcp/",
+                    "transport": ttype,
+                    "token": f"Basic {b64}",
+                })
+
+        if extra_mcp:
+            llm_payload["extra_mcp_servers"] = extra_mcp
     except Exception as exc:
         log.warning("Could not load LLM config, using CentralCore defaults: %s", exc)
         llm_payload = {}
@@ -264,11 +305,49 @@ async def send_message(
     # not configured in the centralcore container).
     try:
         from app.services.settings import get_active_llm_config, get_searxng_config, get_setting
-        llm = await get_active_llm_config(db)
+        llm = await get_active_llm_config(db, user_id=user.id)
         searxng = await get_searxng_config(db)
         # Admin toggle: show the model's reasoning in the session (default ON).
         show_reasoning = (await get_setting(db, "computer.show_reasoning") or "true") != "false"
         body_data = _json.loads(body)
+        # Collect extra MCP servers (needed for session restore after container restart)
+        extra_mcp_msg: list[dict] = []
+        try:
+            from sqlalchemy import select as _sel2
+            from app.models.connector import ConnectorConfig as _CC
+            from app.core.security import decrypt_credentials as _dec2
+            import base64 as _b64m
+            for ctype, ttype in (("mcp_server", "streamable-http"), ("awx_ng", "streamable-http")):
+                res2 = await db.execute(
+                    _sel2(_CC).where(
+                        _CC.type == ctype,
+                        _CC.owner_user_id == user.id,
+                        _CC.enabled.is_(True),
+                    ).limit(1)
+                )
+                conn2 = res2.scalar_one_or_none()
+                if not conn2:
+                    continue
+                creds2 = _dec2(conn2.encrypted_credentials)
+                if ctype == "mcp_server":
+                    extra_mcp_msg.append({
+                        "name": f"mcp-{conn2.name.lower().replace(' ', '-') or 'user'}",
+                        "url": conn2.base_url.rstrip("/"),
+                        "transport": ttype,
+                        "token": creds2.get("token", ""),
+                    })
+                elif ctype == "awx_ng":
+                    b64m = _b64m.b64encode(
+                        f"{creds2.get('username','')}:{creds2.get('password','')}".encode()
+                    ).decode()
+                    extra_mcp_msg.append({
+                        "name": "mcp-awx-ng",
+                        "url": conn2.base_url.rstrip("/") + "/mcp/",
+                        "transport": ttype,
+                        "token": f"Basic {b64m}",
+                    })
+        except Exception:
+            pass
         body_data.update({
             "llm_base_url": llm.base_url or None,
             "llm_model": llm.model or None,
@@ -277,6 +356,7 @@ async def send_message(
             "searxng_url": searxng.base_url if searxng.is_configured else None,
             "llm_timeout_seconds": llm.timeout_seconds or None,
             "show_reasoning": show_reasoning,
+            "extra_mcp_servers": extra_mcp_msg or None,
         })
         body = _json.dumps(body_data).encode()
     except Exception as exc:
