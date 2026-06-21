@@ -21,9 +21,9 @@ VALID_TYPES = {
     "o365", "teams", "prometheus", "netbox", "id_generator", "coroot",
     "aikb", "smtp", "gitlab", "awx",
     # user-personal connectors
-    "llm", "mcp_server", "awx_ng",
+    "llm", "mcp_server", "awx_ng", "ssh",
 }  # keep in sync with get_connector() factory
-USER_MANAGED_TYPES = {"o365", "teams", "jira", "jira_sd", "gitlab", "llm", "mcp_server", "awx_ng"}
+USER_MANAGED_TYPES = {"o365", "teams", "jira", "jira_sd", "gitlab", "llm", "mcp_server", "awx_ng", "ssh"}
 
 
 def _is_admin(user) -> bool:
