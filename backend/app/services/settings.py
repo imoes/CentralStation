@@ -170,12 +170,42 @@ async def get_llm_config(db: AsyncSession) -> LLMConfig:
 
 
 
-async def get_active_llm_config(db: AsyncSession) -> LLMConfig:
+def _llm_config_from_connector(conn, creds: dict) -> LLMConfig:
+    """Convert a user's personal llm ConnectorConfig row to LLMConfig."""
+    return LLMConfig(
+        base_url=conn.base_url or "",
+        model=creds.get("model") or "",
+        api_key=creds.get("api_key"),
+        timeout_seconds=int(creds.get("timeout_seconds") or 120),
+        api_mode=creds.get("api_mode") or "chat_completions",
+        thinking_mode=str(creds.get("thinking_mode", "false")).lower() == "true",
+    )
+
+
+async def get_active_llm_config(db: AsyncSession, user_id=None) -> LLMConfig:
     """Return the LLMConfig for the currently selected provider.
+
+    If user_id is given, check for a personal llm connector first (user override).
+    Falls back to admin GlobalSetting if no personal connector is configured.
 
     llm.provider = "custom"  → local llamacpp03 endpoint (default)
     llm.provider = "openai-codex" → OpenAI Codex via stored OAuth token
     """
+    if user_id is not None:
+        from sqlalchemy import select as _select
+        from app.models.connector import ConnectorConfig
+        result = await db.execute(
+            _select(ConnectorConfig).where(
+                ConnectorConfig.type == "llm",
+                ConnectorConfig.owner_user_id == user_id,
+                ConnectorConfig.enabled.is_(True),
+            ).limit(1)
+        )
+        user_conn = result.scalar_one_or_none()
+        if user_conn:
+            creds = decrypt_credentials(user_conn.encrypted_credentials)
+            return _llm_config_from_connector(user_conn, creds)
+
     s = await get_all_settings(db)
     provider = s.get("llm.provider") or "custom"
 

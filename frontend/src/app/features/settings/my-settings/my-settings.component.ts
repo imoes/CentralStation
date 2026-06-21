@@ -16,6 +16,8 @@ import { forkJoin } from 'rxjs';
 import { environment } from '../../../../environments/environment';
 import { ThemeService } from '../../../core/services/theme.service';
 import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
+import { AuthService } from '../../../core/auth/auth.service';
+import { MatDividerModule } from '@angular/material/divider';
 
 @Component({
   selector: 'cs-my-settings',
@@ -24,7 +26,7 @@ import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
     CommonModule, FormsModule,
     MatCardModule, MatFormFieldModule, MatInputModule, MatSelectModule,
     MatButtonModule, MatChipsModule, MatSnackBarModule,
-    MatProgressSpinnerModule, MatIconModule, MatSlideToggleModule,
+    MatProgressSpinnerModule, MatIconModule, MatSlideToggleModule, MatDividerModule,
   ],
   template: `
     <div class="page-container">
@@ -210,6 +212,146 @@ import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
         </mat-card>
       }
 
+      <!-- ── Persönliche Konnektoren ── -->
+      <mat-card class="settings-card">
+        <mat-card-header>
+          <mat-card-title>
+            <mat-icon style="vertical-align:middle;margin-right:8px;">cable</mat-icon>
+            Persönliche Konnektoren
+          </mat-card-title>
+          <mat-card-subtitle>Überschreiben die Admin-Einstellungen für deine Sitzung</mat-card-subtitle>
+        </mat-card-header>
+        <mat-card-content>
+
+          <!-- LLM / KI-Konnektor -->
+          <div class="connector-section">
+            <div class="connector-header">
+              <span class="connector-title">KI-Konnektor (LLM)</span>
+              <span class="connector-hint">Überschreibt den Admin-KI-Konnektor für Hermes Konsole und KI-Bericht</span>
+              @if (llmConnector.active) {
+                <span class="connector-badge active">Aktiv</span>
+              }
+            </div>
+            <div class="connector-fields">
+              <mat-form-field appearance="outline" class="conn-field-wide">
+                <mat-label>Endpoint URL</mat-label>
+                <input matInput [(ngModel)]="llmConnector.base_url" placeholder="https://api.openai.com/v1">
+              </mat-form-field>
+              <mat-form-field appearance="outline" class="conn-field">
+                <mat-label>Modell</mat-label>
+                <input matInput [(ngModel)]="llmConnector.model" placeholder="gpt-4o">
+              </mat-form-field>
+              <mat-form-field appearance="outline" class="conn-field-wide">
+                <mat-label>API Key</mat-label>
+                <input matInput [type]="llmConnector.showKey ? 'text' : 'password'" [(ngModel)]="llmConnector.api_key">
+                <button matSuffix mat-icon-button (click)="llmConnector.showKey = !llmConnector.showKey" type="button" tabindex="-1">
+                  <mat-icon>{{ llmConnector.showKey ? 'visibility_off' : 'visibility' }}</mat-icon>
+                </button>
+              </mat-form-field>
+              <mat-form-field appearance="outline" class="conn-field">
+                <mat-label>API-Modus</mat-label>
+                <mat-select [(ngModel)]="llmConnector.api_mode">
+                  <mat-option value="chat_completions">OpenAI Chat Completions</mat-option>
+                  <mat-option value="anthropic_messages">Anthropic Messages</mat-option>
+                  <mat-option value="responses">OpenAI Responses</mat-option>
+                </mat-select>
+              </mat-form-field>
+            </div>
+            <div class="connector-actions">
+              <button mat-flat-button color="primary" [disabled]="llmConnector.saving" (click)="saveLlmConnector()">
+                <mat-icon>save</mat-icon> Speichern
+              </button>
+              @if (llmConnector.active) {
+                <button mat-stroked-button color="warn" [disabled]="llmConnector.saving" (click)="deleteLlmConnector()">
+                  <mat-icon>delete</mat-icon> Entfernen
+                </button>
+              }
+            </div>
+          </div>
+
+          <mat-divider class="connector-divider"></mat-divider>
+
+          <!-- MCP Server -->
+          <div class="connector-section">
+            <div class="connector-header">
+              <span class="connector-title">MCP Server</span>
+              <span class="connector-hint">Zusätzlicher MCP-Server für die Hermes Konsole</span>
+              @if (mcpConnector.active) {
+                <span class="connector-badge active">Aktiv</span>
+              }
+            </div>
+            <div class="connector-fields">
+              <mat-form-field appearance="outline" class="conn-field">
+                <mat-label>Name</mat-label>
+                <input matInput [(ngModel)]="mcpConnector.name" placeholder="Mein MCP Server">
+              </mat-form-field>
+              <mat-form-field appearance="outline" class="conn-field-wide">
+                <mat-label>Server URL</mat-label>
+                <input matInput [(ngModel)]="mcpConnector.base_url" placeholder="https://my-mcp-server.example.com/mcp">
+              </mat-form-field>
+              <mat-form-field appearance="outline" class="conn-field-wide">
+                <mat-label>Token (optional)</mat-label>
+                <input matInput [type]="mcpConnector.showKey ? 'text' : 'password'" [(ngModel)]="mcpConnector.token">
+                <button matSuffix mat-icon-button (click)="mcpConnector.showKey = !mcpConnector.showKey" type="button" tabindex="-1">
+                  <mat-icon>{{ mcpConnector.showKey ? 'visibility_off' : 'visibility' }}</mat-icon>
+                </button>
+              </mat-form-field>
+            </div>
+            <div class="connector-actions">
+              <button mat-flat-button color="primary" [disabled]="mcpConnector.saving" (click)="saveMcpConnector()">
+                <mat-icon>save</mat-icon> Speichern
+              </button>
+              @if (mcpConnector.active) {
+                <button mat-stroked-button color="warn" [disabled]="mcpConnector.saving" (click)="deleteMcpConnector()">
+                  <mat-icon>delete</mat-icon> Entfernen
+                </button>
+              }
+            </div>
+          </div>
+
+          <mat-divider class="connector-divider"></mat-divider>
+
+          <!-- AWX-NG -->
+          <div class="connector-section">
+            <div class="connector-header">
+              <span class="connector-title">AWX-NG (Ansible Manager)</span>
+              <span class="connector-hint">Schaltet den Maschinenraum-Navpunkt frei und integriert AWX-NG MCP in Hermes</span>
+              @if (awxConnector.active) {
+                <span class="connector-badge active">Aktiv — Maschinenraum sichtbar</span>
+              }
+            </div>
+            <div class="connector-fields">
+              <mat-form-field appearance="outline" class="conn-field-wide">
+                <mat-label>AWX-NG URL</mat-label>
+                <input matInput [(ngModel)]="awxConnector.base_url" placeholder="http://awx-ng.ippen.media">
+              </mat-form-field>
+              <mat-form-field appearance="outline" class="conn-field">
+                <mat-label>Benutzername</mat-label>
+                <input matInput [(ngModel)]="awxConnector.username" placeholder="admin">
+              </mat-form-field>
+              <mat-form-field appearance="outline" class="conn-field">
+                <mat-label>Passwort</mat-label>
+                <input matInput [type]="awxConnector.showKey ? 'text' : 'password'" [(ngModel)]="awxConnector.password">
+                <button matSuffix mat-icon-button (click)="awxConnector.showKey = !awxConnector.showKey" type="button" tabindex="-1">
+                  <mat-icon>{{ awxConnector.showKey ? 'visibility_off' : 'visibility' }}</mat-icon>
+                </button>
+              </mat-form-field>
+            </div>
+            <div class="connector-actions">
+              <button mat-flat-button color="primary" [disabled]="awxConnector.saving" (click)="saveAwxConnector()">
+                <mat-icon>save</mat-icon> Speichern
+              </button>
+              @if (awxConnector.active) {
+                <button mat-stroked-button color="warn" [disabled]="awxConnector.saving" (click)="deleteAwxConnector()">
+                  <mat-icon>delete</mat-icon> Entfernen
+                </button>
+              }
+            </div>
+          </div>
+
+        </mat-card-content>
+      </mat-card>
+
       <!-- ── E-Mail-Berichte ── -->
       <mat-card class="settings-card">
         <mat-card-header>
@@ -294,6 +436,17 @@ import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
     .digest-hour-field { width: 100px; }
     .digest-select-field { width: 140px; }
     .digest-hint { font-size: 12px; color: var(--mat-sys-on-surface-variant); }
+    .connector-section { padding: 8px 0; }
+    .connector-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+    .connector-title { font-weight: 600; font-size: 14px; }
+    .connector-hint { font-size: 12px; color: var(--mat-sys-on-surface-variant); }
+    .connector-badge { font-size: 11px; padding: 2px 8px; border-radius: 12px; background: var(--mat-sys-primary-container); color: var(--mat-sys-on-primary-container); font-weight: 600; }
+    .connector-fields { display: flex; flex-wrap: wrap; gap: 8px; }
+    .conn-field { width: 200px; }
+    .conn-field-wide { width: 340px; }
+    .connector-actions { display: flex; gap: 8px; margin-top: 4px; }
+    .connector-divider { margin: 16px 0; }
+    @media (max-width: 600px) { .conn-field, .conn-field-wide { width: 100%; } }
   `],
 })
 export class MySettingsComponent implements OnInit {
@@ -341,14 +494,71 @@ export class MySettingsComponent implements OnInit {
     location: [], ve: [], criticality: [], os: [], hostgroups: [],
   };
 
+  llmConnector = { active: false, saving: false, showKey: false, base_url: '', model: '', api_key: '', api_mode: 'chat_completions' };
+  mcpConnector = { active: false, saving: false, showKey: false, name: '', base_url: '', token: '' };
+  awxConnector = { active: false, saving: false, showKey: false, base_url: '', username: '', password: '' };
+
   constructor(
     private http: HttpClient,
     private snack: MatSnackBar,
     public theme: ThemeService,
     public i18n: I18nService,
+    private auth: AuthService,
   ) {}
 
   ngOnInit() {
+    // Load personal connectors
+    this.http.get<any[]>(`${environment.apiUrl}/connectors/my`).subscribe({
+      next: conns => {
+        for (const c of conns) {
+          if (c.type === 'llm') {
+            this.llmConnector.active = true;
+            this.llmConnector.base_url = c.base_url || '';
+          }
+          if (c.type === 'mcp_server') {
+            this.mcpConnector.active = true;
+            this.mcpConnector.name = c.name || '';
+            this.mcpConnector.base_url = c.base_url || '';
+          }
+          if (c.type === 'awx_ng') {
+            this.awxConnector.active = true;
+            this.awxConnector.base_url = c.base_url || '';
+          }
+        }
+        // Load credential placeholders for active connectors (user endpoint, masked)
+        for (const c of conns) {
+          if (c.type === 'llm') {
+            this.http.get<any>(`${environment.apiUrl}/connectors/my/llm/credentials`).subscribe({
+              next: d => {
+                const creds = d?.credentials || {};
+                this.llmConnector.model = creds.model || '';
+                this.llmConnector.api_key = creds.api_key || '';
+                this.llmConnector.api_mode = creds.api_mode || 'chat_completions';
+              },
+              error: () => {},
+            });
+          }
+          if (c.type === 'mcp_server') {
+            this.http.get<any>(`${environment.apiUrl}/connectors/my/mcp_server/credentials`).subscribe({
+              next: d => { this.mcpConnector.token = d?.credentials?.token || ''; },
+              error: () => {},
+            });
+          }
+          if (c.type === 'awx_ng') {
+            this.http.get<any>(`${environment.apiUrl}/connectors/my/awx_ng/credentials`).subscribe({
+              next: d => {
+                const creds = d?.credentials || {};
+                this.awxConnector.username = creds.username || '';
+                this.awxConnector.password = creds.password || '';
+              },
+              error: () => {},
+            });
+          }
+        }
+      },
+      error: () => {},
+    });
+
     forkJoin({
       prefs: this.http.get<any>(`${environment.apiUrl}/preferences`),
       vals: this.http.get<any>(`${environment.apiUrl}/feed/checkmk-filter-values`),
@@ -452,6 +662,89 @@ export class MySettingsComponent implements OnInit {
         this.saving.set(false);
         this.snack.open(this.i18n.t('settings.my.saveError'), 'OK', { duration: 3000 });
       },
+    });
+  }
+
+  saveLlmConnector() {
+    if (!this.llmConnector.base_url || !this.llmConnector.model) {
+      this.snack.open('URL und Modell sind erforderlich', 'OK', { duration: 3000 }); return;
+    }
+    this.llmConnector.saving = true;
+    this.http.put(`${environment.apiUrl}/connectors/my/llm`, {
+      type: 'llm', name: 'Mein KI-Konnektor', enabled: true,
+      base_url: this.llmConnector.base_url,
+      credentials: { model: this.llmConnector.model, api_key: this.llmConnector.api_key, api_mode: this.llmConnector.api_mode },
+    }).subscribe({
+      next: () => { this.llmConnector.saving = false; this.llmConnector.active = true; this.snack.open('KI-Konnektor gespeichert', 'OK', { duration: 3000 }); },
+      error: () => { this.llmConnector.saving = false; this.snack.open('Fehler beim Speichern', 'OK', { duration: 3000 }); },
+    });
+  }
+
+  deleteLlmConnector() {
+    this.llmConnector.saving = true;
+    this.http.delete(`${environment.apiUrl}/connectors/my/llm`).subscribe({
+      next: () => { this.llmConnector.saving = false; this.llmConnector.active = false; this.llmConnector.base_url = ''; this.llmConnector.model = ''; this.llmConnector.api_key = ''; this.snack.open('KI-Konnektor entfernt', 'OK', { duration: 3000 }); },
+      error: () => { this.llmConnector.saving = false; this.snack.open('Fehler beim Löschen', 'OK', { duration: 3000 }); },
+    });
+  }
+
+  saveMcpConnector() {
+    if (!this.mcpConnector.base_url || !this.mcpConnector.name) {
+      this.snack.open('Name und URL sind erforderlich', 'OK', { duration: 3000 }); return;
+    }
+    this.mcpConnector.saving = true;
+    this.http.put(`${environment.apiUrl}/connectors/my/mcp_server`, {
+      type: 'mcp_server', name: this.mcpConnector.name, enabled: true,
+      base_url: this.mcpConnector.base_url,
+      credentials: { token: this.mcpConnector.token },
+    }).subscribe({
+      next: () => { this.mcpConnector.saving = false; this.mcpConnector.active = true; this.snack.open('MCP-Server gespeichert', 'OK', { duration: 3000 }); },
+      error: () => { this.mcpConnector.saving = false; this.snack.open('Fehler beim Speichern', 'OK', { duration: 3000 }); },
+    });
+  }
+
+  deleteMcpConnector() {
+    this.mcpConnector.saving = true;
+    this.http.delete(`${environment.apiUrl}/connectors/my/mcp_server`).subscribe({
+      next: () => { this.mcpConnector.saving = false; this.mcpConnector.active = false; this.mcpConnector.base_url = ''; this.mcpConnector.token = ''; this.snack.open('MCP-Server entfernt', 'OK', { duration: 3000 }); },
+      error: () => { this.mcpConnector.saving = false; this.snack.open('Fehler beim Löschen', 'OK', { duration: 3000 }); },
+    });
+  }
+
+  saveAwxConnector() {
+    if (!this.awxConnector.base_url || !this.awxConnector.username) {
+      this.snack.open('URL und Benutzername sind erforderlich', 'OK', { duration: 3000 }); return;
+    }
+    this.awxConnector.saving = true;
+    this.http.put(`${environment.apiUrl}/connectors/my/awx_ng`, {
+      type: 'awx_ng', name: 'AWX-NG', enabled: true,
+      base_url: this.awxConnector.base_url,
+      credentials: { username: this.awxConnector.username, password: this.awxConnector.password },
+    }).subscribe({
+      next: () => {
+        this.awxConnector.saving = false;
+        this.awxConnector.active = true;
+        this.snack.open('AWX-NG Konnektor gespeichert — Maschinenraum wird sichtbar', 'OK', { duration: 4000 });
+        // Reload user profile so has_awx_ng gets updated in nav
+        this.auth.fetchMe();
+      },
+      error: () => { this.awxConnector.saving = false; this.snack.open('Fehler beim Speichern', 'OK', { duration: 3000 }); },
+    });
+  }
+
+  deleteAwxConnector() {
+    this.awxConnector.saving = true;
+    this.http.delete(`${environment.apiUrl}/connectors/my/awx_ng`).subscribe({
+      next: () => {
+        this.awxConnector.saving = false;
+        this.awxConnector.active = false;
+        this.awxConnector.base_url = '';
+        this.awxConnector.username = '';
+        this.awxConnector.password = '';
+        this.snack.open('AWX-NG Konnektor entfernt', 'OK', { duration: 3000 });
+        this.auth.fetchMe();
+      },
+      error: () => { this.awxConnector.saving = false; this.snack.open('Fehler beim Löschen', 'OK', { duration: 3000 }); },
     });
   }
 }

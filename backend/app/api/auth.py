@@ -142,11 +142,21 @@ async def me(user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]):
     # computer_console_enabled lives on UserPreference (separate table) —
     # merge it in like list_users/update_user do, otherwise it defaults to False.
     from app.models.workflow import UserPreference
+    from app.models.connector import ConnectorConfig
+    from sqlalchemy import exists
     prefs = (
         await db.execute(select(UserPreference).where(UserPreference.user_id == user.id))
     ).scalar_one_or_none()
+    has_awx_ng = bool(await db.scalar(
+        select(exists().where(
+            ConnectorConfig.type == "awx_ng",
+            ConnectorConfig.owner_user_id == user.id,
+            ConnectorConfig.enabled.is_(True),
+        ))
+    ))
     row = UserResponse.model_validate(user)
     row.computer_console_enabled = prefs.computer_console_enabled if prefs else False
+    row.has_awx_ng = has_awx_ng
     return row
 
 
