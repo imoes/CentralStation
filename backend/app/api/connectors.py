@@ -146,6 +146,83 @@ async def delete_my_connector(
     await db.commit()
 
 
+@router.post("/my/", response_model=ConnectorResponse, status_code=status.HTTP_201_CREATED)
+async def create_my_connector(
+    data: ConnectorCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """Create a new personal connector (supports multiple entries per type, e.g. mcp_server)."""
+    if data.type not in VALID_TYPES:
+        raise HTTPException(400, f"Unknown connector type: {data.type}")
+    _assert_can_manage_personal(data.type)
+
+    connector = ConnectorConfig(
+        name=data.name,
+        type=data.type,
+        base_url=data.base_url,
+        encrypted_credentials=encrypt_credentials(data.credentials),
+        enabled=data.enabled,
+        created_by=current_user.id,
+        owner_user_id=current_user.id,
+    )
+    db.add(connector)
+    db.add(AuditLog(
+        action="connector_created",
+        resource_type="connector",
+        resource_id=f"{data.type}:{current_user.id}",
+        user_id=current_user.id,
+        new_value={"type": data.type, "name": data.name, "scope": "personal"},
+    ))
+    await db.commit()
+    await db.refresh(connector)
+    return connector
+
+
+@router.patch("/my/id/{connector_id}", response_model=ConnectorResponse)
+async def update_my_connector_by_id(
+    connector_id: uuid.UUID,
+    data: ConnectorUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    connector = await _get_connector_or_404(db, connector_id)
+    if connector.owner_user_id != current_user.id:
+        raise HTTPException(403, "Kein Zugriff auf diesen Connector")
+
+    if data.name is not None:
+        connector.name = data.name
+    if data.base_url is not None:
+        connector.base_url = data.base_url
+    if data.credentials is not None:
+        existing = decrypt_credentials(connector.encrypted_credentials)
+        connector.encrypted_credentials = encrypt_credentials({**existing, **data.credentials})
+    if data.enabled is not None:
+        connector.enabled = data.enabled
+
+    db.add(AuditLog(action="connector_updated", resource_type="connector",
+                    resource_id=str(connector_id), user_id=current_user.id))
+    await db.commit()
+    await db.refresh(connector)
+    return connector
+
+
+@router.delete("/my/id/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_connector_by_id(
+    connector_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    connector = await _get_connector_or_404(db, connector_id)
+    if connector.owner_user_id != current_user.id:
+        raise HTTPException(403, "Kein Zugriff auf diesen Connector")
+
+    await db.delete(connector)
+    db.add(AuditLog(action="connector_deleted", resource_type="connector",
+                    resource_id=str(connector_id), user_id=current_user.id))
+    await db.commit()
+
+
 @router.get("/my/{connector_type}/credentials")
 async def get_my_connector_credentials(
     connector_type: str,

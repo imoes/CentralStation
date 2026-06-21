@@ -12,6 +12,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { HttpClient } from '@angular/common/http';
 import { ConnectorService } from '../../../core/services/connector.service';
+import { AuthService } from '../../../core/auth/auth.service';
 import { Connector, ConnectorType } from '../../../core/models/connector.model';
 import { environment } from '../../../../environments/environment';
 
@@ -22,7 +23,12 @@ interface CredField {
   options?: { value: string; label: string }[];
 }
 interface CorootProject { id: string; name: string; selected: boolean }
-const PERSONAL_CONNECTOR_TYPES: ConnectorType[] = ['jira', 'jira_sd', 'o365', 'teams', 'gitlab'];
+
+const PERSONAL_CONNECTOR_TYPES_LIST: { value: ConnectorType; label: string }[] = [
+  { value: 'llm',        label: 'KI-Modell (LLM)' },
+  { value: 'mcp_server', label: 'MCP-Server' },
+  { value: 'awx_ng',     label: 'AWX-NG (Ansible Manager)' },
+];
 
 const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'checkmk',      label: 'CheckMK' },
@@ -147,6 +153,9 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
   awx_ng: [
     { key: 'username', label: 'Benutzername', type: 'text' },
     { key: 'password', label: 'Passwort',     type: 'password' },
+  ],
+  mcp_server: [
+    { key: 'token', label: 'Bearer Token (optional)', type: 'password' },
   ],
 };
 
@@ -391,12 +400,13 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
   constructor(
     private fb: FormBuilder,
     private svc: ConnectorService,
+    private auth: AuthService,
     private ref: MatDialogRef<ConnectorFormDialogComponent>,
     @Inject(MAT_DIALOG_DATA) public data: { connector?: Connector; personal?: boolean } | null,
   ) {
     this.isEdit = !!data?.connector;
     if (data?.personal) {
-      this.connectorTypes = CONNECTOR_TYPES.filter(type => PERSONAL_CONNECTOR_TYPES.includes(type.value));
+      this.connectorTypes = PERSONAL_CONNECTOR_TYPES_LIST;
     }
     if (data?.connector?.id) {
       this.savedConnectorId.set(data.connector.id);
@@ -464,7 +474,7 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     const c = this.data?.connector;
-    const defaultType: ConnectorType = this.data?.personal ? 'jira' : 'checkmk';
+    const defaultType: ConnectorType = this.data?.personal ? 'llm' : 'checkmk';
     this.form = this.fb.group({
       type:     [c?.type ?? defaultType, Validators.required],
       name:     [c?.name ?? '', Validators.required],
@@ -475,9 +485,10 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
     this.form.get('type')!.valueChanges.subscribe(type => this.updateCredFields(type as ConnectorType));
 
     if (this.isEdit && c?.id) {
-      this.http.get<{ credentials: Record<string, string> }>(
-        `${environment.apiUrl}/connectors/${c.id}/credentials`
-      ).subscribe({
+      const credUrl = this.data?.personal
+        ? `${environment.apiUrl}/connectors/my/${c.type}/credentials`
+        : `${environment.apiUrl}/connectors/${c.id}/credentials`;
+      this.http.get<{ credentials: Record<string, string> }>(credUrl).subscribe({
         next: res => {
           this._existingCreds = res.credentials ?? {};
           this.updateCredFields((c?.type ?? defaultType) as ConnectorType);
@@ -527,16 +538,22 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
     const v = this.form.value;
     const credentials = this._buildCredentials();
 
+    const afterPersonalSave = () => {
+      this.saving.set(false);
+      if (v.type === 'awx_ng') this.auth.fetchMe();
+      this.ref.close(true);
+    };
+
     if (this.isEdit && this.data?.connector) {
       if (this.data.personal) {
-        this.svc.upsertMine(this.data.connector.type, {
+        const upd: Record<string, unknown> = {
           name: v.name,
-          type: this.data.connector.type,
           base_url: v.base_url || null,
-          credentials,
           enabled: v.enabled,
-        }).subscribe({
-          next: () => { this.saving.set(false); this.ref.close(true); },
+        };
+        if (Object.keys(credentials).length > 0) upd['credentials'] = credentials;
+        this.svc.updateMineById(this.data.connector.id, upd).subscribe({
+          next: () => afterPersonalSave(),
           error: () => this.saving.set(false),
         });
         return;
@@ -556,14 +573,14 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
       });
     } else {
       if (this.data?.personal) {
-        this.svc.upsertMine(v.type, {
+        this.svc.createMine({
           name: v.name,
           type: v.type,
           base_url: v.base_url || null,
           credentials,
           enabled: v.enabled,
         }).subscribe({
-          next: () => { this.saving.set(false); this.ref.close(true); },
+          next: () => afterPersonalSave(),
           error: () => this.saving.set(false),
         });
       } else {
@@ -619,9 +636,15 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
     };
 
     if (this.data?.personal) {
-      this.svc.upsertMine(v.type, {
-        name: v.name, type: v.type, base_url: v.base_url || null, credentials, enabled: v.enabled,
-      }).subscribe({ next: (s: any) => afterSave(s.id), error: onError });
+      if (this.isEdit && this.data.connector) {
+        const upd: Record<string, unknown> = { name: v.name, base_url: v.base_url || null, enabled: v.enabled };
+        if (Object.keys(credentials).length) upd['credentials'] = credentials;
+        this.svc.updateMineById(this.data.connector.id, upd).subscribe({ next: (s: any) => afterSave(s.id), error: onError });
+      } else {
+        this.svc.createMine({
+          name: v.name, type: v.type, base_url: v.base_url || null, credentials, enabled: v.enabled,
+        }).subscribe({ next: (s: any) => afterSave(s.id), error: onError });
+      }
     } else if (this.isEdit && this.data?.connector) {
       const upd: Record<string, unknown> = { name: v.name, base_url: v.base_url || null, enabled: v.enabled };
       if (Object.keys(credentials).length) upd['credentials'] = credentials;

@@ -164,13 +164,7 @@ export class ConnectorsComponent implements OnInit {
       return;
     }
 
-    this.svc.upsertMine(connector.type, {
-      name: connector.name,
-      type: connector.type,
-      base_url: connector.base_url,
-      credentials: {},
-      enabled,
-    }).subscribe({
+    this.svc.updateMineById(connector.id, { enabled }).subscribe({
       next: updated => {
         this.connectors.update(list => list.map(c => c.id === updated.id ? updated : c));
       },
@@ -203,6 +197,6 @@ export class ConnectorsComponent implements OnInit {
 
   deleteMyConnector(connector: Connector) {
     if (!confirm(`Connector "${connector.name}" wirklich löschen?`)) return;
-    this.svc.deleteMine(connector.type).subscribe({ next: () => this.load() });
+    this.svc.deleteMineById(connector.id).subscribe({ next: () => this.load() });
   }
 }
