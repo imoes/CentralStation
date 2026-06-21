@@ -5,15 +5,38 @@ from app.services.connectors.base import BaseConnector
 
 
 class _GenericConnector(BaseConnector):
-    """Simple HTTP reachability check — used for mcp_server connectors."""
+    """Reachability check for mcp_server connectors — transport-aware."""
 
     async def test_connection(self) -> ConnectorTestResult:
         if not self.base_url:
             return ConnectorTestResult(success=False, message="Base URL fehlt")
+        transport = self.credentials.get("transport", "streamable-http")
+        token = self.credentials.get("token", "")
+        headers = {"Authorization": token} if token else {}
         try:
             async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
-                r = await client.get(self.base_url)
-            return ConnectorTestResult(success=True, message=f"Erreichbar (HTTP {r.status_code})")
+                if transport == "sse":
+                    # SSE: GET with Accept: text/event-stream
+                    headers["Accept"] = "text/event-stream"
+                    r = await client.get(self.base_url, headers=headers)
+                    if r.status_code == 200 or r.status_code == 405:
+                        return ConnectorTestResult(success=True, message=f"SSE-Endpunkt erreichbar (HTTP {r.status_code})")
+                    return ConnectorTestResult(success=r.status_code < 500,
+                                              message=f"HTTP {r.status_code}")
+                else:
+                    # streamable-http: POST with minimal MCP initialize ping
+                    headers["Content-Type"] = "application/json"
+                    headers["Accept"] = "application/json, application/jsonl"
+                    r = await client.post(
+                        self.base_url, headers=headers,
+                        json={"jsonrpc": "2.0", "method": "initialize", "id": 1,
+                              "params": {"protocolVersion": "2024-11-05",
+                                         "capabilities": {},
+                                         "clientInfo": {"name": "cs-test", "version": "1"}}},
+                    )
+                    if r.status_code in (200, 202):
+                        return ConnectorTestResult(success=True, message=f"MCP streamable-http erreichbar (HTTP {r.status_code})")
+                    return ConnectorTestResult(success=False, message=f"HTTP {r.status_code}: {r.text[:100]}")
         except Exception as exc:
             return ConnectorTestResult(success=False, message=str(exc))
 
