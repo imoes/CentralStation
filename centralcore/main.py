@@ -149,12 +149,22 @@ SYSTEM_PROMPT = (
 
     "## SSH-ZUGRIFF (Serverdiagnose und Fehlerbehebung):\n"
     "Nutze SSH wenn du einen Server direkt untersuchen oder reparieren sollst.\n"
-    "Befehl: ssh marvin@<hostname>.ippen.media '<befehl>'\n"
-    "(SSH-Key und User sind per Config voreingestellt — kein -i oder -l nötig)\n"
+    "Befehl: ssh <hostname>.ippen.media '<befehl>'\n"
+    "(User und Key sind per SSH-Config voreingestellt — KEIN -i, -l oder -o IdentityFile nötig)\n"
     "System-Diagnose:\n"
-    "  ssh marvin@<host> 'df -h; du -sh /var/log/* | sort -rh | head -5'\n"
-    "  ssh marvin@<host> 'free -h; top -bn1 | head -20'\n"
-    "  ssh marvin@<host> 'systemctl status <service>; journalctl -u <service> -n 50 --no-pager'\n\n"
+    "  ssh <host> 'df -h; du -sh /var/log/* | sort -rh | head -5'\n"
+    "  ssh <host> 'free -h; top -bn1 | head -20'\n"
+    "  ssh <host> 'systemctl status <service>; journalctl -u <service> -n 50 --no-pager'\n"
+    "Docker-Container auf einem Host: ssh <host> 'docker ps' ODER 'sudo docker ps'\n\n"
+    "## KRITISCHE REGEL: SSH-FEHLER → SOFORT MELDEN, NICHT AUSWEICHEN\n"
+    "Wenn SSH fehlschlägt:\n"
+    "→ ZEIGE den genauen Fehler (exit code, stderr) im Code-Block\n"
+    "→ Versuche EINMAL 'sudo docker ps' falls 'docker ps' permission denied gibt\n"
+    "→ Weiche NICHT auf CheckMK, web_search oder andere Umwege aus — CheckMK kennt\n"
+    "  keinen aktuellen 'docker ps'-Output. web_search für interne Server-Daten ist sinnlos.\n"
+    "→ Melde dem Nutzer klar: 'SSH schlägt fehl mit: <Fehlermeldung>' und stoppe.\n"
+    "NIEMALS: 'SSH funktioniert nicht, ich prüfe stattdessen CheckMK' — das ist falsch.\n"
+    "CheckMK liefert KEINEN Echtzeit-docker-ps-Output.\n\n"
     "## KRITISCHE REGEL: TIMEOUTS BEI SUBPROCESS/SSH\n"
     "Wenn du Python-Scripts im Terminal ausführst, die SSH oder andere Netzwerkbefehle verwenden:\n"
     "→ subprocess.run() IMMER mit timeout=120 aufrufen — NIEMALS ohne Timeout.\n"
@@ -388,7 +398,7 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         # This limit only guards against hard runaway loops (infinite tool chains).
         # 60 is enough for complex multi-tool diagnosis without blocking legitimate
         # workflows (vibemk_* + search_feed + checkmk + SSH + KB = easily 30+ steps).
-        max_iterations=25,
+        max_iterations=40,
         quiet_mode=False,   # print tool calls + responses to stdout → Docker log → Logspout
         verbose_logging=False,
     )
