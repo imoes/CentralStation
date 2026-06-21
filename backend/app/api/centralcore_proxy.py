@@ -346,13 +346,19 @@ async def get_history(
     user: CurrentUser,
     _: None = _ConsoleEnabled,
 ):
-    async with _internal_client(timeout=10.0) as client:
-        r = await client.get(f"{_target_url(user.id)}/sessions/{sid}/history")
+    from app.services.userenv_manager import ensure_container
+    try:
+        await asyncio.to_thread(ensure_container, str(user.id))
+    except Exception as exc:
+        log.warning("get_history: ensure_container failed for %s: %s", user.id, exc)
+
+    try:
+        async with _internal_client(timeout=35.0) as client:
+            r = await client.get(f"{_target_url(user.id)}/sessions/{sid}/history")
+    except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        log.warning("get_history: container not reachable for %s: %s", user.id, exc)
+        return []
     if r.status_code == 404:
-        # Session exists in PostgreSQL but not in the Hermes container (e.g. old sessions
-        # from a previous container). Return empty history so the UI shows a blank chat
-        # instead of an error screen. The first message will trigger a proper 404 with
-        # "Session nicht mehr vorhanden" guidance.
         return []
     _check(r)
     return r.json()
