@@ -19,11 +19,18 @@ import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-c
 // Configure marked: no wrapping <p> for simple one-liners, GFM tables + breaks
 marked.setOptions({ gfm: true, breaks: true });
 
+interface ToolCall {
+  tool: string;
+  done: boolean;
+}
+
 interface HermesMessage {
   role: 'user' | 'assistant';
   text: string;
   /** Current tool being executed — shown as a spinner line while streaming. */
   activeTool?: string;
+  /** Permanent log of all tool calls made during this message turn. */
+  toolCalls?: ToolCall[];
 }
 
 interface HermesSession {
@@ -175,9 +182,14 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                 </div>
                 <div class="msg-text"
                      [innerHTML]="renderMarkdown(msg)"></div>
-                @if (msg.activeTool) {
-                  <div class="tool-status">
-                    <span class="tool-spinner">⟳</span> {{ msg.activeTool }}
+                @if (msg.toolCalls?.length) {
+                  <div class="tool-log">
+                    @for (tc of msg.toolCalls!; track tc) {
+                      <div class="tool-log-entry" [class.running]="!tc.done">
+                        <span class="tool-icon">{{ tc.done ? '✓' : '⟳' }}</span>
+                        <span class="tool-name">{{ tc.tool }}</span>
+                      </div>
+                    }
                   </div>
                 }
               </div>
@@ -188,9 +200,14 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                   <span class="msg-label">◎ COMPUTER</span>
                 </div>
                 <div class="msg-text streaming">{{ sm.text }}</div>
-                @if (sm.activeTool) {
-                  <div class="tool-status">
-                    <span class="tool-spinner">⟳</span> {{ sm.activeTool }}
+                @if (sm.toolCalls?.length) {
+                  <div class="tool-log">
+                    @for (tc of sm.toolCalls!; track tc) {
+                      <div class="tool-log-entry" [class.running]="!tc.done">
+                        <span class="tool-icon">{{ tc.done ? '✓' : '⟳' }}</span>
+                        <span class="tool-name">{{ tc.tool }}</span>
+                      </div>
+                    }
                   </div>
                 }
               </div>
@@ -1039,9 +1056,19 @@ export class ComputerComponent implements OnInit, OnDestroy {
     this.sessions.update(ss => ss.map(s => {
       if (s.session_id !== sid) return s;
       const msgs = [...s.messages];
-      if (msgs.length > 0 && msgs[msgs.length - 1].role === 'assistant') {
-        msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], activeTool: tool };
+      if (msgs.length === 0 || msgs[msgs.length - 1].role !== 'assistant') return s;
+      const last = { ...msgs[msgs.length - 1], activeTool: tool };
+      if (tool) {
+        // Append to permanent log
+        last.toolCalls = [...(last.toolCalls ?? []), { tool, done: false }];
+      } else if (last.toolCalls?.length) {
+        // Mark the last running call as done
+        const calls = [...last.toolCalls];
+        const idx = calls.findLastIndex(c => !c.done);
+        if (idx >= 0) calls[idx] = { ...calls[idx], done: true };
+        last.toolCalls = calls;
       }
+      msgs[msgs.length - 1] = last;
       return { ...s, messages: msgs };
     }));
   }
