@@ -916,7 +916,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
         if (!wasAborted && fullAssistantText) {
           this.speak(fullAssistantText);
         }
-        this._setActiveTool(sid, undefined);
+        this._clearActiveTool(sid);
         this.loading.set(false);
         this.scrollToBottom();
       });
