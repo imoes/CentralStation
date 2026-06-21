@@ -257,6 +257,32 @@ class CreateSessionBody(BaseModel):
     ssh_username: str | None = None
 
 
+def _read_mcp_toolsets_from_config() -> list:
+    """Read /root/.hermes/config.yaml and return mcp-{name} toolset names.
+
+    Falls back to centralstation-only if the file is missing or unreadable.
+    The per-user config is written by userenv_manager.write_hermes_config()
+    before the container starts, so this reflects all connectors the user
+    has configured (centralstation always + personal servers like vibemk).
+    """
+    import yaml as _yaml
+    for path in [
+        "/root/.hermes/config.yaml",
+        os.path.join(os.path.dirname(__file__), "hermes_config.yaml"),
+    ]:
+        try:
+            with open(path) as f:
+                cfg_data = _yaml.safe_load(f) or {}
+            names = list((cfg_data.get("mcp_servers") or {}).keys())
+            if names:
+                log.info("MCP toolsets from config (%s): %s", path, names)
+                return [f"mcp-{n}" for n in names]
+        except Exception:
+            continue
+    log.warning("No hermes_config.yaml found — using mcp-centralstation only")
+    return ["mcp-centralstation"]
+
+
 def _make_agent(sid: str, cfg: CreateSessionBody):
     from run_agent import AIAgent
     from hermes_state import SessionDB
@@ -302,6 +328,11 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
             f"ssh {ssh_user}@<hostname>.ippen.media",
         )
 
+    # Toolsets are derived from /root/.hermes/config.yaml — the per-user config
+    # written by userenv_manager.write_hermes_config() at container start.
+    # This includes centralstation (always) + any user-configured servers (vibemk, awx-ng…).
+    _mcp_toolsets = _read_mcp_toolsets_from_config()
+
     agent = AIAgent(
         session_id=sid,
         # SessionDB persists conversation to ~/.hermes/state.db (mounted from
@@ -316,7 +347,7 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         # mandatory for Anthropic's OAuth token routing to accept the request.
         provider="anthropic" if api_mode == "anthropic_messages" else None,
         model=model or None,
-        enabled_toolsets=["terminal", "web", "mcp-centralstation", "mcp-checkmk"],
+        enabled_toolsets=["terminal", "web"] + _mcp_toolsets,
         ephemeral_system_prompt=system_prompt,
         # Cap tool/LLM iterations per user turn. Web search spirals are bounded by
         # the system prompt rule (max 3 web_search per question), not this limit.
@@ -328,32 +359,11 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         verbose_logging=False,
     )
     # Give MCP discovery a generous window to complete before the first turn.
+    # All MCP servers (centralstation + user-specific) are defined in
+    # /root/.hermes/config.yaml and discovered at container startup — no
+    # per-session dynamic registration needed.
     from hermes_cli.mcp_startup import wait_for_mcp_discovery
     wait_for_mcp_discovery(timeout=8.0)
-
-    # Register per-session extra MCP servers (user-personal connectors).
-    # register_mcp_servers() is idempotent — already-connected names are skipped.
-    if cfg.extra_mcp_servers:
-        try:
-            from tools.mcp_tool import register_mcp_servers
-            extra = {}
-            for srv in cfg.extra_mcp_servers:
-                name = srv.get("name", "")
-                url = srv.get("url", "")
-                token = srv.get("token", "")
-                transport = srv.get("transport", "streamable-http")
-                if not name or not url:
-                    continue
-                srv_cfg: dict = {"url": url, "transport": transport}
-                if token:
-                    srv_cfg["headers"] = {"Authorization": token}
-                extra[name] = srv_cfg
-            if extra:
-                registered = register_mcp_servers(extra)
-                log.info("[%s] Extra MCP servers registered: %s → %d tool(s)",
-                         sid[:8], list(extra.keys()), len(registered))
-        except Exception as exc:
-            log.warning("[%s] Extra MCP server registration failed: %s", sid[:8], exc)
 
     return agent
 
@@ -556,10 +566,9 @@ async def send_message(sid: str, body: MessageBody):
         loop.call_soon_threadsafe(q.put_nowait, {"type": "delta", "text": text})
 
     def _tool_label(name: str) -> str:
-        for prefix in ("mcp_centralstation_", "mcp_checkmk_vibemk_", "mcp_checkmk_"):
-            if name.startswith(prefix):
-                name = name[len(prefix):]
-                break
+        import re
+        # Strip any mcp_{server}_ prefix so only the tool action name remains.
+        name = re.sub(r'^mcp_[a-z0-9_]+_', '', name)
         return name.replace("_", " ")
 
     def on_tool_progress(event_type: str, *cb_args, **cb_kwargs) -> None:

@@ -41,6 +41,42 @@ def _user_base(user_id: str) -> str:
     return os.path.join(USERENV_WORKSPACES_BASE, user_id)
 
 
+def hermes_config_path(user_id: str) -> str:
+    """Per-user hermes_config.yaml path on the host."""
+    return os.path.join(_user_base(user_id), "hermes_config.yaml")
+
+
+def write_hermes_config(user_id: str, extra_servers: dict) -> str:
+    """Generate per-user hermes_config.yaml from DB-loaded connectors.
+
+    Always includes centralstation (system server). Adds user-specific servers
+    (vibemk, awx-ng, ...) from extra_servers.
+
+    Args:
+        extra_servers: {name: {transport, url, headers?}} from user's connector DB rows.
+    Returns:
+        Path to the written config file.
+    """
+    import yaml
+
+    backend_url = os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000")
+    servers: dict = {
+        "centralstation": {
+            "transport": "sse",
+            "url": f"{backend_url}/api/mcp/sse",
+        }
+    }
+    servers.update(extra_servers)
+
+    config_path = hermes_config_path(user_id)
+    os.makedirs(_user_base(user_id), exist_ok=True)
+    with open(config_path, "w") as f:
+        yaml.dump({"mcp_servers": servers}, f, default_flow_style=False, allow_unicode=True)
+    log.info("hermes_config written: %s (%d servers: %s)",
+             config_path, len(servers), list(servers.keys()))
+    return config_path
+
+
 def workspace_dir(user_id: str) -> str:
     return os.path.join(_user_base(user_id), "workspaces")
 
@@ -115,22 +151,31 @@ def ensure_container(user_id: str) -> str:
         config_volume_name(user_id): {"bind": "/root/.claude", "mode": "rw"},
         f"hermes-state-{user_id}": {"bind": "/root/.hermes", "mode": "rw"},
     }
-    if USERENV_CONFIG_PATH and os.path.isfile(USERENV_CONFIG_PATH):
-        volumes[USERENV_CONFIG_PATH] = {"bind": "/root/.hermes/config.yaml", "mode": "ro"}
+    # Mount per-user hermes_config.yaml to /app/hermes_config.yaml (NOT into the
+    # hermes-state volume at /root/.hermes — Docker volume mounts shadow file bind-mounts
+    # when the volume already contains the same file name). The entrypoint copies
+    # /app/hermes_config.yaml → /root/.hermes/config.yaml at startup.
+    _user_cfg = hermes_config_path(user_id)
+    _cfg_to_mount = _user_cfg if os.path.isfile(_user_cfg) else (
+        USERENV_CONFIG_PATH if USERENV_CONFIG_PATH and os.path.isfile(USERENV_CONFIG_PATH) else None
+    )
+    if _cfg_to_mount:
+        volumes[_cfg_to_mount] = {"bind": "/app/hermes_config.yaml", "mode": "ro"}
     if USERENV_HOST_SSH_DIR:
         volumes[USERENV_HOST_SSH_DIR] = {"bind": "/root/.ssh_host", "mode": "ro"}
     if USERENV_ANSIBLE_PATH:
         volumes[USERENV_ANSIBLE_PATH] = {"bind": f"{WORKSPACES_DIR}/ansible", "mode": "rw"}
 
+    _no_proxy = "localhost,127.0.0.1,backend,centralcore,redis,db,opensearch,.ippen.media"
     environment = {
         "HOME": "/root",
         "CENTRALSTATION_BACKEND_URL": os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000"),
         "HTTP_PROXY": os.getenv("HTTP_PROXY", ""),
         "HTTPS_PROXY": os.getenv("HTTPS_PROXY", ""),
-        "NO_PROXY": "localhost,127.0.0.1,.ippen.media",
+        "NO_PROXY": _no_proxy,
         "http_proxy": os.getenv("HTTP_PROXY", ""),
         "https_proxy": os.getenv("HTTPS_PROXY", ""),
-        "no_proxy": "localhost,127.0.0.1,.ippen.media",
+        "no_proxy": _no_proxy,
     }
 
     c = cli.containers.run(
