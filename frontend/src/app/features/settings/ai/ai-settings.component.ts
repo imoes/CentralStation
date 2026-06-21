@@ -36,21 +36,6 @@ interface OAuthSession {
 
 const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showOnlyFor?: string[] }[] = [
   {
-    title: 'LLM Configuration',
-    keys: ['llm.provider', 'llm.base_url', 'llm.model', 'llm.api_mode', 'llm.api_key', 'llm.timeout_seconds', 'llm.thinking_mode'],
-    testGroup: 'llm',
-  },
-  {
-    title: 'OpenAI Codex Model',
-    keys: ['llm.codex_model', 'llm.codex_timeout_seconds'],
-    showOnlyFor: ['openai-codex'],
-  },
-  {
-    title: 'Claude Model',
-    keys: ['llm.claude_model'],
-    showOnlyFor: ['claude-oauth'],
-  },
-  {
     title: 'Vision Model',
     keys: ['llm.vision_base_url', 'llm.vision_model', 'llm.vision_api_key'],
     testGroup: 'vision',

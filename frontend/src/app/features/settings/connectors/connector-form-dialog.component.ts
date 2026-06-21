@@ -39,7 +39,8 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'aikb',         label: 'IT-AIKB (Wissensdatenbank)' },
   { value: 'smtp',         label: 'SMTP (E-Mail-Versand)' },
   { value: 'gitlab',       label: 'GitLab (Versionskontrolle)' },
-  { value: 'awx',          label: 'AWX (Ansible Automation)' },
+  { value: 'awx',          label: 'AWX-NG (Ansible Automation)' },
+  { value: 'llm',          label: 'KI-Modell (LLM)' },
 ];
 
 const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
@@ -121,7 +122,7 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
   ],
   awx: [
     { key: 'token',         label: 'Bearer Token (PAT)',    type: 'password',
-      hint: 'Aus AWX: Benutzer → Token → Hinzufügen' },
+      hint: 'Aus AWX-NG: Benutzer → Token → Hinzufügen' },
     { key: 'verify_ssl',    label: 'SSL verifizieren',       type: 'text',
       hint: 'true / false (Standard: false für selbstsignierte Zertifikate)' },
     { key: 'project_id',    label: 'Standard-Projekt-ID',   type: 'text',
@@ -129,6 +130,23 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     { key: 'inventory_id',  label: 'Standard-Inventory-ID', type: 'text' },
     { key: 'credential_id', label: 'Standard-Credential-ID', type: 'text',
       hint: 'Machine Credential für SSH-Zugriff' },
+  ],
+  llm: [
+    { key: 'api_key',          label: 'API Key',                  type: 'password',
+      hint: 'Leer lassen wenn kein Auth nötig (z.B. lokale Instanz)' },
+    { key: 'model',            label: 'Modell',                   type: 'text',
+      hint: 'z.B. claude-sonnet-4-6, gpt-4o, llama3.2' },
+    { key: 'api_mode',         label: 'API Modus',                type: 'select', options: [
+        { value: 'chat_completions',   label: 'OpenAI Chat Completions' },
+        { value: 'anthropic_messages', label: 'Anthropic Messages (Claude API)' },
+      ]},
+    { key: 'timeout_seconds',  label: 'Timeout (Sekunden)',       type: 'text',
+      hint: 'Standard: 120' },
+    { key: 'thinking_mode',    label: 'Thinking Mode aktivieren', type: 'checkbox' },
+  ],
+  awx_ng: [
+    { key: 'username', label: 'Benutzername', type: 'text' },
+    { key: 'password', label: 'Passwort',     type: 'password' },
   ],
 };
 

@@ -24,7 +24,7 @@ import { I18nService } from '../../core/services/i18n.service';
             <mat-icon>group</mat-icon>&nbsp;{{ i18n.t('settings.tabs.users') }}
           </a>
           <a mat-tab-link routerLink="ai" routerLinkActive #ai="routerLinkActive" [active]="ai.isActive">
-            <mat-icon>psychology</mat-icon>&nbsp;{{ i18n.t('settings.tabs.ai') }}
+            <mat-icon>tune</mat-icon>&nbsp;{{ i18n.t('settings.tabs.ai') }}
           </a>
           <a mat-tab-link routerLink="audit" routerLinkActive #audit="routerLinkActive" [active]="audit.isActive">
             <mat-icon>history</mat-icon>&nbsp;{{ i18n.t('settings.tabs.audit') }}

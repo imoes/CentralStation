@@ -206,6 +206,21 @@ async def get_active_llm_config(db: AsyncSession, user_id=None) -> LLMConfig:
             creds = decrypt_credentials(user_conn.encrypted_credentials)
             return _llm_config_from_connector(user_conn, creds)
 
+    # Check global admin llm connector (owner_user_id IS NULL)
+    from sqlalchemy import select as _select
+    from app.models.connector import ConnectorConfig
+    result = await db.execute(
+        _select(ConnectorConfig).where(
+            ConnectorConfig.type == "llm",
+            ConnectorConfig.owner_user_id.is_(None),
+            ConnectorConfig.enabled.is_(True),
+        ).limit(1)
+    )
+    admin_conn = result.scalar_one_or_none()
+    if admin_conn:
+        creds = decrypt_credentials(admin_conn.encrypted_credentials)
+        return _llm_config_from_connector(admin_conn, creds)
+
     s = await get_all_settings(db)
     provider = s.get("llm.provider") or "custom"
 

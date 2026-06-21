@@ -30,7 +30,7 @@ const TRANSLATIONS: Record<AppLanguage, Record<string, string>> = {
     'settings.tabs.myConnectors': 'My connectors',
     'settings.tabs.mySettings': 'My settings',
     'settings.tabs.users': 'Users',
-    'settings.tabs.ai': 'AI configuration',
+    'settings.tabs.ai': 'System settings',
     'settings.tabs.audit': 'Audit log',
     'settings.tabs.feed': 'Feed',
 
@@ -110,7 +110,7 @@ const TRANSLATIONS: Record<AppLanguage, Record<string, string>> = {
     'settings.tabs.myConnectors': 'Meine Konnektoren',
     'settings.tabs.mySettings': 'Meine Einstellungen',
     'settings.tabs.users': 'Benutzer',
-    'settings.tabs.ai': 'KI-Konfiguration',
+    'settings.tabs.ai': 'Systemeinstellungen',
     'settings.tabs.audit': 'Audit-Log',
     'settings.tabs.feed': 'Feed',
 
