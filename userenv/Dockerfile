@@ -30,15 +30,19 @@ RUN apt-get update \
         iputils-ping traceroute nmap dnsutils netcat-openbsd mtr-tiny iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Ansible (for Werkbank terminal use) ──────────────────────────────
-RUN pip3 install --break-system-packages ansible ansible-lint 2>/dev/null \
-    || pip3 install ansible ansible-lint
-
 # ── Node.js 22 LTS (required by Hermes browser tools) ────────────────
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | \
     https_proxy=${HTTPS_PROXY} http_proxy=${HTTP_PROXY} bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# ── Python venv (avoids Debian PEP 668 protection + RECORD-less system packages) ─
+RUN python3 -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH \
+    VIRTUAL_ENV=/opt/venv
+
+# ── Ansible (for Werkbank terminal use) ──────────────────────────────
+RUN pip install --no-cache-dir ansible ansible-lint
 
 # ── Hermes AI agent ───────────────────────────────────────────────────
 RUN git clone --depth=1 https://github.com/NousResearch/hermes-agent /opt/hermes \
