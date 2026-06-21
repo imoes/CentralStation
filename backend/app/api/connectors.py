@@ -116,6 +116,29 @@ async def upsert_my_connector(
     ))
     await db.commit()
     await db.refresh(connector)
+
+    # SSH live-apply: write new key/config into the running per-user container
+    # immediately so the next terminal command already uses the updated settings.
+    if connector_type == "ssh":
+        creds = decrypt_credentials(connector.encrypted_credentials)
+        import asyncio as _aio
+
+        async def _apply_ssh() -> None:
+            try:
+                from app.services.userenv_manager import configure_ssh
+                await _aio.to_thread(
+                    configure_ssh,
+                    str(current_user.id),
+                    creds.get("username", ""),
+                    creds.get("private_key", ""),
+                    creds.get("password", ""),
+                )
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).debug("SSH live-apply skipped (no container?): %s", exc)
+
+        _aio.ensure_future(_apply_ssh())
+
     return connector
 
 
