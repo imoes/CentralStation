@@ -543,6 +543,47 @@
   }
 }
 
+.tool-log {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  .tool-log-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Antonio', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    color: #7a7a7a;
+
+    .tool-icon {
+      width: 14px;
+      text-align: center;
+      flex-shrink: 0;
+      color: #555;
+    }
+
+    .tool-name {
+      opacity: 0.7;
+    }
+
+    &.running {
+      color: #ff9933;
+
+      .tool-icon {
+        color: #ff9933;
+        animation: spin 1.2s linear infinite;
+      }
+
+      .tool-name {
+        opacity: 1;
+      }
+    }
+  }
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
