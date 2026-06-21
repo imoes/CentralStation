@@ -18,6 +18,21 @@ class _GenericConnector(BaseConnector):
             return ConnectorTestResult(success=False, message=str(exc))
 
 
+class _SshConnector(BaseConnector):
+    """Validates SSH credentials for the per-user Hermes/Werkbank container."""
+
+    async def test_connection(self) -> ConnectorTestResult:
+        username = self.credentials.get("username", "")
+        if not username:
+            return ConnectorTestResult(success=False, message="SSH-Benutzername fehlt")
+        has_key = bool(self.credentials.get("private_key", "").strip())
+        has_pass = bool(self.credentials.get("password", "").strip())
+        if not has_key and not has_pass:
+            return ConnectorTestResult(success=False, message="Key oder Passwort fehlt")
+        mode = "Key" if has_key else "Passwort"
+        return ConnectorTestResult(success=True, message=f"SSH ({mode}) für Benutzer '{username}' gespeichert")
+
+
 class _AwxNgConnector(BaseConnector):
     """Basic-Auth health check for AWX-NG MCP connectors."""
 
@@ -79,6 +94,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
         "llm": LLMConnector,
         "awx_ng": _AwxNgConnector,
         "mcp_server": _GenericConnector,
+        "ssh": _SshConnector,
     }
     cls = mapping.get(connector_type)
     if not cls:

@@ -210,6 +210,48 @@ import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
         </mat-card>
       }
 
+      <!-- ── SSH-Zugang ── -->
+      <mat-card class="settings-card">
+        <mat-card-header>
+          <mat-card-title>
+            <mat-icon style="vertical-align:middle;margin-right:8px;">terminal</mat-icon>
+            SSH-Zugang (Hermes &amp; Werkbank)
+          </mat-card-title>
+          <mat-card-subtitle>Benutzername und Key für SSH in Hermes-Konsole und Werkbank-Terminal</mat-card-subtitle>
+        </mat-card-header>
+        <mat-card-content>
+          <mat-form-field appearance="outline" class="ssh-field">
+            <mat-label>SSH-Benutzername</mat-label>
+            <input matInput [(ngModel)]="sshUsername" placeholder="z.B. marvin">
+          </mat-form-field>
+          <mat-form-field appearance="outline" class="full-width">
+            <mat-label>SSH Private Key (PEM)</mat-label>
+            <textarea matInput rows="6" [(ngModel)]="sshKey"
+                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+            <mat-hint>Inhalt von ~/.ssh/id_rsa oder id_ed25519 (leer lassen um vorhandenen zu behalten)</mat-hint>
+          </mat-form-field>
+          <mat-form-field appearance="outline" class="ssh-field">
+            <mat-label>Passwort (Alternativ zum Key)</mat-label>
+            <input matInput [type]="sshPwShow ? 'text' : 'password'" [(ngModel)]="sshPassword">
+            <button matSuffix mat-icon-button (click)="sshPwShow = !sshPwShow" type="button" tabindex="-1">
+              <mat-icon>{{ sshPwShow ? 'visibility_off' : 'visibility' }}</mat-icon>
+            </button>
+          </mat-form-field>
+          <div class="ssh-actions">
+            <button mat-flat-button color="primary" [disabled]="sshSaving() || !sshUsername" (click)="saveSshSettings()">
+              @if (sshSaving()) { <mat-spinner diameter="18"></mat-spinner> }
+              @else { <mat-icon>save</mat-icon> }
+              Speichern
+            </button>
+            @if (sshActive) {
+              <button mat-stroked-button color="warn" [disabled]="sshSaving()" (click)="deleteSshSettings()">
+                <mat-icon>delete</mat-icon> Entfernen
+              </button>
+            }
+          </div>
+        </mat-card-content>
+      </mat-card>
+
       <!-- ── E-Mail-Berichte ── -->
       <mat-card class="settings-card">
         <mat-card-header>
@@ -294,6 +336,8 @@ import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
     .digest-hour-field { width: 100px; }
     .digest-select-field { width: 140px; }
     .digest-hint { font-size: 12px; color: var(--mat-sys-on-surface-variant); }
+    .ssh-field { width: 100%; max-width: 380px; }
+    .ssh-actions { display: flex; align-items: center; gap: 12px; padding-top: 4px; }
   `],
 })
 export class MySettingsComponent implements OnInit {
@@ -327,6 +371,13 @@ export class MySettingsComponent implements OnInit {
   digestWeeklyHour = 7;
   digestSaving     = signal(false);
 
+  sshUsername = '';
+  sshKey      = '';
+  sshPassword = '';
+  sshPwShow   = false;
+  sshActive   = false;
+  sshSaving   = signal(false);
+
   readonly weekdays = [
     { value: 0, label: 'Montag' },
     { value: 1, label: 'Dienstag' },
@@ -349,6 +400,7 @@ export class MySettingsComponent implements OnInit {
   ) {}
 
   ngOnInit() {
+    this.loadSshSettings();
     forkJoin({
       prefs: this.http.get<any>(`${environment.apiUrl}/preferences`),
       vals: this.http.get<any>(`${environment.apiUrl}/feed/checkmk-filter-values`),
@@ -426,6 +478,70 @@ export class MySettingsComponent implements OnInit {
       error: () => {
         this.digestSaving.set(false);
         this.snack.open('Fehler beim Speichern', 'OK', { duration: 3000 });
+      },
+    });
+  }
+
+  loadSshSettings() {
+    this.http.get<any[]>(`${environment.apiUrl}/connectors/my`).subscribe({
+      next: list => {
+        const ssh = list.find((c: any) => c.type === 'ssh');
+        if (!ssh) return;
+        this.sshActive = true;
+        this.http.get<{ credentials: Record<string, string> }>(
+          `${environment.apiUrl}/connectors/my/ssh/credentials`
+        ).subscribe({
+          next: ({ credentials: creds }) => {
+            this.sshUsername = creds['username'] ?? '';
+            // Key/password never pre-filled for security
+          },
+        });
+      },
+    });
+  }
+
+  saveSshSettings() {
+    if (!this.sshUsername) return;
+    this.sshSaving.set(true);
+    const credentials: Record<string, string> = { username: this.sshUsername };
+    if (this.sshKey.trim()) credentials['private_key'] = this.sshKey.trim();
+    if (this.sshPassword) credentials['password'] = this.sshPassword;
+    this.http.put(`${environment.apiUrl}/connectors/my/ssh`, {
+      name: 'SSH-Zugang',
+      type: 'ssh',
+      base_url: null,
+      credentials,
+      enabled: true,
+    }).subscribe({
+      next: () => {
+        this.sshSaving.set(false);
+        this.sshActive = true;
+        this.sshPassword = '';
+        this.sshKey = '';
+        this.snack.open('SSH-Einstellungen gespeichert', 'OK', { duration: 3000 });
+      },
+      error: () => {
+        this.sshSaving.set(false);
+        this.snack.open('Fehler beim Speichern der SSH-Einstellungen', 'OK', { duration: 3000 });
+      },
+    });
+  }
+
+  deleteSshSettings() {
+    if (!confirm('SSH-Einstellungen wirklich entfernen?')) return;
+    this.sshSaving.set(true);
+    this.http.delete(`${environment.apiUrl}/connectors/my/ssh`).subscribe({
+      next: () => {
+        this.sshSaving.set(false);
+        this.sshActive = false;
+        this.sshUsername = '';
+        this.sshKey = '';
+        this.sshPassword = '';
+        this.snack.open('SSH-Einstellungen entfernt', 'OK', { duration: 3000 });
+      },
+      error: () => {
+        this.sshSaving.set(false);
+        this.snack.open('Fehler beim Entfernen', 'OK', { duration: 3000 });
       },
     });
   }
