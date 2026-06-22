@@ -773,7 +773,16 @@ async def search_by_query(
     """
     os_client = get_opensearch()
     if query_string:
-        query: dict = {"query_string": {"query": _normalise_query_string(query_string), "default_operator": "AND"}}
+        query: dict = {
+            "query_string": {
+                "query": _normalise_query_string(query_string),
+                "default_operator": "AND",
+                # Restrict to key fields so bare hostname searches (e.g. "cue0175") don't
+                # match unrelated log bodies that merely mention the host in passing.
+                # Users can still target body explicitly with body:keyword syntax.
+                "fields": ["title^2", "metadata.host^3", "metadata.agent^2", "tags"],
+            }
+        }
     else:
         query = {"match_all": {}}
 

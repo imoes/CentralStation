@@ -180,10 +180,11 @@ async def get_feed(
             index_pattern=index_pattern,
             query_string=query_string,
             user_id=str(user.id),
-            host_scope=await feed_index.get_user_checkmk_host_scope(db, str(user.id)),
+            host_scope=None,   # no scope filter on explicit text search
             since_seconds=time_range_seconds,
             from_=offset,
             size=limit,
+            db=db,             # apply exclusion filters consistently
         )
 
     min_age = (prefs.feed_checkmk_min_age_minutes if prefs else None) or 5
