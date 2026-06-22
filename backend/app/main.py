@@ -117,7 +117,7 @@ app.include_router(topology.router, prefix="/api")
 app.include_router(remediation.router, prefix="/api")
 app.include_router(ide.router, prefix="/api")
 app.include_router(awx_ng.router, prefix="/api")
-app.include_router(ws.router)
+app.include_router(ws.router, prefix="/api")
 
 # fastmcp sse_app() has no HEAD handler — Hermes probes with HEAD before
 # connecting, which causes a TypeError. Intercept it here first.
