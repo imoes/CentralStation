@@ -103,15 +103,24 @@ def touch(user_id: str) -> None:
     _last_used[container_name(user_id)] = time.monotonic()
 
 
-def _wait_ready(container, timeout: float = 30.0) -> bool:
-    """Wait until Hermes /health responds on port 8001."""
+def _wait_ready(container, timeout: float = 45.0) -> bool:
+    """Wait until both Hermes (:8001) and code-server (:8080) are ready."""
     deadline = time.monotonic() + timeout
+    hermes_ok = False
+    cs_ok = False
     while time.monotonic() < deadline:
         try:
-            code, _ = container.exec_run(
-                ["curl", "-sf", "-o", "/dev/null", "http://localhost:8001/health"]
-            )
-            if code == 0:
+            if not hermes_ok:
+                code, _ = container.exec_run(
+                    ["curl", "-sf", "-o", "/dev/null", "http://localhost:8001/health"]
+                )
+                hermes_ok = (code == 0)
+            if not cs_ok:
+                code, _ = container.exec_run(
+                    ["curl", "-sf", "-o", "/dev/null", "-m", "2", "http://localhost:8080/"]
+                )
+                cs_ok = (code == 0)
+            if hermes_ok and cs_ok:
                 return True
         except Exception:
             pass
