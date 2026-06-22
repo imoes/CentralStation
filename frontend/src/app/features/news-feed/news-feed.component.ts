@@ -1873,6 +1873,13 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (this.highlightId)       params['highlight_id'] = this.highlightId;
     this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params }).subscribe({
       next: (data) => {
+        // Discard regular-feed responses that arrived after a text search became active.
+        // loadMore() fires load(false) without a guard, so this races with runFeedSearch().
+        if (this.searchActive()) {
+          this.loading.set(false);
+          this.loadingMore.set(false);
+          return;
+        }
         if (reset) {
           if (silent) {
             // Silent auto-refresh: only prepend genuinely new items to avoid scroll-jump
