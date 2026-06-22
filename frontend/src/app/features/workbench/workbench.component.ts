@@ -193,7 +193,13 @@ export class WorkbenchComponent implements OnInit {
 
   openTab(): void {
     const u = this.rawIdeUrl();
-    if (u) window.open(u, '_blank', 'noopener');
+    if (!u) return;
+    // Ensure the container is running before opening the new tab — otherwise
+    // the new window hits nginx before Docker DNS has the container registered.
+    this.http.post(`${environment.apiUrl}/ide/session/ensure`, {}).subscribe({
+      next: () => window.open(u, '_blank', 'noopener'),
+      error: () => window.open(u, '_blank', 'noopener'), // open anyway on error
+    });
   }
 
   reload(): void {

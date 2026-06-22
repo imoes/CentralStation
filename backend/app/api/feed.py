@@ -1202,12 +1202,19 @@ async def incident_claude_prompt(
     if not inc:
         raise HTTPException(404, "Incident nicht gefunden")
 
+    # Extract all primitive values immediately — SQLAlchemy expires `inc` after
+    # each subsequent await db.execute(), so accessing inc.id in the final return
+    # would trigger a lazy refresh that fails outside an async greenlet context.
+    inc_id_str = str(inc.id)
     host = inc.primary_host
+    severity = inc.severity
+    created_str = inc.created_at.strftime('%Y-%m-%d %H:%M')
+
     lines: list[str] = []
     lines.append(f"# Incident-Untersuchung: {host}")
     lines.append("")
     lines.append(f"Auf dem Host **{host}** ist ein Incident aufgetreten "
-                 f"(Severity: {inc.severity}, seit {inc.created_at.strftime('%Y-%m-%d %H:%M')} UTC).")
+                 f"(Severity: {severity}, seit {created_str} UTC).")
     lines.append("Bitte untersuche die Ursache und schlage einen konkreten Fix vor. "
                  "Du hast Shell-Zugriff auf den Host. Arbeite read-only bis der Fix klar ist.")
     lines.append("")
@@ -1268,7 +1275,7 @@ async def incident_claude_prompt(
     lines.append("3. Schlage einen konkreten, reversiblen Fix vor und warte auf Freigabe, bevor du ihn ausführst.")
 
     prompt = "\n".join(lines)
-    return {"incident_id": str(inc.id), "host": host, "prompt": prompt}
+    return {"incident_id": inc_id_str, "host": host, "prompt": prompt}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
