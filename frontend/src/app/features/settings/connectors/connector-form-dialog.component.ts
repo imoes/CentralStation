@@ -642,6 +642,36 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
       }
       this.form.addControl(`cred_${field.key}`, this.fb.control(initial));
     }
+
+    // For LLM connectors: auto-fill the base URL from the selected API mode so the
+    // user doesn't have to remember the Codex endpoint. Only fills when empty (or
+    // still on a known default), never clobbers a manually-entered custom URL.
+    if (type === 'llm') {
+      this._applyLlmBaseUrl(this.form.get('cred_api_mode')?.value ?? '');
+      this.form.get('cred_api_mode')?.valueChanges.subscribe(
+        (mode: string) => this._applyLlmBaseUrl(mode),
+      );
+    }
+  }
+
+  /** Default base URLs per LLM API mode. */
+  private static readonly LLM_DEFAULT_URLS: Record<string, string> = {
+    codex_responses: 'https://chatgpt.com/backend-api/codex',
+    anthropic_messages: 'https://api.anthropic.com',
+  };
+
+  private _applyLlmBaseUrl(mode: string) {
+    const ctrl = this.form.get('base_url');
+    if (!ctrl) return;
+    const known = Object.values(ConnectorFormDialogComponent.LLM_DEFAULT_URLS);
+    const cur = (ctrl.value ?? '').trim();
+    const target = ConnectorFormDialogComponent.LLM_DEFAULT_URLS[mode];
+    if (!target) return;
+    // Fill only when empty or when the field still holds another known default
+    // (i.e. the user switched modes without customising) — preserve custom URLs.
+    if (!cur || known.includes(cur)) {
+      ctrl.setValue(target);
+    }
   }
 
   save() {
