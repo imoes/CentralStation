@@ -334,7 +334,7 @@ async def run_topology_kb_extraction(db: Any) -> int:
         credentials=decrypt_credentials(aikb_row.encrypted_credentials),
     )
 
-    pages = await aikb.search_opensearch("Abhängigkeiten", size=40)
+    pages = await aikb.search_opensearch("Abhängigkeiten", size=200)
     if not pages:
         log.info("topology_kb_extraction: no pages found for 'Abhängigkeiten'")
         return 0

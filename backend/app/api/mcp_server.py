@@ -584,7 +584,7 @@ async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
                     "title": s.get("title", ""),
                     "space": s.get("space_key", ""),
                     "url": s.get("source_url", ""),
-                    "excerpt": s.get("content", "")[:200],
+                    "excerpt": s.get("content", "")[:4000],
                 }
                 for s in sources
             ],
@@ -599,7 +599,7 @@ async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
                     "title": h.get("title", ""),
                     "space": h.get("space_key", ""),
                     "url": h.get("source_url", ""),
-                    "excerpt": h.get("content", "")[:300],
+                    "excerpt": h.get("content", "")[:4000],
                 }
                 for h in hits
             ],

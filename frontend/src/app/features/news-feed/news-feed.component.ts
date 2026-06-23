@@ -34,6 +34,14 @@ interface FeedItemCollab {
   incident_id?: string | null;
 }
 
+interface CausalEntry {
+  service: string;
+  incident_id: string;
+  likely_cause: boolean;
+  started_at: string;
+  host: string;
+}
+
 interface IncidentTimeline {
   incident: {
     id: string;
@@ -43,6 +51,7 @@ interface IncidentTimeline {
     status: string;
     created_at: string;
     member_count: number;
+    causal_context?: CausalEntry[] | null;
   };
   timeline: {
     at: string;
@@ -780,6 +789,25 @@ const SEVERITY_COLOR: Record<string, string> = {
         @if (loadingIncident()) {
           <div class="incident-drawer-loading"><mat-spinner diameter="32"></mat-spinner></div>
         } @else if (incidentTimeline()) {
+          @if (incidentTimeline()!.incident.causal_context?.length) {
+            <div class="causal-panel">
+              <div class="causal-panel-header">
+                <mat-icon>account_tree</mat-icon>
+                <span>Wahrscheinliche Ursache</span>
+              </div>
+              @for (cause of incidentTimeline()!.incident.causal_context!; track cause.incident_id) {
+                <div class="causal-entry" (click)="openIncidentTimeline(cause.incident_id)">
+                  <mat-icon class="causal-icon">hub</mat-icon>
+                  <div class="causal-info">
+                    <span class="causal-service">{{ cause.service }}</span>
+                    <span class="causal-host">{{ cause.host }}</span>
+                  </div>
+                  <span class="causal-since">seit {{ cause.started_at | date:'HH:mm' }}</span>
+                  <mat-icon class="causal-arrow">chevron_right</mat-icon>
+                </div>
+              }
+            </div>
+          }
           <div class="incident-timeline-list">
             @for (entry of incidentTimeline()!.timeline; track entry.at + entry.text) {
               <div class="tl-entry" [attr.data-kind]="entry.kind">
@@ -1397,6 +1425,40 @@ const SEVERITY_COLOR: Record<string, string> = {
     .claude-handoff-btn mat-spinner { display: inline-block; margin-right: 4px; }
     :host-context(html.cs-theme-lcars) .claude-handoff-btn { color: #99CCFF; border-color: rgba(153,204,255,.45); }
     .incident-drawer-loading { display: flex; justify-content: center; padding: 40px; }
+
+    /* ── Causal Panel ── */
+    .causal-panel {
+      margin: 10px 16px 4px;
+      border: 1px solid color-mix(in srgb, var(--mat-sys-error) 40%, transparent);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--mat-sys-error) 6%, var(--mat-sys-surface));
+      overflow: hidden;
+    }
+    .causal-panel-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px;
+      font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+      color: var(--mat-sys-error);
+      border-bottom: 1px solid color-mix(in srgb, var(--mat-sys-error) 25%, transparent);
+    }
+    .causal-panel-header mat-icon { font-size: 16px; height: 16px; width: 16px; }
+    .causal-entry {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .causal-entry:hover { background: color-mix(in srgb, var(--mat-sys-error) 10%, transparent); }
+    .causal-icon { font-size: 18px; height: 18px; width: 18px; color: var(--mat-sys-error); opacity: .7; }
+    .causal-info { display: flex; flex-direction: column; flex: 1; }
+    .causal-service { font-weight: 600; font-size: 13px; }
+    .causal-host { font-size: 11px; opacity: .6; }
+    .causal-since { font-size: 11px; opacity: .7; white-space: nowrap; }
+    .causal-arrow { font-size: 18px; height: 18px; width: 18px; opacity: .4; }
+    :host-context(html.cs-theme-lcars) .causal-panel { border-color: rgba(255,153,0,.45); background: rgba(255,153,0,.06); }
+    :host-context(html.cs-theme-lcars) .causal-panel-header { color: #FF9900; border-color: rgba(255,153,0,.25); }
+    :host-context(html.cs-theme-lcars) .causal-icon { color: #FF9900; }
+    :host-context(html.cs-theme-lcars) .causal-entry:hover { background: rgba(255,153,0,.1); }
 
     .incident-timeline-list { overflow-y: auto; flex: 1; padding: 8px 0; }
     .tl-entry {
