@@ -73,6 +73,11 @@ export const routes: Routes = [
         canActivate: [authGuard, roleGuard('admin')],
         loadComponent: () => import('./features/settings/feed/feed-settings.component').then(m => m.FeedSettingsComponent),
       },
+      {
+        path: 'skills',
+        canActivate: [authGuard],
+        loadComponent: () => import('./features/settings/skills/skills.component').then(m => m.SkillsComponent),
+      },
     ],
   },
   {

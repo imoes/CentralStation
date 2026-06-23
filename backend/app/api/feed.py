@@ -1029,6 +1029,23 @@ async def computer_resolve_alert(
     except Exception as _res_exc:
         log.warning("computer-resolve: marking session resolved failed: %s", _res_exc)
 
+    # Living Documentation: Erkenntnis in cs-knowledge speichern
+    try:
+        from app.services.knowledge_index import store_knowledge
+        _service = external_id.split(":")[0] if ":" in external_id else ""
+        await store_knowledge({
+            "kind": "lesson",
+            "service": _service,
+            "title": summary[:120],
+            "problem": external_id,
+            "solution": summary,
+            "tags": [_service, "gelöst", "computer-session"] if _service else ["gelöst", "computer-session"],
+            "source": "computer_session",
+            "confidence": 0.85,
+        })
+    except Exception as _know_exc:
+        log.debug("computer-resolve: cs-knowledge write failed: %s", _know_exc)
+
     log.info("computer-resolve: Lernkommentar gespeichert für %s (%d Zeichen)", external_id[:24], len(summary))
     return {"ok": True, "comment": comment_body}
 

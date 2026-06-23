@@ -19,6 +19,9 @@ import { I18nService } from '../../core/services/i18n.service';
         <a mat-tab-link routerLink="my" routerLinkActive #my="routerLinkActive" [active]="my.isActive">
           <mat-icon>manage_accounts</mat-icon>&nbsp;{{ i18n.t('settings.tabs.mySettings') }}
         </a>
+        <a mat-tab-link routerLink="skills" routerLinkActive #skills="routerLinkActive" [active]="skills.isActive">
+          <mat-icon>psychology</mat-icon>&nbsp;Skills
+        </a>
         @if (isAdmin()) {
           <a mat-tab-link routerLink="users" routerLinkActive #users="routerLinkActive" [active]="users.isActive">
             <mat-icon>group</mat-icon>&nbsp;{{ i18n.t('settings.tabs.users') }}
