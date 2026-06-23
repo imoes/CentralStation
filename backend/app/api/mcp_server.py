@@ -860,6 +860,123 @@ async def gitlab_create_merge_request(project: str, source_branch: str, target_b
     return {"iid": mr.get("iid"), "title": mr.get("title"), "web_url": mr.get("web_url"), "state": mr.get("state")}
 
 
+# ── Living Documentation ───────────────────────────────────────────
+
+@mcp.tool()
+async def store_knowledge(
+    kind: str,
+    title: str,
+    problem: str = "",
+    solution: str = "",
+    service: str = "",
+    host: str = "",
+    tags: list[str] = [],
+    confidence: float = 0.8,
+    session_id: str = "",
+) -> dict:
+    """Speichert eine Erkenntnis in der Living Documentation (cs-knowledge OpenSearch-Index).
+
+    Nutze dieses Tool proaktiv wenn du:
+    - Ein Problem gelöst hast das wieder auftreten könnte (kind="lesson")
+    - Service-Abhängigkeiten identifiziert hast (kind="dependency")
+    - Ein wiederkehrendes Muster erkannt hast (kind="pattern")
+    - Eine bewährte Vorgehensweise dokumentieren möchtest (kind="runbook")
+
+    Speichere NUR verifizierte Erkenntnisse. confidence < 0.5 → nicht speichern.
+
+    kind: "lesson"|"dependency"|"pattern"|"runbook"
+    confidence: 0.0–1.0 (wie sicher bist du dir?)
+    """
+    from app.services.knowledge_index import store_knowledge as _store
+    doc_id = await _store({
+        "kind": kind, "title": title, "problem": problem,
+        "solution": solution, "service": service, "host": host,
+        "tags": tags, "confidence": confidence,
+        "source": "hermes", "session_id": session_id,
+    })
+    return {"stored": True, "id": doc_id, "kind": kind, "title": title}
+
+
+@mcp.tool()
+async def search_knowledge(
+    query: str,
+    kind: str = "",
+    service: str = "",
+    limit: int = 5,
+) -> list[dict]:
+    """Sucht in der Living Documentation nach bekannten Lösungen und Erkenntnissen.
+
+    Rufe dies auf BEVOR du ein Problem untersuchst — vielleicht wurde es schon gelöst.
+    Gibt Erkenntnisse mit Confidence-Score zurück, höchste zuerst.
+
+    kind: Optional Filter: "lesson"|"dependency"|"pattern"|"runbook"
+    service: Optional Filter auf einen bestimmten Service (z.B. "graylog")
+    """
+    from app.services.knowledge_index import search_knowledge as _search
+    results = await _search(
+        query=query,
+        kind=kind or None,
+        service=service or None,
+        limit=limit,
+    )
+    return results
+
+
+# ── Skill-Bibliothek ───────────────────────────────────────────────
+
+@mcp.tool()
+async def list_skills(tag: str = "") -> list[dict]:
+    """Zeigt alle verfügbaren öffentlichen Skills mit Name und Beschreibung.
+
+    Rufe dies auf wenn du eine komplexe Aufgabe beginnst — vielleicht gibt es
+    bereits einen bewährten Ablauf (Skill) der dir sagt wie du vorgehen sollst.
+
+    Returns: Liste von {name, title, description, tags, version}
+    """
+    from app.services.knowledge_index import list_skills as _list
+    return await _list(tag=tag, include_private=False)
+
+
+@mcp.tool()
+async def get_skill(name: str) -> dict:
+    """Lädt den vollständigen Inhalt eines Skills (Prozedur/Anleitung).
+
+    name: der Slug-Name aus list_skills (z.B. "ssh-diagnose", "docker-restart-sequence")
+    Returns: {name, title, description, content, tags, version} oder {} wenn nicht gefunden.
+    """
+    from app.services.knowledge_index import get_skill as _get
+    result = await _get(name=name)
+    return result or {}
+
+
+@mcp.tool()
+async def store_skill(
+    name: str,
+    title: str,
+    description: str,
+    content: str,
+    tags: list[str] = [],
+    version: str = "1.0",
+) -> dict:
+    """Legt einen neuen Skill oder eine neue Version eines Skills in der Skill-Bibliothek ab.
+
+    Nutze dies nach einer erfolgreichen nicht-trivialen Lösung:
+    - Mehr als 3 Schritte
+    - Wird wahrscheinlich wieder gebraucht
+    - Nicht trivial zu wiederholen ohne Dokumentation
+
+    name: Eindeutiger Slug (z.B. "graylog-restart-sequence", "opensearch-reindex")
+    description: 1–2 Sätze — wann und wofür diesen Skill nutzen?
+    content: Vollständige Anleitung in Markdown
+    """
+    from app.services.knowledge_index import store_skill as _store
+    return await _store(
+        name=name, title=title, description=description,
+        content=content, tags=tags, version=version,
+        author="hermes", user_id="", visibility="public",
+    )
+
+
 # ── DB session helper ──────────────────────────────────────────────
 
 async def _get_db_session():

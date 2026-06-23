@@ -193,6 +193,23 @@ async def enrich_kb_dependencies(db: Any) -> dict:
                     title, service_deps, dependency_of,
                 )
                 enriched += 1
+                # Auch in cs-knowledge speichern — schnellere lokale Abfrage bei Incidents
+                try:
+                    from app.services.knowledge_index import store_knowledge
+                    await store_knowledge({
+                        "kind": "dependency",
+                        "service": service_name,
+                        "title": f"{service_name} hängt ab von: {', '.join(service_deps)}",
+                        "solution": (
+                            f"Abhängigkeiten: {service_deps}. "
+                            f"Benötigt von: {dependency_of}"
+                        ),
+                        "tags": [service_name] + service_deps + ["dependency"],
+                        "source": "topology_enricher",
+                        "confidence": 0.7,
+                    })
+                except Exception as _ke:
+                    log.debug("topology_enricher: cs-knowledge write failed: %s", _ke)
             else:
                 log.debug("topology_enricher: '%s' not updated: %s", title, result.get("message"))
                 skipped += 1
