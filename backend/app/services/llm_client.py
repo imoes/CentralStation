@@ -234,7 +234,7 @@ async def generate_text(
 
     if mode == "codex_responses":
         _codex_base = llm_config.base_url or "https://chatgpt.com/backend-api/codex"
-        url = _build_api_url(_codex_base, "responses")
+        url = _build_api_url(_codex_base, "responses") + "?client_version=1.0.0"
         # Map thinking_mode → Codex reasoning effort. gpt-5.x defaults to HIGH
         # reasoning when no `reasoning` field is sent → slow even for trivial
         # prompts. We make it explicit so it is fast unless thinking is wanted:
