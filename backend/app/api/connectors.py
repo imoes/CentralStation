@@ -24,6 +24,8 @@ VALID_TYPES = {
     "llm", "mcp_server", "awx_ng", "ssh",
 }  # keep in sync with get_connector() factory
 USER_MANAGED_TYPES = {"o365", "teams", "jira", "jira_sd", "gitlab", "llm", "mcp_server", "awx_ng", "ssh"}
+# Types where only one connector per user is allowed (mcp_server + awx_ng allow multiple)
+SINGLETON_USER_TYPES = USER_MANAGED_TYPES - {"mcp_server", "awx_ng"}
 
 
 def _is_admin(user) -> bool:
@@ -83,7 +85,7 @@ async def upsert_my_connector(
         select(ConnectorConfig).where(
             ConnectorConfig.owner_user_id == current_user.id,
             ConnectorConfig.type == connector_type,
-        )
+        ).with_for_update()
     )
     connector = result.scalar_one_or_none()
     if connector:
@@ -256,6 +258,16 @@ async def create_my_connector(
     if data.type not in VALID_TYPES:
         raise HTTPException(400, f"Unknown connector type: {data.type}")
     _assert_can_manage_personal(data.type)
+
+    if data.type in SINGLETON_USER_TYPES:
+        existing = await db.execute(
+            select(ConnectorConfig).where(
+                ConnectorConfig.owner_user_id == current_user.id,
+                ConnectorConfig.type == data.type,
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(409, f"Es existiert bereits ein {data.type}-Connector. Bitte den vorhandenen bearbeiten.")
 
     connector = ConnectorConfig(
         name=data.name,
