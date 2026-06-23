@@ -60,9 +60,14 @@ async def correlate_docs(docs: list[dict], db: AsyncSession) -> None:
             continue
         by_host.setdefault(host, []).append(doc)
 
+    new_incidents: list[tuple[str, str]] = []  # (host, incident_id)
+
     for host, host_docs in by_host.items():
         try:
-            await _correlate_host(host, host_docs, window_start, now, db)
+            new_inc = await _correlate_host(host, host_docs, window_start, now, db)
+            if new_inc:
+                await db.flush()  # incident.id sicherstellen
+                new_incidents.append((host, str(new_inc.id)))
         except Exception as e:
             log.debug("correlate_docs: host %s failed: %s", host, e)
 
@@ -71,6 +76,17 @@ async def correlate_docs(docs: list[dict], db: AsyncSession) -> None:
     except Exception as e:
         log.debug("correlate_docs: commit failed: %s", e)
         await db.rollback()
+        return
+
+    # Kausale Korrelation für neue Incidents (best-effort, nicht-blockierend)
+    if new_incidents:
+        try:
+            from app.services.incident.causal_correlator import enrich_incident_causal_context
+            for host, inc_id in new_incidents:
+                await enrich_incident_causal_context(inc_id, host, db)
+            await db.commit()
+        except Exception as exc:
+            log.debug("correlate_docs: causal enrichment failed: %s", exc)
 
 
 async def _correlate_host(
@@ -79,7 +95,8 @@ async def _correlate_host(
     window_start: datetime,
     now: datetime,
     db: AsyncSession,
-) -> None:
+) -> "Incident | None":
+    """Erstellt oder erweitert einen Incident für host. Gibt neuen Incident zurück (oder None)."""
     sources = {d.get("source", "") for d in docs}
     max_severity = _max_severity({d.get("severity", "info") for d in docs})
     cross_source = len(sources) >= 2
@@ -98,12 +115,13 @@ async def _correlate_host(
     )
     incident = existing.scalar_one_or_none()
 
+    is_new = False
     if incident is None:
         # New incident requires a real cluster: ≥2 alerts OR cross-source.
         # A lone critical alert is just an alert — it lives in the feed,
         # and becomes an incident only once it correlates with something.
         if len(docs) < 2 and not cross_source:
-            return
+            return None
         src_list = "/".join(sorted(s for s in sources if s))
         incident = Incident(
             id=uuid.uuid4(),
@@ -115,6 +133,7 @@ async def _correlate_host(
             updated_at=now,
         )
         db.add(incident)
+        is_new = True
         log.info("correlator: new incident %s for %s (%d docs, %s)",
                  incident.id, host, len(docs), src_list)
     else:
@@ -155,6 +174,8 @@ async def _correlate_host(
     if added:
         log.debug("correlator: +%d members on incident %s (%d total)",
                   added, incident.id, total)
+
+    return incident if is_new else None
 
 
 async def resolve_stale_incidents(db: AsyncSession) -> int:

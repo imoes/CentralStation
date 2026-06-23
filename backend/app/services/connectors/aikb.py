@@ -125,11 +125,44 @@ class AIKBConnector(BaseConnector):
                 data = r.json()
                 answer = data.get("answer") or ""
                 raw_results = data.get("results") or data.get("references") or []
-                results = [self._normalise_hit(h) for h in raw_results[:5]]
+                results = [self._normalise_hit(h) for h in raw_results[:20]]
                 return {"answer": answer, "results": results}
         except Exception as exc:
             log.warning("AIKBConnector.search_rag failed: %s", exc)
             return {"answer": "", "results": []}
+
+    async def update_page_dependencies(
+        self,
+        page_title: str,
+        space_key: str,
+        service_dependencies: list[str],
+        dependency_of: list[str],
+    ) -> dict:
+        """Schreibt strukturierte Service-Abhängigkeiten via it-aikb REST-API zurück.
+
+        Ruft POST /admin/update-page-dependencies auf — it-aikb schreibt direkt
+        in den confluence-pages OpenSearch-Index (service_dependencies, dependency_of).
+        Gibt {"updated": bool, "doc_id": str, "message": str} zurück.
+        """
+        payload = {
+            "page_title": page_title,
+            "space_key": space_key,
+            "service_dependencies": service_dependencies,
+            "dependency_of": dependency_of,
+        }
+        try:
+            async with self._client(timeout=30.0) as client:
+                token = await self._bearer(client)
+                r = await client.post(
+                    f"{self.base_url}/admin/update-page-dependencies",
+                    json=payload,
+                    headers=self._headers(token),
+                )
+                r.raise_for_status()
+                return r.json()
+        except Exception as exc:
+            log.warning("AIKBConnector.update_page_dependencies failed: %s", exc)
+            return {"updated": False, "doc_id": "", "message": str(exc)}
 
     @staticmethod
     def _normalise_hit(h: dict) -> dict:
@@ -137,7 +170,7 @@ class AIKBConnector(BaseConnector):
             "title": h.get("title") or h.get("page_title") or "",
             "content": (
                 h.get("content_snippet") or h.get("text") or h.get("content") or h.get("body") or ""
-            )[:500],
+            )[:4000],
             "source_url": h.get("source_url") or h.get("url") or h.get("link") or "",
             "space_key": h.get("space_key") or h.get("space") or "",
         }
