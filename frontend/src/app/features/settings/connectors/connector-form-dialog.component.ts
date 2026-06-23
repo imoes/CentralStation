@@ -138,12 +138,14 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
       hint: 'Machine Credential für SSH-Zugriff' },
   ],
   llm: [
-    { key: 'api_key',          label: 'API Key',                  type: 'password',
-      hint: 'Leer lassen wenn kein Auth nötig (z.B. lokale Instanz)' },
+    { key: 'api_key',          label: 'API Key / OAuth Bearer Token', type: 'password',
+      hint: 'Leer lassen wenn kein Auth nötig. Bei Codex: OAuth access_token aus Device-Code-Flow.' },
     { key: 'model',            label: 'Modell',                   type: 'text',
-      hint: 'z.B. claude-sonnet-4-6, gpt-4o, llama3.2' },
+      hint: 'z.B. gpt-5.5, gpt-5.4-mini, claude-sonnet-4-6, llama3.2' },
     { key: 'api_mode',         label: 'API Modus',                type: 'select', options: [
         { value: 'chat_completions',   label: 'OpenAI Chat Completions' },
+        { value: 'responses',          label: 'OpenAI Responses API' },
+        { value: 'codex_responses',    label: 'ChatGPT Codex (OAuth Bearer)' },
         { value: 'anthropic_messages', label: 'Anthropic Messages (Claude API)' },
       ]},
     { key: 'timeout_seconds',  label: 'Timeout (Sekunden)',       type: 'text',
