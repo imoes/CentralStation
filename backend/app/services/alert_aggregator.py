@@ -24,6 +24,14 @@ _APP_LEVEL_RE = _re.compile(
     r'\b(DEBUG|INFO|NOTICE|WARNING|WARN|LOG|ERROR|SEVERE|CRITICAL|FATAL)\b',
     _re.IGNORECASE,
 )
+# Kernel audit messages where the operation was ALLOWED/AUDIT are purely
+# informational — AppArmor is recording permitted access, not a denial.
+# They arrive with syslog level=4 (Warning) because the kernel audit
+# facility always uses that level, masking their true info nature.
+_KERNEL_AUDIT_INFO_RE = _re.compile(
+    r'apparmor="(?:ALLOWED|AUDIT)"|audit:\s+type=\d+.*apparmor="ALLOWED"',
+    _re.IGNORECASE,
+)
 _APP_LEVEL_SEVERITY = {
     'debug':    'info',
     'info':     'info',
@@ -240,6 +248,13 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
                 app_sev = _APP_LEVEL_SEVERITY.get(app_match.group(1).lower(), "")
                 if app_sev and _sev_rank.get(app_sev, 99) < _sev_rank.get(syslog_severity, 0):
                     syslog_severity = app_sev  # correct the over-escalated severity
+
+            # Kernel audit ALLOWED entries: AppArmor permitted the operation — not a warning.
+            # The kernel audit facility always uses syslog level=4 (Warning) regardless of
+            # whether the operation was allowed or denied. Reclassify ALLOWED as info so it
+            # is dropped below (only medium+ stays in the feed).
+            if _KERNEL_AUDIT_INFO_RE.search(msg_text):
+                syslog_severity = "info"
 
             # Drop non-actionable noise. Docker GELF stamps ALL container output as
             # syslog level=3, so info/low lines slip past the level:<=4 query above;
