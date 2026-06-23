@@ -477,15 +477,42 @@ def delete_session(sid: str):
     return {"ok": True}
 
 
+def _find_lineage_tip(db, sid: str) -> str:
+    """Walk child-session chain and return the leaf (tip) session ID.
+
+    Hermes branches a new session each time run_conversation() is called with
+    conversation_history=[…].  The new session's parent_session_id points to
+    the CentralStation UUID.  Walking to the tip and fetching with
+    include_ancestors=True gives the complete, deduplicated conversation.
+    """
+    current = sid
+    seen = {current}
+    while True:
+        try:
+            row = db._conn.execute(
+                "SELECT id FROM sessions WHERE parent_session_id = ? ORDER BY rowid DESC LIMIT 1",
+                (current,),
+            ).fetchone()
+        except Exception:
+            break
+        if not row or row[0] in seen:
+            break
+        seen.add(row[0])
+        current = row[0]
+    return current
+
+
 @app.get("/sessions/{sid}/history")
 def get_history(sid: str):
     # Always read from SessionDB — it is the authoritative source.
-    # The agent's in-memory conversation_history is loaded lazily on the first
-    # run_conversation() call and is empty for freshly restored sessions.
+    # Hermes branches child sessions when run_conversation() is called with
+    # conversation_history=[…] — walk to the lineage tip and include ancestors
+    # so all turns (parent + child branches) appear in the returned history.
     try:
         from hermes_state import SessionDB
         db = SessionDB()
-        history = db.get_messages_as_conversation(sid)
+        tip = _find_lineage_tip(db, sid)
+        history = db.get_messages_as_conversation(tip, include_ancestors=(tip != sid))
         if history:
             return history
     except Exception as exc:
@@ -695,7 +722,11 @@ async def send_message(sid: str, body: MessageBody):
             # SessionDB.get_messages_as_conversation() returns the full history for
             # this session_id, surviving container restarts (state.db is host-mounted).
             db = getattr(agent, "_session_db", None)
-            history = db.get_messages_as_conversation(sid) if db else []
+            if db:
+                tip = _find_lineage_tip(db, sid)
+                history = db.get_messages_as_conversation(tip, include_ancestors=(tip != sid))
+            else:
+                history = []
             # Tool/reasoning callbacks are AIAgent attributes, NOT run_conversation
             # kwargs — only stream_callback is accepted by run_conversation. Set the
             # progress callback on the agent right before the run (requests to a
