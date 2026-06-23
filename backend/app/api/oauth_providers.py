@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, RequireAdmin
+from app.api.deps import get_db, RequireAdmin, CurrentUser
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
 log = logging.getLogger(__name__)
@@ -525,3 +525,217 @@ async def get_claude_access_token(db: AsyncSession) -> str | None:
         except Exception as e:
             log.warning("claude auto-refresh failed: %s", e)
     return access
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Per-user OAuth flows (no admin required) — tokens returned to frontend,
+# stored by the caller in the connector's encrypted_credentials (api_key field).
+# ══════════════════════════════════════════════════════════════════════════════
+
+_user_codex_sessions: dict[str, dict] = {}
+_user_claude_sessions: dict[str, dict] = {}
+
+
+@router.post("/openai-codex/user/start")
+async def user_codex_start(user: CurrentUser):
+    """Start Device Code flow for a personal LLM connector (any authenticated user)."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(
+            f"{CODEX_ISSUER}{CODEX_USERCODE_EP}",
+            json={"client_id": CODEX_CLIENT_ID},
+            headers={"Content-Type": "application/json"},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(502, f"OpenAI device code request failed: HTTP {resp.status_code}")
+
+    data = resp.json()
+    user_code      = data.get("user_code", "")
+    device_auth_id = data.get("device_auth_id", "")
+    interval       = max(3, int(data.get("interval", CODEX_POLL_SECS)))
+
+    if not user_code or not device_auth_id:
+        raise HTTPException(502, "Invalid response from OpenAI device auth endpoint")
+
+    session_id = str(uuid.uuid4())
+    _user_codex_sessions[session_id] = {
+        "user_id": str(user.id),
+        "device_auth_id": device_auth_id,
+        "user_code": user_code,
+        "interval": interval,
+        "started_at": time.monotonic(),
+        "status": "pending",
+    }
+
+    return {
+        "session_id": session_id,
+        "user_code": user_code,
+        "verification_uri": CODEX_DEVICE_URL,
+        "expires_in_minutes": CODEX_TIMEOUT_MIN,
+        "poll_interval_seconds": interval,
+    }
+
+
+@router.post("/openai-codex/user/poll/{session_id}")
+async def user_codex_poll(session_id: str, user: CurrentUser):
+    """Poll for Device Code completion. Returns tokens on success — caller stores them.
+
+    Response: {status: 'pending'|'authorized'|'timeout'|'error', access_token?, refresh_token?}
+    """
+    session = _user_codex_sessions.get(session_id)
+    if not session:
+        raise HTTPException(404, "Auth session not found or expired")
+    if session["user_id"] != str(user.id):
+        raise HTTPException(403, "Session belongs to another user")
+
+    if session["status"] != "pending":
+        return {"status": session["status"]}
+
+    if time.monotonic() - session["started_at"] > CODEX_TIMEOUT_MIN * 60:
+        session["status"] = "timeout"
+        _user_codex_sessions.pop(session_id, None)
+        return {"status": "timeout"}
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        poll_resp = await client.post(
+            f"{CODEX_ISSUER}{CODEX_POLL_EP}",
+            json={
+                "device_auth_id": session["device_auth_id"],
+                "user_code": session["user_code"],
+            },
+            headers={"Content-Type": "application/json"},
+        )
+
+    if poll_resp.status_code in (403, 404):
+        return {"status": "pending"}
+
+    if poll_resp.status_code != 200:
+        session["status"] = "error"
+        _user_codex_sessions.pop(session_id, None)
+        raise HTTPException(502, f"Polling error: HTTP {poll_resp.status_code}")
+
+    code_data          = poll_resp.json()
+    authorization_code = code_data.get("authorization_code", "")
+    code_verifier      = code_data.get("code_verifier", "")
+
+    if not authorization_code or not code_verifier:
+        return {"status": "pending"}
+
+    redirect_uri = f"{CODEX_ISSUER}/deviceauth/callback"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        token_resp = await client.post(
+            CODEX_TOKEN_URL,
+            data={
+                "grant_type":    "authorization_code",
+                "code":          authorization_code,
+                "redirect_uri":  redirect_uri,
+                "client_id":     CODEX_CLIENT_ID,
+                "code_verifier": code_verifier,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+    if token_resp.status_code != 200:
+        session["status"] = "error"
+        _user_codex_sessions.pop(session_id, None)
+        raise HTTPException(502, f"Token exchange failed: HTTP {token_resp.status_code}")
+
+    tokens        = token_resp.json()
+    access_token  = tokens.get("access_token", "")
+    refresh_token = tokens.get("refresh_token", "")
+
+    if not access_token:
+        session["status"] = "error"
+        _user_codex_sessions.pop(session_id, None)
+        raise HTTPException(502, "No access_token in token exchange response")
+
+    _user_codex_sessions.pop(session_id, None)
+    return {
+        "status": "authorized",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+    }
+
+
+@router.post("/claude-oauth/user/start")
+async def user_claude_start(user: CurrentUser):
+    """Start PKCE authorization flow for a personal LLM connector."""
+    verifier, challenge = _pkce_pair()
+    state = secrets.token_urlsafe(24)
+    session_id = str(uuid.uuid4())
+    _user_claude_sessions[session_id] = {
+        "user_id": str(user.id),
+        "verifier": verifier,
+        "state": state,
+        "started_at": time.monotonic(),
+    }
+    params = {
+        "code": "true",
+        "client_id": CLAUDE_CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": CLAUDE_REDIRECT_URI,
+        "scope": CLAUDE_SCOPES,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "state": state,
+    }
+    from urllib.parse import urlencode
+    authorize_url = f"{CLAUDE_AUTHORIZE_URL}?{urlencode(params)}"
+    return {
+        "session_id": session_id,
+        "authorize_url": authorize_url,
+        "expires_in_minutes": 15,
+    }
+
+
+class _UserClaudeCompleteBody(BaseModel):
+    session_id: str
+    code: str
+
+
+@router.post("/claude-oauth/user/complete")
+async def user_claude_complete(body: _UserClaudeCompleteBody, user: CurrentUser):
+    """Exchange the authorization code for tokens. Returns them — caller stores in connector."""
+    session = _user_claude_sessions.get(body.session_id)
+    if not session:
+        raise HTTPException(404, "Auth-Session nicht gefunden oder abgelaufen")
+    if session["user_id"] != str(user.id):
+        raise HTTPException(403, "Session belongs to another user")
+
+    raw = body.code.strip()
+    code_part = raw
+    state_part = session["state"]
+    if "#" in raw:
+        code_part, state_part = raw.split("#", 1)
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        token_resp = await client.post(
+            CLAUDE_TOKEN_URL,
+            json={
+                "grant_type":    "authorization_code",
+                "code":          code_part,
+                "state":         state_part,
+                "client_id":     CLAUDE_CLIENT_ID,
+                "redirect_uri":  CLAUDE_REDIRECT_URI,
+                "code_verifier": session["verifier"],
+            },
+            headers={"Content-Type": "application/json"},
+        )
+
+    if token_resp.status_code != 200:
+        raise HTTPException(502, f"Claude Token-Austausch fehlgeschlagen: HTTP {token_resp.status_code}")
+
+    tokens        = token_resp.json()
+    access_token  = tokens.get("access_token", "")
+    refresh_token = tokens.get("refresh_token", "")
+    expires_in    = int(tokens.get("expires_in", 0))
+
+    if not access_token:
+        raise HTTPException(502, "Kein access_token in Claude Token-Antwort")
+
+    _user_claude_sessions.pop(body.session_id, None)
+    return {
+        "status": "authorized",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "expires_at": _claude_expires_at_iso(expires_in),
+    }

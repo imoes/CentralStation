@@ -22,6 +22,8 @@ interface CredField {
   hint?: string;
   options?: { value: string; label: string }[];
 }
+interface OAuthSession { session_id: string; user_code: string; verification_uri: string; expires_in_minutes: number; poll_interval_seconds: number; }
+interface ClaudeOAuthSession { session_id: string; authorize_url: string; }
 interface CorootProject { id: string; name: string; selected: boolean }
 
 const PERSONAL_CONNECTOR_TYPES_LIST: { value: ConnectorType; label: string }[] = [
@@ -270,6 +272,85 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
 
         <mat-slide-toggle formControlName="enabled">Aktiviert</mat-slide-toggle>
 
+        <!-- ── LLM OAuth (Codex Device Code / Claude PKCE) ─────────── -->
+        @if (isLlmType() && llmNeedsOAuth()) {
+          <div class="ms-auth-section">
+            <div class="ms-auth-title">
+              <mat-icon>key</mat-icon>
+              <span>{{ llmApiMode() === 'codex_responses' ? 'OpenAI Codex — Login' : 'Claude — OAuth Login' }}</span>
+            </div>
+
+            @if (llmOAuthStatus() === 'idle') {
+              <p class="ms-auth-hint">
+                @if (llmApiMode() === 'codex_responses') {
+                  Klicke auf „Anmelden", öffne den Link und gib den Code ein. Das Token wird automatisch in das API-Key-Feld eingetragen.
+                } @else {
+                  Klicke auf „Anmelden", autorisiere bei Claude und kopiere den angezeigten Code.
+                }
+              </p>
+              <button type="button" mat-stroked-button color="primary"
+                      [disabled]="llmOAuthLoading()"
+                      (click)="startLlmOAuth()">
+                @if (llmOAuthLoading()) { <mat-spinner diameter="16"></mat-spinner> }
+                @else { <mat-icon>login</mat-icon> }
+                {{ llmApiMode() === 'codex_responses' ? 'Mit OpenAI anmelden' : 'Mit Claude anmelden' }}
+              </button>
+            }
+
+            @if (llmOAuthStatus() === 'waiting') {
+              <div class="ms-device-code-box">
+                <p>Öffne <a [href]="llmOAuthVerificationUrl()" target="_blank" rel="noopener"><strong>{{ llmOAuthVerificationUrl() }}</strong></a> und gib diesen Code ein:</p>
+                <div class="ms-user-code">{{ llmOAuthUserCode() }}</div>
+                <p class="ms-poll-hint">Warte auf Bestätigung…</p>
+                <mat-spinner diameter="20"></mat-spinner>
+                <button mat-button (click)="cancelLlmOAuth()">Abbrechen</button>
+              </div>
+            }
+
+            @if (llmOAuthStatus() === 'claude-input') {
+              <div class="ms-device-code-box">
+                <p class="ms-poll-hint">1. Öffne den Link und melde dich bei Claude an.<br>2. Kopiere den angezeigten Code und füge ihn unten ein.</p>
+                <a [href]="llmClaudeUrl()" target="_blank" rel="noopener">
+                  <button type="button" mat-stroked-button>
+                    <mat-icon>open_in_new</mat-icon> Bei Claude anmelden
+                  </button>
+                </a>
+                <mat-form-field appearance="outline" class="full-width" style="margin-top:8px">
+                  <mat-label>Autorisierungs-Code</mat-label>
+                  <input matInput [value]="llmClaudeCode()" (input)="llmClaudeCode.set($any($event.target).value)"
+                         placeholder="Code aus dem Browser">
+                </mat-form-field>
+                <div style="display:flex;gap:8px">
+                  <button type="button" mat-raised-button color="primary"
+                          [disabled]="llmOAuthLoading() || !llmClaudeCode()"
+                          (click)="completeLlmClaudeOAuth()">
+                    @if (llmOAuthLoading()) { <mat-spinner diameter="16"></mat-spinner> }
+                    @else { <mat-icon>check</mat-icon> }
+                    Code bestätigen
+                  </button>
+                  <button type="button" mat-button (click)="cancelLlmOAuth()">Abbrechen</button>
+                </div>
+              </div>
+            }
+
+            @if (llmOAuthStatus() === 'authorized') {
+              <div class="ms-success">
+                <mat-icon>check_circle</mat-icon>
+                <span>Erfolgreich angemeldet — Token im API-Key-Feld eingetragen. Jetzt speichern!</span>
+              </div>
+              <button type="button" mat-button (click)="cancelLlmOAuth()">Zurücksetzen</button>
+            }
+
+            @if (llmOAuthStatus() === 'error') {
+              <div class="ms-error">
+                <mat-icon>error</mat-icon>
+                <span>{{ llmOAuthError() }}</span>
+                <button type="button" mat-button (click)="cancelLlmOAuth()">Erneut versuchen</button>
+              </div>
+            }
+          </div>
+        }
+
         <!-- ── Microsoft Delegated Auth (O365 / Teams) ───────────── -->
         @if (isMicrosoftType()) {
           <div class="ms-auth-section">
@@ -404,6 +485,18 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
   private msDeviceCode = '';
   private msPollInterval: ReturnType<typeof setInterval> | null = null;
 
+  // LLM OAuth state (Codex + Claude)
+  llmOAuthStatus = signal<'idle' | 'waiting' | 'authorized' | 'error' | 'claude-input'>('idle');
+  llmOAuthLoading = signal(false);
+  llmOAuthUserCode = signal('');
+  llmOAuthVerificationUrl = signal('');
+  llmOAuthError = signal('');
+  llmClaudeUrl = signal('');
+  llmClaudeSessionId = signal('');
+  llmClaudeCode = signal('');
+  private llmOAuthPollInterval: ReturnType<typeof setInterval> | null = null;
+  private llmOAuthSessionId = '';
+
   constructor(
     private fb: FormBuilder,
     private svc: ConnectorService,
@@ -426,6 +519,18 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
 
   isCorootType(): boolean {
     return this.form?.get('type')?.value === 'coroot';
+  }
+
+  isLlmType(): boolean {
+    return this.form?.get('type')?.value === 'llm';
+  }
+
+  llmApiMode(): string {
+    return this.form?.get('cred_api_mode')?.value ?? '';
+  }
+
+  llmNeedsOAuth(): boolean {
+    return ['codex_responses', 'anthropic_messages'].includes(this.llmApiMode());
   }
 
   loadCorootProjects() {
@@ -477,6 +582,7 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this._stopPolling();
+    this._stopLlmOAuthPolling();
   }
 
   ngOnInit() {
@@ -743,5 +849,121 @@ export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
     this._stopPolling();
     this.msAuthStatus.set('idle');
     this.msDeviceCode = '';
+  }
+
+  // ── LLM OAuth (Codex Device Code / Claude PKCE) ─────────────────────────
+
+  startLlmOAuth() {
+    const mode = this.llmApiMode();
+    if (mode === 'codex_responses') {
+      this._startCodexOAuth();
+    } else if (mode === 'anthropic_messages') {
+      this._startClaudeOAuth();
+    }
+  }
+
+  private _startCodexOAuth() {
+    this.llmOAuthLoading.set(true);
+    this.llmOAuthError.set('');
+    this.http.post<OAuthSession>(`${environment.apiUrl}/oauth/openai-codex/user/start`, {})
+      .subscribe({
+        next: s => {
+          this.llmOAuthLoading.set(false);
+          this.llmOAuthSessionId = s.session_id;
+          this.llmOAuthUserCode.set(s.user_code);
+          this.llmOAuthVerificationUrl.set(s.verification_uri);
+          this.llmOAuthStatus.set('waiting');
+          const ms = (s.poll_interval_seconds ?? 5) * 1000;
+          this.llmOAuthPollInterval = setInterval(() => this._pollCodexOAuth(), ms);
+        },
+        error: err => {
+          this.llmOAuthLoading.set(false);
+          this.llmOAuthError.set(err?.error?.detail ?? 'OpenAI nicht erreichbar');
+          this.llmOAuthStatus.set('error');
+        },
+      });
+  }
+
+  private _pollCodexOAuth() {
+    this.http.post<{ status: string; access_token?: string; refresh_token?: string }>(
+      `${environment.apiUrl}/oauth/openai-codex/user/poll/${this.llmOAuthSessionId}`, {}
+    ).subscribe({
+      next: r => {
+        if (r.status === 'authorized' && r.access_token) {
+          this._stopLlmOAuthPolling();
+          this.form.get('cred_api_key')?.setValue(r.access_token);
+          this.llmOAuthStatus.set('authorized');
+        } else if (r.status === 'timeout') {
+          this._stopLlmOAuthPolling();
+          this.llmOAuthError.set('Zeit abgelaufen — bitte erneut versuchen.');
+          this.llmOAuthStatus.set('error');
+        } else if (r.status === 'error') {
+          this._stopLlmOAuthPolling();
+          this.llmOAuthError.set('Fehler beim Anmelden.');
+          this.llmOAuthStatus.set('error');
+        }
+      },
+      error: () => { /* network blip — keep polling */ },
+    });
+  }
+
+  private _startClaudeOAuth() {
+    this.llmOAuthLoading.set(true);
+    this.llmOAuthError.set('');
+    this.http.post<ClaudeOAuthSession>(`${environment.apiUrl}/oauth/claude-oauth/user/start`, {})
+      .subscribe({
+        next: s => {
+          this.llmOAuthLoading.set(false);
+          this.llmClaudeSessionId.set(s.session_id);
+          this.llmClaudeUrl.set(s.authorize_url);
+          this.llmClaudeCode.set('');
+          this.llmOAuthStatus.set('claude-input');
+        },
+        error: err => {
+          this.llmOAuthLoading.set(false);
+          this.llmOAuthError.set(err?.error?.detail ?? 'Claude nicht erreichbar');
+          this.llmOAuthStatus.set('error');
+        },
+      });
+  }
+
+  completeLlmClaudeOAuth() {
+    const code = this.llmClaudeCode().trim();
+    const sid  = this.llmClaudeSessionId();
+    if (!code || !sid) return;
+    this.llmOAuthLoading.set(true);
+    this.http.post<{ status: string; access_token: string }>(
+      `${environment.apiUrl}/oauth/claude-oauth/user/complete`,
+      { session_id: sid, code }
+    ).subscribe({
+      next: r => {
+        this.llmOAuthLoading.set(false);
+        if (r.access_token) {
+          this.form.get('cred_api_key')?.setValue(r.access_token);
+          this.llmOAuthStatus.set('authorized');
+        }
+      },
+      error: err => {
+        this.llmOAuthLoading.set(false);
+        this.llmOAuthError.set(err?.error?.detail ?? 'Code ungültig oder abgelaufen');
+        this.llmOAuthStatus.set('error');
+      },
+    });
+  }
+
+  cancelLlmOAuth() {
+    this._stopLlmOAuthPolling();
+    this.llmOAuthStatus.set('idle');
+    this.llmOAuthSessionId = '';
+    this.llmOAuthUserCode.set('');
+    this.llmClaudeUrl.set('');
+    this.llmClaudeCode.set('');
+  }
+
+  private _stopLlmOAuthPolling() {
+    if (this.llmOAuthPollInterval) {
+      clearInterval(this.llmOAuthPollInterval);
+      this.llmOAuthPollInterval = null;
+    }
   }
 }
