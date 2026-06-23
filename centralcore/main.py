@@ -342,6 +342,13 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
     api_key    = cfg.llm_api_key  or os.getenv("LLM_API_KEY")
     api_mode   = cfg.llm_api_mode or os.getenv("LLM_API_MODE", "chat_completions")
 
+    # Hermes extracts query params from base_url via _extract_url_query_params()
+    # and forwards them as default_query to every SDK call.  The Codex
+    # /responses endpoint requires client_version as a query parameter.
+    if api_mode == "codex_responses" and base_url and "client_version" not in base_url:
+        sep = "&" if "?" in base_url else "?"
+        base_url = base_url.rstrip("/") + sep + "client_version=1.0.0"
+
     # Hermes requires api_key AND base_url for explicit-creds path.
     # Local endpoints have no key — use a placeholder so the condition holds.
     if base_url and not api_key:
