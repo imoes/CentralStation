@@ -11,7 +11,7 @@ import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -929,6 +929,7 @@ async def incident_timeline(
             "status": inc.status,
             "created_at": inc.created_at.isoformat(),
             "member_count": len(ext_ids),
+            "causal_context": inc.causal_context or [],
         },
         "timeline": timeline,
     }
@@ -1489,3 +1490,37 @@ async def create_ticket(
         log.debug("create_ticket: timeline record failed: %s", e)
 
     return {"ok": True, "jira_key": jira_key, "url": url}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Topology enricher — Service-Abhängigkeiten aus KB-Seiten extrahieren
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/topology/enrich")
+async def trigger_topology_enrichment(
+    background_tasks: BackgroundTasks,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Startet den Topology-Enricher als Background-Task (Admin only).
+
+    Liest alle [KB] Confluence-Seiten via it-aikb RAG und schreibt erkannte
+    Service-Abhängigkeiten als strukturierte Felder zurück (service_dependencies,
+    dependency_of). Ermöglicht danach kausale Incident-Korrelation.
+    """
+    if user.role not in ("admin", "sysadmin"):
+        raise HTTPException(403, "Nur Admins dürfen den Topology-Enricher starten")
+
+    from app.services.topology_enricher import enrich_kb_dependencies
+    from app.core.database import AsyncSessionLocal
+
+    async def _run() -> None:
+        async with AsyncSessionLocal() as bg_db:
+            try:
+                result = await enrich_kb_dependencies(bg_db)
+                log.info("topology_enricher finished: %s", result)
+            except Exception as exc:
+                log.error("topology_enricher failed: %s", exc)
+
+    background_tasks.add_task(_run)
+    return {"status": "started", "message": "Topology-Enricher läuft im Hintergrund"}
