@@ -15,9 +15,9 @@ class LLMConnector(BaseConnector):
 
         if api_mode == "anthropic_messages":
             return await self._test_anthropic(api_key, model, timeout)
-        return await self._test_openai(api_key, model, timeout)
+        return await self._test_openai(api_key, model, timeout, api_mode=api_mode)
 
-    async def _test_openai(self, api_key: str, model: str, timeout: float) -> ConnectorTestResult:
+    async def _test_openai(self, api_key: str, model: str, timeout: float, *, api_mode: str = "chat_completions") -> ConnectorTestResult:
         if not self.base_url:
             return ConnectorTestResult(success=False, message="Base URL fehlt")
 
@@ -25,10 +25,15 @@ class LLMConnector(BaseConnector):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
+        base = self.base_url.rstrip("/")
+        models_url = f"{base}/models"
+        if api_mode == "codex_responses" and "client_version" not in models_url:
+            models_url += "?client_version=1.0.0"
+
         # Try /models first (cheap, no token cost)
         try:
             async with self._client(timeout=timeout) as client:
-                r = await client.get(f"{self.base_url}/models", headers=headers)
+                r = await client.get(models_url, headers=headers)
             if r.status_code in (200, 404):
                 # 404 = no /models endpoint (some local servers) but reachable
                 return ConnectorTestResult(
