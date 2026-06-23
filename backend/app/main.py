@@ -43,7 +43,7 @@ def _configure_logging() -> None:
 _configure_logging()
 logger = logging.getLogger("app.main")
 
-from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, audit, preferences, jira_view, workflow, feed, feed_searches, dashboard_widgets, bridge, help as help_router, hosts, tickets, topology
+from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, audit, preferences, jira_view, workflow, feed, feed_searches, dashboard_widgets, bridge, help as help_router, hosts, tickets, topology, skills as skills_router
 from app.api import settings as settings_router
 from app.api import oauth_providers, centralcore_proxy, remediation, ide, awx_ng
 from app.api.mcp_server import mcp
@@ -67,6 +67,13 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning("OpenSearch index setup deferred: %s", exc)
+    # Ensure Living Documentation indices (cs-knowledge, cs-skills)
+    try:
+        from app.services.knowledge_index import ensure_knowledge_indices
+        await ensure_knowledge_indices()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Knowledge index setup deferred: %s", exc)
     yield
     stop_scheduler()
     await close_redis()
@@ -117,6 +124,7 @@ app.include_router(topology.router, prefix="/api")
 app.include_router(remediation.router, prefix="/api")
 app.include_router(ide.router, prefix="/api")
 app.include_router(awx_ng.router, prefix="/api")
+app.include_router(skills_router.router, prefix="/api")
 app.include_router(ws.router, prefix="/api")
 
 # fastmcp sse_app() has no HEAD handler — Hermes probes with HEAD before
