@@ -23,6 +23,9 @@ class LLMConfig:
         # no base_url required, just a model + OAuth token.
         if self.api_mode == "anthropic_messages":
             return bool(self.model and self.api_key)
+        # codex_responses has a built-in default URL — base_url optional
+        if self.api_mode == "codex_responses":
+            return bool(self.model and self.api_key)
         return bool(self.base_url and self.model)
 
 
