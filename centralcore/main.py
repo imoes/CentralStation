@@ -261,6 +261,11 @@ SYSTEM_PROMPT = (
     "  )\n"
     "Speichere auch erkannte Service-Abhängigkeiten (kind='dependency').\n"
     "Speichere NUR verifizierte Erkenntnisse — confidence < 0.5 → nicht speichern.\n\n"
+    "**Wenn eine Erkenntnis veraltet oder falsch ist:** Zuerst search_knowledge aufrufen\n"
+    "um die doc_id zu ermitteln, dann:\n"
+    "  update_knowledge(doc_id='...', solution='neue/korrigierte Lösung', confidence=0.9)\n"
+    "Oder wenn komplett irrelevant — erst Nutzer fragen, dann:\n"
+    "  forget_knowledge(doc_id='...')\n\n"
 
     "## SKILL-BIBLIOTHEK — BEWÄHRTE ABLÄUFE:\n"
     "Du hast Zugriff auf list_skills, get_skill und store_skill.\n\n"

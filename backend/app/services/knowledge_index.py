@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from app.core.opensearch import get_opensearch
@@ -299,6 +299,116 @@ async def store_skill(
     except Exception as exc:
         log.warning("knowledge_index: store_skill failed: %s", exc)
         return {"updated": False, "id": "", "name": name, "error": str(exc)}
+
+
+async def update_knowledge(doc_id: str, **fields) -> bool:
+    """Patch-Update einer Erkenntnis (nur übergebene Felder werden geändert)."""
+    os_client = get_opensearch()
+    patch = {k: v for k, v in fields.items() if v not in (None, "", [], 0.0)}
+    if not patch:
+        return False
+    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        await os_client.update(
+            index=CS_KNOWLEDGE_INDEX, id=doc_id, body={"doc": patch}
+        )
+        log.info("knowledge_index: updated %s (%s)", doc_id, list(patch.keys()))
+        return True
+    except Exception as exc:
+        log.warning("knowledge_index: update_knowledge failed: %s", exc)
+        return False
+
+
+async def forget_knowledge(doc_id: str) -> bool:
+    """Löscht eine einzelne Erkenntnis dauerhaft."""
+    os_client = get_opensearch()
+    try:
+        await os_client.delete(index=CS_KNOWLEDGE_INDEX, id=doc_id)
+        log.info("knowledge_index: deleted %s", doc_id)
+        return True
+    except Exception as exc:
+        log.warning("knowledge_index: forget_knowledge failed: %s", exc)
+        return False
+
+
+async def expire_old_knowledge(
+    days_lesson: int = 90,
+    days_pattern: int = 180,
+) -> int:
+    """Löscht abgelaufene Erkenntnisse (lesson + pattern).
+
+    dependency und runbook laufen nie automatisch ab.
+    Sonderregeln:
+    - confidence < 0.5 → TTL ÷ 3 (minimum 30 Tage)
+    - vote_score > 0   → TTL × 2
+    """
+    os_client = get_opensearch()
+    now = datetime.now(timezone.utc)
+    total = 0
+
+    for kind, base_days in (("lesson", days_lesson), ("pattern", days_pattern)):
+        cutoff_normal   = (now - timedelta(days=base_days)).isoformat()
+        cutoff_low_conf = (now - timedelta(days=max(30, base_days // 3))).isoformat()
+        cutoff_voted    = (now - timedelta(days=base_days * 2)).isoformat()
+
+        queries = [
+            # Normale Einträge (confidence ≥ 0.5, kein Vote)
+            {"bool": {"filter": [
+                {"term": {"kind": kind}},
+                {"range": {"updated_at": {"lt": cutoff_normal}}},
+                {"range": {"confidence": {"gte": 0.5}}},
+                {"range": {"vote_score": {"lte": 0}}},
+            ]}},
+            # Low-confidence (< 0.5) — kürzere TTL
+            {"bool": {"filter": [
+                {"term": {"kind": kind}},
+                {"range": {"updated_at": {"lt": cutoff_low_conf}}},
+                {"range": {"confidence": {"lt": 0.5}}},
+                {"range": {"vote_score": {"lte": 0}}},
+            ]}},
+            # Voted (vote_score > 0) — längere TTL
+            {"bool": {"filter": [
+                {"term": {"kind": kind}},
+                {"range": {"updated_at": {"lt": cutoff_voted}}},
+                {"range": {"vote_score": {"gt": 0}}},
+            ]}},
+        ]
+        for q in queries:
+            try:
+                resp = await os_client.delete_by_query(
+                    index=CS_KNOWLEDGE_INDEX,
+                    body={"query": q},
+                    params={"conflicts": "proceed"},
+                )
+                total += resp.get("deleted", 0)
+            except Exception as exc:
+                log.warning("knowledge_index: expire_old_knowledge (%s) failed: %s", kind, exc)
+
+    if total:
+        log.info("knowledge_index: expired %d old knowledge entries", total)
+    return total
+
+
+async def expire_disabled_skills(days: int = 30) -> int:
+    """Hard-delete für soft-gelöschte Skills (enabled=False) nach N Tagen."""
+    os_client = get_opensearch()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    try:
+        resp = await os_client.delete_by_query(
+            index=CS_SKILLS_INDEX,
+            body={"query": {"bool": {"filter": [
+                {"term": {"enabled": False}},
+                {"range": {"updated_at": {"lt": cutoff}}},
+            ]}}},
+            params={"conflicts": "proceed"},
+        )
+        deleted = resp.get("deleted", 0)
+        if deleted:
+            log.info("knowledge_index: hard-deleted %d disabled skills", deleted)
+        return deleted
+    except Exception as exc:
+        log.warning("knowledge_index: expire_disabled_skills failed: %s", exc)
+        return 0
 
 
 async def delete_skill(name: str, user_id: str = "", is_admin: bool = False) -> bool:
