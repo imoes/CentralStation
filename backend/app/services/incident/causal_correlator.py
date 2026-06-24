@@ -1,8 +1,8 @@
 """Kausale Incident-Korrelation via it-aikb Service-Abhängigkeiten.
 
 Wenn ein neuer Incident für Host X erstellt wird:
-  1. it-aikb OpenSearch nach KB-Seite für X befragen
-  2. service_dependencies lesen (was benötigt X?)
+  1. it-aikb OpenSearch (confluence-pages Index) nach KB-Seite für X befragen
+  2. service_dependencies lesen (via update_page_dependencies gepflegt)
   3. Für jede Dependency: gibt es bereits einen offenen Incident?
   4. Wenn ja: causal_context im neuen Incident setzen
 
@@ -69,49 +69,27 @@ async def find_causal_incidents(
     if not service_name or len(service_name) < 3:
         return []
 
-    # 1. Zuerst cs-knowledge (schnell, lokal, kein externer Request)
+    # Service-Abhängigkeiten aus it-aikb OpenSearch (confluence-pages Index)
     service_deps: list[str] = []
     try:
-        from app.services.knowledge_index import search_knowledge
-        cs_hits = await search_knowledge(
-            query=service_name,
-            kind="dependency",
-            service=service_name,
-            limit=3,
+        hits = await conn.search_opensearch(
+            query=f"[KB] {service_name}",
+            space_keys=["002IT", "MYC"],
+            size=5,
         )
-        for h in cs_hits:
-            # Tags enthalten alle Deps (ohne den Service selbst)
-            for tag in h.get("tags", []):
-                if tag not in (service_name, "dependency") and tag not in service_deps:
-                    service_deps.append(tag)
-        if service_deps:
-            log.debug(
-                "causal_correlator: cs-knowledge Deps für %s: %s", service_name, service_deps
-            )
     except Exception as exc:
-        log.debug("causal_correlator: cs-knowledge-Suche fehlgeschlagen: %s", exc)
+        log.debug("causal_correlator: AIKB-Suche fehlgeschlagen für %s: %s", host, exc)
+        return []
 
-    # 2. Fallback: it-aikb OpenSearch (falls cs-knowledge noch keine Deps hat)
-    if not service_deps:
-        try:
-            hits = await conn.search_opensearch(
-                query=f"[KB] {service_name}",
-                space_keys=["002IT", "MYC"],
-                size=5,
-            )
-        except Exception as exc:
-            log.debug("causal_correlator: AIKB-Suche fehlgeschlagen für %s: %s", host, exc)
-            return []
+    if not hits:
+        log.debug("causal_correlator: keine KB-Seite für service=%s host=%s", service_name, host)
+        return []
 
-        if not hits:
-            log.debug("causal_correlator: keine KB-Seite für service=%s host=%s", service_name, host)
-            return []
-
-        best = next(
-            (h for h in hits if service_name in h.get("title", "").lower()),
-            hits[0],
-        )
-        service_deps = best.get("service_dependencies") or []
+    best = next(
+        (h for h in hits if service_name in h.get("title", "").lower()),
+        hits[0],
+    )
+    service_deps = best.get("service_dependencies") or []
 
     if not service_deps:
         log.debug(
