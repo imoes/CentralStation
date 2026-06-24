@@ -225,6 +225,16 @@ async def run_ide_reaper() -> None:
         logger.debug("IDE reaper skipped: %s", e)
 
 
+async def run_knowledge_housekeeping() -> None:
+    """Löscht abgelaufene Erkenntnisse (lesson/pattern) + hard-deleted Skills."""
+    from app.services.knowledge_index import expire_old_knowledge, expire_disabled_skills
+    deleted_k = await expire_old_knowledge()
+    deleted_s = await expire_disabled_skills()
+    if deleted_k or deleted_s:
+        logger.info("Knowledge housekeeping: %d knowledge + %d skills removed",
+                    deleted_k, deleted_s)
+
+
 async def run_digest_check() -> None:
     """Hourly check — sends email digests to users whose configured time matches now."""
     from datetime import datetime, timezone
@@ -279,6 +289,8 @@ async def start_scheduler() -> None:
                        id="digest_check", replace_existing=True)
     _scheduler.add_job(run_ide_reaper, "interval",
                        minutes=15, id="ide_reaper", replace_existing=True)
+    _scheduler.add_job(run_knowledge_housekeeping, "cron", hour=3, minute=30,
+                       id="knowledge_housekeeping", replace_existing=True)
     _scheduler.start()
     logger.info(
         "APScheduler started — aggregation: %dmin, agent: %dmin, metrics: 5min",

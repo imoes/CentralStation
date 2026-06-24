@@ -977,6 +977,49 @@ async def store_skill(
     )
 
 
+@mcp.tool()
+async def update_knowledge(
+    doc_id: str,
+    title: str = "",
+    problem: str = "",
+    solution: str = "",
+    confidence: float = 0.0,
+    tags: list[str] = [],
+) -> dict:
+    """Aktualisiert eine bestehende Erkenntnis in der Living Documentation (Patch).
+
+    Nur die übergebenen, nicht-leeren Felder werden überschrieben.
+    doc_id: die 'id' aus search_knowledge-Ergebnissen.
+
+    Nutze dies wenn:
+    - Eine Lösung sich geändert hat oder die bisherige falsch/unvollständig war
+    - Du mehr Details zu einer bekannten Erkenntnis ergänzen möchtest
+    Workflow: search_knowledge(...) → doc_id ermitteln → update_knowledge(doc_id, ...)
+    """
+    from app.services.knowledge_index import update_knowledge as _upd
+    ok = await _upd(
+        doc_id,
+        title=title or None,
+        problem=problem or None,
+        solution=solution or None,
+        confidence=confidence if confidence > 0 else None,
+        tags=tags if tags else None,
+    )
+    return {"updated": ok, "id": doc_id}
+
+
+@mcp.tool()
+async def forget_knowledge(doc_id: str) -> dict:
+    """Löscht eine einzelne Erkenntnis dauerhaft aus der Living Documentation.
+
+    doc_id: die 'id' aus search_knowledge-Ergebnissen.
+    Nur aufrufen wenn der Nutzer explizit bittet, eine Erkenntnis zu löschen/vergessen.
+    """
+    from app.services.knowledge_index import forget_knowledge as _forget
+    ok = await _forget(doc_id)
+    return {"deleted": ok, "id": doc_id}
+
+
 # ── DB session helper ──────────────────────────────────────────────
 
 async def _get_db_session():
