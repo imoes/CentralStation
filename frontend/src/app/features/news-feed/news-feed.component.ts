@@ -2121,14 +2121,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
 
   relTime(iso: string): string {
     if (!iso) return '';
-    const d = new Date(iso);
-    const diff = Date.now() - d.getTime();
-    const mins = Math.floor(diff / 60_000);
-    if (mins < 1)  return 'gerade eben';
-    if (mins < 60) return `vor ${mins} Min.`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24)  return `vor ${hrs} Std.`;
-    return d.toLocaleString('de-DE', {
+    return new Date(iso).toLocaleString('de-DE', {
       day: '2-digit', month: '2-digit', year: 'numeric',
       hour: '2-digit', minute: '2-digit',
     });
