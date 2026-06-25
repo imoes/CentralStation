@@ -470,7 +470,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                 <span class="lh-loc">{{ item.location_name }}</span>
               }
               <span class="lh-spacer"></span>
-              <span class="lh-time">{{ relTime(item.created_at) }}</span>
+              <span class="lh-time" [title]="absTime(item.created_at)">{{ relTime(item.created_at) }}</span>
               @if (item.status === 'acknowledged') {
                 <span class="lh-ack">✓</span>
               }
@@ -533,7 +533,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                     </span>
                   }
                 </div>
-                <span class="timestamp" [title]="item.created_at">{{ relTime(item.created_at) }}</span>
+                <span class="timestamp" [title]="absTime(item.created_at)">{{ relTime(item.created_at) }}</span>
               </div>
               @if (item.status === 'acknowledged') {
                 <span class="ack-stamp"><mat-icon>check_circle</mat-icon> Bestätigt</span>
@@ -690,7 +690,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                         <div class="ce-body">
                           <span class="ce-author">{{ entry.user_name }}</span>
                           <span class="ce-text">{{ entry.body }}</span>
-                          <span class="ce-time">{{ relTime(entry.created_at) }}</span>
+                          <span class="ce-time" [title]="absTime(entry.created_at)">{{ relTime(entry.created_at) }}</span>
                         </div>
                       } @else if (entry.kind === 'ai') {
                         <mat-icon class="ce-icon ce-ai">smart_toy</mat-icon>
@@ -709,11 +709,11 @@ const SEVERITY_COLOR: Record<string, string> = {
                               }
                             </div>
                           }
-                          <span class="ce-time">{{ relTime(entry.created_at) }}</span>
+                          <span class="ce-time" [title]="absTime(entry.created_at)">{{ relTime(entry.created_at) }}</span>
                         </div>
                       } @else {
                         <mat-icon class="ce-icon ce-system">info_outline</mat-icon>
-                        <div class="ce-body ce-system-text">{{ entry.body }} · {{ relTime(entry.created_at) }}</div>
+                        <div class="ce-body ce-system-text" [title]="absTime(entry.created_at)">{{ entry.body }} · {{ relTime(entry.created_at) }}</div>
                       }
                     </div>
                   }
@@ -2129,6 +2129,14 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (hrs < 24) return `vor ${hrs} Std.`;
     const days = Math.floor(hrs / 24);
     return `vor ${days} Tag${days !== 1 ? 'en' : ''}`;
+  }
+
+  absTime(iso: string): string {
+    if (!iso) return '';
+    return new Date(iso).toLocaleString('de-DE', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
   }
 
   sourceIcon(src: string)  { return SOURCE_META[src]?.icon  ?? 'info'; }
