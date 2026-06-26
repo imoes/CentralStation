@@ -53,31 +53,41 @@ from app.core.rate_limit import limiter
 from app.core.redis import close_redis
 
 
+# Streamable-HTTP MCP app for native MCP clients (codex / claude CLI). Mounted
+# alongside the legacy SSE app (mcp.sse_app(), used by Hermes) further below.
+# Unlike sse_app(), the streamable-http app runs a session manager that must be
+# started via its lifespan — we nest it inside the main app lifespan so the
+# StreamableHTTPSessionManager task group is initialized.
+mcp_http_app = mcp.http_app(path="/", transport="streamable-http")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.services.ai_agent.scheduler import start_scheduler, stop_scheduler
     from app.services.feed_index import ensure_indices
 
-    await start_scheduler()
-    # Ensure OpenSearch feed indices exist, then backfill existing DB alerts
-    try:
-        await ensure_indices()
-        from app.services.feed_index import backfill_from_db
-        await backfill_from_db(days=7)
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).warning("OpenSearch index setup deferred: %s", exc)
-    # Ensure Living Documentation indices (cs-knowledge, cs-skills)
-    try:
-        from app.services.knowledge_index import ensure_knowledge_indices
-        await ensure_knowledge_indices()
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).warning("Knowledge index setup deferred: %s", exc)
-    yield
-    stop_scheduler()
-    await close_redis()
-    await close_opensearch()
+    # Start the MCP streamable-http session manager for the whole app lifetime.
+    async with mcp_http_app.lifespan(app):
+        await start_scheduler()
+        # Ensure OpenSearch feed indices exist, then backfill existing DB alerts
+        try:
+            await ensure_indices()
+            from app.services.feed_index import backfill_from_db
+            await backfill_from_db(days=7)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("OpenSearch index setup deferred: %s", exc)
+        # Ensure Living Documentation indices (cs-knowledge, cs-skills)
+        try:
+            from app.services.knowledge_index import ensure_knowledge_indices
+            await ensure_knowledge_indices()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Knowledge index setup deferred: %s", exc)
+        yield
+        stop_scheduler()
+        await close_redis()
+        await close_opensearch()
 
 
 app = FastAPI(
@@ -135,6 +145,10 @@ async def mcp_sse_head():
     return Response(status_code=200)
 
 app.mount("/api/mcp", mcp.sse_app())
+# Streamable-HTTP MCP endpoint at /api/mcp-http/ for native MCP clients (codex /
+# claude CLI). Same tools as the SSE app, but a transport modern clients speak
+# directly without a stdio bridge. Lifespan is started in the app lifespan above.
+app.mount("/api/mcp-http", mcp_http_app)
 
 
 @app.get("/api/health")

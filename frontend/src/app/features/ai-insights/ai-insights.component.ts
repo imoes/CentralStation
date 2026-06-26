@@ -477,6 +477,7 @@ const SEVERITY_COLORS: Record<string, string> = {
   `],
 })
 export class AiInsightsComponent implements OnInit, OnDestroy {
+  readonly i18n = inject(I18nService);
   analyses = signal<any[]>([]);
   loading = signal(true);
   triggering = signal(false);

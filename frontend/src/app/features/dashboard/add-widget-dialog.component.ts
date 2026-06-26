@@ -317,6 +317,7 @@ interface FeedSearch {
   `],
 })
 export class AddWidgetDialogComponent implements OnInit {
+  readonly i18n = inject(I18nService);
   private dialogData = inject<{ existingWidget?: DashboardWidget } | null>(MAT_DIALOG_DATA, { optional: true });
 
   get isEdit(): boolean { return !!this.dialogData?.existingWidget; }

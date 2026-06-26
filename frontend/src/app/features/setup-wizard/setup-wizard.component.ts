@@ -367,7 +367,45 @@ const PERSONAL_CONNECTORS: PersonalConnectorMeta[] = [
           </div>
         </mat-step>
 
-        <!-- Step 5: Done -->
+        <!-- Step 5: Computer Console Agent -->
+        <mat-step label="{{ i18n.t('setup.computer_agent.title') }}" [completed]="true">
+          <div class="step-content">
+            <mat-icon class="step-icon accent">terminal</mat-icon>
+            <h2>{{ i18n.t('setup.computer_agent.title') }}</h2>
+            <p class="step-desc">{{ i18n.t('setup.computer_agent.subtitle') }}</p>
+            <p class="step-desc">{{ i18n.t('console.agent_section_hint') }}</p>
+            <div class="agent-choice-cards">
+              <div class="agent-choice" [class.selected]="wizardAgent === 'hermes'" (click)="wizardAgent = 'hermes'">
+                <mat-icon>memory</mat-icon>
+                <span>{{ i18n.t('console.agent_hermes') }}</span>
+                <small>{{ i18n.t('console.agent_hermes_desc') }}</small>
+              </div>
+              <div class="agent-choice" [class.selected]="wizardAgent === 'claude_cli'" (click)="wizardAgent = 'claude_cli'">
+                <mat-icon>smart_toy</mat-icon>
+                <span>{{ i18n.t('console.agent_claude') }}</span>
+                <small>{{ i18n.t('console.agent_claude_desc') }}</small>
+              </div>
+              <div class="agent-choice" [class.selected]="wizardAgent === 'codex_cli'" (click)="wizardAgent = 'codex_cli'">
+                <mat-icon>code</mat-icon>
+                <span>{{ i18n.t('console.agent_codex') }}</span>
+                <small>{{ i18n.t('console.agent_codex_desc') }}</small>
+              </div>
+            </div>
+            @if (wizardAgent !== 'hermes') {
+              <p class="step-desc" style="font-style:italic">
+                Die OAuth-Verbindung richtest du unter <strong>Einstellungen → Konsole</strong> ein.
+              </p>
+            }
+            <div class="step-actions">
+              <button mat-stroked-button matStepperPrevious>Zurück</button>
+              <button mat-flat-button color="primary" (click)="saveWizardAgent(stepper)">
+                {{ i18n.t('setup.next') }} <mat-icon>arrow_forward</mat-icon>
+              </button>
+            </div>
+          </div>
+        </mat-step>
+
+        <!-- Step 6: Done -->
         <mat-step label="Fertig">
           <div class="step-content center">
             <mat-icon class="step-icon ok big">celebration</mat-icon>
@@ -427,6 +465,17 @@ const PERSONAL_CONNECTORS: PersonalConnectorMeta[] = [
     .connector-fields { display: flex; flex-direction: column; gap: 8px; }
     .connector-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
     .ok-chip { background: color-mix(in srgb, #4caf50 18%, transparent); color: #2e7d32; }
+    .agent-choice-cards { display: flex; flex-direction: column; gap: 10px; }
+    .agent-choice {
+      display: flex; align-items: flex-start; gap: 12px;
+      padding: 12px 16px; border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: 8px; cursor: pointer; transition: border-color 0.2s;
+    }
+    .agent-choice:hover { border-color: var(--mat-sys-primary); }
+    .agent-choice.selected { border-color: var(--mat-sys-primary); background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent); }
+    .agent-choice mat-icon { color: var(--mat-sys-primary); flex-shrink: 0; }
+    .agent-choice span { font-weight: 500; display: block; }
+    .agent-choice small { font-size: 0.8rem; color: var(--mat-sys-on-surface-variant); }
   `],
 })
 export class SetupWizardComponent implements OnInit {
@@ -456,6 +505,7 @@ export class SetupWizardComponent implements OnInit {
   })));
   o365Folder = 'Inbox';
   teamsChannelsText = '';
+  wizardAgent: 'hermes' | 'claude_cli' | 'codex_cli' = 'hermes';
 
   constructor(
     private connectorService: ConnectorService,
@@ -670,6 +720,19 @@ export class SetupWizardComponent implements OnInit {
       }
     });
     Promise.all(saves).then(() => stepper.next());
+  }
+
+  saveWizardAgent(stepper: any): void {
+    // Always proceed to next step; for claude_cli/codex_cli we just save the preference
+    // and the user will complete the OAuth in Settings → Konsole.
+    if (this.wizardAgent === 'hermes') {
+      stepper.next();
+      return;
+    }
+    this.http.patch(`${environment.apiUrl}/preferences`, { computer_agent: this.wizardAgent }).subscribe({
+      next: () => stepper.next(),
+      error: () => stepper.next(),
+    });
   }
 
   finish() {

@@ -280,6 +280,26 @@
   margin-left: 4px;
 }
 
+.agent-badge {
+  font-size: 0.55rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 4px;
+  vertical-align: middle;
+  letter-spacing: 0.03em;
+}
+
+.agent-claude {
+  background: #FFCC99;
+  color: #1a0f00;
+}
+
+.agent-codex {
+  background: #99CCFF;
+  color: #001a33;
+}
+
 // ── Conversation area ─────────────────────────────────────────────
 
 .conversation {

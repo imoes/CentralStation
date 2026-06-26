@@ -55,6 +55,7 @@ class PreferenceUpdate(BaseModel):
     ticket_seen_map:            dict | None = None
     ui_theme:                   str | None = None
     computer_console_enabled:   bool | None = None
+    computer_agent:             str | None = None
 
 
 class JQLQueryCreate(BaseModel):
@@ -123,6 +124,7 @@ async def get_preferences(user: CurrentUser, db: Annotated[AsyncSession, Depends
         "ticket_seen_map": prefs.ticket_seen_map or {},
         "ui_theme": getattr(prefs, "ui_theme", None) or "classic",
         "computer_console_enabled": prefs.computer_console_enabled,
+        "computer_agent": getattr(prefs, "computer_agent", None) or "hermes",
     }
 
 

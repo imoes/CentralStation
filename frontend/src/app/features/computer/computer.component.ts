@@ -13,6 +13,7 @@ import { Subscription } from 'rxjs';
 import { marked } from 'marked';
 import { AuthService } from '../../core/auth/auth.service';
 import { ComputerService } from '../../core/services/computer.service';
+import { I18nService } from '../../core/services/i18n.service';
 import { environment } from '../../../environments/environment';
 import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-create-dialog.component';
 
@@ -38,6 +39,8 @@ interface HermesSession {
   label: string;
   msg_count: number;
   messages: HermesMessage[];
+  /** Which agent handled this session: hermes | claude_cli | codex_cli */
+  agent_type?: string;
   /** Alert external_id — present only for alert-triggered sessions. */
   external_id?: string;
   /** True after the user clicked "✓ GELÖST" and the learning comment was saved. */
@@ -80,18 +83,18 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
 
         <!-- Stop button (only while streaming) -->
         @if (loading()) {
-          <button class="stop-btn" (click)="stopGeneration()" title="Antwort abbrechen">
+          <button class="stop-btn" (click)="stopGeneration()" title="Cancel response">
             <mat-icon>stop</mat-icon>
           </button>
         }
 
         <!-- TTS mute toggle -->
         <button class="tts-btn" [class.muted]="muted()" (click)="toggleMute()"
-                [title]="muted() ? 'Sprachausgabe aktivieren' : 'Sprachausgabe stummschalten'">
+                [title]="muted() ? 'Enable voice output' : 'Mute voice output'">
           <mat-icon>{{ muted() ? 'volume_off' : 'volume_up' }}</mat-icon>
         </button>
 
-        <button class="close-btn" (click)="close()" title="Schließen (Esc)">✕</button>
+        <button class="close-btn" (click)="close()" title="Close (Esc)">✕</button>
         <div class="cap-tr"></div>
       </div>
 
@@ -115,39 +118,44 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                       (dblclick)="editingSid.set(s.session_id)"
                       [title]="s.label + ' (Doppelklick zum Umbenennen)'">
                 {{ s.label }}
+                @if (s.agent_type === 'claude_cli') {
+                  <span class="agent-badge agent-claude" title="Claude CLI">CL</span>
+                } @else if (s.agent_type === 'codex_cli') {
+                  <span class="agent-badge agent-codex" title="Codex CLI">CO</span>
+                }
                 @if (s.msg_count > 0) {
                   <span class="msg-badge">{{ s.msg_count }}</span>
                 }
               </button>
             }
           }
-          <button class="rail-pill new-pill" (click)="newSession()" title="Neue Session">
-            + NEU
+          <button class="rail-pill new-pill" (click)="newSession()" title="New session">
+            + NEW
           </button>
           @if (activeTabId()) {
-            <button class="rail-pill del-pill" (click)="deleteSession()" title="Session beenden">
-              ✕ ENDE
+            <button class="rail-pill del-pill" (click)="deleteSession()" title="End session">
+              ✕ END
             </button>
           }
           @if (activeSession()?.external_id && !activeSession()?.resolved) {
             <button class="rail-pill resolve-pill" (click)="resolveSession()"
-                    title="Problem als gelöst markieren — speichert Lernkommentar am Alert">
-              ✓ GELÖST
+                    title="Mark as resolved — saves learning comment on the alert">
+              ✓ RESOLVED
             </button>
           }
           @if (activeSession()?.resolved) {
-            <span class="rail-pill resolved-pill">✓ GELÖST</span>
+            <span class="rail-pill resolved-pill">✓ RESOLVED</span>
           }
           @if (activeMessages().length > 0) {
             <button class="rail-pill ticket-pill" (click)="createTicket()"
-                    title="Jira/Service-Desk-Ticket aus diesem Gespräch erstellen">
+                    title="Create Jira ticket from this conversation">
               🎫 TICKET
             </button>
           }
           @if (activeTabId()) {
             <button class="rail-pill workbench-pill" (click)="sendToWorkbench()"
-                    title="Session in die Werkbank übertragen">
-              ⬡ WERKBANK
+                    title="Transfer session to workbench">
+              ⬡ WORKBENCH
             </button>
           }
         </div>
@@ -159,8 +167,8 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
             <div class="empty-state">
               <div class="empty-icon">◉</div>
               <div class="empty-text">BEREIT</div>
-              <div class="empty-sub">Neue Session starten oder Befehl eingeben</div>
-              <div class="empty-hint">⌨ Strg+K öffnen/schließen · Leertaste = Mikrofon</div>
+              <div class="empty-sub">Start a new session or enter a command</div>
+              <div class="empty-hint">⌨ Ctrl+K open/close · Space = microphone</div>
             </div>
           }
 
@@ -175,7 +183,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                   @if (msg.role === 'assistant' && msg.text.trim()) {
                     <button class="tts-msg-btn"
                             (click)="speakMessage(msg.text)"
-                            [title]="muted() ? 'Stumm (TTS deaktiviert)' : 'Fazit vorlesen'">
+                            [title]="muted() ? 'Muted (TTS disabled)' : 'Read summary aloud'">
                       <mat-icon>{{ muted() ? 'volume_off' : 'volume_up' }}</mat-icon>
                     </button>
                   }
@@ -231,7 +239,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
             <textarea #inputEl
                       class="lcars-input"
                       [(ngModel)]="inputText"
-                      placeholder="Computer, ...  (Leertaste = Mikrofon)"
+                      placeholder="Computer, ...  (Space = microphone)"
                       [disabled]="loading()"
                       (input)="resizeInput()"
                       (keydown)="onInputKeydown($event)"></textarea>
@@ -242,7 +250,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
               <mat-icon>{{ listening() ? 'mic' : 'mic_none' }}</mat-icon>
             </button>
             @if (loading()) {
-              <button class="stop-inline-btn" (click)="stopGeneration()" title="Abbrechen">
+              <button class="stop-inline-btn" (click)="stopGeneration()" title="Cancel">
                 <mat-icon>stop_circle</mat-icon>
               </button>
             } @else {
@@ -286,6 +294,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   private computerService = inject(ComputerService);
   private dialog = inject(MatDialog);
   private ngZone = inject(NgZone);
+  readonly i18n = inject(I18nService);
   private apiBase = `${environment.apiUrl}/computer`;
 
   // Maps a host key (e.g. hostname) → session_id so that repeated "Computer, prüfe das"
@@ -426,7 +435,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
       if (!r.ok) return;
       const list: Array<{
         session_id: string; label: string; msg_count: number;
-        external_id?: string | null; resolved?: boolean;
+        agent_type?: string; external_id?: string | null; resolved?: boolean;
       }> = await r.json();
       if (!list.length) return;
 
@@ -437,6 +446,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
           label: s.label,
           msg_count: s.msg_count,
           messages: [],
+          agent_type: s.agent_type ?? 'hermes',
           // Restore external_id + resolved so the "✓ GELÖST" button reappears
           // for alert-handoff sessions after a reload.
           external_id: s.external_id ?? undefined,
@@ -950,11 +960,11 @@ export class ComputerComponent implements OnInit, OnDestroy {
       this._recognition.onerror = (e: any) => {
         this.listening.set(false);
         if (e.error === 'not-allowed') {
-          this.voiceError.set('Mikrofon-Zugriff verweigert — Browsereinstellungen prüfen');
+          this.voiceError.set('Microphone access denied — check browser settings');
         } else if (e.error === 'network') {
-          this.voiceError.set('Spracherkennung benötigt Internetverbindung');
+          this.voiceError.set('Speech recognition requires internet connection');
         } else if (e.error !== 'no-speech') {
-          this.voiceError.set(`Fehler: ${e.error}`);
+          this.voiceError.set(`Error: ${e.error}`);
         }
       };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -975,7 +985,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
-      this.voiceError.set('Mikrofon nicht verfügbar – HTTPS oder localhost erforderlich');
+      this.voiceError.set('Microphone not available — HTTPS or localhost required');
       return;
     }
 
@@ -1010,7 +1020,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
             this.send();
           }
         } catch (err) {
-          this.voiceError.set(`Transkription fehlgeschlagen: ${err}`);
+          this.voiceError.set(`Transcription failed: ${err}`);
         }
       };
 
@@ -1021,11 +1031,11 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }).catch(err => {
       let msg: string;
       if (err instanceof DOMException && err.name === 'NotAllowedError') {
-        msg = 'Mikrofon-Zugriff verweigert — Berechtigung im Browser prüfen';
+        msg = 'Microphone access denied — check browser permissions';
       } else if (err instanceof DOMException && (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError')) {
-        msg = 'Kein Mikrofon gefunden — bitte ein Mikrofon anschließen';
+        msg = 'No microphone found — please connect a microphone';
       } else {
-        msg = `Mikrofon-Fehler: ${err instanceof Error ? err.message : err}`;
+        msg = `Microphone error: ${err instanceof Error ? err.message : err}`;
       }
       this.voiceError.set(msg);
     });
