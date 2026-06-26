@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, signal, Inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, Inject, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -20,6 +20,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { WorkSessionDialogComponent } from '../workflow/work-session-dialog.component';
 import { environment } from '../../../environments/environment';
+import { I18nService } from '../../core/services/i18n.service';
 
 interface JqlQuery {
   id: string;
@@ -85,21 +86,21 @@ const STATUS_COLOR: Record<string, string> = {
     <mat-dialog-content>
       <mat-form-field appearance="outline" class="full-width">
         <mat-label>Name</mat-label>
-        <input matInput [(ngModel)]="name" placeholder="Meine offenen Tickets" autofocus>
+        <input matInput [(ngModel)]="name" placeholder="My open tickets" autofocus>
       </mat-form-field>
       <mat-form-field appearance="outline" class="full-width">
-        <mat-label>JQL-Abfrage</mat-label>
+        <mat-label>JQL query</mat-label>
         <textarea matInput [(ngModel)]="jql"
                   cdkTextareaAutosize cdkAutosizeMinRows="4" cdkAutosizeMaxRows="10"
                   placeholder="assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
                   spellcheck="false"></textarea>
-        <mat-hint>Tipp: <code>statusCategory != Done</code> filtert alle erledigten Status heraus.</mat-hint>
+        <mat-hint>Tip: <code>statusCategory != Done</code> filters out all resolved statuses.</mat-hint>
       </mat-form-field>
     </mat-dialog-content>
     <mat-dialog-actions align="end">
-      <button mat-button (click)="dialogRef.close()">Abbrechen</button>
+      <button mat-button (click)="dialogRef.close()">Cancel</button>
       <button mat-flat-button color="primary" (click)="save()" [disabled]="!name.trim() || !jql.trim()">
-        <mat-icon>save</mat-icon> Speichern
+        <mat-icon>save</mat-icon> Save
       </button>
     </mat-dialog-actions>
   `,
@@ -143,13 +144,13 @@ export class JqlQueryDialogComponent {
   template: `
     <div class="page-container">
       <div class="page-header">
-        <h2>Meine Tickets</h2>
+        <h2>{{ i18n.t('app.nav.myTickets') }}</h2>
         <div class="header-actions">
           <button mat-stroked-button (click)="loadTickets()">
-            <mat-icon>refresh</mat-icon> Aktualisieren
+            <mat-icon>refresh</mat-icon> Refresh
           </button>
           <button mat-flat-button color="primary" (click)="openQueryManager()">
-            <mat-icon>tune</mat-icon> Filter verwalten
+            <mat-icon>tune</mat-icon> Manage filters
           </button>
         </div>
       </div>
@@ -171,13 +172,13 @@ export class JqlQueryDialogComponent {
             @if (group.error) {
               <div class="group-error"><mat-icon>error</mat-icon> {{ group.error }}</div>
             } @else if (group.issues.length === 0) {
-              <div class="group-empty">Keine Tickets gefunden.</div>
+              <div class="group-empty">{{ i18n.t('my_tickets.no_tickets') }}</div>
             } @else {
               <div class="issue-list">
                 @for (issue of group.issues; track issue.key) {
                   <div class="issue-row" (click)="openSession(issue)">
                     @if (hasUnread(issue)) {
-                      <span class="unread-dot" matTooltip="Neue Aktivität seit dem letzten Besuch"></span>
+                      <span class="unread-dot" matTooltip="New activity since your last visit"></span>
                     }
                     <span class="issue-key">{{ issue.key }}</span>
                     <mat-icon class="issue-type-icon" [matTooltip]="issue.fields.issuetype?.name">
@@ -205,9 +206,9 @@ export class JqlQueryDialogComponent {
         @if (ticketGroups().length === 0) {
           <mat-card class="empty-card">
             <mat-icon>inbox</mat-icon>
-            <p>Keine Ticket-Filter konfiguriert.</p>
+            <p>No ticket filters configured.</p>
             <button mat-flat-button color="primary" (click)="openQueryManager()">
-              Filter einrichten
+              Set up filters
             </button>
           </mat-card>
         }
@@ -218,7 +219,7 @@ export class JqlQueryDialogComponent {
         <div class="side-panel-backdrop" (click)="closeQueryManager()"></div>
         <div class="side-panel">
           <div class="panel-header">
-            <h3>Ticket-Filter</h3>
+            <h3>Ticket filters</h3>
             <button mat-icon-button (click)="closeQueryManager()"><mat-icon>close</mat-icon></button>
           </div>
 
@@ -232,10 +233,10 @@ export class JqlQueryDialogComponent {
                 </div>
                 <div class="query-actions">
                   <mat-slide-toggle [checked]="q.enabled" (change)="toggleQuery(q, $event.checked)"></mat-slide-toggle>
-                  <button mat-icon-button matTooltip="Bearbeiten" (click)="editQuery(q)">
+                  <button mat-icon-button [matTooltip]="i18n.t('common.edit')" (click)="editQuery(q)">
                     <mat-icon>edit</mat-icon>
                   </button>
-                  <button mat-icon-button color="warn" matTooltip="Löschen" (click)="deleteQuery(q)">
+                  <button mat-icon-button color="warn" [matTooltip]="i18n.t('common.delete')" (click)="deleteQuery(q)">
                     <mat-icon>delete</mat-icon>
                   </button>
                 </div>
@@ -245,22 +246,22 @@ export class JqlQueryDialogComponent {
 
           <div class="panel-actions">
             <button mat-stroked-button (click)="addQuery()">
-              <mat-icon>add</mat-icon> Filter hinzufügen
+              <mat-icon>add</mat-icon> {{ i18n.t('common.add') }} filter
             </button>
             <button mat-stroked-button [disabled]="!hasLlm()" (click)="showAiInput.set(!showAiInput())">
-              <mat-icon>psychology</mat-icon> KI erstellen
+              <mat-icon>psychology</mat-icon> Create with AI
             </button>
           </div>
 
           @if (showAiInput()) {
             <div class="ai-input-box">
               <mat-form-field appearance="outline" class="full-width">
-                <mat-label>Beschreiben Sie den gewünschten Filter</mat-label>
-                <input matInput [(ngModel)]="aiDesc" placeholder="z.B. meine Bugs mit hoher Priorität">
+                <mat-label>Describe the desired filter</mat-label>
+                <input matInput [(ngModel)]="aiDesc" placeholder="e.g. my high-priority bugs">
               </mat-form-field>
               <button mat-flat-button color="accent" (click)="generateAiQuery()" [disabled]="aiGenerating()">
-                @if (aiGenerating()) { <mat-spinner diameter="16"></mat-spinner> Generiere… }
-                @else { <ng-container><mat-icon>auto_awesome</mat-icon> Generieren</ng-container> }
+                @if (aiGenerating()) { <mat-spinner diameter="16"></mat-spinner> Generating… }
+                @else { <ng-container><mat-icon>auto_awesome</mat-icon> Generate</ng-container> }
               </button>
             </div>
           }
@@ -317,6 +318,7 @@ export class JqlQueryDialogComponent {
   `],
 })
 export class MyTicketsComponent implements OnInit, OnDestroy {
+  readonly i18n = inject(I18nService);
   ticketGroups = signal<TicketGroup[]>([]);
   queries = signal<JqlQuery[]>([]);
   loadingTickets = signal(true);
@@ -428,8 +430,8 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
     const ref = this.dialog.open(JqlQueryDialogComponent, {
       width: '580px',
       data: {
-        title: 'Filter hinzufügen',
-        name: 'Neuer Filter',
+        title: 'Add filter',
+        name: 'New filter',
         jql: 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC',
       },
     });
@@ -444,7 +446,7 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
             id: res.id, name: result.name, jql: result.jql,
             position: qs.length, enabled: true, show_in_widget: true,
           }]);
-          this.snackBar.open('Filter gespeichert', '', { duration: 2000 });
+          this.snackBar.open('Filter saved', '', { duration: 2000 });
         },
       });
     });
@@ -453,14 +455,14 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
   editQuery(q: JqlQuery) {
     const ref = this.dialog.open(JqlQueryDialogComponent, {
       width: '580px',
-      data: { title: 'Filter bearbeiten', name: q.name, jql: q.jql },
+      data: { title: 'Edit filter', name: q.name, jql: q.jql },
     });
     ref.afterClosed().subscribe((result: { name: string; jql: string } | undefined) => {
       if (!result) return;
       this.http.patch(`${environment.apiUrl}/preferences/jira-queries/${q.id}`, result).subscribe({
         next: () => {
           this.queries.update(qs => qs.map(x => x.id === q.id ? { ...x, ...result } : x));
-          this.snackBar.open('Filter gespeichert', '', { duration: 2000 });
+          this.snackBar.open('Filter saved', '', { duration: 2000 });
         },
       });
     });
@@ -473,11 +475,11 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
   }
 
   deleteQuery(q: JqlQuery) {
-    if (!confirm(`Filter "${q.name}" löschen?`)) return;
+    if (!confirm(`Delete filter "${q.name}"?`)) return;
     this.http.delete(`${environment.apiUrl}/preferences/jira-queries/${q.id}`).subscribe({
       next: () => {
         this.queries.update(qs => qs.filter(x => x.id !== q.id));
-        this.snackBar.open('Filter gelöscht', '', { duration: 2000 });
+        this.snackBar.open('Filter deleted', '', { duration: 2000 });
       },
     });
   }
@@ -499,14 +501,14 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
               id: res.id, name: result.name, jql: result.jql,
               position: qs.length, enabled: true, show_in_widget: true,
             }]);
-            this.snackBar.open(`KI-Filter erstellt: "${result.name}"`, '', { duration: 3000 });
+            this.snackBar.open(`AI filter created: "${result.name}"`, '', { duration: 3000 });
             this.aiDesc = '';
             this.showAiInput.set(false);
             this.aiGenerating.set(false);
           },
         });
       },
-      error: () => { this.aiGenerating.set(false); this.snackBar.open('Fehler beim Generieren', '', { duration: 3000 }); },
+      error: () => { this.aiGenerating.set(false); this.snackBar.open('Error generating filter', '', { duration: 3000 }); },
     });
   }
 

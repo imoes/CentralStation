@@ -16,6 +16,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { NgxEchartsDirective } from 'ngx-echarts';
 import { ThemeService } from '../../core/services/theme.service';
+import { I18nService } from '../../core/services/i18n.service';
 import { environment } from '../../../environments/environment';
 
 interface Vital {
@@ -101,7 +102,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
       } @else if (loading()) {
         <span class="badge-loading">INIT…</span>
       }
-      <button class="cap-close" (click)="close()" matTooltip="Fenster schließen">✕</button>
+      <button class="cap-close" (click)="close()" [matTooltip]="i18n.t('common.close_window')">✕</button>
       <div class="cap-tr"></div>
     </div>
 
@@ -112,7 +113,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
         <div class="block-head">
           <span>PERFORMANCE</span>
           @if (vitals().length === 0 && !loading()) {
-            <span class="block-hint">Keine Metriken verfügbar</span>
+            <span class="block-hint">{{ i18n.t('cockpit.no_metrics') }}</span>
           }
         </div>
 
@@ -143,7 +144,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
             }
           </div>
         } @else if (loading()) {
-          <div class="block-loading">METRIKEN WERDEN GELADEN…</div>
+          <div class="block-loading">{{ i18n.t('cockpit.loading_metrics') }}</div>
         }
       </div>
 
@@ -166,18 +167,18 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
                 [class.active]="stateFilter() === st"
                 [class.zero]="stateCount(st) === 0 && st !== 'all' && st !== 'errors'"
                 (click)="setStateFilter(st)"
-              >{{ st === 'all' ? 'ALLE' : st === 'errors' ? 'FEHLER' : st }}</button>
+              >{{ st === 'all' ? i18n.t('cockpit.all') : st === 'errors' ? i18n.t('cockpit.errors') : st }}</button>
             }
           </div>
         </div>
 
         <div class="services-area">
           @if (servicesLoading()) {
-            <div class="block-loading">SERVICES WERDEN GELADEN…</div>
+            <div class="block-loading">{{ i18n.t('cockpit.loading_services') }}</div>
           } @else if (filteredServices().length === 0) {
             <div class="alert-empty">
-              @if (serviceCounts().total === 0) { Keine CheckMK-Services für diesen Host. }
-              @else { Keine Services in dieser Auswahl. }
+              @if (serviceCounts().total === 0) { {{ i18n.t('cockpit.no_services') }} }
+              @else { {{ i18n.t('cockpit.no_services_filtered') }} }
             </div>
           } @else {
             <div class="services-grid">
@@ -196,11 +197,11 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
                   @if (expandedService() === svc.name) {
                     <div class="svc-graph">
                       @if (graphLoading()) {
-                        <div class="svc-graph-msg">GRAPH WIRD GELADEN…</div>
+                        <div class="svc-graph-msg">{{ i18n.t('cockpit.loading_graph') }}</div>
                       } @else if (serviceGraph() && serviceGraph()!.series.length > 0) {
                         <div echarts [options]="graphOptions()" class="svc-graph-chart"></div>
                       } @else {
-                        <div class="svc-graph-msg">Keine Graph-Daten verfügbar.</div>
+                        <div class="svc-graph-msg">{{ i18n.t('cockpit.no_graph_data') }}</div>
                       }
                     </div>
                   }
@@ -214,7 +215,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
       <!-- ── ALERTS BLOCK ── -->
       <div class="block">
         <div class="block-head blue">
-          <span>ALERTS &amp; MELDUNGEN</span>
+          <span>{{ i18n.t('cockpit.alerts_section') }}</span>
           <span class="block-count">{{ filteredMessages().length }}</span>
           <div class="block-filters">
             @for (sev of severities; track sev) {
@@ -229,7 +230,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
 
         @if (availableSources().length > 2) {
           <div class="source-filters">
-            <span class="source-label">QUELLE</span>
+            <span class="source-label">{{ i18n.t('cockpit.source_label') }}</span>
             @for (src of availableSources(); track src) {
               <button
                 class="filter-chip src"
@@ -243,8 +244,8 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
         <div class="alert-list">
           @if (filteredMessages().length === 0) {
             <div class="alert-empty">
-              @if (loading()) { LADE MELDUNGEN… }
-              @else { Keine Meldungen für diesen Host. }
+              @if (loading()) { {{ i18n.t('cockpit.loading_alerts') }} }
+              @else { {{ i18n.t('cockpit.no_alerts') }} }
             </div>
           }
           @for (msg of filteredMessages(); track msg.id) {
@@ -264,7 +265,7 @@ const SEVERITIES = ['all', 'critical', 'high', 'medium', 'low', 'info'];
     <!-- Bottom LCARS cap bar -->
     <div class="cap-bar bottom">
       <div class="cap-bl"></div>
-      <span class="cap-bottom-label">CENTRALSTATION · SERVER COCKPIT</span>
+      <span class="cap-bottom-label">{{ i18n.t('cockpit.footer_label') }}</span>
       <div class="cap-spacer"></div>
       <span class="cap-host-id">{{ hostname() }}</span>
       <div class="cap-br"></div>
@@ -628,6 +629,7 @@ export class CockpitComponent implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   private themeSvc = inject(ThemeService);
+  readonly i18n = inject(I18nService);
 
   hostname = signal('');
   vitals = signal<Vital[]>([]);

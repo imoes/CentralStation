@@ -20,35 +20,36 @@ import { Router } from '@angular/router';
 import { inject } from '@angular/core';
 import { environment } from '../../../environments/environment';
 import { ComputerService } from '../../core/services/computer.service';
+import { I18nService } from '../../core/services/i18n.service';
 
 const CLOSURE_CODES = [
-  { value: 'solved_permanently', label: 'Dauerlösung' },
+  { value: 'solved_permanently', label: 'Permanent fix' },
   { value: 'solved_workaround', label: 'Workaround' },
-  { value: 'no_fault_found', label: 'Kein Fehler gefunden' },
-  { value: 'duplicate', label: 'Duplikat' },
-  { value: 'user_error', label: 'Benutzerfehler' },
-  { value: 'cancelled', label: 'Storniert' },
+  { value: 'no_fault_found', label: 'No fault found' },
+  { value: 'duplicate', label: 'Duplicate' },
+  { value: 'user_error', label: 'User error' },
+  { value: 'cancelled', label: 'Cancelled' },
 ];
 
 const STATUS_OPTIONS = [
-  { value: 'in_progress', label: 'In Bearbeitung' },
-  { value: 'pending', label: 'Ausstehend' },
-  { value: 'resolved', label: 'Gelöst' },
-  { value: 'closed', label: 'Geschlossen' },
+  { value: 'in_progress', label: 'In progress' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'resolved', label: 'Resolved' },
+  { value: 'closed', label: 'Closed' },
 ];
 
 const CATEGORIES = [
-  'Hardware', 'Software', 'Netzwerk', 'Sicherheit',
-  'E-Mail / Kommunikation', 'Berechtigungen / Zugang',
+  'Hardware', 'Software', 'Network', 'Security',
+  'Email / Communication', 'Permissions / Access',
   'Backup / Storage', 'Monitoring / Alerting',
-  'Server / Virtualisierung', 'Datenbank', 'Sonstiges',
+  'Server / Virtualisation', 'Database', 'Other',
 ];
 
 const PRIORITY_META: Record<string, { color: string; label: string }> = {
-  P1: { color: '#c62828', label: 'Kritisch' },
-  P2: { color: '#ef6c00', label: 'Hoch' },
-  P3: { color: '#f9a825', label: 'Mittel' },
-  P4: { color: '#388e3c', label: 'Niedrig' },
+  P1: { color: '#c62828', label: 'Critical' },
+  P2: { color: '#ef6c00', label: 'High' },
+  P3: { color: '#f9a825', label: 'Medium' },
+  P4: { color: '#388e3c', label: 'Low' },
 };
 
 @Component({
@@ -76,12 +77,12 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
           <span class="status-badge">{{ statusLabel() }}</span>
         </div>
         <div class="header-right">
-          <button mat-stroked-button (click)="openInWorkbench()" style="margin-right:8px" title="IDE, Terminal & Git in der Werkbank öffnen">
-            <mat-icon>construction</mat-icon> In Werkbank öffnen
+          <button mat-stroked-button (click)="openInWorkbench()" style="margin-right:8px" title="Open IDE, terminal &amp; git in workbench">
+            <mat-icon>construction</mat-icon> Open in workbench
           </button>
           @if (hasComputerSession()) {
-            <button mat-stroked-button (click)="resumeInComputer()" style="margin-right:8px" title="Session im Computer fortsetzen">
-              <mat-icon>terminal</mat-icon> Im Computer fortsetzen
+            <button mat-stroked-button (click)="resumeInComputer()" style="margin-right:8px" title="Continue session in Computer">
+              <mat-icon>terminal</mat-icon> Continue in Computer
             </button>
           }
           <button mat-icon-button (click)="dialogRef.close()"><mat-icon>close</mat-icon></button>
@@ -99,7 +100,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
           <div class="ticket-tab-layout">
             <div class="ticket-scroll-area">
               @if (!session()?.jira_key) {
-                <div class="empty-notes">Kein Jira-Ticket verknüpft.</div>
+                <div class="empty-notes">No Jira ticket linked.</div>
               } @else if (!jiraDetail()) {
                 <div class="spinner-center"><mat-spinner diameter="32"></mat-spinner></div>
               } @else {
@@ -107,33 +108,33 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                   <button mat-stroked-button (click)="refreshJiraDetail()" [disabled]="jiraRefreshing()">
                     @if (jiraRefreshing()) { <mat-spinner diameter="14"></mat-spinner> }
                     @else { <mat-icon>refresh</mat-icon> }
-                    Jira aktualisieren
+                    Refresh Jira
                   </button>
                 </div>
                 <!-- Meta row -->
                 <div class="jira-meta-row">
                   <span class="jira-meta-field"><strong>Status:</strong> {{ jiraDetail().status }}</span>
-                  <span class="jira-meta-field"><strong>Priorität:</strong> {{ jiraDetail().priority }}</span>
+                  <span class="jira-meta-field"><strong>Priority:</strong> {{ jiraDetail().priority }}</span>
                   @if (jiraDetail().assignee) {
-                    <span class="jira-meta-field"><strong>Zugewiesen:</strong> {{ jiraDetail().assignee }}</span>
+                    <span class="jira-meta-field"><strong>Assigned to:</strong> {{ jiraDetail().assignee }}</span>
                   }
-                  <span class="jira-meta-field"><strong>Erstellt:</strong> {{ jiraDetail().created | date:'dd.MM.yyyy HH:mm' }}</span>
+                  <span class="jira-meta-field"><strong>Created:</strong> {{ jiraDetail().created | date:'dd.MM.yyyy HH:mm' }}</span>
                 </div>
 
                 <!-- Description -->
                 <div class="jira-section">
-                  <div class="jira-section-title">Beschreibung</div>
+                  <div class="jira-section-title">Description</div>
                   @if (jiraDetail().description) {
                     <pre class="jira-body-text">{{ jiraDetail().description }}</pre>
                   } @else {
-                    <span class="empty-notes">Keine Beschreibung.</span>
+                    <span class="empty-notes">No description.</span>
                   }
                 </div>
 
                 <!-- Comments -->
                 @if (jiraDetail().comments?.length) {
                   <div class="jira-section">
-                    <div class="jira-section-title">Kommentare ({{ jiraDetail().comments.length }})</div>
+                    <div class="jira-section-title">Comments ({{ jiraDetail().comments.length }})</div>
                     <div class="comment-list">
                       @for (c of jiraDetail().comments; track c.id) {
                         <div class="comment-entry">
@@ -155,8 +156,8 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
             @if (session()?.jira_key) {
               <div class="ticket-comment-bar">
                 <mat-form-field appearance="outline" class="full-width comment-bar-field">
-                  <mat-label>Kommentar in Jira posten</mat-label>
-                  <textarea matInput [(ngModel)]="manualComment" rows="3" placeholder="Kommentar eingeben…"></textarea>
+                  <mat-label>Post comment to Jira</mat-label>
+                  <textarea matInput [(ngModel)]="manualComment" rows="3" placeholder="Enter comment…"></textarea>
                 </mat-form-field>
                 <div class="comment-bar-actions">
                   <button mat-flat-button color="primary"
@@ -170,7 +171,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                     Posten
                   </button>
                   @if (manualCommentPosted()) {
-                    <span class="post-success"><mat-icon>check_circle</mat-icon> Gepostet</span>
+                    <span class="post-success"><mat-icon>check_circle</mat-icon> Posted</span>
                   }
                 </div>
               </div>
@@ -179,22 +180,22 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
         </mat-tab>
 
         <!-- ── Tab 1: Overview ── -->
-        <mat-tab label="Übersicht">
+        <mat-tab label="Overview">
           <div class="tab-content">
             <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Titel</mat-label>
+              <mat-label>Title</mat-label>
               <input matInput [(ngModel)]="form.title">
             </mat-form-field>
 
             <div class="row-2">
               <mat-form-field appearance="outline">
-                <mat-label>Kategorie</mat-label>
+                <mat-label>Category</mat-label>
                 <mat-select [(ngModel)]="form.category">
                   @for (c of categories; track c) { <mat-option [value]="c">{{ c }}</mat-option> }
                 </mat-select>
               </mat-form-field>
               <mat-form-field appearance="outline">
-                <mat-label>Unterkategorie</mat-label>
+                <mat-label>Subcategory</mat-label>
                 <input matInput [(ngModel)]="form.subcategory">
               </mat-form-field>
             </div>
@@ -203,17 +204,17 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
               <mat-form-field appearance="outline">
                 <mat-label>Impact</mat-label>
                 <mat-select [(ngModel)]="form.impact" (selectionChange)="onImpactUrgencyChange()">
-                  <mat-option value="high">Hoch</mat-option>
-                  <mat-option value="medium">Mittel</mat-option>
-                  <mat-option value="low">Niedrig</mat-option>
+                  <mat-option value="high">High</mat-option>
+                  <mat-option value="medium">Medium</mat-option>
+                  <mat-option value="low">Low</mat-option>
                 </mat-select>
               </mat-form-field>
               <mat-form-field appearance="outline">
                 <mat-label>Urgency</mat-label>
                 <mat-select [(ngModel)]="form.urgency" (selectionChange)="onImpactUrgencyChange()">
-                  <mat-option value="high">Hoch</mat-option>
-                  <mat-option value="medium">Mittel</mat-option>
-                  <mat-option value="low">Niedrig</mat-option>
+                  <mat-option value="high">High</mat-option>
+                  <mat-option value="medium">Medium</mat-option>
+                  <mat-option value="low">Low</mat-option>
                 </mat-select>
               </mat-form-field>
               <mat-form-field appearance="outline">
@@ -227,15 +228,15 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
             @if (form.status === 'resolved' || form.status === 'closed') {
               <div class="row-2">
                 <mat-form-field appearance="outline">
-                  <mat-label>Abschlusstyp</mat-label>
+                  <mat-label>Closure type</mat-label>
                   <mat-select [(ngModel)]="form.closure_code">
                     @for (c of closureCodes; track c.value) { <mat-option [value]="c.value">{{ c.label }}</mat-option> }
                   </mat-select>
                 </mat-form-field>
                 <mat-form-field appearance="outline">
-                  <mat-label>Lösungstyp</mat-label>
+                  <mat-label>Resolution type</mat-label>
                   <mat-select [(ngModel)]="form.resolution_type">
-                    <mat-option value="permanent_fix">Dauerlösung</mat-option>
+                    <mat-option value="permanent_fix">Permanent fix</mat-option>
                     <mat-option value="workaround">Workaround</mat-option>
                   </mat-select>
                 </mat-form-field>
@@ -251,30 +252,30 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                   {{ session()?.sla_response_at | date:'dd.MM. HH:mm' }}
                 </span>
                 <mat-icon class="sla-icon" style="margin-left:12px">schedule</mat-icon>
-                <span class="sla-label">Lösung:</span>
+                <span class="sla-label">Resolution:</span>
                 <span [class.sla-breach]="isSlaBreached(session()?.sla_resolved_at)">
                   {{ session()?.sla_resolved_at | date:'dd.MM. HH:mm' }}
                 </span>
               </div>
             }
 
-            <!-- KI Auto-Kategorisierung -->
+            <!-- AI Auto-categorisation -->
             <button mat-stroked-button (click)="autoCategorize()" [disabled]="aiLoading.categorize()">
               @if (aiLoading.categorize()) { <mat-spinner diameter="16"></mat-spinner> }
               @else { <mat-icon>psychology</mat-icon> }
-              KI Auto-Kategorisierung
+              AI auto-categorise
             </button>
 
             <div class="form-actions">
               <button mat-flat-button color="primary" (click)="saveOverview()">
-                <mat-icon>save</mat-icon> Speichern
+                <mat-icon>save</mat-icon> {{ i18n.t('common.save') }}
               </button>
             </div>
           </div>
         </mat-tab>
 
         <!-- ── Tab 2: Work Notes ── -->
-        <mat-tab [label]="'Notizen (' + (session()?.work_notes?.length ?? 0) + ')'">
+        <mat-tab [label]="'Notes (' + (session()?.work_notes?.length ?? 0) + ')'">
           <div class="tab-content">
             <div class="notes-log">
               @for (note of session()?.work_notes ?? []; track $index) {
@@ -288,7 +289,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                 </div>
               }
               @if (!session()?.work_notes?.length) {
-                <div class="empty-notes">Noch keine Notizen.</div>
+                <div class="empty-notes">No notes yet.</div>
               }
             </div>
 
@@ -296,24 +297,24 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
 
             <div class="add-note">
               <mat-form-field appearance="outline" class="full-width">
-                <mat-label>Neue Notiz</mat-label>
-                <textarea matInput [(ngModel)]="newNote" rows="3" placeholder="Arbeitsschritt, Beobachtung, …"></textarea>
+                <mat-label>New note</mat-label>
+                <textarea matInput [(ngModel)]="newNote" rows="3" placeholder="Work step, observation, …"></textarea>
               </mat-form-field>
               <button mat-flat-button color="primary" (click)="addNote()" [disabled]="!newNote.trim()">
-                <mat-icon>add_comment</mat-icon> Notiz hinzufügen
+                <mat-icon>add_comment</mat-icon> Add note
               </button>
             </div>
           </div>
         </mat-tab>
 
         <!-- ── Tab 3: KI-Kommentar ── -->
-        <mat-tab label="KI-Assistent">
+        <mat-tab label="AI Assistant">
           <div class="tab-content">
 
             <!-- Comment Generator -->
             <mat-expansion-panel expanded>
               <mat-expansion-panel-header>
-                <mat-panel-title><mat-icon>comment</mat-icon> Ticket-Kommentar generieren</mat-panel-title>
+                <mat-panel-title><mat-icon>comment</mat-icon> Generate ticket comment</mat-panel-title>
               </mat-expansion-panel-header>
               <div class="panel-body">
                 <div class="comment-type-row">
@@ -326,19 +327,19 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                   }
                 </div>
                 <mat-form-field appearance="outline" class="full-width">
-                  <mat-label>Aktuelle Entwicklungen (optional)</mat-label>
+                  <mat-label>Recent developments (optional)</mat-label>
                   <textarea matInput [(ngModel)]="additionalContext" rows="3"
-                    placeholder="z.B. Service heute Nacht neu gestartet, Logs zeigen keine weiteren Fehler. Sprint-Ziel: Migration bis Freitag abschließen."></textarea>
-                  <mat-hint>Beschreiben Sie aktuelle Entwicklungen — die KI nimmt diese in den Kommentar auf.</mat-hint>
+                    placeholder="e.g. Service restarted last night, logs show no further errors. Sprint goal: complete migration by Friday."></textarea>
+                  <mat-hint>Describe recent developments — the AI will incorporate them into the comment.</mat-hint>
                 </mat-form-field>
                 <button mat-flat-button color="accent" (click)="generateComment()" [disabled]="aiLoading.comment()">
-                  @if (aiLoading.comment()) { <mat-spinner diameter="16"></mat-spinner> Generiere… }
-                  @else { <ng-container><mat-icon>auto_awesome</mat-icon> Kommentar erstellen</ng-container> }
+                  @if (aiLoading.comment()) { <mat-spinner diameter="16"></mat-spinner> Generating… }
+                  @else { <ng-container><mat-icon>auto_awesome</mat-icon> Create comment</ng-container> }
                 </button>
                 @if (generatedComment()) {
                   <div class="ai-result">
                     <div class="ai-result-header">
-                      <span>Generierter Kommentar</span>
+                      <span>Generated comment</span>
                       <button mat-icon-button (click)="copyToClipboard(generatedComment()!)" matTooltip="Kopieren">
                         <mat-icon>content_copy</mat-icon>
                       </button>
@@ -350,15 +351,15 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                       <button mat-flat-button color="primary"
                         (click)="postCommentToJira()"
                         [disabled]="aiLoading.posting() || !session()?.jira_key"
-                        [matTooltip]="session()?.jira_key ? 'Kommentar in Jira ' + session()?.jira_key + ' posten' : 'Kein Jira-Ticket verknüpft'">
+                        [matTooltip]="session()?.jira_key ? 'Post comment to Jira ' + session()?.jira_key : 'No Jira ticket linked'">
                         @if (aiLoading.posting()) {
-                          <mat-spinner diameter="16"></mat-spinner> Wird gepostet…
+                          <mat-spinner diameter="16"></mat-spinner> Posting…
                         } @else {
-                          <mat-icon>send</mat-icon> Kommentar übernehmen
+                          <mat-icon>send</mat-icon> Post comment
                         }
                       </button>
                       @if (commentPosted()) {
-                        <span class="post-success"><mat-icon>check_circle</mat-icon> In Jira gepostet</span>
+                        <span class="post-success"><mat-icon>check_circle</mat-icon> Posted to Jira</span>
                       }
                     </div>
                   </div>
@@ -369,7 +370,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
             <!-- Resolution Generator -->
             <mat-expansion-panel>
               <mat-expansion-panel-header>
-                <mat-panel-title><mat-icon>task_alt</mat-icon> Abschluss-Dokumentation generieren</mat-panel-title>
+                <mat-panel-title><mat-icon>task_alt</mat-icon> Generate closure documentation</mat-panel-title>
               </mat-expansion-panel-header>
               <div class="panel-body">
                 <mat-form-field appearance="outline" class="full-width">
@@ -378,27 +379,27 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                 </mat-form-field>
                 <div class="row-2">
                   <mat-form-field appearance="outline">
-                    <mat-label>Abschlusstyp</mat-label>
+                    <mat-label>Closure type</mat-label>
                     <mat-select [(ngModel)]="form.closure_code">
                       @for (c of closureCodes; track c.value) { <mat-option [value]="c.value">{{ c.label }}</mat-option> }
                     </mat-select>
                   </mat-form-field>
                   <mat-form-field appearance="outline">
-                    <mat-label>Lösungstyp</mat-label>
+                    <mat-label>Resolution type</mat-label>
                     <mat-select [(ngModel)]="form.resolution_type">
-                      <mat-option value="permanent_fix">Dauerlösung</mat-option>
+                      <mat-option value="permanent_fix">Permanent fix</mat-option>
                       <mat-option value="workaround">Workaround</mat-option>
                     </mat-select>
                   </mat-form-field>
                 </div>
                 <button mat-flat-button color="accent" (click)="generateResolution()" [disabled]="aiLoading.resolution()">
-                  @if (aiLoading.resolution()) { <mat-spinner diameter="16"></mat-spinner> Generiere… }
-                  @else { <ng-container><mat-icon>auto_awesome</mat-icon> Dokumentation erstellen</ng-container> }
+                  @if (aiLoading.resolution()) { <mat-spinner diameter="16"></mat-spinner> Generating… }
+                  @else { <ng-container><mat-icon>auto_awesome</mat-icon> Create documentation</ng-container> }
                 </button>
                 @if (generatedResolution()) {
                   <div class="ai-result">
                     <div class="ai-result-header">
-                      <span>Lösungsdokumentation</span>
+                      <span>Solution documentation</span>
                       <button mat-icon-button (click)="copyToClipboard(generatedResolution()!)" matTooltip="Kopieren">
                         <mat-icon>content_copy</mat-icon>
                       </button>
@@ -412,29 +413,29 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
             <!-- Solution Suggester -->
             <mat-expansion-panel>
               <mat-expansion-panel-header>
-                <mat-panel-title><mat-icon>search</mat-icon> Lösungsvorschläge (RAG + Web)</mat-panel-title>
+                <mat-panel-title><mat-icon>search</mat-icon> Solution suggestions (RAG + Web)</mat-panel-title>
               </mat-expansion-panel-header>
               <div class="panel-body">
                 <button mat-flat-button color="accent" (click)="suggestSolution()" [disabled]="aiLoading.solution()">
-                  @if (aiLoading.solution()) { <mat-spinner diameter="16"></mat-spinner> Suche… }
-                  @else { <ng-container><mat-icon>travel_explore</mat-icon> Lösungen suchen</ng-container> }
+                  @if (aiLoading.solution()) { <mat-spinner diameter="16"></mat-spinner> Searching… }
+                  @else { <ng-container><mat-icon>travel_explore</mat-icon> Search solutions</ng-container> }
                 </button>
                 @if (solutionData()) {
                   @if (solutionData()!.solution_steps?.length) {
                     <div class="solution-section">
-                      <strong>Lösungsschritte</strong>
+                      <strong>Solution steps</strong>
                       <ol>@for (step of solutionData()!.solution_steps; track $index) { <li>{{ step }}</li> }</ol>
                     </div>
                   }
                   @if (solutionData()!.possible_causes?.length) {
                     <div class="solution-section">
-                      <strong>Mögliche Ursachen</strong>
+                      <strong>Possible causes</strong>
                       <ul>@for (c of solutionData()!.possible_causes; track $index) { <li>{{ c }}</li> }</ul>
                     </div>
                   }
                   @if (solutionData()!.rag_results?.length) {
                     <div class="solution-section">
-                      <strong>Wissensdatenbank</strong>
+                      <strong>Knowledge base</strong>
                       @for (r of solutionData()!.rag_results; track $index) {
                         <div class="rag-item"><mat-icon>article</mat-icon> {{ r.title ?? r }}</div>
                       }
@@ -442,7 +443,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                   }
                   @if (solutionData()!.web_results?.length) {
                     <div class="solution-section">
-                      <strong>Web-Ergebnisse</strong>
+                      <strong>Web results</strong>
                       @for (r of solutionData()!.web_results; track r.url) {
                         <div class="rag-item"><mat-icon>language</mat-icon>
                           <a [href]="r.url" target="_blank">{{ r.title }}</a>
@@ -488,39 +489,39 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
             <div class="gitlab-actions">
               @if (!gitlabStatus()?.branch) {
                 <mat-form-field appearance="outline" class="full-width">
-                  <mat-label>Projekt-ID</mat-label>
-                  <input matInput [(ngModel)]="glProjectId" placeholder="z.B. 211">
+                  <mat-label>Project ID</mat-label>
+                  <input matInput [(ngModel)]="glProjectId" placeholder="e.g. 211">
                 </mat-form-field>
                 <mat-form-field appearance="outline" class="full-width">
-                  <mat-label>Branch-Name</mat-label>
-                  <input matInput [(ngModel)]="glBranch" placeholder="z.B. fix/my-session">
+                  <mat-label>Branch name</mat-label>
+                  <input matInput [(ngModel)]="glBranch" placeholder="e.g. fix/my-session">
                 </mat-form-field>
                 <mat-form-field appearance="outline" class="full-width">
-                  <mat-label>Von Branch (ref)</mat-label>
+                  <mat-label>From branch (ref)</mat-label>
                   <input matInput [(ngModel)]="glRef" placeholder="main">
                 </mat-form-field>
                 <button mat-flat-button color="primary" (click)="createGitLabBranch()" [disabled]="!glProjectId || !glBranch">
-                  <mat-icon>call_split</mat-icon> Branch anlegen
+                  <mat-icon>call_split</mat-icon> Create branch
                 </button>
               }
 
               @if (gitlabStatus()?.branch && !gitlabStatus()?.mr_iid) {
                 <mat-form-field appearance="outline" class="full-width">
-                  <mat-label>MR-Titel</mat-label>
-                  <input matInput [(ngModel)]="glMrTitle" placeholder="z.B. Fix: ...">
+                  <mat-label>MR title</mat-label>
+                  <input matInput [(ngModel)]="glMrTitle" placeholder="e.g. Fix: ...">
                 </mat-form-field>
                 <mat-form-field appearance="outline" class="full-width">
-                  <mat-label>Ziel-Branch</mat-label>
+                  <mat-label>Target branch</mat-label>
                   <input matInput [(ngModel)]="glTargetBranch" placeholder="main">
                 </mat-form-field>
                 <button mat-flat-button color="accent" (click)="openGitLabMR()" [disabled]="!glMrTitle">
-                  <mat-icon>merge_type</mat-icon> Merge Request öffnen
+                  <mat-icon>merge_type</mat-icon> Open merge request
                 </button>
               }
 
               @if (gitlabStatus()?.branch) {
                 <button mat-stroked-button (click)="loadGitLabStatus()" style="margin-top:8px">
-                  <mat-icon>refresh</mat-icon> Status aktualisieren
+                  <mat-icon>refresh</mat-icon> Refresh status
                 </button>
               }
             </div>
@@ -643,15 +644,16 @@ export class WorkSessionDialogComponent implements OnInit {
   readonly closureCodes = CLOSURE_CODES;
   readonly statusOptions = STATUS_OPTIONS;
   readonly commentTypes = [
-    { value: 'progress', label: 'Fortschritt' },
+    { value: 'progress', label: 'Progress' },
     { value: 'pending', label: 'Pending' },
-    { value: 'escalation', label: 'Eskalation' },
-    { value: 'handoff', label: 'Übergabe' },
+    { value: 'escalation', label: 'Escalation' },
+    { value: 'handoff', label: 'Handoff' },
   ];
 
   private sessionId: string | null = null;
   private router = inject(Router);
   private computerService = inject(ComputerService);
+  readonly i18n = inject(I18nService);
 
   hasComputerSession = computed(() => !!this.session()?.computer_session_id);
 
@@ -740,8 +742,8 @@ export class WorkSessionDialogComponent implements OnInit {
       branch: this.glBranch,
       ref: this.glRef || 'main',
     }).subscribe({
-      next: () => { this.snackBar.open('Branch angelegt', '', { duration: 2000 }); this.loadSession(this.sessionId!); },
-      error: (e) => this.snackBar.open('Fehler: ' + (e?.error?.detail ?? e.message), '', { duration: 3000 }),
+      next: () => { this.snackBar.open('Branch created', '', { duration: 2000 }); this.loadSession(this.sessionId!); },
+      error: (e) => this.snackBar.open('Error: ' + (e?.error?.detail ?? e.message), '', { duration: 3000 }),
     });
   }
 
@@ -752,10 +754,10 @@ export class WorkSessionDialogComponent implements OnInit {
       title: this.glMrTitle,
     }).subscribe({
       next: (d) => {
-        this.snackBar.open('MR erstellt', 'Öffnen', { duration: 4000 }).onAction().subscribe(() => window.open(d.url, '_blank'));
+        this.snackBar.open('MR created', 'Open', { duration: 4000 }).onAction().subscribe(() => window.open(d.url, '_blank'));
         this.loadSession(this.sessionId!);
       },
-      error: (e) => this.snackBar.open('Fehler: ' + (e?.error?.detail ?? e.message), '', { duration: 3000 }),
+      error: (e) => this.snackBar.open('Error: ' + (e?.error?.detail ?? e.message), '', { duration: 3000 }),
     });
   }
 
@@ -771,7 +773,7 @@ export class WorkSessionDialogComponent implements OnInit {
       resolution_type: this.form.resolution_type,
       root_cause: this.form.root_cause,
     }).subscribe({
-      next: () => { this.snackBar.open('Gespeichert', '', { duration: 2000 }); this.loadSession(this.sessionId!); },
+      next: () => { this.snackBar.open('Saved', '', { duration: 2000 }); this.loadSession(this.sessionId!); },
     });
   }
 
@@ -795,12 +797,12 @@ export class WorkSessionDialogComponent implements OnInit {
           this.manualCommentPosted.set(true);
           this.manualComment = '';
           const key = res.jira_key ?? this.session()?.jira_key;
-          this.snackBar.open(`Kommentar in ${key} gepostet`, '', { duration: 3000 });
+          this.snackBar.open(`Comment posted to ${key}`, '', { duration: 3000 });
           this.refreshJiraDetail();
         },
         error: () => {
           this.aiLoading.posting.set(false);
-          this.snackBar.open('Fehler beim Posten', '', { duration: 3000 });
+          this.snackBar.open('Error posting comment', '', { duration: 3000 });
         },
       });
   }
@@ -831,7 +833,7 @@ export class WorkSessionDialogComponent implements OnInit {
       additional_context: this.additionalContext.trim() || null,
     }).subscribe({
       next: res => { this.generatedComment.set(res.comment); this.aiLoading.comment.set(false); this.loadSession(this.sessionId!); },
-      error: () => { this.aiLoading.comment.set(false); this.snackBar.open('Fehler beim Generieren', '', { duration: 3000 }); },
+      error: () => { this.aiLoading.comment.set(false); this.snackBar.open('Error generating comment', '', { duration: 3000 }); },
     });
   }
 
@@ -843,7 +845,7 @@ export class WorkSessionDialogComponent implements OnInit {
       closure_code: this.form.closure_code,
     }).subscribe({
       next: res => { this.generatedResolution.set(res.resolution); this.aiLoading.resolution.set(false); this.loadSession(this.sessionId!); },
-      error: () => { this.aiLoading.resolution.set(false); this.snackBar.open('Fehler beim Generieren', '', { duration: 3000 }); },
+      error: () => { this.aiLoading.resolution.set(false); this.snackBar.open('Error generating resolution', '', { duration: 3000 }); },
     });
   }
 
@@ -851,7 +853,7 @@ export class WorkSessionDialogComponent implements OnInit {
     this.aiLoading.solution.set(true);
     this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/suggest-solution`, { use_rag: true, use_web: true }).subscribe({
       next: res => { this.solutionData.set(res); this.aiLoading.solution.set(false); },
-      error: () => { this.aiLoading.solution.set(false); this.snackBar.open('Fehler bei Lösungssuche', '', { duration: 3000 }); },
+      error: () => { this.aiLoading.solution.set(false); this.snackBar.open('Error searching for solutions', '', { duration: 3000 }); },
     });
   }
 
@@ -865,7 +867,7 @@ export class WorkSessionDialogComponent implements OnInit {
         this.form.urgency = res.urgency ?? this.form.urgency;
         this.aiLoading.categorize.set(false);
         this.loadSession(this.sessionId!);
-        this.snackBar.open('Kategorisierung übernommen', '', { duration: 2000 });
+        this.snackBar.open('Categorisation applied', '', { duration: 2000 });
       },
       error: () => this.aiLoading.categorize.set(false),
     });
@@ -879,18 +881,18 @@ export class WorkSessionDialogComponent implements OnInit {
       next: () => {
         this.aiLoading.posting.set(false);
         this.commentPosted.set(true);
-        this.snackBar.open(`Kommentar in ${this.session()?.jira_key} gepostet`, 'OK', { duration: 3000 });
+        this.snackBar.open(`Comment posted to ${this.session()?.jira_key}`, 'OK', { duration: 3000 });
         this.loadSession(this.sessionId!);
       },
       error: (err) => {
         this.aiLoading.posting.set(false);
-        this.snackBar.open(err?.error?.detail ?? 'Fehler beim Posten', '', { duration: 4000 });
+        this.snackBar.open(err?.error?.detail ?? 'Error posting comment', '', { duration: 4000 });
       },
     });
   }
 
   copyToClipboard(text: string) {
-    navigator.clipboard.writeText(text).then(() => this.snackBar.open('In Zwischenablage kopiert', '', { duration: 2000 }));
+    navigator.clipboard.writeText(text).then(() => this.snackBar.open('Copied to clipboard', '', { duration: 2000 }));
   }
 
   priorityColor() {

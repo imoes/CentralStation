@@ -1,8 +1,9 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, signal, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
+import { I18nService } from '../../core/services/i18n.service';
 import { MatStepperModule } from '@angular/material/stepper';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
@@ -197,9 +198,9 @@ const PERSONAL_CONNECTORS: PersonalConnectorMeta[] = [
             }
 
             <div class="step-actions">
-              <button mat-stroked-button matStepperPrevious>Zurück</button>
+              <button mat-stroked-button matStepperPrevious>{{ i18n.t('common.back') }}</button>
               <button mat-flat-button color="primary" matStepperNext (click)="checkLlm()">
-                {{ llmChecking() ? 'Prüfe…' : 'Weiter' }} <mat-icon>arrow_forward</mat-icon>
+                {{ llmChecking() ? '…' : i18n.t('common.next') }} <mat-icon>arrow_forward</mat-icon>
               </button>
             </div>
           </div>
@@ -337,7 +338,7 @@ const PERSONAL_CONNECTORS: PersonalConnectorMeta[] = [
 
             <div class="jql-actions">
               <button mat-stroked-button (click)="addJql()">
-                <mat-icon>add</mat-icon> Filter hinzufügen
+                <mat-icon>add</mat-icon> {{ i18n.t('common.add') }}
               </button>
               <button mat-stroked-button (click)="openAiJqlDialog()" [disabled]="!llmOk()">
                 <mat-icon>psychology</mat-icon> Per KI erstellen
@@ -358,7 +359,7 @@ const PERSONAL_CONNECTORS: PersonalConnectorMeta[] = [
             }
 
             <div class="step-actions">
-              <button mat-stroked-button matStepperPrevious>Zurück</button>
+              <button mat-stroked-button matStepperPrevious>{{ i18n.t('common.back') }}</button>
               <button mat-flat-button color="primary" (click)="saveJqlAndNext(stepper)">
                 Speichern & Weiter <mat-icon>arrow_forward</mat-icon>
               </button>
@@ -377,7 +378,7 @@ const PERSONAL_CONNECTORS: PersonalConnectorMeta[] = [
             </p>
             <div class="step-actions">
               <button mat-flat-button color="primary" (click)="finish()">
-                Dashboard öffnen <mat-icon>dashboard</mat-icon>
+                {{ i18n.t('app.nav.dashboard') }} <mat-icon>dashboard</mat-icon>
               </button>
             </div>
           </div>
@@ -429,6 +430,7 @@ const PERSONAL_CONNECTORS: PersonalConnectorMeta[] = [
   `],
 })
 export class SetupWizardComponent implements OnInit {
+  readonly i18n = inject(I18nService);
   llmOk = signal(false);
   llmChecking = signal(false);
   connectorsLoading = signal(true);

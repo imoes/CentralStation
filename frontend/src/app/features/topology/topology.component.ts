@@ -11,6 +11,7 @@ import { NgxEchartsDirective } from 'ngx-echarts';
 import { environment } from '../../../environments/environment';
 import { ThemeService } from '../../core/services/theme.service';
 import { AuthService } from '../../core/auth/auth.service';
+import { I18nService } from '../../core/services/i18n.service';
 
 interface TopologyNode {
   id: string;
@@ -67,7 +68,7 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
       <div class="topo-topbar">
         <h2 class="topo-title">
           <mat-icon>account_tree</mat-icon>
-          Infrastruktur-Karte
+          {{ i18n.t('topology.title') }}
         </h2>
 
         <div class="topo-sources">
@@ -131,7 +132,7 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
       } @else if (graph()?.nodes?.length === 0) {
         <div class="topo-empty">
           <mat-icon>hub</mat-icon>
-          <p>Keine Nodes gefunden — NetBox-Daten vorhanden?</p>
+          <p>{{ i18n.t('topology.empty') }}</p>
         </div>
       } @else {
         <div
@@ -259,6 +260,7 @@ export class TopologyComponent implements OnInit, OnDestroy {
   private http = inject(HttpClient);
   private themeSvc = inject(ThemeService);
   private auth = inject(AuthService);
+  readonly i18n = inject(I18nService);
   private snack = inject(MatSnackBar);
   private zone = inject(NgZone);
 

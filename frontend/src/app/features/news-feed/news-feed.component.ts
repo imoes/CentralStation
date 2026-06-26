@@ -5,6 +5,7 @@ import { HttpClient } from '@angular/common/http';
 import { ActivatedRoute, Router } from '@angular/router';
 import { skip } from 'rxjs';
 import { ComputerService } from '../../core/services/computer.service';
+import { I18nService } from '../../core/services/i18n.service';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -139,7 +140,7 @@ const SEVERITY_COLOR: Record<string, string> = {
     @if (showScrollTop()) {
       <button mat-raised-button color="primary" class="scroll-top-btn" (click)="scrollToTop()">
         <mat-icon>arrow_upward</mat-icon>
-        Neueste Meldungen
+        {{ i18n.t('feed.scroll_to_top') }}
       </button>
     }
 
@@ -166,10 +167,10 @@ const SEVERITY_COLOR: Record<string, string> = {
           <button mat-icon-button (click)="toggleFilters()" matTooltip="Filter" [class.active-icon]="hasActiveFilter()">
             <mat-icon>filter_list</mat-icon>
           </button>
-          <button mat-icon-button (click)="showSettings.set(!showSettings())" matTooltip="Feed-Einstellungen">
+          <button mat-icon-button (click)="showSettings.set(!showSettings())" [matTooltip]="i18n.t('feed.settings_tooltip')">
             <mat-icon>tune</mat-icon>
           </button>
-          <button mat-icon-button (click)="toggleSearchManager()" matTooltip="OpenSearch-Suchen" [class.active-icon]="showSearchManager() || !!activeSearch()">
+          <button mat-icon-button (click)="toggleSearchManager()" [matTooltip]="i18n.t('feed.saved_searches_tooltip')" [class.active-icon]="showSearchManager() || !!activeSearch()">
             <mat-icon>manage_search</mat-icon>
           </button>
           <button mat-icon-button (click)="load(true)" matTooltip="Aktualisieren" [disabled]="loading()">
@@ -183,7 +184,7 @@ const SEVERITY_COLOR: Record<string, string> = {
         <mat-icon class="glog-bar-icon">search</mat-icon>
         <input class="glog-input" type="text" [(ngModel)]="searchQuery"
                (keyup.enter)="runFeedSearch()"
-               placeholder='Alle Quellen durchsuchen — z.B. metadata.host:"host.example.com" AND severity:high'>
+               [placeholder]="i18n.t('feed.search_placeholder')">
         <select class="glog-range" [(ngModel)]="searchRangeSec">
           @for (r of searchRanges; track r.sec) {
             <option [ngValue]="r.sec">{{ r.label }}</option>
@@ -193,7 +194,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                 (click)="runFeedSearch()" [disabled]="searching()">
           @if (searching()) { <mat-spinner diameter="18"></mat-spinner> }
           @else { <mat-icon>search</mat-icon> }
-          Suchen
+          {{ i18n.t('common.search') }}
         </button>
         @if (searchActive()) {
           <button mat-icon-button class="glog-clear" (click)="clearFeedSearch()" matTooltip="Suche zurücksetzen">
@@ -207,7 +208,7 @@ const SEVERITY_COLOR: Record<string, string> = {
         <mat-card class="settings-card filter-card">
           <div class="filter-grid">
             <mat-form-field appearance="outline" class="filter-field">
-              <mat-label>System / Hostname</mat-label>
+              <mat-label>{{ i18n.t('feed.filter.hostname') }}</mat-label>
               <input matInput [(ngModel)]="hostFilter" placeholder="z.B. srv-web01" (ngModelChange)="onFilterChange()">
               @if (hostFilter) {
                 <button matSuffix mat-icon-button aria-label="Löschen" (click)="hostFilter=''; onFilterChange()">
@@ -218,56 +219,56 @@ const SEVERITY_COLOR: Record<string, string> = {
               }
             </mat-form-field>
             <mat-form-field appearance="outline" class="filter-field">
-              <mat-label>Alert-Schwere</mat-label>
+              <mat-label>{{ i18n.t('feed.filter.severity') }}</mat-label>
               <mat-select [(ngModel)]="severityFilter" (ngModelChange)="onFilterChange()">
-                <mat-option value="">Alle</mat-option>
-                <mat-option value="critical">Critical</mat-option>
-                <mat-option value="high">High</mat-option>
-                <mat-option value="medium">Medium</mat-option>
-                <mat-option value="low">Low</mat-option>
-                <mat-option value="info">Info</mat-option>
+                <mat-option value="">{{ i18n.t('common.all') }}</mat-option>
+                <mat-option value="critical">{{ i18n.t('severity.critical') }}</mat-option>
+                <mat-option value="high">{{ i18n.t('severity.high') }}</mat-option>
+                <mat-option value="medium">{{ i18n.t('severity.medium') }}</mat-option>
+                <mat-option value="low">{{ i18n.t('severity.low') }}</mat-option>
+                <mat-option value="info">{{ i18n.t('severity.info') }}</mat-option>
               </mat-select>
             </mat-form-field>
             <mat-form-field appearance="outline" class="filter-field">
-              <mat-label>Betriebssystem (CheckMK)</mat-label>
+              <mat-label>{{ i18n.t('feed.filter.os') }}</mat-label>
               <mat-select [(ngModel)]="osFilter" (ngModelChange)="onFilterChange()">
-                <mat-option value="">Alle</mat-option>
+                <mat-option value="">{{ i18n.t('common.all') }}</mat-option>
                 @for (v of filterValues.os; track v) {
                   <mat-option [value]="v">{{ v }}</mat-option>
                 }
               </mat-select>
             </mat-form-field>
             <mat-form-field appearance="outline" class="filter-field">
-              <mat-label>Standort / Location (CheckMK)</mat-label>
+              <mat-label>{{ i18n.t('feed.filter.location') }}</mat-label>
               <mat-select [(ngModel)]="locationFilter" (ngModelChange)="onFilterChange()">
-                <mat-option value="">Alle</mat-option>
+                <mat-option value="">{{ i18n.t('common.all') }}</mat-option>
                 @for (v of filterValues.location; track v) {
                   <mat-option [value]="v">{{ v }}</mat-option>
                 }
               </mat-select>
             </mat-form-field>
             <mat-form-field appearance="outline" class="filter-field">
-              <mat-label>Kritikalität (CheckMK)</mat-label>
+              <mat-label>{{ i18n.t('feed.filter.criticality') }}</mat-label>
               <mat-select [(ngModel)]="criticalityFilter" (ngModelChange)="onFilterChange()">
-                <mat-option value="">Alle</mat-option>
+                <mat-option value="">{{ i18n.t('common.all') }}</mat-option>
                 @for (v of filterValues.criticality; track v) {
                   <mat-option [value]="v">{{ v }}</mat-option>
                 }
               </mat-select>
             </mat-form-field>
             <mat-form-field appearance="outline" class="filter-field">
-              <mat-label>VE / Umgebung (CheckMK)</mat-label>
+              <mat-label>{{ i18n.t('feed.filter.ve') }}</mat-label>
               <mat-select [(ngModel)]="veFilter" (ngModelChange)="onFilterChange()">
-                <mat-option value="">Alle</mat-option>
+                <mat-option value="">{{ i18n.t('common.all') }}</mat-option>
                 @for (v of filterValues.ve; track v) {
                   <mat-option [value]="v">{{ v }}</mat-option>
                 }
               </mat-select>
             </mat-form-field>
             <mat-form-field appearance="outline" class="filter-field">
-              <mat-label>Hostgruppe (CheckMK)</mat-label>
+              <mat-label>{{ i18n.t('feed.filter.hostgroup') }}</mat-label>
               <mat-select [(ngModel)]="hostgroupFilter" (ngModelChange)="onFilterChange()">
-                <mat-option value="">Alle</mat-option>
+                <mat-option value="">{{ i18n.t('common.all') }}</mat-option>
                 @for (v of filterValues.hostgroups; track v) {
                   <mat-option [value]="v">{{ v }}</mat-option>
                 }
@@ -277,7 +278,7 @@ const SEVERITY_COLOR: Record<string, string> = {
           @if (hasActiveFilter()) {
             <div style="padding: 0 4px 8px">
               <button mat-button color="warn" (click)="clearFilters()">
-                <mat-icon>clear</mat-icon> Filter zurücksetzen
+                <mat-icon>clear</mat-icon> {{ i18n.t('common.reset_filters') }}
               </button>
             </div>
           }
@@ -322,7 +323,7 @@ const SEVERITY_COLOR: Record<string, string> = {
         <mat-card class="settings-card search-manager-card">
           <div class="search-manager-header">
             <div>
-              <h3>OpenSearch-Suchen</h3>
+              <h3>{{ i18n.t('feed.saved_searches_tooltip') }}</h3>
               <p>
                 Lucene Query-Strings gegen <code>cs-feed-graylog</code>, <code>cs-feed-wazuh</code>,
                 <code>cs-feed-checkmk</code> oder <code>cs-feed-*</code>.
@@ -536,7 +537,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                 <span class="timestamp" [title]="absTime(item.created_at)">{{ relTime(item.created_at) }}</span>
               </div>
               @if (item.status === 'acknowledged') {
-                <span class="ack-stamp"><mat-icon>check_circle</mat-icon> Bestätigt</span>
+                <span class="ack-stamp"><mat-icon>check_circle</mat-icon> {{ i18n.t('status.acknowledged') }}</span>
               }
             </div>
 
@@ -618,7 +619,7 @@ const SEVERITY_COLOR: Record<string, string> = {
               @if (item.type === 'alert' && item.status === 'new') {
                 <button mat-button class="action-btn" (click)="acknowledge(item)">
                   <mat-icon>check_circle_outline</mat-icon>
-                  Bestätigen
+                  {{ i18n.t('common.acknowledge') }}
                 </button>
               }
               @if (item.external_url && item.type !== 'email' && item.type !== 'teams_message') {
@@ -633,7 +634,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                   KI bereitet vor…
                 } @else {
                   <mat-icon>add_task</mat-icon>
-                  Ticket erstellen
+                  {{ i18n.t('dialog.ticket.title') }}
                 }
               </button>
               <!-- Claim / Release -->
@@ -1488,6 +1489,7 @@ const SEVERITY_COLOR: Record<string, string> = {
 })
 export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   readonly allSources = Object.entries(SOURCE_META).map(([id, m]) => ({ id, ...m }));
+  readonly i18n = inject(I18nService);
 
   @ViewChild('scrollSentinel') private sentinelRef!: ElementRef<HTMLElement>;
   private observer?: IntersectionObserver;
