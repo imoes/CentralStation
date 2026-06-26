@@ -181,7 +181,7 @@ def ensure_container(user_id: str) -> str:
     _backend_url = os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000")
     from urllib.parse import urlparse as _urlparse
     _backend_host = _urlparse(_backend_url).hostname or "backend"
-    _no_proxy = os.getenv("NO_PROXY", "localhost,127.0.0.1")
+    _no_proxy = os.getenv("NO_PROXY", "localhost,127.0.0.1,.ippen.media")
     if _backend_host not in _no_proxy:
         _no_proxy = f"{_backend_host},{_no_proxy}"
     environment = {
@@ -242,10 +242,11 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
             environment={"KEY": key_pem},
         )
 
-    ssh_user = username.strip()
-    ssh_cfg_lines = ["Host *"]
-    if ssh_user:
-        ssh_cfg_lines.append(f"    User {ssh_user}")
+    ssh_user = username.strip() or "marvin"
+    ssh_cfg_lines = [
+        "Host *",
+        f"    User {ssh_user}",
+    ]
     if key_pem and key_pem.strip():
         ssh_cfg_lines.append("    IdentityFile /root/.ssh/user.key")
     ssh_cfg_lines += [
@@ -260,6 +261,161 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
     )
     log.info("userenv_manager: SSH configured for %s (user=%s key=%s)",
              name, ssh_user, "yes" if key_pem else "no")
+
+
+def configure_claude_credentials(
+    user_id: str, access_token: str, refresh_token: str, expires_at: str | None
+) -> None:
+    """Write ~/.claude/.credentials.json into the container (on cs-ide-cfg volume → persistent).
+
+    Format matches what `claude auth login --claudeai` writes. Because the file lives on the
+    cs-ide-cfg named volume it survives container restarts — no re-injection needed.
+    Also configures the Claude Code VS Code extension in code-server automatically.
+
+    Reads the existing credentials file first so that extra fields written by the VS Code
+    extension (scopes, subscriptionType, rateLimitTier) are preserved — claude CLI requires
+    these fields to recognise the credential as valid. Only the three token fields are updated.
+    expiresAt is stored as an integer (milliseconds since epoch) as the CLI expects.
+    """
+    import json
+    import docker as _docker
+
+    # expiresAt must be an integer (ms since epoch); cast defensively.
+    try:
+        expires_int: int | str = int(expires_at) if expires_at else 0
+    except (ValueError, TypeError):
+        expires_int = expires_at or 0
+
+    try:
+        c = _client().containers.get(container_name(user_id))
+
+        # Read existing credentials file so we can preserve extra fields.
+        existing: dict = {}
+        read_result = c.exec_run(
+            ["sh", "-c", "cat /root/.claude/.credentials.json 2>/dev/null || echo '{}'"],
+        )
+        try:
+            existing = json.loads(read_result.output.decode(errors="replace"))
+        except Exception:
+            existing = {}
+
+        # Merge: start from existing claudeAiOauth dict, update only token fields.
+        # Preserve scopes/subscriptionType/rateLimitTier if already present;
+        # add defaults when the file was written without them (e.g. after a failed
+        # first configure call). The claude CLI requires all these fields.
+        oauth = existing.get("claudeAiOauth") or {}
+        oauth.update({
+            "accessToken": access_token,
+            "refreshToken": refresh_token,
+            "expiresAt": expires_int,
+        })
+        oauth.setdefault("scopes", [
+            "user:file_upload", "user:inference", "user:mcp_servers",
+            "user:profile", "user:sessions:claude_code",
+        ])
+        oauth.setdefault("subscriptionType", "pro")
+        oauth.setdefault("rateLimitTier", "default_raven")
+        existing["claudeAiOauth"] = oauth
+        creds = json.dumps(existing)
+
+        c.exec_run(
+            ["sh", "-c",
+             "mkdir -p /root/.claude && "
+             "printf '%s' \"$C\" > /root/.claude/.credentials.json && "
+             "chmod 600 /root/.claude/.credentials.json"],
+            environment={"C": creds},
+        )
+        log.info("userenv_manager: claude credentials written for %s", container_name(user_id))
+    except _docker.errors.NotFound:
+        log.warning("configure_claude_credentials: container %s not found", container_name(user_id))
+
+
+def _codex_config_toml(mcp_servers: dict | None) -> str:
+    """Render ~/.codex/config.toml: ChatGPT-backend provider + MCP servers.
+
+    mcp_servers maps name → {transport, url, headers?} (same shape as the Hermes
+    config). Each becomes an [mcp_servers.<name>] entry with the streamable-http URL
+    and default_tools_approval_mode="approve" so `codex exec` runs tool calls without
+    an interactive prompt (in headless exec mode the approval reader gets EOF and
+    would otherwise auto-cancel every MCP tool call → "user cancelled MCP tool call").
+    """
+    backend_url = os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000").rstrip("/")
+    parts = [
+        'model = "gpt-5.5"',
+        'model_provider = "chatgpt_backend"',
+        # Shell-command governance (separate from MCP tool approval below):
+        # read-only sandbox + no interactive prompt → safe headless operation.
+        'approval_policy = "never"',
+        'sandbox_mode = "read-only"',
+        '',
+        '[model_providers.chatgpt_backend]',
+        'name = "ChatGPT Backend"',
+        'base_url = "https://chatgpt.com/backend-api/codex"',
+        'wire_api = "responses"',
+        'env_key = "OPENAI_API_KEY"',
+        '',
+        # CentralStation IT-Ops tools via the native streamable-http MCP endpoint
+        # (/api/mcp-http/ — codex speaks streamable-http, not the legacy SSE app).
+        '[mcp_servers.centralstation]',
+        f'url = "{backend_url}/api/mcp-http/"',
+        'default_tools_approval_mode = "approve"',
+        'tool_timeout_sec = 60',
+    ]
+    # Personal MCP connectors (e.g. VibeMK) — only streamable-http servers; codex
+    # connects to their URL directly. Bearer tokens (if any) are passed via env var.
+    for name, srv in (mcp_servers or {}).items():
+        url = (srv.get("url") or "").rstrip("/")
+        if not url or name == "centralstation":
+            continue
+        safe = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in name)
+        parts += [
+            '',
+            f'[mcp_servers.{safe}]',
+            f'url = "{url}"',
+            'default_tools_approval_mode = "approve"',
+            'tool_timeout_sec = 60',
+        ]
+    return "\n".join(parts) + "\n"
+
+
+def configure_codex_credentials(
+    user_id: str, access_token: str, mcp_servers: dict | None = None
+) -> None:
+    """Configure @openai/codex CLI for the user's ChatGPT-account OAuth token.
+
+    The ChatGPT OAuth access token (aud=api.openai.com/v1) is NOT a paid API key and
+    NOT a codex "agent identity JWT", so neither `OPENAI_API_KEY` against api.openai.com
+    nor `codex login --with-access-token` work. The token *does* work as a plain Bearer
+    against https://chatgpt.com/backend-api/codex/responses (same as the Hermes codex LLM
+    mode). We therefore point codex at that backend via a custom model_provider in
+    ~/.codex/config.toml and feed the token through OPENAI_API_KEY (env_key).
+
+    Writes:
+      - /root/.profile      → export OPENAI_API_KEY (token store, sourced by `codex exec`)
+      - /root/.codex/config.toml → ChatGPT-backend provider + MCP servers (centralstation
+        via /api/mcp-http/ streamable-http + the user's personal MCP connectors)
+
+    Not on a named volume → re-injected at each session create (same pattern as SSH).
+    """
+    import docker as _docker
+
+    config_toml = _codex_config_toml(mcp_servers)
+    try:
+        c = _client().containers.get(container_name(user_id))
+        c.exec_run(
+            ["sh", "-c",
+             # token into /root/.profile (replace any prior value)
+             "grep -qF 'OPENAI_API_KEY' /root/.profile 2>/dev/null && "
+             "sed -i '/OPENAI_API_KEY/d;/OPENAI_BASE_URL/d' /root/.profile; "
+             "printf 'export OPENAI_API_KEY=\"%s\"\\n' \"$K\" >> /root/.profile; "
+             # provider + MCP config so codex talks to the ChatGPT backend and tools
+             "mkdir -p /root/.codex && printf '%s' \"$CFG\" > /root/.codex/config.toml"],
+            environment={"K": access_token, "CFG": config_toml},
+        )
+        log.info("userenv_manager: codex credentials + config.toml written for %s",
+                 container_name(user_id))
+    except _docker.errors.NotFound:
+        log.warning("configure_codex_credentials: container %s not found", container_name(user_id))
 
 
 def exec_sh(user_id: str, script: str, environment: dict | None = None) -> tuple[int, str]:

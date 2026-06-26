@@ -40,6 +40,8 @@ class UserPreference(Base):
     ui_theme: Mapped[str | None] = mapped_column(String(20), default="classic")
     # Feature flag: Hermes Computer Console (admin activates per user, default off)
     computer_console_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Console agent: "hermes" | "claude_cli" | "codex_cli"
+    computer_agent: Mapped[str] = mapped_column(String(20), default="hermes")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -323,21 +325,24 @@ class IncidentMember(Base):
 
 
 class ComputerSession(Base):
-    """Persists Computer Console (Hermes) session metadata per user.
+    """Persists Computer Console session metadata per user.
 
     The actual conversation history is stored in Hermes's own state.db
-    (${PWD}/.hermes/state.db). This table only holds the metadata needed
-    to list and restore sessions after page reload.
-    id = the Hermes session UUID (used as session_id in AIAgent).
+    (${PWD}/.hermes/state.db) for Hermes sessions, or in
+    ~/.claude/sessions/<id>.json (cs-ide-cfg volume) for claude_cli sessions.
+    This table only holds the metadata needed to list and restore sessions.
+    id = the session UUID (Hermes-generated for hermes, backend-generated for CLI agents).
     """
     __tablename__ = "computer_sessions"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)  # Hermes session UUID
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     label: Mapped[str] = mapped_column(String(100), default="Session")
     msg_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Which agent backend handled this session.
+    agent_type: Mapped[str] = mapped_column(String(20), default="hermes")
     # Alert external_id for handoff sessions — drives the "✓ GELÖST" button.
     # Persisted so the button survives reloads and container restarts.
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
