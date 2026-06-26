@@ -18,7 +18,9 @@ cryptography==43.0.3
 redis[hiredis]==5.2.0
 
 # HTTP Client
-httpx==0.27.2
+# Bumped from 0.27.2 → 0.28.x: fastmcp 2.13 (streamable-http MCP endpoint) requires
+# httpx>=0.28.1. Code uses no APIs removed in 0.28 (no proxies=/app= kwargs).
+httpx>=0.28.1,<0.29
 
 # Scheduling (AI Agent)
 apscheduler==3.10.4
@@ -30,7 +32,9 @@ langgraph==0.2.45
 langgraph-checkpoint-postgres==2.0.5
 
 # Validation
-pydantic[email]==2.10.3
+# Bumped from 2.10.3 → 2.11.x: fastmcp 2.13 requires pydantic>=2.11.7. Minor bump
+# within pydantic 2.x; fastapi/langchain/pydantic-settings all allow it.
+pydantic[email]>=2.11.7,<2.12
 pydantic-settings==2.6.1
 
 # Rate Limiting
@@ -39,9 +43,12 @@ slowapi==0.1.9
 # OpenSearch feed storage
 opensearch-py==2.7.1
 
-# MCP Server (CentralStation as tool provider for Hermes)
-# get_asgi_app() existiert nur in 2.x — 3.x hat die API umgebaut
-fastmcp>=2.0,<3
+# MCP Server (CentralStation as tool provider for Hermes + CLI agents)
+# 2.x has both sse_app() (legacy, used by Hermes) AND http_app() (streamable-http,
+# used by codex/claude CLI native MCP clients). 2.13.3 is the LAST 2.x release that
+# still exposes sse_app() — 2.14+ removed it. 3.x rebuilt the API entirely. Pin to
+# the 2.13 line so the SSE endpoint Hermes relies on keeps working unchanged.
+fastmcp>=2.13,<2.14
 
 # Email dispatch
 aiosmtplib>=3.0,<4
@@ -50,7 +57,8 @@ aiosmtplib>=3.0,<4
 docker==7.1.0
 
 # Utils
-python-dotenv==1.0.1
+# Bumped 1.0.1 → 1.1.x: fastmcp 2.13 requires python-dotenv>=1.1.0 (trivial util bump).
+python-dotenv>=1.1.0,<2
 python-dateutil>=2.9
 
 # Testing

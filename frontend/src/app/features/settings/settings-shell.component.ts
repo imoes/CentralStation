@@ -1,10 +1,11 @@
-import { Component, computed } from '@angular/core';
+import { Component, computed, signal, OnInit, inject } from '@angular/core';
 import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatIconModule } from '@angular/material/icon';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../core/auth/auth.service';
 import { I18nService } from '../../core/services/i18n.service';
+import { HttpClient } from '@angular/common/http';
 
 @Component({
   selector: 'cs-settings-shell',
@@ -22,6 +23,11 @@ import { I18nService } from '../../core/services/i18n.service';
         <a mat-tab-link routerLink="skills" routerLinkActive #skills="routerLinkActive" [active]="skills.isActive">
           <mat-icon>psychology</mat-icon>&nbsp;Skills
         </a>
+        @if (consoleEnabled()) {
+          <a mat-tab-link routerLink="console" routerLinkActive #consoleTab="routerLinkActive" [active]="consoleTab.isActive">
+            <mat-icon>terminal</mat-icon>&nbsp;Konsole
+          </a>
+        }
         @if (isAdmin()) {
           <a mat-tab-link routerLink="users" routerLinkActive #users="routerLinkActive" [active]="users.isActive">
             <mat-icon>group</mat-icon>&nbsp;{{ i18n.t('settings.tabs.users') }}
@@ -48,11 +54,20 @@ import { I18nService } from '../../core/services/i18n.service';
     mat-tab-nav-panel { flex: 1; overflow: auto; }
   `],
 })
-export class SettingsShellComponent {
+export class SettingsShellComponent implements OnInit {
   isAdmin = computed(() => this.auth.userRole() === 'admin');
+  consoleEnabled = signal(false);
   readonly i18n: I18nService;
+  private readonly http = inject(HttpClient);
 
   constructor(private auth: AuthService, i18n: I18nService) {
     this.i18n = i18n;
+  }
+
+  ngOnInit(): void {
+    this.http.get<any>('/api/preferences').subscribe({
+      next: (prefs) => this.consoleEnabled.set(!!prefs?.computer_console_enabled),
+      error: () => {},
+    });
   }
 }

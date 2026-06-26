@@ -78,6 +78,11 @@ export const routes: Routes = [
         canActivate: [authGuard],
         loadComponent: () => import('./features/settings/skills/skills.component').then(m => m.SkillsComponent),
       },
+      {
+        path: 'console',
+        canActivate: [authGuard],
+        loadComponent: () => import('./features/settings/console/console-settings.component').then(m => m.ConsoleSettingsComponent),
+      },
     ],
   },
   {

@@ -58,6 +58,52 @@ async def _load_ssh_creds(db: AsyncSession, user_id) -> dict | None:
     return _dec(conn.encrypted_credentials)
 
 
+async def _load_agent_creds(db: AsyncSession, user_id, agent_type: str) -> dict | None:
+    """Load stored CLI agent credentials (claude_cli or codex_cli connector)."""
+    from sqlalchemy import select as _sel
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials as _dec
+    res = await db.execute(
+        _sel(ConnectorConfig).where(
+            ConnectorConfig.type == agent_type,
+            ConnectorConfig.owner_user_id == user_id,
+        ).limit(1)
+    )
+    conn = res.scalar_one_or_none()
+    if not conn:
+        return None
+    return _dec(conn.encrypted_credentials)
+
+
+async def _upsert_agent_connector(
+    db: AsyncSession, user_id, agent_type: str, creds: dict
+) -> None:
+    """Upsert a ConnectorConfig row for the given CLI agent type."""
+    from sqlalchemy import select as _sel
+    from app.models.connector import ConnectorConfig
+    from app.core.security import encrypt_credentials as _enc
+    res = await db.execute(
+        _sel(ConnectorConfig).where(
+            ConnectorConfig.type == agent_type,
+            ConnectorConfig.owner_user_id == user_id,
+        ).limit(1)
+    )
+    conn = res.scalar_one_or_none()
+    enc = _enc(creds)
+    if conn:
+        conn.encrypted_credentials = enc
+    else:
+        conn = ConnectorConfig(
+            name=f"Computer Console {agent_type}",
+            type=agent_type,
+            owner_user_id=user_id,
+            enabled=True,
+            encrypted_credentials=enc,
+        )
+        db.add(conn)
+    await db.commit()
+
+
 async def _require_console(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -72,6 +118,64 @@ async def _require_console(
 
 
 _ConsoleEnabled = Depends(_require_console)
+
+
+# ── Console Agent Configuration ────────────────────────────────────
+
+class _ConfigureAgentBody(BaseModel):
+    agent: str                         # "hermes" | "claude_cli" | "codex_cli"
+    access_token: str | None = None    # Claude PKCE / Codex Device-Code OAuth token
+    refresh_token: str | None = None
+    expires_at: str | None = None      # ISO string (Claude only)
+
+
+@router.post("/configure-agent", status_code=200)
+async def configure_agent(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    body: _ConfigureAgentBody,
+    _: None = _ConsoleEnabled,
+):
+    """Set the Computer Console agent + inject credentials into the userenv container."""
+    from app.services.userenv_manager import (
+        ensure_container, configure_claude_credentials, configure_codex_credentials,
+    )
+
+    if body.agent not in ("hermes", "claude_cli", "codex_cli"):
+        raise HTTPException(400, "agent muss 'hermes', 'claude_cli' oder 'codex_cli' sein")
+
+    if body.agent == "claude_cli":
+        if not body.access_token:
+            raise HTTPException(400, "access_token erforderlich für claude_cli")
+        await _upsert_agent_connector(db, user.id, "claude_cli", {
+            "access_token": body.access_token,
+            "refresh_token": body.refresh_token or "",
+            "expires_at": body.expires_at or "",
+        })
+        await asyncio.to_thread(ensure_container, str(user.id))
+        await asyncio.to_thread(
+            configure_claude_credentials,
+            str(user.id), body.access_token, body.refresh_token or "", body.expires_at,
+        )
+
+    elif body.agent == "codex_cli":
+        if not body.access_token:
+            raise HTTPException(400, "access_token erforderlich für codex_cli")
+        await _upsert_agent_connector(db, user.id, "codex_cli", {
+            "access_token": body.access_token,
+            "refresh_token": body.refresh_token or "",
+        })
+        await asyncio.to_thread(ensure_container, str(user.id))
+        await asyncio.to_thread(configure_codex_credentials, str(user.id), body.access_token)
+
+    result = await db.execute(select(UserPreference).where(UserPreference.user_id == user.id))
+    pref = result.scalar_one_or_none()
+    if pref:
+        pref.computer_agent = body.agent
+        await db.commit()
+
+    log.info("Computer Console agent set to '%s' for user %s", body.agent, user.id)
+    return {"agent": body.agent, "status": "configured"}
 
 
 # ── Session CRUD ───────────────────────────────────────────────────
@@ -96,6 +200,8 @@ async def create_session(
     from app.services.settings import get_active_llm_config, get_searxng_config
     from app.models.connector import ConnectorConfig
     _ssh_creds: dict | None = None
+    extra_servers: dict = {}  # personal MCP connectors; defined here so it survives
+                              # an early exception in the LLM-config block below.
     try:
         llm = await get_active_llm_config(db, user_id=user.id)
         searxng = await get_searxng_config(db)
@@ -115,7 +221,6 @@ async def create_session(
         # Build per-user MCP server config from personal connectors.
         # Written to {workspaces_base}/{user_id}/hermes_config.yaml and mounted
         # into the container as /root/.hermes/config.yaml (read by Hermes at startup).
-        extra_servers: dict = {}
         from sqlalchemy import select as _sel
         from app.core.security import decrypt_credentials as _dec
         import base64 as _b64
@@ -165,10 +270,19 @@ async def create_session(
         log.warning("Could not load LLM config, using Hermes defaults: %s", exc)
         llm_payload = {}
 
+    # Determine which Console agent this user has configured.
+    _pref_res = await db.execute(select(UserPreference).where(UserPreference.user_id == user.id))
+    _pref = _pref_res.scalar_one_or_none()
+    agent_type = getattr(_pref, "computer_agent", None) or "hermes"
+    llm_payload["agent_type"] = agent_type
+
     # Write per-user hermes_config.yaml (centralstation + personal connectors).
     # Done BEFORE ensure_container so the file is ready when the container starts
     # and mounts it as /root/.hermes/config.yaml.
-    from app.services.userenv_manager import ensure_container, configure_ssh, write_hermes_config
+    from app.services.userenv_manager import (
+        ensure_container, configure_ssh, write_hermes_config,
+        configure_claude_credentials, configure_codex_credentials,
+    )
     try:
         await asyncio.to_thread(write_hermes_config, str(user.id), extra_servers)
     except Exception as exc:
@@ -182,6 +296,26 @@ async def create_session(
                 _ssh_creds.get("username", ""), _ssh_creds.get("private_key", ""),
                 _ssh_creds.get("password", ""),
             )
+        # Re-inject CLI agent credentials at session create (codex: not on volume).
+        if agent_type == "claude_cli":
+            _claude_creds = await _load_agent_creds(db, user.id, "claude_cli")
+            if _claude_creds:
+                await asyncio.to_thread(
+                    configure_claude_credentials, str(user.id),
+                    _claude_creds.get("access_token", ""),
+                    _claude_creds.get("refresh_token", ""),
+                    _claude_creds.get("expires_at") or None,
+                )
+        elif agent_type == "codex_cli":
+            _codex_creds = await _load_agent_creds(db, user.id, "codex_cli")
+            if _codex_creds:
+                # Pass the same MCP server set Hermes gets (centralstation is added
+                # by configure_codex_credentials itself; extra_servers = personal
+                # connectors like VibeMK) so codex can use CentralStation tools.
+                await asyncio.to_thread(
+                    configure_codex_credentials, str(user.id),
+                    _codex_creds.get("access_token", ""), extra_servers,
+                )
     except Exception as exc:
         log.warning("Could not ensure userenv container for %s: %s — falling back to shared Hermes session", user.id, exc)
 
@@ -206,11 +340,12 @@ async def create_session(
     db.add(ComputerSession(
         id=sid, user_id=user.id, label=label,
         external_id=(body.external_id or None),
+        agent_type=agent_type,
     ))
     await db.commit()
     log.info("Computer session %s created for user %s (label=%s, external_id=%s)",
              sid[:8], user.id, label, body.external_id or "-")
-    return {**data, "label": label, "external_id": body.external_id or None}
+    return {**data, "label": label, "external_id": body.external_id or None, "agent_type": agent_type}
 
 
 @router.get("/sessions")
@@ -233,6 +368,7 @@ async def list_sessions(
             "created_at": r.created_at.isoformat(),
             "external_id": r.external_id,
             "resolved": r.resolved,
+            "agent_type": r.agent_type,
         }
         for r in rows
     ]
@@ -405,6 +541,14 @@ async def send_message(
     body = await request.body()
     log.debug("proxy message → hermes session %s", sid[:8])
 
+    # Ensure the per-user container is running. This is a no-op when it's already up
+    # and auto-restarts it after a Docker restart or explicit docker rm.
+    from app.services.userenv_manager import ensure_container as _ensure
+    try:
+        await asyncio.to_thread(_ensure, str(user.id))
+    except Exception as exc:
+        log.warning("send_message: ensure_container failed for %s: %s", user.id, exc)
+
     # Inject active LLM config into every message so Hermes can use it
     # when restoring a session after a container restart (env-var defaults are
     # not configured in the userenv container).
@@ -415,6 +559,10 @@ async def send_message(
         # Admin toggle: show the model's reasoning in the session (default ON).
         show_reasoning = (await get_setting(db, "computer.show_reasoning") or "true") != "false"
         body_data = _json.loads(body)
+        _msg_pref = (await db.execute(
+            select(UserPreference).where(UserPreference.user_id == user.id)
+        )).scalar_one_or_none()
+        _agent_type = getattr(_msg_pref, "computer_agent", None) or "hermes"
         body_data.update({
             "llm_base_url": llm.base_url or None,
             "llm_model": llm.model or None,
@@ -423,6 +571,7 @@ async def send_message(
             "searxng_url": searxng.base_url if searxng.is_configured else None,
             "llm_timeout_seconds": llm.timeout_seconds or None,
             "show_reasoning": show_reasoning,
+            "agent_type": _agent_type,
         })
         body = _json.dumps(body_data).encode()
     except Exception as exc:
