@@ -1,8 +1,8 @@
 #!/bin/sh
 # Unified Werkbank+Hermes entrypoint.
-# 1. SSH setup (marvin key from host mount — user-specific config injected later via API)
-# 2. All VS Code / Claude Code extension patches from entrypoint.codeserver.sh
-# 3. Hermes/CentralCore (uvicorn) in background on :8001
+# 1. SSH setup (keys from host mount — user-specific config injected later via configure_ssh API)
+# 2. All VS Code / Claude Code extension patches
+# 3. Hermes (uvicorn) in background on :8001
 # 4. code-server in foreground on :8080
 set -e
 
@@ -12,23 +12,21 @@ HOST_SSH="$HOME/.ssh_host"
 mkdir -p "$SSH_DIR"
 chmod 700 "$SSH_DIR"
 
-# Default SSH config — user-specific SSH settings are applied later via configure_ssh()
-# (called by centralcore_proxy.py at each session create).  Only write default if no
+# Default SSH config — user-specific settings are applied later via configure_ssh()
+# (called by computer_proxy.py at each session create).  Only write default if no
 # user config has been written yet (by a previous configure_ssh call).
 if [ ! -f "$SSH_DIR/config" ]; then
     cat > "$SSH_DIR/config" <<EOF
-Host *.ippen.media
-    User marvin
-    IdentityFile $SSH_DIR/marvin.key
+Host *
     StrictHostKeyChecking accept-new
     ConnectTimeout 10
 EOF
     chmod 600 "$SSH_DIR/config"
 fi
 
-# Copy shared marvin key from host ~/.ssh mount (read-only bind mount).
+# Copy SSH keys from host ~/.ssh mount (read-only bind mount).
 if [ -d "$HOST_SSH" ]; then
-    for KEY in id_rsa id_ed25519 id_ecdsa marvin.key; do
+    for KEY in id_rsa id_ed25519 id_ecdsa; do
         if [ -f "$HOST_SSH/$KEY" ]; then
             cp "$HOST_SSH/$KEY" "$SSH_DIR/$KEY"
             chmod 600 "$SSH_DIR/$KEY"
@@ -137,7 +135,7 @@ if ! grep -q '"disableRemoteControl"' "$_managed" 2>/dev/null; then
 fi
 unset _managed
 
-# ── Hermes/CentralCore on :8001 (background) ──────────────────────────
+# ── Hermes on :8001 (background) ─────────────────────────────────────
 # Per-user hermes_config.yaml is bind-mounted to /app/hermes_config.yaml by
 # userenv_manager.py (written from the user's DB connectors). We always copy it
 # to ~/.hermes/config.yaml so it takes precedence over any stale config inside

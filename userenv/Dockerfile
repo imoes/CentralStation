@@ -1,5 +1,5 @@
 # Per-user unified Werkbank+Hermes image.
-# Runs both code-server (VS Code in the browser, port 8080) and Hermes/CentralCore
+# Runs both code-server (VS Code in the browser, port 8080) and Hermes
 # (FastAPI, port 8001) in the same container so they share /root/.ssh and /root/workspaces.
 #
 # Base: codercom/code-server:latest — ships /usr/lib/code-server/lib/node needed by
@@ -50,10 +50,11 @@ RUN git clone --depth=1 https://github.com/NousResearch/hermes-agent /opt/hermes
     && pip install --no-cache-dir /opt/hermes
 
 WORKDIR /app
-COPY centralcore/requirements.txt ./requirements.txt
+COPY userenv/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY centralcore/main.py ./main.py
+COPY userenv/main.py ./main.py
+COPY userenv/hermes_config.yaml ./hermes_config.yaml
 ENV PYTHONPATH=/opt/hermes
 
 # ── Claude Code CLI ───────────────────────────────────────────────────

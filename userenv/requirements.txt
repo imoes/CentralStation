@@ -1,4 +1,4 @@
-# CentralCore-specific additions — Hermes + its deps come from pip install /opt/hermes in Dockerfile
+# Hermes dependencies — base Hermes is pip-installed from /opt/hermes in the Dockerfile
 
 # Web framework (not in Hermes)
 fastapi>=0.115
