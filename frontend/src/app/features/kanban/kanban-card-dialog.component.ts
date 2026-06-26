@@ -1,4 +1,4 @@
-import { Component, Inject, OnInit, signal } from '@angular/core';
+import { Component, Inject, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
 import { FormsModule } from '@angular/forms';
@@ -16,6 +16,7 @@ import { MatChipsModule } from '@angular/material/chips';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { KanbanService } from '../../core/services/kanban.service';
 import { JiraComment, JiraDetail, KanbanCard, KanbanPriority, KanbanStatus } from '../../core/models/kanban.model';
+import { I18nService } from '../../core/services/i18n.service';
 
 @Component({
   selector: 'cs-kanban-card-dialog',
@@ -36,7 +37,7 @@ import { JiraComment, JiraDetail, KanbanCard, KanbanPriority, KanbanStatus } fro
             {{ card!.jira_key }}<mat-icon class="ext-icon">open_in_new</mat-icon>
           </a>
         }
-        <span class="dialog-title">{{ isEdit ? 'Ticket bearbeiten' : 'Neue Karte' }}</span>
+        <span class="dialog-title">{{ isEdit ? i18n.t('kanban.edit_card') : i18n.t('kanban.new_card') }}</span>
       </div>
       <button mat-icon-button (click)="ref.close()"><mat-icon>close</mat-icon></button>
     </div>
@@ -49,24 +50,24 @@ import { JiraComment, JiraDetail, KanbanCard, KanbanPriority, KanbanStatus } fro
 
         <!-- Title -->
         <mat-form-field appearance="outline" class="full-width">
-          <mat-label>Titel</mat-label>
-          <input matInput formControlName="title" placeholder="Ticket-Titel">
+          <mat-label>{{ i18n.t('common.title') }}</mat-label>
+          <input matInput formControlName="title" [placeholder]="i18n.t('kanban.title_placeholder')">
         </mat-form-field>
 
         <!-- Status + Priority row -->
         <div class="meta-row">
           <mat-form-field appearance="outline" class="meta-field">
-            <mat-label>Status</mat-label>
+            <mat-label>{{ i18n.t('common.status') }}</mat-label>
             <mat-select formControlName="status">
-              <mat-option value="backlog">Backlog</mat-option>
-              <mat-option value="todo">To Do</mat-option>
-              <mat-option value="in_progress">In Arbeit</mat-option>
-              <mat-option value="review">Review</mat-option>
-              <mat-option value="done">Erledigt</mat-option>
+              <mat-option value="backlog">{{ i18n.t('status.backlog') }}</mat-option>
+              <mat-option value="todo">{{ i18n.t('status.todo') }}</mat-option>
+              <mat-option value="in_progress">{{ i18n.t('status.in_progress') }}</mat-option>
+              <mat-option value="review">{{ i18n.t('status.review') }}</mat-option>
+              <mat-option value="done">{{ i18n.t('status.done') }}</mat-option>
             </mat-select>
           </mat-form-field>
           <mat-form-field appearance="outline" class="meta-field">
-            <mat-label>Priorität</mat-label>
+            <mat-label>{{ i18n.t('common.priority') }}</mat-label>
             <mat-select formControlName="priority">
               <mat-option value="low">Niedrig</mat-option>
               <mat-option value="medium">Mittel</mat-option>
@@ -75,12 +76,12 @@ import { JiraComment, JiraDetail, KanbanCard, KanbanPriority, KanbanStatus } fro
             </mat-select>
           </mat-form-field>
           @if (card?.ai_generated) {
-            <mat-chip class="ai-chip"><mat-icon>smart_toy</mat-icon>KI-generiert</mat-chip>
+            <mat-chip class="ai-chip"><mat-icon>smart_toy</mat-icon>{{ i18n.t('kanban.ai_generated') }}</mat-chip>
           }
         </div>
 
         <!-- Description -->
-        <div class="section-label">Beschreibung</div>
+        <div class="section-label">{{ i18n.t('common.description') }}</div>
         @if (card?.jira_key && jiraDetail()?.description) {
           <!-- Jira description read-only -->
           <div class="description-block">{{ jiraDetail()!.description }}</div>
@@ -98,7 +99,7 @@ import { JiraComment, JiraDetail, KanbanCard, KanbanPriority, KanbanStatus } fro
         <mat-divider class="section-divider"></mat-divider>
 
         <div class="section-header">
-          <span class="section-label">Kommentare
+          <span class="section-label">{{ i18n.t('kanban.add_comment') }}
             @if (jiraDetail()?.comments?.length) {
               <span class="comment-count">({{ jiraDetail()!.comments!.length }})</span>
             }
@@ -128,7 +129,7 @@ import { JiraComment, JiraDetail, KanbanCard, KanbanPriority, KanbanStatus } fro
               }
             </div>
           } @else if (jiraDetail()?.has_jira) {
-            <div class="no-comments">Noch keine Kommentare.</div>
+            <div class="no-comments">{{ i18n.t('kanban.no_comments') }}</div>
           }
 
         }
@@ -140,7 +141,7 @@ import { JiraComment, JiraDetail, KanbanCard, KanbanPriority, KanbanStatus } fro
           <button mat-stroked-button (click)="syncToJira()" [disabled]="syncingJira()">
             @if (syncingJira()) { <mat-spinner diameter="16"></mat-spinner> }
             @else { <mat-icon>cloud_upload</mat-icon> }
-            Als Jira-Ticket erstellen
+            {{ i18n.t('kanban.create_jira_ticket') }}
           </button>
         </div>
       }
@@ -152,13 +153,13 @@ import { JiraComment, JiraDetail, KanbanCard, KanbanPriority, KanbanStatus } fro
       <div class="comment-footer">
         <div class="new-comment-box">
           <mat-form-field appearance="outline" class="full-width">
-            <mat-label>Kommentar hinzufügen</mat-label>
+            <mat-label>{{ i18n.t('kanban.add_comment') }}</mat-label>
             <textarea matInput [(ngModel)]="newComment"
                       cdkTextareaAutosize cdkAutosizeMinRows="2" cdkAutosizeMaxRows="5"
-                      placeholder="Kommentar eingeben…"
+                      [placeholder]="i18n.t('kanban.comment_placeholder')"
                       (keydown.control.enter)="submitComment()"
                       (keydown.meta.enter)="submitComment()"></textarea>
-            <mat-hint>Strg+Enter zum Senden</mat-hint>
+            <mat-hint>{{ i18n.t('kanban.keyboard_hint') }}</mat-hint>
           </mat-form-field>
           <button mat-flat-button color="accent" class="send-btn"
                   [disabled]="!newComment.trim() || sendingComment()"
@@ -168,7 +169,7 @@ import { JiraComment, JiraDetail, KanbanCard, KanbanPriority, KanbanStatus } fro
             } @else {
               <mat-icon>send</mat-icon>
             }
-            Senden
+            {{ i18n.t('common.send') }}
           </button>
         </div>
       </div>
@@ -177,10 +178,10 @@ import { JiraComment, JiraDetail, KanbanCard, KanbanPriority, KanbanStatus } fro
     <!-- ── Actions ── -->
     <mat-divider></mat-divider>
     <div class="dialog-actions">
-      <button mat-button (click)="ref.close()">Abbrechen</button>
+      <button mat-button (click)="ref.close()">{{ i18n.t('common.cancel') }}</button>
       <button mat-flat-button color="primary" [disabled]="form.invalid || saving()" (click)="save()">
         @if (saving()) { <mat-spinner diameter="18"></mat-spinner> }
-        @else { <ng-container><mat-icon>save</mat-icon> Speichern</ng-container> }
+        @else { <ng-container><mat-icon>save</mat-icon> {{ i18n.t('common.save') }}</ng-container> }
       </button>
     </div>
   `,
@@ -237,6 +238,8 @@ import { JiraComment, JiraDetail, KanbanCard, KanbanPriority, KanbanStatus } fro
   `],
 })
 export class KanbanCardDialogComponent implements OnInit {
+  readonly i18n = inject(I18nService);
+
   isEdit: boolean;
   card: KanbanCard | undefined;
   form!: FormGroup;

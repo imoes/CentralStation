@@ -15,6 +15,7 @@ import { ConnectorService } from '../../../core/services/connector.service';
 import { AuthService } from '../../../core/auth/auth.service';
 import { Connector, ConnectorType } from '../../../core/models/connector.model';
 import { environment } from '../../../../environments/environment';
+import { I18nService } from '../../../core/services/i18n.service';
 
 interface CredField {
   key: string; label: string;
@@ -303,7 +304,7 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
                 <div class="ms-user-code">{{ llmOAuthUserCode() }}</div>
                 <p class="ms-poll-hint">Warte auf Bestätigung…</p>
                 <mat-spinner diameter="20"></mat-spinner>
-                <button mat-button (click)="cancelLlmOAuth()">Abbrechen</button>
+                <button mat-button (click)="cancelLlmOAuth()">{{ i18n.t('common.cancel') }}</button>
               </div>
             }
 
@@ -404,10 +405,10 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
       </form>
     </mat-dialog-content>
     <mat-dialog-actions align="end">
-      <button mat-button mat-dialog-close>Abbrechen</button>
+      <button mat-button mat-dialog-close>{{ i18n.t('common.cancel') }}</button>
       <button mat-raised-button color="primary" [disabled]="form.invalid || saving()" (click)="save()">
         @if (saving()) { <mat-spinner diameter="18"></mat-spinner> }
-        @else { Speichern }
+        @else { {{ i18n.t('common.save') }} }
       </button>
     </mat-dialog-actions>
   `,
@@ -461,6 +462,7 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
   `],
 })
 export class ConnectorFormDialogComponent implements OnInit, OnDestroy {
+  readonly i18n = inject(I18nService);
   connectorTypes = CONNECTOR_TYPES;
   isEdit: boolean;
   form!: FormGroup;

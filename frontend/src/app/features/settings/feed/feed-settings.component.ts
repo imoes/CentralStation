@@ -1,4 +1,4 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -14,6 +14,7 @@ import { MatDividerModule } from '@angular/material/divider';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { environment } from '../../../../environments/environment';
+import { I18nService } from '../../../core/services/i18n.service';
 
 interface RetentionConfig {
   checkmk_days: number;
@@ -58,7 +59,7 @@ const SOURCE_META = [
   template: `
     <div class="page-container">
       <div class="page-header">
-        <h2>Feed-Einstellungen</h2>
+        <h2>{{ i18n.t('settings.tabs.feed') }}</h2>
       </div>
 
       @if (loading()) {
@@ -99,7 +100,7 @@ const SOURCE_META = [
             <button mat-flat-button color="primary" (click)="save()" [disabled]="saving()">
               @if (saving()) { <mat-spinner diameter="18"></mat-spinner> }
               @else { <mat-icon>save</mat-icon> }
-              Speichern
+              {{ i18n.t('common.save') }}
             </button>
           </div>
         </mat-card>
@@ -139,7 +140,7 @@ const SOURCE_META = [
                   </mat-form-field>
                 </div>
                 <div class="search-actions">
-                  <mat-slide-toggle [(ngModel)]="search.enabled">Aktiv</mat-slide-toggle>
+                  <mat-slide-toggle [(ngModel)]="search.enabled">{{ i18n.t('common.enabled') }}</mat-slide-toggle>
                   <mat-slide-toggle [(ngModel)]="search.is_exclusion" color="warn">
                     <span class="exclusion-label">Ausblenden</span>
                   </mat-slide-toggle>
@@ -148,8 +149,8 @@ const SOURCE_META = [
                     @else { <mat-icon>visibility</mat-icon> }
                     Vorschau
                   </button>
-                  <button mat-flat-button color="primary" (click)="saveSearch(search)">Speichern</button>
-                  <button mat-icon-button color="warn" matTooltip="System-Filter löschen" (click)="deleteSearch(search)">
+                  <button mat-flat-button color="primary" (click)="saveSearch(search)">{{ i18n.t('common.save') }}</button>
+                  <button mat-icon-button color="warn" [matTooltip]="i18n.t('common.delete')" (click)="deleteSearch(search)">
                     <mat-icon>delete</mat-icon>
                   </button>
                 </div>
@@ -194,7 +195,7 @@ const SOURCE_META = [
             <div class="card-actions">
               <button mat-flat-button color="primary" (click)="createSystemSearch()" [disabled]="!newSearch.name.trim()">
                 <mat-icon>add</mat-icon>
-                Suche anlegen
+                {{ i18n.t('feed.save_search') }}
               </button>
             </div>
           </div>
@@ -290,6 +291,7 @@ const SOURCE_META = [
   `],
 })
 export class FeedSettingsComponent implements OnInit {
+  readonly i18n = inject(I18nService);
   readonly sources = SOURCE_META;
 
   loading = signal(true);
