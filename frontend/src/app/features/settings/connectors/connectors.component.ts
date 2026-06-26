@@ -1,6 +1,6 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
+import { ReactiveFormsModule } from '@angular/forms';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -13,6 +13,8 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { ConnectorService } from '../../../core/services/connector.service';
 import { Connector, ConnectorType } from '../../../core/models/connector.model';
 import { ConnectorFormDialogComponent } from './connector-form-dialog.component';
+import { AuthService } from '../../../core/auth/auth.service';
+import { I18nService } from '../../../core/services/i18n.service';
 
 @Component({
   selector: 'cs-connectors',
@@ -26,9 +28,14 @@ import { ConnectorFormDialogComponent } from './connector-form-dialog.component'
   template: `
     <div class="page-container">
       <div class="page-header">
-        <h2>Connectors</h2>
+        <div>
+          <h2>{{ isAdmin() ? i18n.t('settings.tabs.connectors') : i18n.t('settings.tabs.myConnectors') }}</h2>
+          @if (!isAdmin()) {
+            <p class="subtle">Hier pflegen Sie Ihre persönlichen Zugänge für Monitoring, Jira, O365 und Teams.</p>
+          }
+        </div>
         <button mat-raised-button color="primary" (click)="openCreate()">
-          <mat-icon>add</mat-icon> Connector hinzufügen
+          <mat-icon>add</mat-icon> {{ i18n.t('settings.connectors.add') }}
         </button>
       </div>
 
@@ -38,13 +45,13 @@ import { ConnectorFormDialogComponent } from './connector-form-dialog.component'
         <mat-card>
           <table mat-table [dataSource]="connectors()" class="full-width">
             <ng-container matColumnDef="type">
-              <th mat-header-cell *matHeaderCellDef>Typ</th>
+              <th mat-header-cell *matHeaderCellDef>{{ i18n.t('common.type') }}</th>
               <td mat-cell *matCellDef="let c">
                 <mat-chip [class]="'chip-' + c.type">{{ c.type }}</mat-chip>
               </td>
             </ng-container>
             <ng-container matColumnDef="name">
-              <th mat-header-cell *matHeaderCellDef>Name</th>
+              <th mat-header-cell *matHeaderCellDef>{{ i18n.t('common.name') }}</th>
               <td mat-cell *matCellDef="let c">{{ c.name }}</td>
             </ng-container>
             <ng-container matColumnDef="base_url">
@@ -52,7 +59,7 @@ import { ConnectorFormDialogComponent } from './connector-form-dialog.component'
               <td mat-cell *matCellDef="let c" class="url-cell">{{ c.base_url || '—' }}</td>
             </ng-container>
             <ng-container matColumnDef="enabled">
-              <th mat-header-cell *matHeaderCellDef>Aktiv</th>
+              <th mat-header-cell *matHeaderCellDef>{{ i18n.t('common.enabled') }}</th>
               <td mat-cell *matCellDef="let c">
                 <mat-slide-toggle
                   [checked]="c.enabled"
@@ -61,9 +68,9 @@ import { ConnectorFormDialogComponent } from './connector-form-dialog.component'
               </td>
             </ng-container>
             <ng-container matColumnDef="actions">
-              <th mat-header-cell *matHeaderCellDef>Aktionen</th>
+              <th mat-header-cell *matHeaderCellDef>{{ i18n.t('common.actions') }}</th>
               <td mat-cell *matCellDef="let c">
-                <button mat-icon-button (click)="testConnector(c)" title="Verbindung testen"
+                <button mat-icon-button (click)="testConnector(c)" [title]="i18n.t('settings.connectors.test')"
                         [disabled]="testingId() === c.id">
                   @if (testingId() === c.id) {
                     <mat-spinner diameter="20"></mat-spinner>
@@ -71,19 +78,25 @@ import { ConnectorFormDialogComponent } from './connector-form-dialog.component'
                     <mat-icon>wifi_tethering</mat-icon>
                   }
                 </button>
-                <button mat-icon-button (click)="openEdit(c)" title="Bearbeiten">
+                <button mat-icon-button (click)="openEdit(c)" [title]="i18n.t('common.edit')">
                   <mat-icon>edit</mat-icon>
                 </button>
-                <button mat-icon-button color="warn" (click)="deleteConnector(c)" title="Löschen">
-                  <mat-icon>delete</mat-icon>
-                </button>
+                @if (isAdmin()) {
+                  <button mat-icon-button color="warn" (click)="deleteConnector(c)" [title]="i18n.t('common.delete')">
+                    <mat-icon>delete</mat-icon>
+                  </button>
+                } @else if (c.owner_user_id) {
+                  <button mat-icon-button color="warn" (click)="deleteMyConnector(c)" [title]="i18n.t('common.delete')">
+                    <mat-icon>delete</mat-icon>
+                  </button>
+                }
               </td>
             </ng-container>
             <tr mat-header-row *matHeaderRowDef="columns"></tr>
             <tr mat-row *matRowDef="let row; columns: columns"></tr>
           </table>
           @if (connectors().length === 0) {
-            <div class="empty-state">Keine Connectors konfiguriert.</div>
+            <div class="empty-state">{{ i18n.t('settings.connectors.no_connectors') }}</div>
           }
         </mat-card>
       }
@@ -93,6 +106,7 @@ import { ConnectorFormDialogComponent } from './connector-form-dialog.component'
     .page-container { padding: 24px; max-width: 1100px; }
     .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
     .page-header h2 { margin: 0; }
+    .subtle { margin: 4px 0 0; color: var(--mat-sys-on-surface-variant); font-size: 13px; }
     .full-width { width: 100%; }
     .url-cell { font-family: monospace; font-size: 12px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .empty-state { padding: 24px; text-align: center; color: var(--mat-sys-on-surface-variant); }
@@ -101,42 +115,58 @@ import { ConnectorFormDialogComponent } from './connector-form-dialog.component'
   `],
 })
 export class ConnectorsComponent implements OnInit {
+  readonly i18n = inject(I18nService);
   columns = ['type', 'name', 'base_url', 'enabled', 'actions'];
   connectors = signal<Connector[]>([]);
   loading = signal(true);
   testingId = signal<string | null>(null);
+  isAdmin = computed(() => this.auth.userRole() === 'admin');
 
   constructor(
     private svc: ConnectorService,
     private dialog: MatDialog,
     private snack: MatSnackBar,
+    private auth: AuthService,
   ) {}
 
   ngOnInit() { this.load(); }
 
   load() {
     this.loading.set(true);
-    this.svc.list().subscribe({
+    const request$ = this.isAdmin() ? this.svc.list() : this.svc.listMine();
+    request$.subscribe({
       next: list => { this.connectors.set(list); this.loading.set(false); },
       error: () => { this.loading.set(false); },
     });
   }
 
   openCreate() {
-    const ref = this.dialog.open(ConnectorFormDialogComponent, { width: '540px' });
+    const ref = this.dialog.open(ConnectorFormDialogComponent, {
+      width: '540px',
+      data: { personal: !this.isAdmin() },
+    });
     ref.afterClosed().subscribe(result => { if (result) this.load(); });
   }
 
   openEdit(connector: Connector) {
     const ref = this.dialog.open(ConnectorFormDialogComponent, {
       width: '540px',
-      data: { connector },
+      data: { connector, personal: !this.isAdmin() },
     });
     ref.afterClosed().subscribe(result => { if (result) this.load(); });
   }
 
   toggleEnabled(connector: Connector, enabled: boolean) {
-    this.svc.update(connector.id, { enabled }).subscribe({
+    if (this.isAdmin()) {
+      this.svc.update(connector.id, { enabled }).subscribe({
+        next: updated => {
+          this.connectors.update(list => list.map(c => c.id === updated.id ? updated : c));
+        },
+      });
+      return;
+    }
+
+    this.svc.updateMineById(connector.id, { enabled }).subscribe({
       next: updated => {
         this.connectors.update(list => list.map(c => c.id === updated.id ? updated : c));
       },
@@ -145,7 +175,8 @@ export class ConnectorsComponent implements OnInit {
 
   testConnector(connector: Connector) {
     this.testingId.set(connector.id);
-    this.svc.test(connector.id).subscribe({
+    const request$ = this.isAdmin() ? this.svc.test(connector.id) : this.svc.testMine(connector.type);
+    request$.subscribe({
       next: result => {
         this.testingId.set(null);
         const msg = result.success ? `✓ ${result.message}` : `✗ ${result.message}`;
@@ -156,7 +187,7 @@ export class ConnectorsComponent implements OnInit {
       },
       error: () => {
         this.testingId.set(null);
-        this.snack.open('Verbindungstest fehlgeschlagen', 'OK', { duration: 4000 });
+        this.snack.open(this.i18n.t('settings.connectors.test_error'), 'OK', { duration: 4000 });
       },
     });
   }
@@ -164,5 +195,10 @@ export class ConnectorsComponent implements OnInit {
   deleteConnector(connector: Connector) {
     if (!confirm(`Connector "${connector.name}" wirklich löschen?`)) return;
     this.svc.delete(connector.id).subscribe({ next: () => this.load() });
+  }
+
+  deleteMyConnector(connector: Connector) {
+    if (!confirm(`Connector "${connector.name}" wirklich löschen?`)) return;
+    this.svc.deleteMineById(connector.id).subscribe({ next: () => this.load() });
   }
 }

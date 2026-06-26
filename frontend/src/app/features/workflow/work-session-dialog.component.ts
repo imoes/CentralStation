@@ -1,4 +1,4 @@
-import { Component, Inject, OnInit, signal } from '@angular/core';
+import { Component, Inject, OnInit, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -16,36 +16,40 @@ import { MatExpansionModule } from '@angular/material/expansion';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatBadgeModule } from '@angular/material/badge';
+import { Router } from '@angular/router';
+import { inject } from '@angular/core';
 import { environment } from '../../../environments/environment';
+import { ComputerService } from '../../core/services/computer.service';
+import { I18nService } from '../../core/services/i18n.service';
 
 const CLOSURE_CODES = [
-  { value: 'solved_permanently', label: 'Dauerlösung' },
+  { value: 'solved_permanently', label: 'Permanent fix' },
   { value: 'solved_workaround', label: 'Workaround' },
-  { value: 'no_fault_found', label: 'Kein Fehler gefunden' },
-  { value: 'duplicate', label: 'Duplikat' },
-  { value: 'user_error', label: 'Benutzerfehler' },
-  { value: 'cancelled', label: 'Storniert' },
+  { value: 'no_fault_found', label: 'No fault found' },
+  { value: 'duplicate', label: 'Duplicate' },
+  { value: 'user_error', label: 'User error' },
+  { value: 'cancelled', label: 'Cancelled' },
 ];
 
 const STATUS_OPTIONS = [
-  { value: 'in_progress', label: 'In Bearbeitung' },
-  { value: 'pending', label: 'Ausstehend' },
-  { value: 'resolved', label: 'Gelöst' },
-  { value: 'closed', label: 'Geschlossen' },
+  { value: 'in_progress', label: 'In progress' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'resolved', label: 'Resolved' },
+  { value: 'closed', label: 'Closed' },
 ];
 
 const CATEGORIES = [
-  'Hardware', 'Software', 'Netzwerk', 'Sicherheit',
-  'E-Mail / Kommunikation', 'Berechtigungen / Zugang',
+  'Hardware', 'Software', 'Network', 'Security',
+  'Email / Communication', 'Permissions / Access',
   'Backup / Storage', 'Monitoring / Alerting',
-  'Server / Virtualisierung', 'Datenbank', 'Sonstiges',
+  'Server / Virtualisation', 'Database', 'Other',
 ];
 
 const PRIORITY_META: Record<string, { color: string; label: string }> = {
-  P1: { color: '#c62828', label: 'Kritisch' },
-  P2: { color: '#ef6c00', label: 'Hoch' },
-  P3: { color: '#f9a825', label: 'Mittel' },
-  P4: { color: '#388e3c', label: 'Niedrig' },
+  P1: { color: '#c62828', label: 'Critical' },
+  P2: { color: '#ef6c00', label: 'High' },
+  P3: { color: '#f9a825', label: 'Medium' },
+  P4: { color: '#388e3c', label: 'Low' },
 };
 
 @Component({
@@ -73,6 +77,14 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
           <span class="status-badge">{{ statusLabel() }}</span>
         </div>
         <div class="header-right">
+          <button mat-stroked-button (click)="openInWorkbench()" style="margin-right:8px" title="Open IDE, terminal &amp; git in workbench">
+            <mat-icon>construction</mat-icon> Open in workbench
+          </button>
+          @if (hasComputerSession()) {
+            <button mat-stroked-button (click)="resumeInComputer()" style="margin-right:8px" title="Continue session in Computer">
+              <mat-icon>terminal</mat-icon> Continue in Computer
+            </button>
+          }
           <button mat-icon-button (click)="dialogRef.close()"><mat-icon>close</mat-icon></button>
         </div>
       </div>
@@ -83,23 +95,107 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
 
       <mat-tab-group animationDuration="200ms" class="session-tabs">
 
+        <!-- ── Tab 0: Jira Ticket Content ── -->
+        <mat-tab label="Ticket">
+          <div class="ticket-tab-layout">
+            <div class="ticket-scroll-area">
+              @if (!session()?.jira_key) {
+                <div class="empty-notes">No Jira ticket linked.</div>
+              } @else if (!jiraDetail()) {
+                <div class="spinner-center"><mat-spinner diameter="32"></mat-spinner></div>
+              } @else {
+                <div class="ticket-toolbar">
+                  <button mat-stroked-button (click)="refreshJiraDetail()" [disabled]="jiraRefreshing()">
+                    @if (jiraRefreshing()) { <mat-spinner diameter="14"></mat-spinner> }
+                    @else { <mat-icon>refresh</mat-icon> }
+                    Refresh Jira
+                  </button>
+                </div>
+                <!-- Meta row -->
+                <div class="jira-meta-row">
+                  <span class="jira-meta-field"><strong>Status:</strong> {{ jiraDetail().status }}</span>
+                  <span class="jira-meta-field"><strong>Priority:</strong> {{ jiraDetail().priority }}</span>
+                  @if (jiraDetail().assignee) {
+                    <span class="jira-meta-field"><strong>Assigned to:</strong> {{ jiraDetail().assignee }}</span>
+                  }
+                  <span class="jira-meta-field"><strong>Created:</strong> {{ jiraDetail().created | date:'dd.MM.yyyy HH:mm' }}</span>
+                </div>
+
+                <!-- Description -->
+                <div class="jira-section">
+                  <div class="jira-section-title">Description</div>
+                  @if (jiraDetail().description) {
+                    <pre class="jira-body-text">{{ jiraDetail().description }}</pre>
+                  } @else {
+                    <span class="empty-notes">No description.</span>
+                  }
+                </div>
+
+                <!-- Comments -->
+                @if (jiraDetail().comments?.length) {
+                  <div class="jira-section">
+                    <div class="jira-section-title">Comments ({{ jiraDetail().comments.length }})</div>
+                    <div class="comment-list">
+                      @for (c of jiraDetail().comments; track c.id) {
+                        <div class="comment-entry">
+                          <div class="comment-meta">
+                            <mat-icon class="note-icon">person</mat-icon>
+                            <span class="note-author">{{ c.author }}</span>
+                            <span class="note-time">{{ c.created | date:'dd.MM.yyyy HH:mm' }}</span>
+                          </div>
+                          <pre class="note-content">{{ c.body }}</pre>
+                        </div>
+                      }
+                    </div>
+                  </div>
+                }
+              }
+            </div>
+
+            <!-- Sticky comment bar at bottom -->
+            @if (session()?.jira_key) {
+              <div class="ticket-comment-bar">
+                <mat-form-field appearance="outline" class="full-width comment-bar-field">
+                  <mat-label>Post comment to Jira</mat-label>
+                  <textarea matInput [(ngModel)]="manualComment" rows="3" placeholder="Enter comment…"></textarea>
+                </mat-form-field>
+                <div class="comment-bar-actions">
+                  <button mat-flat-button color="primary"
+                    (click)="postManualComment()"
+                    [disabled]="aiLoading.posting() || !manualComment.trim()">
+                    @if (aiLoading.posting()) {
+                      <mat-spinner diameter="16"></mat-spinner>
+                    } @else {
+                      <mat-icon>send</mat-icon>
+                    }
+                    Posten
+                  </button>
+                  @if (manualCommentPosted()) {
+                    <span class="post-success"><mat-icon>check_circle</mat-icon> Posted</span>
+                  }
+                </div>
+              </div>
+            }
+          </div>
+        </mat-tab>
+
         <!-- ── Tab 1: Overview ── -->
-        <mat-tab label="Übersicht">
+        <mat-tab label="Overview">
           <div class="tab-content">
             <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Titel</mat-label>
+              <mat-label>Title</mat-label>
               <input matInput [(ngModel)]="form.title">
             </mat-form-field>
 
             <div class="row-2">
               <mat-form-field appearance="outline">
-                <mat-label>Kategorie</mat-label>
+                <mat-label>Category</mat-label>
                 <mat-select [(ngModel)]="form.category">
                   @for (c of categories; track c) { <mat-option [value]="c">{{ c }}</mat-option> }
                 </mat-select>
               </mat-form-field>
               <mat-form-field appearance="outline">
-                <mat-label>Unterkategorie</mat-label>
+                <mat-label>Subcategory</mat-label>
                 <input matInput [(ngModel)]="form.subcategory">
               </mat-form-field>
             </div>
@@ -108,17 +204,17 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
               <mat-form-field appearance="outline">
                 <mat-label>Impact</mat-label>
                 <mat-select [(ngModel)]="form.impact" (selectionChange)="onImpactUrgencyChange()">
-                  <mat-option value="high">Hoch</mat-option>
-                  <mat-option value="medium">Mittel</mat-option>
-                  <mat-option value="low">Niedrig</mat-option>
+                  <mat-option value="high">High</mat-option>
+                  <mat-option value="medium">Medium</mat-option>
+                  <mat-option value="low">Low</mat-option>
                 </mat-select>
               </mat-form-field>
               <mat-form-field appearance="outline">
                 <mat-label>Urgency</mat-label>
                 <mat-select [(ngModel)]="form.urgency" (selectionChange)="onImpactUrgencyChange()">
-                  <mat-option value="high">Hoch</mat-option>
-                  <mat-option value="medium">Mittel</mat-option>
-                  <mat-option value="low">Niedrig</mat-option>
+                  <mat-option value="high">High</mat-option>
+                  <mat-option value="medium">Medium</mat-option>
+                  <mat-option value="low">Low</mat-option>
                 </mat-select>
               </mat-form-field>
               <mat-form-field appearance="outline">
@@ -132,15 +228,15 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
             @if (form.status === 'resolved' || form.status === 'closed') {
               <div class="row-2">
                 <mat-form-field appearance="outline">
-                  <mat-label>Abschlusstyp</mat-label>
+                  <mat-label>Closure type</mat-label>
                   <mat-select [(ngModel)]="form.closure_code">
                     @for (c of closureCodes; track c.value) { <mat-option [value]="c.value">{{ c.label }}</mat-option> }
                   </mat-select>
                 </mat-form-field>
                 <mat-form-field appearance="outline">
-                  <mat-label>Lösungstyp</mat-label>
+                  <mat-label>Resolution type</mat-label>
                   <mat-select [(ngModel)]="form.resolution_type">
-                    <mat-option value="permanent_fix">Dauerlösung</mat-option>
+                    <mat-option value="permanent_fix">Permanent fix</mat-option>
                     <mat-option value="workaround">Workaround</mat-option>
                   </mat-select>
                 </mat-form-field>
@@ -156,30 +252,30 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                   {{ session()?.sla_response_at | date:'dd.MM. HH:mm' }}
                 </span>
                 <mat-icon class="sla-icon" style="margin-left:12px">schedule</mat-icon>
-                <span class="sla-label">Lösung:</span>
+                <span class="sla-label">Resolution:</span>
                 <span [class.sla-breach]="isSlaBreached(session()?.sla_resolved_at)">
                   {{ session()?.sla_resolved_at | date:'dd.MM. HH:mm' }}
                 </span>
               </div>
             }
 
-            <!-- KI Auto-Kategorisierung -->
+            <!-- AI Auto-categorisation -->
             <button mat-stroked-button (click)="autoCategorize()" [disabled]="aiLoading.categorize()">
               @if (aiLoading.categorize()) { <mat-spinner diameter="16"></mat-spinner> }
               @else { <mat-icon>psychology</mat-icon> }
-              KI Auto-Kategorisierung
+              AI auto-categorise
             </button>
 
             <div class="form-actions">
               <button mat-flat-button color="primary" (click)="saveOverview()">
-                <mat-icon>save</mat-icon> Speichern
+                <mat-icon>save</mat-icon> {{ i18n.t('common.save') }}
               </button>
             </div>
           </div>
         </mat-tab>
 
         <!-- ── Tab 2: Work Notes ── -->
-        <mat-tab [label]="'Notizen (' + (session()?.work_notes?.length ?? 0) + ')'">
+        <mat-tab [label]="'Notes (' + (session()?.work_notes?.length ?? 0) + ')'">
           <div class="tab-content">
             <div class="notes-log">
               @for (note of session()?.work_notes ?? []; track $index) {
@@ -193,7 +289,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                 </div>
               }
               @if (!session()?.work_notes?.length) {
-                <div class="empty-notes">Noch keine Notizen.</div>
+                <div class="empty-notes">No notes yet.</div>
               }
             </div>
 
@@ -201,24 +297,24 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
 
             <div class="add-note">
               <mat-form-field appearance="outline" class="full-width">
-                <mat-label>Neue Notiz</mat-label>
-                <textarea matInput [(ngModel)]="newNote" rows="3" placeholder="Arbeitsschritt, Beobachtung, …"></textarea>
+                <mat-label>New note</mat-label>
+                <textarea matInput [(ngModel)]="newNote" rows="3" placeholder="Work step, observation, …"></textarea>
               </mat-form-field>
               <button mat-flat-button color="primary" (click)="addNote()" [disabled]="!newNote.trim()">
-                <mat-icon>add_comment</mat-icon> Notiz hinzufügen
+                <mat-icon>add_comment</mat-icon> Add note
               </button>
             </div>
           </div>
         </mat-tab>
 
         <!-- ── Tab 3: KI-Kommentar ── -->
-        <mat-tab label="KI-Assistent">
+        <mat-tab label="AI Assistant">
           <div class="tab-content">
 
             <!-- Comment Generator -->
             <mat-expansion-panel expanded>
               <mat-expansion-panel-header>
-                <mat-panel-title><mat-icon>comment</mat-icon> Ticket-Kommentar generieren</mat-panel-title>
+                <mat-panel-title><mat-icon>comment</mat-icon> Generate ticket comment</mat-panel-title>
               </mat-expansion-panel-header>
               <div class="panel-body">
                 <div class="comment-type-row">
@@ -230,19 +326,42 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                     </button>
                   }
                 </div>
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>Recent developments (optional)</mat-label>
+                  <textarea matInput [(ngModel)]="additionalContext" rows="3"
+                    placeholder="e.g. Service restarted last night, logs show no further errors. Sprint goal: complete migration by Friday."></textarea>
+                  <mat-hint>Describe recent developments — the AI will incorporate them into the comment.</mat-hint>
+                </mat-form-field>
                 <button mat-flat-button color="accent" (click)="generateComment()" [disabled]="aiLoading.comment()">
-                  @if (aiLoading.comment()) { <mat-spinner diameter="16"></mat-spinner> Generiere… }
-                  @else { <mat-icon>auto_awesome</mat-icon> Kommentar erstellen }
+                  @if (aiLoading.comment()) { <mat-spinner diameter="16"></mat-spinner> Generating… }
+                  @else { <ng-container><mat-icon>auto_awesome</mat-icon> Create comment</ng-container> }
                 </button>
                 @if (generatedComment()) {
                   <div class="ai-result">
                     <div class="ai-result-header">
-                      <span>Generierter Kommentar</span>
+                      <span>Generated comment</span>
                       <button mat-icon-button (click)="copyToClipboard(generatedComment()!)" matTooltip="Kopieren">
                         <mat-icon>content_copy</mat-icon>
                       </button>
                     </div>
-                    <pre class="ai-text">{{ generatedComment() }}</pre>
+                    <textarea class="ai-text-edit" rows="8"
+                      [value]="generatedComment()!"
+                      (input)="generatedComment.set($any($event.target).value)"></textarea>
+                    <div class="ai-result-actions">
+                      <button mat-flat-button color="primary"
+                        (click)="postCommentToJira()"
+                        [disabled]="aiLoading.posting() || !session()?.jira_key"
+                        [matTooltip]="session()?.jira_key ? 'Post comment to Jira ' + session()?.jira_key : 'No Jira ticket linked'">
+                        @if (aiLoading.posting()) {
+                          <mat-spinner diameter="16"></mat-spinner> Posting…
+                        } @else {
+                          <mat-icon>send</mat-icon> Post comment
+                        }
+                      </button>
+                      @if (commentPosted()) {
+                        <span class="post-success"><mat-icon>check_circle</mat-icon> Posted to Jira</span>
+                      }
+                    </div>
                   </div>
                 }
               </div>
@@ -251,7 +370,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
             <!-- Resolution Generator -->
             <mat-expansion-panel>
               <mat-expansion-panel-header>
-                <mat-panel-title><mat-icon>task_alt</mat-icon> Abschluss-Dokumentation generieren</mat-panel-title>
+                <mat-panel-title><mat-icon>task_alt</mat-icon> Generate closure documentation</mat-panel-title>
               </mat-expansion-panel-header>
               <div class="panel-body">
                 <mat-form-field appearance="outline" class="full-width">
@@ -260,27 +379,27 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                 </mat-form-field>
                 <div class="row-2">
                   <mat-form-field appearance="outline">
-                    <mat-label>Abschlusstyp</mat-label>
+                    <mat-label>Closure type</mat-label>
                     <mat-select [(ngModel)]="form.closure_code">
                       @for (c of closureCodes; track c.value) { <mat-option [value]="c.value">{{ c.label }}</mat-option> }
                     </mat-select>
                   </mat-form-field>
                   <mat-form-field appearance="outline">
-                    <mat-label>Lösungstyp</mat-label>
+                    <mat-label>Resolution type</mat-label>
                     <mat-select [(ngModel)]="form.resolution_type">
-                      <mat-option value="permanent_fix">Dauerlösung</mat-option>
+                      <mat-option value="permanent_fix">Permanent fix</mat-option>
                       <mat-option value="workaround">Workaround</mat-option>
                     </mat-select>
                   </mat-form-field>
                 </div>
                 <button mat-flat-button color="accent" (click)="generateResolution()" [disabled]="aiLoading.resolution()">
-                  @if (aiLoading.resolution()) { <mat-spinner diameter="16"></mat-spinner> Generiere… }
-                  @else { <mat-icon>auto_awesome</mat-icon> Dokumentation erstellen }
+                  @if (aiLoading.resolution()) { <mat-spinner diameter="16"></mat-spinner> Generating… }
+                  @else { <ng-container><mat-icon>auto_awesome</mat-icon> Create documentation</ng-container> }
                 </button>
                 @if (generatedResolution()) {
                   <div class="ai-result">
                     <div class="ai-result-header">
-                      <span>Lösungsdokumentation</span>
+                      <span>Solution documentation</span>
                       <button mat-icon-button (click)="copyToClipboard(generatedResolution()!)" matTooltip="Kopieren">
                         <mat-icon>content_copy</mat-icon>
                       </button>
@@ -294,29 +413,29 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
             <!-- Solution Suggester -->
             <mat-expansion-panel>
               <mat-expansion-panel-header>
-                <mat-panel-title><mat-icon>search</mat-icon> Lösungsvorschläge (RAG + Web)</mat-panel-title>
+                <mat-panel-title><mat-icon>search</mat-icon> Solution suggestions (RAG + Web)</mat-panel-title>
               </mat-expansion-panel-header>
               <div class="panel-body">
                 <button mat-flat-button color="accent" (click)="suggestSolution()" [disabled]="aiLoading.solution()">
-                  @if (aiLoading.solution()) { <mat-spinner diameter="16"></mat-spinner> Suche… }
-                  @else { <mat-icon>travel_explore</mat-icon> Lösungen suchen }
+                  @if (aiLoading.solution()) { <mat-spinner diameter="16"></mat-spinner> Searching… }
+                  @else { <ng-container><mat-icon>travel_explore</mat-icon> Search solutions</ng-container> }
                 </button>
                 @if (solutionData()) {
                   @if (solutionData()!.solution_steps?.length) {
                     <div class="solution-section">
-                      <strong>Lösungsschritte</strong>
+                      <strong>Solution steps</strong>
                       <ol>@for (step of solutionData()!.solution_steps; track $index) { <li>{{ step }}</li> }</ol>
                     </div>
                   }
                   @if (solutionData()!.possible_causes?.length) {
                     <div class="solution-section">
-                      <strong>Mögliche Ursachen</strong>
+                      <strong>Possible causes</strong>
                       <ul>@for (c of solutionData()!.possible_causes; track $index) { <li>{{ c }}</li> }</ul>
                     </div>
                   }
                   @if (solutionData()!.rag_results?.length) {
                     <div class="solution-section">
-                      <strong>Wissensdatenbank</strong>
+                      <strong>Knowledge base</strong>
                       @for (r of solutionData()!.rag_results; track $index) {
                         <div class="rag-item"><mat-icon>article</mat-icon> {{ r.title ?? r }}</div>
                       }
@@ -324,7 +443,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                   }
                   @if (solutionData()!.web_results?.length) {
                     <div class="solution-section">
-                      <strong>Web-Ergebnisse</strong>
+                      <strong>Web results</strong>
                       @for (r of solutionData()!.web_results; track r.url) {
                         <div class="rag-item"><mat-icon>language</mat-icon>
                           <a [href]="r.url" target="_blank">{{ r.title }}</a>
@@ -339,55 +458,73 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
           </div>
         </mat-tab>
 
-        <!-- ── Tab 4: 5-Why Analyse ── -->
-        <mat-tab label="5-Why Analyse">
+        <!-- ── Tab: GitLab ── -->
+        <mat-tab label="GitLab">
           <div class="tab-content">
-            <p class="tab-desc">Die 5-Why-Analyse identifiziert die Kernursache eines Problems durch fünf iterative Warum-Fragen (ITIL Problem Management).</p>
-
-            <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Problembeschreibung / Root Cause Hinweis</mat-label>
-              <textarea matInput [(ngModel)]="form.root_cause" rows="3"></textarea>
-            </mat-form-field>
-
-            <button mat-flat-button color="accent" (click)="run5Why()" [disabled]="aiLoading.fiveWhy()">
-              @if (aiLoading.fiveWhy()) { <mat-spinner diameter="16"></mat-spinner> Analysiere… }
-              @else { <mat-icon>psychology</mat-icon> 5-Why Analyse starten }
-            </button>
-
-            @if (fiveWhyData()) {
-              <div class="fivewhy-result">
-                @for (i of [1,2,3,4,5]; track i) {
-                  @let key = 'why_' + i;
-                  @if (fiveWhyData()![key]) {
-                    <div class="why-step">
-                      <div class="why-q"><span class="why-num">Warum {{ i }}</span> {{ fiveWhyData()![key].question }}</div>
-                      <div class="why-a">→ {{ fiveWhyData()![key].answer }}</div>
+            @if (gitlabStatus()) {
+              @if (gitlabStatus()?.linked) {
+                <div class="gitlab-info">
+                  <div class="info-row">
+                    <mat-icon>call_split</mat-icon>
+                    <span>Branch: <strong>{{ gitlabStatus()?.branch ?? '—' }}</strong></span>
+                  </div>
+                  @if (gitlabStatus()?.mr_url) {
+                    <div class="info-row">
+                      <mat-icon>merge_type</mat-icon>
+                      <a [href]="gitlabStatus()?.mr_url" target="_blank">
+                        MR !{{ gitlabStatus()?.mr_iid }} — {{ gitlabStatus()?.mr_state }}
+                      </a>
                     </div>
                   }
-                }
-                @if (fiveWhyData()!.root_cause) {
-                  <div class="root-cause-box">
-                    <mat-icon>gps_fixed</mat-icon>
-                    <div>
-                      <strong>Kernursache:</strong> {{ fiveWhyData()!.root_cause }}
+                  @for (p of gitlabStatus()?.pipelines ?? []; track p.id) {
+                    <div class="info-row">
+                      <mat-icon>smart_toy</mat-icon>
+                      <span>Pipeline #{{ p.id }}: <strong>{{ p.status }}</strong></span>
                     </div>
-                  </div>
-                }
-                @if (fiveWhyData()!.corrective_action) {
-                  <div class="corrective-box">
-                    <mat-icon>build</mat-icon>
-                    <div>
-                      <strong>Empfohlene Maßnahme:</strong> {{ fiveWhyData()!.corrective_action }}
-                    </div>
-                  </div>
-                }
-                <div class="fivewhy-actions">
-                  <button mat-stroked-button (click)="adopt5WhyRootCause()">
-                    <mat-icon>check</mat-icon> Kernursache übernehmen
-                  </button>
+                  }
                 </div>
-              </div>
+              }
             }
+
+            <div class="gitlab-actions">
+              @if (!gitlabStatus()?.branch) {
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>Project ID</mat-label>
+                  <input matInput [(ngModel)]="glProjectId" placeholder="e.g. 211">
+                </mat-form-field>
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>Branch name</mat-label>
+                  <input matInput [(ngModel)]="glBranch" placeholder="e.g. fix/my-session">
+                </mat-form-field>
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>From branch (ref)</mat-label>
+                  <input matInput [(ngModel)]="glRef" placeholder="main">
+                </mat-form-field>
+                <button mat-flat-button color="primary" (click)="createGitLabBranch()" [disabled]="!glProjectId || !glBranch">
+                  <mat-icon>call_split</mat-icon> Create branch
+                </button>
+              }
+
+              @if (gitlabStatus()?.branch && !gitlabStatus()?.mr_iid) {
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>MR title</mat-label>
+                  <input matInput [(ngModel)]="glMrTitle" placeholder="e.g. Fix: ...">
+                </mat-form-field>
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>Target branch</mat-label>
+                  <input matInput [(ngModel)]="glTargetBranch" placeholder="main">
+                </mat-form-field>
+                <button mat-flat-button color="accent" (click)="openGitLabMR()" [disabled]="!glMrTitle">
+                  <mat-icon>merge_type</mat-icon> Open merge request
+                </button>
+              }
+
+              @if (gitlabStatus()?.branch) {
+                <button mat-stroked-button (click)="loadGitLabStatus()" style="margin-top:8px">
+                  <mat-icon>refresh</mat-icon> Refresh status
+                </button>
+              }
+            </div>
           </div>
         </mat-tab>
 
@@ -415,6 +552,23 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
     .sla-label { font-weight: 500; }
     .sla-breach { color: #c62828; font-weight: 700; }
     .form-actions { display: flex; justify-content: flex-end; }
+    .ticket-tab-layout { display: flex; flex-direction: column; height: calc(85vh - 120px); }
+    .ticket-scroll-area { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .ticket-comment-bar { flex-shrink: 0; border-top: 1px solid var(--mat-sys-outline-variant); padding: 10px 16px 12px; background: var(--mat-sys-surface); display: flex; flex-direction: column; gap: 4px; }
+    .comment-bar-field { width: 100%; }
+    .comment-bar-actions { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+    .ticket-toolbar { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+    .ticket-toolbar button { font-size: 12px; }
+    /* Jira detail tab */
+    .jira-meta-row { display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; padding: 4px 0; }
+    .jira-meta-field { color: var(--mat-sys-on-surface-variant); }
+    .jira-meta-field strong { color: var(--mat-sys-on-surface); margin-right: 4px; }
+    .jira-section { display: flex; flex-direction: column; gap: 6px; }
+    .jira-section-title { font-weight: 600; font-size: 13px; color: var(--mat-sys-on-surface-variant); text-transform: uppercase; letter-spacing: .5px; }
+    pre.jira-body-text { margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-word; font-family: inherit; line-height: 1.6; background: var(--mat-sys-surface-variant); border-radius: 6px; padding: 10px 12px; }
+    .comment-list { display: flex; flex-direction: column; gap: 8px; }
+    .comment-entry { border-radius: 8px; padding: 8px 12px; background: var(--mat-sys-surface-variant); }
+    .comment-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
     /* Notes */
     .notes-log { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
     .note-entry { border-radius: 8px; padding: 8px 12px; background: var(--mat-sys-surface-variant); }
@@ -435,24 +589,33 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
     .ai-result { background: var(--mat-sys-surface-variant); border-radius: 8px; padding: 12px; }
     .ai-result-header { display: flex; align-items: center; justify-content: space-between; font-weight: 500; font-size: 13px; margin-bottom: 6px; }
     pre.ai-text { margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-word; font-family: inherit; line-height: 1.5; }
+    .ai-text-edit { width: 100%; box-sizing: border-box; font-size: 12px; font-family: inherit; line-height: 1.5; padding: 8px 10px; border: 1px solid var(--mat-sys-outline-variant); border-radius: 6px; background: var(--mat-sys-surface); color: var(--mat-sys-on-surface); resize: vertical; outline: none; }
+    .ai-text-edit:focus { border-color: var(--mat-sys-primary); }
+    .ai-result-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+    .post-success { display: flex; align-items: center; gap: 4px; color: #2e7d32; font-size: 13px; font-weight: 500; }
+    .post-success mat-icon { font-size: 16px; width: 16px; height: 16px; }
     .solution-section { font-size: 13px; }
     .solution-section strong { display: block; margin-bottom: 4px; }
     .rag-item { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 0; }
     .rag-item mat-icon { font-size: 14px; width: 14px; height: 14px; }
-    /* 5-Why */
-    .fivewhy-result { display: flex; flex-direction: column; gap: 10px; }
-    .why-step { padding: 8px 12px; background: var(--mat-sys-surface-variant); border-radius: 6px; }
-    .why-q { font-size: 13px; }
-    .why-num { font-weight: 700; color: var(--mat-sys-primary); margin-right: 6px; }
-    .why-a { font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-top: 2px; padding-left: 12px; }
-    .root-cause-box { display: flex; gap: 8px; align-items: flex-start; padding: 12px; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ef6c00; font-size: 13px; }
-    .corrective-box { display: flex; gap: 8px; align-items: flex-start; padding: 12px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #388e3c; font-size: 13px; }
-    .fivewhy-actions { display: flex; gap: 8px; }
+    .gitlab-info { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
+    .gitlab-actions { display: flex; flex-direction: column; gap: 8px; }
+    .info-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .info-row mat-icon { font-size: 18px; width: 18px; height: 18px; color: var(--mat-sys-primary); }
   `],
 })
 export class WorkSessionDialogComponent implements OnInit {
   session = signal<any | null>(null);
+  jiraDetail = signal<any | null>(null);
+  gitlabStatus = signal<any | null>(null);
   loading = signal(true);
+  jiraRefreshing = signal(false);
+
+  glProjectId = '';
+  glBranch = '';
+  glRef = 'main';
+  glMrTitle = '';
+  glTargetBranch = 'main';
 
   form: any = {
     title: '', category: null, subcategory: '', impact: null, urgency: null,
@@ -461,31 +624,38 @@ export class WorkSessionDialogComponent implements OnInit {
   };
 
   newNote = '';
+  additionalContext = '';
+  manualComment = '';
+  manualCommentPosted = signal(false);
   selectedCommentType = signal('progress');
   generatedComment = signal<string | null>(null);
   generatedResolution = signal<string | null>(null);
   solutionData = signal<any | null>(null);
-  fiveWhyData = signal<any | null>(null);
-
+  commentPosted = signal(false);
   aiLoading = {
     comment: signal(false),
     resolution: signal(false),
     solution: signal(false),
-    fiveWhy: signal(false),
     categorize: signal(false),
+    posting: signal(false),
   };
 
   readonly categories = CATEGORIES;
   readonly closureCodes = CLOSURE_CODES;
   readonly statusOptions = STATUS_OPTIONS;
   readonly commentTypes = [
-    { value: 'progress', label: 'Fortschritt' },
+    { value: 'progress', label: 'Progress' },
     { value: 'pending', label: 'Pending' },
-    { value: 'escalation', label: 'Eskalation' },
-    { value: 'handoff', label: 'Übergabe' },
+    { value: 'escalation', label: 'Escalation' },
+    { value: 'handoff', label: 'Handoff' },
   ];
 
   private sessionId: string | null = null;
+  private router = inject(Router);
+  private computerService = inject(ComputerService);
+  readonly i18n = inject(I18nService);
+
+  hasComputerSession = computed(() => !!this.session()?.computer_session_id);
 
   constructor(
     public dialogRef: MatDialogRef<WorkSessionDialogComponent>,
@@ -493,6 +663,21 @@ export class WorkSessionDialogComponent implements OnInit {
     private http: HttpClient,
     private snackBar: MatSnackBar,
   ) {}
+
+  resumeInComputer(): void {
+    const sid = this.session()?.computer_session_id;
+    if (!sid) return;
+    this.dialogRef.close();
+    this.computerService.resumeSession(sid);
+    this.router.navigate(['/computer']);
+  }
+
+  openInWorkbench(): void {
+    const id = this.session()?.id;
+    if (!id) return;
+    this.dialogRef.close();
+    this.router.navigate(['/workbench', id]);
+  }
 
   ngOnInit() {
     if (this.dialogData?.id) {
@@ -524,6 +709,13 @@ export class WorkSessionDialogComponent implements OnInit {
   private setSession(s: any) {
     this.session.set(s);
     this.sessionId = s.id;
+    if (s.jira_key) {
+      this.http.get<any>(`${environment.apiUrl}/jira-view/issue/${s.jira_key}`)
+        .subscribe({ next: d => this.jiraDetail.set(d), error: () => {} });
+    }
+    if (s.gitlab_project_id || s.gitlab_branch) {
+      this.loadGitLabStatus();
+    }
     this.form = {
       title: s.title,
       category: s.category,
@@ -535,6 +727,38 @@ export class WorkSessionDialogComponent implements OnInit {
       resolution_type: s.resolution_type ?? 'permanent_fix',
       root_cause: s.root_cause ?? '',
     };
+  }
+
+  loadGitLabStatus() {
+    if (!this.sessionId) return;
+    this.http.get<any>(`${environment.apiUrl}/workflow/${this.sessionId}/gitlab/status`)
+      .subscribe({ next: d => this.gitlabStatus.set(d), error: () => {} });
+  }
+
+  createGitLabBranch() {
+    if (!this.sessionId) return;
+    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/gitlab/branch`, {
+      project_id: this.glProjectId,
+      branch: this.glBranch,
+      ref: this.glRef || 'main',
+    }).subscribe({
+      next: () => { this.snackBar.open('Branch created', '', { duration: 2000 }); this.loadSession(this.sessionId!); },
+      error: (e) => this.snackBar.open('Error: ' + (e?.error?.detail ?? e.message), '', { duration: 3000 }),
+    });
+  }
+
+  openGitLabMR() {
+    if (!this.sessionId) return;
+    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/gitlab/mr`, {
+      target_branch: this.glTargetBranch || 'main',
+      title: this.glMrTitle,
+    }).subscribe({
+      next: (d) => {
+        this.snackBar.open('MR created', 'Open', { duration: 4000 }).onAction().subscribe(() => window.open(d.url, '_blank'));
+        this.loadSession(this.sessionId!);
+      },
+      error: (e) => this.snackBar.open('Error: ' + (e?.error?.detail ?? e.message), '', { duration: 3000 }),
+    });
   }
 
   saveOverview() {
@@ -549,7 +773,7 @@ export class WorkSessionDialogComponent implements OnInit {
       resolution_type: this.form.resolution_type,
       root_cause: this.form.root_cause,
     }).subscribe({
-      next: () => { this.snackBar.open('Gespeichert', '', { duration: 2000 }); this.loadSession(this.sessionId!); },
+      next: () => { this.snackBar.open('Saved', '', { duration: 2000 }); this.loadSession(this.sessionId!); },
     });
   }
 
@@ -561,6 +785,39 @@ export class WorkSessionDialogComponent implements OnInit {
     }
   }
 
+  postManualComment() {
+    const text = this.manualComment.trim();
+    if (!text || !this.sessionId) return;
+    this.aiLoading.posting.set(true);
+    this.manualCommentPosted.set(false);
+    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/post-comment`, { comment: text })
+      .subscribe({
+        next: res => {
+          this.aiLoading.posting.set(false);
+          this.manualCommentPosted.set(true);
+          this.manualComment = '';
+          const key = res.jira_key ?? this.session()?.jira_key;
+          this.snackBar.open(`Comment posted to ${key}`, '', { duration: 3000 });
+          this.refreshJiraDetail();
+        },
+        error: () => {
+          this.aiLoading.posting.set(false);
+          this.snackBar.open('Error posting comment', '', { duration: 3000 });
+        },
+      });
+  }
+
+  refreshJiraDetail() {
+    const key = this.session()?.jira_key;
+    if (!key) return;
+    this.jiraRefreshing.set(true);
+    this.http.get<any>(`${environment.apiUrl}/jira-view/issue/${key}`)
+      .subscribe({
+        next: d => { this.jiraDetail.set(d); this.jiraRefreshing.set(false); },
+        error: () => this.jiraRefreshing.set(false),
+      });
+  }
+
   addNote() {
     if (!this.newNote.trim()) return;
     this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/notes`, { content: this.newNote }).subscribe({
@@ -570,9 +827,13 @@ export class WorkSessionDialogComponent implements OnInit {
 
   generateComment() {
     this.aiLoading.comment.set(true);
-    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/generate-comment`, { comment_type: this.selectedCommentType() }).subscribe({
+    this.commentPosted.set(false);
+    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/generate-comment`, {
+      comment_type: this.selectedCommentType(),
+      additional_context: this.additionalContext.trim() || null,
+    }).subscribe({
       next: res => { this.generatedComment.set(res.comment); this.aiLoading.comment.set(false); this.loadSession(this.sessionId!); },
-      error: () => { this.aiLoading.comment.set(false); this.snackBar.open('Fehler beim Generieren', '', { duration: 3000 }); },
+      error: () => { this.aiLoading.comment.set(false); this.snackBar.open('Error generating comment', '', { duration: 3000 }); },
     });
   }
 
@@ -584,7 +845,7 @@ export class WorkSessionDialogComponent implements OnInit {
       closure_code: this.form.closure_code,
     }).subscribe({
       next: res => { this.generatedResolution.set(res.resolution); this.aiLoading.resolution.set(false); this.loadSession(this.sessionId!); },
-      error: () => { this.aiLoading.resolution.set(false); this.snackBar.open('Fehler beim Generieren', '', { duration: 3000 }); },
+      error: () => { this.aiLoading.resolution.set(false); this.snackBar.open('Error generating resolution', '', { duration: 3000 }); },
     });
   }
 
@@ -592,26 +853,8 @@ export class WorkSessionDialogComponent implements OnInit {
     this.aiLoading.solution.set(true);
     this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/suggest-solution`, { use_rag: true, use_web: true }).subscribe({
       next: res => { this.solutionData.set(res); this.aiLoading.solution.set(false); },
-      error: () => { this.aiLoading.solution.set(false); this.snackBar.open('Fehler bei Lösungssuche', '', { duration: 3000 }); },
+      error: () => { this.aiLoading.solution.set(false); this.snackBar.open('Error searching for solutions', '', { duration: 3000 }); },
     });
-  }
-
-  run5Why() {
-    this.aiLoading.fiveWhy.set(true);
-    if (this.form.root_cause) {
-      this.http.patch(`${environment.apiUrl}/workflow/${this.sessionId}`, { root_cause: this.form.root_cause }).subscribe();
-    }
-    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/5why`, {}).subscribe({
-      next: res => { this.fiveWhyData.set(res); this.aiLoading.fiveWhy.set(false); },
-      error: () => { this.aiLoading.fiveWhy.set(false); this.snackBar.open('Fehler bei 5-Why-Analyse', '', { duration: 3000 }); },
-    });
-  }
-
-  adopt5WhyRootCause() {
-    if (this.fiveWhyData()?.root_cause) {
-      this.form.root_cause = this.fiveWhyData()!.root_cause;
-      this.saveOverview();
-    }
   }
 
   autoCategorize() {
@@ -624,14 +867,32 @@ export class WorkSessionDialogComponent implements OnInit {
         this.form.urgency = res.urgency ?? this.form.urgency;
         this.aiLoading.categorize.set(false);
         this.loadSession(this.sessionId!);
-        this.snackBar.open('Kategorisierung übernommen', '', { duration: 2000 });
+        this.snackBar.open('Categorisation applied', '', { duration: 2000 });
       },
       error: () => this.aiLoading.categorize.set(false),
     });
   }
 
+  postCommentToJira() {
+    const comment = this.generatedComment();
+    if (!comment) return;
+    this.aiLoading.posting.set(true);
+    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/post-comment`, { comment }).subscribe({
+      next: () => {
+        this.aiLoading.posting.set(false);
+        this.commentPosted.set(true);
+        this.snackBar.open(`Comment posted to ${this.session()?.jira_key}`, 'OK', { duration: 3000 });
+        this.loadSession(this.sessionId!);
+      },
+      error: (err) => {
+        this.aiLoading.posting.set(false);
+        this.snackBar.open(err?.error?.detail ?? 'Error posting comment', '', { duration: 4000 });
+      },
+    });
+  }
+
   copyToClipboard(text: string) {
-    navigator.clipboard.writeText(text).then(() => this.snackBar.open('In Zwischenablage kopiert', '', { duration: 2000 }));
+    navigator.clipboard.writeText(text).then(() => this.snackBar.open('Copied to clipboard', '', { duration: 2000 }));
   }
 
   priorityColor() {
@@ -643,7 +904,7 @@ export class WorkSessionDialogComponent implements OnInit {
   }
 
   jiraUrl() {
-    return `${environment.apiUrl.replace('/api', '')}/browse/${this.session()?.jira_key}`;
+    return this.session()?.jira_browse_url ?? null;
   }
 
   isSlaBreached(iso: string | null | undefined): boolean {

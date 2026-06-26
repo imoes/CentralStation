@@ -1,0 +1,18 @@
+# ─── cs-meta ───────────────────────────────────────────────
+# id: ping-test
+# title: Ping Test
+# description: Prüft ob ein Host erreichbar ist (Ansible-Verbindungstest)
+# matches:
+#   - "checkmk:Host Unreachable"
+#   - "ping test"
+#   - "connectivity check"
+# target: linux
+# risk: low
+# ─── /cs-meta ──────────────────────────────────────────────
+---
+- name: Ping Test
+  hosts: "{{ target_host | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Ping
+      ansible.builtin.ping:

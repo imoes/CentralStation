@@ -25,6 +25,7 @@ class ConnectorResponse(BaseModel):
     type: str
     base_url: str | None
     enabled: bool
+    owner_user_id: uuid.UUID | None = None
     updated_at: datetime
     # Credentials werden NIEMALS zurückgegeben
 

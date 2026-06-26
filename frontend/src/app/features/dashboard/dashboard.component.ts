@@ -1,264 +1,1208 @@
-import { Component, OnInit, OnDestroy, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
-import { MatCardModule } from '@angular/material/card';
-import { MatButtonModule } from '@angular/material/button';
-import { MatIconModule } from '@angular/material/icon';
-import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { NgxEchartsDirective, provideEchartsCore } from 'ngx-echarts';
-import * as echarts from 'echarts/core';
-import { PieChart, BarChart, LineChart } from 'echarts/charts';
 import {
-  TitleComponent, TooltipComponent, LegendComponent,
-  GridComponent, DatasetComponent,
-} from 'echarts/components';
-import { CanvasRenderer } from 'echarts/renderers';
-import { Subject, takeUntil, interval } from 'rxjs';
-import { AlertService } from '../../core/services/alert.service';
-import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
-import { AlertSummary } from '../../core/models/alert.model';
+  AfterViewInit,
+  Component,
+  ElementRef,
+  Injector,
+  OnDestroy,
+  ViewChild,
+  afterNextRender,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
+import { Router } from '@angular/router';
+import { forkJoin } from 'rxjs';
+import { GridItemHTMLElement, GridStack } from 'gridstack';
+import { MatButtonModule } from '@angular/material/button';
+import { MatCardModule } from '@angular/material/card';
+import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import { MatIconModule } from '@angular/material/icon';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatSelectModule } from '@angular/material/select';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { environment } from '../../../environments/environment';
-
-echarts.use([
-  PieChart, BarChart, LineChart,
-  TitleComponent, TooltipComponent, LegendComponent, GridComponent, DatasetComponent,
-  CanvasRenderer,
-]);
-
-const SEVERITY_PALETTE = {
-  critical: '#d32f2f',
-  high:     '#f57c00',
-  medium:   '#1976d2',
-  low:      '#388e3c',
-  info:     '#607d8b',
-};
+import { AddWidgetDialogComponent } from './add-widget-dialog.component';
+import { DashboardWidgetComponent } from './dashboard-widget.component';
+import {
+  DashboardWidget,
+  DashboardWidgetCreate,
+  Dashboard,
+  WidgetData,
+  GenerativePayload,
+  RationaleSegment,
+} from './dashboard-widget.model';
+import { WebsocketService } from '../../core/services/websocket.service';
+import { I18nService } from '../../core/services/i18n.service';
 
 @Component({
   selector: 'cs-dashboard',
   standalone: true,
   imports: [
     CommonModule,
-    MatCardModule, MatButtonModule, MatIconModule, MatProgressSpinnerModule,
-    NgxEchartsDirective,
-  ],
-  providers: [
-    provideEchartsCore({ echarts }),
+    FormsModule,
+    MatButtonModule,
+    MatCardModule,
+    MatDialogModule,
+    MatFormFieldModule,
+    MatIconModule,
+    MatInputModule,
+    MatSelectModule,
+    MatProgressSpinnerModule,
+    MatSnackBarModule,
+    MatTooltipModule,
+    DashboardWidgetComponent,
   ],
   template: `
-    <div class="dashboard">
-      <!-- Alert Summary Cards -->
-      <div class="summary-row">
-        @for (sev of severities; track sev.key) {
-          <mat-card class="summary-card" [style.border-top-color]="sev.color">
-            <div class="summary-count">{{ getSummaryCount(sev.key) }}</div>
-            <div class="summary-label">{{ sev.label }}</div>
-          </mat-card>
+    <!-- War Room Overlay — erscheint automatisch bei Critical-KI-Insight -->
+    @if (warRoomActive()) {
+      <div class="war-room-overlay" (click)="dismissWarRoom()">
+        <div class="war-room-panel" (click)="$event.stopPropagation()">
+          <div class="wr-overlay-header">
+            <mat-icon class="wr-pulse">warning</mat-icon>
+            <span>{{ i18n.t('dashboard.incident_detected') }}</span>
+            <button mat-icon-button (click)="dismissWarRoom()"><mat-icon>close</mat-icon></button>
+          </div>
+          <p>{{ i18n.t('dashboard.war_room_message') }}</p>
+          <div class="wr-overlay-actions">
+            <button mat-flat-button color="warn" (click)="scrollToWarRoom(); dismissWarRoom()">
+              <mat-icon>radar</mat-icon> {{ i18n.t('dashboard.open_war_room') }}
+            </button>
+            <button mat-button (click)="dismissWarRoom()">{{ i18n.t('common.close') }}</button>
+          </div>
+        </div>
+      </div>
+    }
+
+    <div class="dashboard-shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">CentralStation</p>
+          <h1>{{ i18n.t('dashboard.title') }}</h1>
+          <p class="subtitle">
+            {{ i18n.t('dashboard.subtitle') }}
+          </p>
+        </div>
+        <div class="hero-actions">
+          <mat-form-field appearance="outline" class="dashboard-select">
+            <mat-label>{{ i18n.t('dashboard.select_label') }}</mat-label>
+            <mat-select [ngModel]="selectedDashboardId()" (ngModelChange)="selectDashboard($event)">
+              @for (dashboard of dashboards(); track dashboard.id) {
+                <mat-option [value]="dashboard.id">{{ dashboard.name }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+          @if (!generativeMode()) {
+            @if (configMode()) {
+              <button mat-flat-button color="primary" (click)="addWidget()">
+                <mat-icon>add</mat-icon>
+                {{ i18n.t('dashboard.add_widget') }}
+              </button>
+              <button mat-stroked-button color="warn" (click)="resetDefaults()" [title]="i18n.t('dashboard.reset_defaults_tooltip')">
+                <mat-icon>restore</mat-icon>
+                {{ i18n.t('dashboard.reset_defaults') }}
+              </button>
+              <button mat-stroked-button (click)="cancelConfigMode()">
+                <mat-icon>close</mat-icon>
+                Abbrechen
+              </button>
+            }
+            <button mat-stroked-button [color]="configMode() ? 'warn' : 'primary'" (click)="toggleConfigMode()">
+              <mat-icon>{{ configMode() ? 'done' : 'dashboard_customize' }}</mat-icon>
+              {{ configMode() ? i18n.t('dashboard.save_layout') : i18n.t('dashboard.customize_dashboard') }}
+            </button>
+          }
+
+          <!-- Generative / Classic toggle — switches the whole view (classic
+               dashboards are untouched; generative is a separate AI canvas) -->
+          <button mat-stroked-button
+            [class.generative-active]="generativeMode()"
+            [class.mode-klassisch]="!generativeMode()"
+            (click)="toggleGenerativeMode()"
+            [matTooltip]="generativeMode() ? 'Generativer Modus — KI komponiert das Dashboard für die aktuelle Lage. Klicken für Klassisch.' : 'Generativen Modus aktivieren — die KI komponiert ein Lagebild aus der aktuellen Situation'">
+            <mat-icon>auto_awesome</mat-icon>
+            {{ generativeMode() ? i18n.t('dashboard.mode.generative') : i18n.t('dashboard.mode.classic') }}
+          </button>
+
+          <button mat-icon-button (click)="refreshAll()" [disabled]="loading()" title="Aktualisieren">
+            <mat-icon>refresh</mat-icon>
+          </button>
+        </div>
+      </section>
+
+      @if (loading()) {
+        <mat-card class="loading-card">
+          <mat-spinner diameter="32"></mat-spinner>
+          <span>{{ i18n.t('dashboard.loading') }}</span>
+        </mat-card>
+      }
+
+      @if (configMode()) {
+        <mat-card class="ai-builder">
+          <div>
+            <h3>{{ i18n.t('dashboard.ai_builder_title') }}</h3>
+            <p>{{ i18n.t('dashboard.ai_builder_hint') }}</p>
+          </div>
+          <mat-form-field appearance="outline">
+            <mat-label>{{ i18n.t('dashboard.prompt_label') }}</mat-label>
+            <textarea matInput rows="2" [(ngModel)]="dashboardPrompt"></textarea>
+          </mat-form-field>
+          <button mat-flat-button color="primary" (click)="createWidgetFromPrompt()" [disabled]="creatingFromPrompt() || !dashboardPrompt.trim()">
+            @if (creatingFromPrompt()) { <mat-spinner diameter="18"></mat-spinner> }
+            @else { <mat-icon>auto_awesome</mat-icon> }
+            {{ i18n.t('dashboard.create_widget') }}
+          </button>
+          <button mat-stroked-button color="primary" (click)="createDashboardFromPrompt()" [disabled]="creatingFromPrompt() || !dashboardPrompt.trim()">
+            <mat-icon>dashboard_customize</mat-icon>
+            {{ i18n.t('dashboard.new_dashboard') }}
+          </button>
+        </mat-card>
+      }
+
+      @if (generativeMode()) {
+        @if (kiInsight()) {
+          <div class="ki-strip" [attr.data-sev]="kiInsight()!.severity_summary">
+            <span class="ki-strip-icon">
+              <mat-icon style="font-size:16px;height:16px;width:16px;vertical-align:middle">psychology</mat-icon>
+            </span>
+            <span class="ki-strip-sev">{{ (kiInsight()!.severity_summary ?? 'info').toUpperCase() }}</span>
+            <span class="ki-strip-text">{{ kiInsight()!.summary_text }}</span>
+            <span class="ki-strip-hosts">
+              @for (h of kiStripHosts(); track h) {
+                <span class="ki-strip-host" (click)="openFeedHost(h)">{{ h }}</span>
+              }
+            </span>
+            <span class="ki-strip-ago">{{ kiInsightAgo() }}</span>
+            <button mat-icon-button class="ki-strip-btn" (click)="openInsight(kiInsight()!.analysis_id)" matTooltip="KI-Insights öffnen">
+              <mat-icon style="font-size:16px;height:16px;width:16px">open_in_new</mat-icon>
+            </button>
+          </div>
+        }
+        <div class="gen-banner">
+          <!-- Header bar — same visual weight as a widget header -->
+          <div class="gen-header">
+            <mat-icon class="gen-icon" [class.spinning]="generativeLoading()">auto_awesome</mat-icon>
+            <span class="gen-header-title">{{ i18n.t('dashboard.ai_situation_report') }}</span>
+            @if (generativeAgo()) { <span class="gen-ago">{{ generativeAgo() }}</span> }
+            <button mat-flat-button color="primary" (click)="regenerate()" [disabled]="generativeLoading()">
+              @if (generativeLoading()) { <mat-spinner diameter="18"></mat-spinner> }
+              @else { <mat-icon>refresh</mat-icon> }
+              {{ i18n.t('dashboard.regenerate') }}
+            </button>
+          </div>
+          <!-- Body — dark background like widget body -->
+          @if (generativeRationale()) {
+            <div class="gen-body">
+              <p class="gen-rationale" [class.collapsed]="!rationaleExpanded()">
+                @for (seg of rationaleSegments(); track $index) {
+                  @if (seg.host) {
+                    <span class="gen-host-link" (click)="openFeedHost(seg.host); $event.stopPropagation()">{{ seg.text }}</span>
+                  } @else {
+                    {{ seg.text }}
+                  }
+                }
+              </p>
+              <button mat-button class="gen-why" (click)="rationaleExpanded.set(!rationaleExpanded())">
+                {{ rationaleExpanded() ? '▲ Less' : '▼ More' }}
+              </button>
+            </div>
+          }
+        </div>
+      }
+
+      <div #grid class="grid-stack" [class.config-mode]="configMode()">
+        @for (widget of widgets(); track widget.id) {
+          <div class="grid-stack-item"
+               [attr.gs-id]="widget.id"
+               [attr.gs-x]="widget.gs_x"
+               [attr.gs-y]="widget.gs_y"
+               [attr.gs-w]="widget.gs_w"
+               [attr.gs-h]="widget.gs_h">
+            <div class="grid-stack-item-content">
+              <cs-dashboard-widget
+                [widget]="widget"
+                [data]="widgetData()[widget.id]"
+                [editMode]="configMode()"
+                [generativeMode]="generativeMode()"
+                (click)="openWidget(widget)"
+                (remove)="deleteWidget(widget.id)"
+                (edit)="editWidget(widget)"
+                (pinToggle)="toggleWidgetPin(widget)"
+                (itemClick)="openFeedItem($event)"
+                (findingClick)="openFeedFinding($event)"
+                (insightOpen)="openInsight($event)"
+                (donutClick)="openFeedSeverity($event)"
+                (barClick)="openFeedBar($event, widget)"
+                (hostClick)="openFeedHost($event)"
+                (warRoomJira)="createWarRoomTicket($event)" />
+            </div>
+          </div>
         }
       </div>
-
-      <!-- Alert Distribution Pie -->
-      <div class="charts-row">
-        <mat-card class="chart-card">
-          <mat-card-header><mat-card-title>Alert-Verteilung</mat-card-title></mat-card-header>
-          <mat-card-content>
-            <div echarts [options]="pieOptions()" class="chart-container"></div>
-          </mat-card-content>
-        </mat-card>
-
-        <!-- Prometheus CPU Chart -->
-        <mat-card class="chart-card">
-          <mat-card-header>
-            <mat-card-title>CPU-Auslastung (Prometheus)</mat-card-title>
-          </mat-card-header>
-          <mat-card-content>
-            @if (prometheusLoading()) {
-              <div class="spinner-center"><mat-spinner diameter="30"></mat-spinner></div>
-            } @else {
-              <div echarts [options]="cpuOptions()" class="chart-container"></div>
-            }
-          </mat-card-content>
-        </mat-card>
-      </div>
-
-      <!-- Recent Alerts Timeline -->
-      <mat-card class="timeline-card">
-        <mat-card-header>
-          <mat-card-title>Letzte Alerts</mat-card-title>
-          <mat-card-subtitle>Neue Alerts (letzten 24h)</mat-card-subtitle>
-        </mat-card-header>
-        <mat-card-content>
-          @if (recentAlerts().length > 0) {
-            <div class="timeline">
-              @for (alert of recentAlerts(); track alert.id) {
-                <div class="timeline-item">
-                  <span class="tl-dot" [style.background-color]="sevColor(alert.severity)"></span>
-                  <span class="tl-time">{{ alert.created_at | date:'HH:mm' }}</span>
-                  <span class="tl-source chip-source">{{ alert.source }}</span>
-                  <span class="tl-title">{{ alert.title }}</span>
-                </div>
-              }
-            </div>
-          } @else {
-            <div class="empty-state">Keine neuen Alerts.</div>
-          }
-        </mat-card-content>
-      </mat-card>
     </div>
   `,
   styles: [`
-    .dashboard { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
-    .summary-row { display: flex; gap: 12px; flex-wrap: wrap; }
-    .summary-card { flex: 1; min-width: 120px; padding: 16px; border-top: 4px solid; cursor: default; text-align: center; }
-    .summary-count { font-size: 32px; font-weight: 700; line-height: 1; }
-    .summary-label { font-size: 12px; text-transform: uppercase; color: var(--mat-sys-on-surface-variant); margin-top: 4px; }
-    .charts-row { display: flex; gap: 16px; flex-wrap: wrap; }
-    .chart-card { flex: 1; min-width: 300px; }
-    .chart-container { height: 220px; }
-    .timeline-card { }
-    .timeline { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; }
-    .timeline-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-    .tl-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-    .tl-time { color: var(--mat-sys-on-surface-variant); min-width: 40px; }
-    .tl-source { font-size: 10px; background: var(--mat-sys-surface-variant); padding: 2px 6px; border-radius: 10px; }
-    .tl-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .spinner-center { display: flex; justify-content: center; padding: 20px; }
-    .empty-state { text-align: center; padding: 24px; color: var(--mat-sys-on-surface-variant); }
+    .dashboard-shell {
+      min-height: 100%;
+      padding: 8px 10px 18px;
+      background: #000;
+      color: #ffe8a0;
+      font-family: 'Antonio', 'Eurostile', 'Roboto Condensed', sans-serif;
+      overflow-x: hidden;
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(330px, 520px) 1fr auto;
+      align-items: stretch;
+      gap: 8px;
+      margin-bottom: 12px;
+      padding: 0;
+      background: #000;
+      color: #ffcc99;
+      min-height: 104px;
+      position: relative;     /* stacking context so ::before/::after stay inside */
+      isolation: isolate;     /* new stacking context — hero cannot bleed over gen-banner */
+    }
+    .hero > div:first-child {
+      background: #000;
+      color: #FF9933;
+      border-radius: 44px 0 0 0;
+      padding: 18px 24px 12px 74px;
+      position: relative;
+      min-width: 0;
+      border-top: 18px solid #FF9933;
+      border-left: 36px solid #FF9933;
+      border-bottom: 12px solid #ffcc66;
+    }
+    .hero > div:first-child::before {
+      content: '';
+      position: absolute;
+      left: -36px;
+      top: -18px;
+      width: 36px;
+      height: calc(100% + 30px);
+      background: #FF9933;
+      border-radius: 44px 0 0 0;
+      pointer-events: none;   /* must not intercept clicks below the hero */
+    }
+    .hero > div:first-child::after {
+      content: '';
+      position: absolute;
+      right: -140px;
+      top: -18px;
+      width: 132px;
+      height: 18px;
+      background: #FF9933;
+      border-radius: 0 12px 12px 0;
+      pointer-events: none;
+    }
+    .eyebrow {
+      margin: 0 0 6px;
+      color: #FF9933;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+      opacity: .75;
+    }
+    h1 {
+      /* Bridge-style section heading — compact, uppercase, letter-spaced */
+      margin: 0;
+      font-size: clamp(20px, 2.2vw, 26px);
+      line-height: 1.15;
+      letter-spacing: .22em;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: #ffcc66;
+      background: #000;                 /* LCARS "cut-through" dark background */
+      display: inline-block;
+      padding: 3px 12px 3px 0;
+    }
+    .subtitle {
+      margin: 8px 0 0;
+      max-width: 320px;
+      color: rgba(255,204,153,.6);
+      font-size: 11px;
+      line-height: 1.35;
+      letter-spacing: .04em;
+    }
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      background: #000;
+      color: #ffcc99;
+      padding: 12px 18px;
+      min-width: 0;
+      border-top: 18px solid #99CCFF;
+      border-bottom: 12px solid #99CCFF;
+    }
+    .hero::after {
+      content: '';
+      display: block;
+      pointer-events: none;
+      background: #000;
+      border-top: 18px solid #e8ec9a;
+      border-bottom: 12px solid #e8ec9a;
+      border-radius: 0 44px 0 0;
+    }
+    .hero-actions button {
+      background: #FF9933 !important;
+      color: #000 !important;
+      border-color: #FF9933 !important;
+      border-radius: 20px;
+      font-weight: 900;
+    }
+    .hero-actions button mat-icon { color: #000 !important; }
+    .dashboard-select {
+      width: 240px;
+      --mat-form-field-container-text-color: #ffcc99;
+      --mat-form-field-label-text-color: #ffcc66;
+      --mat-select-enabled-trigger-text-color: #ffcc99;
+      --mdc-outlined-text-field-outline-color: #FF9933;
+      --mdc-outlined-text-field-label-text-color: #ffcc66;
+      --mdc-outlined-text-field-input-text-color: #ffcc99;
+    }
+    /* Generative toggle: gold when active; explicit text for inactive (Classic = dark, LCARS/Holo = theme) */
+    .generative-active { background: #ffcc66 !important; color: #000 !important; border-color: #ffcc66 !important; }
+    .mode-klassisch { color: var(--mat-sys-on-surface) !important; border-color: var(--mat-sys-outline) !important; }
+    :host-context(html.cs-theme-lcars) .mode-klassisch { color: #e8a060 !important; border-color: #FF9933 !important; }
+    :host-context(html.cs-theme-holo) .mode-klassisch { color: #8fb8cf !important; border-color: rgba(79,214,255,.5) !important; }
+    /* War Room Overlay */
+    .war-room-overlay { position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; padding-top: 80px; animation: fadeIn .25s ease; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .war-room-panel { background: var(--mat-sys-surface); border-radius: 16px; padding: 24px; max-width: 440px; width: 90%; border: 2px solid #c62828; box-shadow: 0 8px 40px rgba(198,40,40,.35); }
+    .wr-overlay-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-weight: 700; font-size: 16px; color: #c62828; }
+    .wr-overlay-header mat-icon { font-size: 26px; height: 26px; width: 26px; }
+    .wr-overlay-header button { margin-left: auto; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+    .wr-pulse { animation: pulse 1.2s infinite; }
+    .wr-overlay-actions { display: flex; gap: 10px; margin-top: 16px; justify-content: flex-end; }
+    .loading-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+      color: var(--mat-sys-on-surface-variant);
+    }
+    .ai-builder {
+      display: grid;
+      grid-template-columns: minmax(220px, 320px) 1fr auto auto;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+      border: 1px solid color-mix(in srgb, var(--mat-sys-primary) 24%, transparent);
+      background: color-mix(in srgb, var(--mat-sys-primary) 7%, var(--mat-sys-surface));
+    }
+    .ai-builder h3 { margin: 0 0 4px; font-size: 15px; }
+    .ai-builder p { margin: 0; color: var(--mat-sys-on-surface-variant); font-size: 12px; line-height: 1.4; }
+    .ai-builder mat-form-field { width: 100%; }
+    .ai-builder mat-spinner { display: inline-block; margin-right: 6px; }
+    /* gen-banner matches the lcars-widget design exactly:
+       gold left border · gold header bar · dark body · button in header */
+    .gen-banner {
+      display: flex;
+      flex-direction: column;
+      margin: 0 0 10px;
+      border: none;
+      border-left: 8px solid #ffcc66;     /* same as nth-child(2) gold widgets */
+      border-radius: 0 14px 14px 0;
+      overflow: hidden;
+      box-shadow: none;
+      position: relative;
+      z-index: 2;   /* ensure gen-banner sits above any hero-area overflow */
+    }
+    .gen-header {
+      /* mimics .widget-header in lcars-widget */
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #ffcc66;
+      color: #000;
+      padding: 8px 14px;
+      flex-shrink: 0;
+      min-height: 42px;
+    }
+    .gen-header-title {
+      font-family: 'Antonio', 'Eurostile', 'Roboto Condensed', sans-serif;
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      flex: 1;
+    }
+    .gen-ago { font-size: 11px; opacity: .65; }
+    .gen-icon {
+      font-size: 18px; width: 18px; height: 18px;
+      display: inline-flex; align-items: center;
+    }
+    .gen-icon.spinning { animation: spin 1.4s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .gen-body {
+      background: #000;
+      color: #ffe8a0;
+      padding: 10px 14px 10px;
+    }
+    .gen-rationale { font-size: 13px; color: #ffcc99; line-height: 1.55; margin: 0; }
+    .gen-rationale.collapsed { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .gen-why { font-size: 11px; min-height: 26px; line-height: 26px; padding: 0; color: #ffcc66; margin-top: 4px; display: inline-block; }
+    .gen-host-link { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; border-radius: 3px; padding: 0 1px; transition: background .1s; }
+    .gen-host-link:hover { background: rgba(255,204,153,.18); }
+
+    /* KI-Insight strip — only visible in generativeMode */
+    .ki-strip {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 6px 14px; margin-bottom: 8px;
+      background: rgba(180,20,20,.12); border-left: 4px solid #b71c1c;
+      border-radius: 0 6px 6px 0; font-size: 12px;
+    }
+    .ki-strip[data-sev="high"]     { background: rgba(230,81,0,.1); border-left-color: #e65100; }
+    .ki-strip[data-sev="medium"]   { background: rgba(245,124,0,.08); border-left-color: #f57c00; }
+    .ki-strip[data-sev="info"], .ki-strip[data-sev="ok"] { background: rgba(46,125,50,.08); border-left-color: #2e7d32; }
+    .ki-strip-icon { color: var(--mat-sys-on-surface-variant); flex-shrink: 0; }
+    .ki-strip-sev { font-weight: 700; font-size: 11px; letter-spacing: .06em; min-width: 52px; flex-shrink: 0; }
+    .ki-strip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ki-strip-hosts { display: flex; gap: 4px; flex-wrap: wrap; }
+    .ki-strip-host { cursor: pointer; background: rgba(0,0,0,.12); border-radius: 3px;
+                     padding: 1px 6px; font-size: 10px; color: var(--mat-sys-primary); }
+    .ki-strip-host:hover { text-decoration: underline; }
+    .ki-strip-ago { font-size: 10px; color: var(--mat-sys-on-surface-variant); white-space: nowrap; flex-shrink: 0; }
+    .ki-strip-btn { width: 24px; height: 24px; line-height: 24px; flex-shrink: 0; }
+
+    :host-context(html.cs-theme-lcars) .ki-strip { background: rgba(255,68,51,.1); border-left-color: #ff4433; }
+    :host-context(html.cs-theme-lcars) .ki-strip[data-sev="high"] { border-left-color: #ffcc00; background: rgba(255,204,0,.08); }
+    :host-context(html.cs-theme-lcars) .ki-strip-sev { color: #FF9933; }
+    :host-context(html.cs-theme-lcars) .ki-strip-text { color: #ffe8a0; }
+    :host-context(html.cs-theme-lcars) .ki-strip-host { color: #FFCC99; background: rgba(255,153,51,.1); }
+    :host-context(html.cs-theme-holo)  .ki-strip { background: rgba(79,214,255,.07); border-left-color: #4fd6ff; }
+    :host-context(html.cs-theme-holo)  .ki-strip[data-sev="critical"] { border-left-color: #ff5b6e; background: rgba(255,91,110,.08); }
+    :host-context(html.cs-theme-holo)  .ki-strip-sev { color: #4fd6ff; }
+    :host-context(html.cs-theme-holo)  .ki-strip-host { color: #4fd6ff; }
+    .gen-banner button[color="primary"] {
+      background: #FF9933 !important;
+      color: #000 !important;
+      border-radius: 14px;
+      font-size: 12px;
+      font-weight: 900;
+      height: 30px;
+      line-height: 30px;
+      padding: 0 14px;
+    }
+    /* ── LCARS: dark canvas, gen-banner uses its own LCARS grid design already ── */
+    :host-context(html.cs-theme-lcars) .dashboard-shell { background: #000 !important; }
+    :host-context(html.cs-theme-lcars) h1 { color: #ffcc66; }
+    /* NOTE: do NOT override gen-banner here — the base CSS is already LCARS-styled */
+
+    /* ── Classic theme: restore light look (base CSS is LCARS-dark, needs override) ── */
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .dashboard-shell {
+      background:
+        radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--mat-sys-primary) 15%, transparent), transparent 26rem),
+        linear-gradient(145deg, color-mix(in srgb, var(--mat-sys-surface-container) 70%, #eef7f2), var(--mat-sys-surface)) !important;
+      color: var(--mat-sys-on-surface) !important;
+      font-family: Roboto, 'Helvetica Neue', sans-serif !important;
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero {
+      background: transparent;
+      color: var(--mat-sys-on-surface);
+      border: none;
+      min-height: auto;
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero > div:first-child {
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      color: var(--mat-sys-on-surface);
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero > div:first-child::before,
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero > div:first-child::after {
+      display: none;
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero-actions {
+      background: transparent; border: none; padding: 0;
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero::after { display: none; }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .eyebrow { color: var(--mat-sys-primary); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) h1 { color: var(--mat-sys-primary); background: transparent; padding: 0; font-size: clamp(20px, 2.2vw, 26px); letter-spacing: .12em; }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .subtitle { color: var(--mat-sys-on-surface-variant); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero-actions button { background: revert !important; color: revert !important; border-color: revert !important; border-radius: revert !important; font-weight: revert !important; }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .hero-actions button mat-icon { color: revert !important; }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .dashboard-select { --mat-form-field-container-text-color: revert; --mat-select-enabled-trigger-text-color: revert; --mdc-outlined-text-field-outline-color: revert; }
+
+    /* ── Classic theme: gen-banner light override ── */
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-banner {
+      border-left-color: var(--mat-sys-primary);
+      border-radius: 0 14px 14px 0;
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-header {
+      background: var(--mat-sys-primary-container);
+      color: var(--mat-sys-on-primary-container);
+    }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-header-title { color: var(--mat-sys-on-primary-container); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-body { background: var(--mat-sys-surface-container); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-rationale { color: var(--mat-sys-on-surface-variant); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-why { color: var(--mat-sys-primary); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-host-link { color: var(--mat-sys-primary); }
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-banner button[color="primary"] {
+      background: var(--mat-sys-primary) !important; color: var(--mat-sys-on-primary) !important;
+    }
+
+    /* ── Holo: dark canvas + cyan gen-banner ── */
+    :host-context(html.cs-theme-holo) .dashboard-shell {
+      background: radial-gradient(circle at 50% 8%, rgba(20,60,90,.4), transparent 36rem), linear-gradient(160deg,#02060f,#050d1a 60%,#02060f) !important;
+    }
+    :host-context(html.cs-theme-holo) .gen-banner { border-left-color: #4fd6ff; }
+    :host-context(html.cs-theme-holo) .gen-header { background: rgba(79,214,255,.15); color: #9fe8ff; }
+    :host-context(html.cs-theme-holo) .gen-header-title { color: #9fe8ff !important; }
+    :host-context(html.cs-theme-holo) .gen-body { background: rgba(5,20,35,.9); }
+    :host-context(html.cs-theme-holo) .gen-rationale { color: #8fb8cf !important; }
+    :host-context(html.cs-theme-holo) .gen-why { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-holo) .gen-host-link { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-lcars) .gen-host-link { color: #FFCC99 !important; }
+    :host-context(html.cs-theme-holo) .gen-banner button[color="primary"] {
+      background: #4fd6ff !important; color: #00131f !important;
+    }
+
+    .gen-host-link { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; border-radius: 3px; padding: 0 1px; transition: background .1s; }
+    .gen-host-link:hover { background: rgba(255,204,153,.18); }
+
+    /* KI-Insight strip — only visible in generativeMode */
+    .ki-strip {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 6px 14px; margin-bottom: 8px;
+      background: rgba(180,20,20,.12); border-left: 4px solid #b71c1c;
+      border-radius: 0 6px 6px 0; font-size: 12px;
+    }
+    .ki-strip[data-sev="high"]     { background: rgba(230,81,0,.1); border-left-color: #e65100; }
+    .ki-strip[data-sev="medium"]   { background: rgba(245,124,0,.08); border-left-color: #f57c00; }
+    .ki-strip[data-sev="info"], .ki-strip[data-sev="ok"] { background: rgba(46,125,50,.08); border-left-color: #2e7d32; }
+    .ki-strip-icon { color: var(--mat-sys-on-surface-variant); flex-shrink: 0; }
+    .ki-strip-sev { font-weight: 700; font-size: 11px; letter-spacing: .06em; min-width: 52px; flex-shrink: 0; }
+    .ki-strip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ki-strip-hosts { display: flex; gap: 4px; flex-wrap: wrap; }
+    .ki-strip-host { cursor: pointer; background: rgba(0,0,0,.12); border-radius: 3px;
+                     padding: 1px 6px; font-size: 10px; color: var(--mat-sys-primary); }
+    .ki-strip-host:hover { text-decoration: underline; }
+    .ki-strip-ago { font-size: 10px; color: var(--mat-sys-on-surface-variant); white-space: nowrap; flex-shrink: 0; }
+    .ki-strip-btn { width: 24px; height: 24px; line-height: 24px; flex-shrink: 0; }
+
+    :host-context(html.cs-theme-lcars) .ki-strip { background: rgba(255,68,51,.1); border-left-color: #ff4433; }
+    :host-context(html.cs-theme-lcars) .ki-strip[data-sev="high"] { border-left-color: #ffcc00; background: rgba(255,204,0,.08); }
+    :host-context(html.cs-theme-lcars) .ki-strip-sev { color: #FF9933; }
+    :host-context(html.cs-theme-lcars) .ki-strip-text { color: #ffe8a0; }
+    :host-context(html.cs-theme-lcars) .ki-strip-host { color: #FFCC99; background: rgba(255,153,51,.1); }
+    :host-context(html.cs-theme-holo)  .ki-strip { background: rgba(79,214,255,.07); border-left-color: #4fd6ff; }
+    :host-context(html.cs-theme-holo)  .ki-strip[data-sev="critical"] { border-left-color: #ff5b6e; background: rgba(255,91,110,.08); }
+    :host-context(html.cs-theme-holo)  .ki-strip-sev { color: #4fd6ff; }
+    :host-context(html.cs-theme-holo)  .ki-strip-host { color: #4fd6ff; }
+
+    :host-context(:not(html.cs-theme-lcars):not(html.cs-theme-holo)) .gen-host-link { color: var(--mat-sys-primary); }
+    :host-context(html.cs-theme-holo) .gen-host-link { color: #4fd6ff !important; }
+    :host-context(html.cs-theme-lcars) .gen-host-link { color: #FFCC99 !important; }
+
+    .grid-stack { min-height: 520px; }
+    .grid-stack.config-mode {
+      background-image:
+        linear-gradient(#3a2810 1px, transparent 1px),
+        linear-gradient(90deg, #3a2810 1px, transparent 1px);
+      background-size: 80px 80px;
+      border-radius: 0;
+      padding-bottom: 12px;
+    }
+    .grid-stack-item-content { inset: 6px !important; overflow: hidden !important; }
+
+    @media (max-width: 820px) {
+      .dashboard-shell { padding: 16px; }
+      .hero { grid-template-columns: 1fr; }
+      .hero::after { display:none; }
+      .hero > div:first-child { border-radius: 32px 0 0 0; }
+      h1 { white-space: normal; }
+      .hero-actions { justify-content: flex-start; }
+      .gen-banner { grid-template-columns: 1fr; border-radius: 24px 8px 8px 0; background:#0a0804; }
+      .gen-icon { color: #000; justify-self: stretch; min-height: 48px; }
+      .ai-builder { grid-template-columns: 1fr; }
+    }
   `],
 })
-export class DashboardComponent implements OnInit, OnDestroy {
-  severities = [
-    { key: 'critical', label: 'Kritisch', color: '#d32f2f' },
-    { key: 'high',     label: 'Hoch',     color: '#f57c00' },
-    { key: 'medium',   label: 'Mittel',   color: '#1976d2' },
-    { key: 'low',      label: 'Niedrig',  color: '#388e3c' },
-    { key: 'info',     label: 'Info',     color: '#607d8b' },
-  ];
+export class DashboardComponent implements AfterViewInit, OnDestroy {
+  @ViewChild('grid') private gridEl!: ElementRef<HTMLElement>;
 
-  summary = signal<AlertSummary>({});
-  recentAlerts = signal<any[]>([]);
-  prometheusLoading = signal(true);
-  pieOptions = signal<any>({});
-  cpuOptions = signal<any>({});
+  widgets = signal<DashboardWidget[]>([]);
+  dashboards = signal<Dashboard[]>([]);
+  selectedDashboardId = signal<string>('');
+  widgetData = signal<Record<string, WidgetData>>({});
+  configMode = signal(false);
+  generativeMode = signal(false);
+  generativeLoading = signal(false);
+  generativeRationale = signal<string | null>(null);
+  generativeGeneratedAt = signal<string | null>(null);
+  rationaleExpanded = signal(true);
+  generativeHosts = signal<string[]>([]);
+  kiInsight = signal<{ analysis_id: string; severity_summary: string; run_at: string; findings: { title: string; severity: string; host: string }[]; summary_text: string } | null>(null);
 
-  private destroy$ = new Subject<void>();
+  readonly kiInsightAgo = computed(() => {
+    const ts = this.kiInsight()?.run_at;
+    if (!ts) return '';
+    const diff = Date.now() - new Date(ts).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'gerade';
+    if (mins < 60) return `vor ${mins} Min.`;
+    const hrs = Math.floor(mins / 60);
+    return hrs < 24 ? `vor ${hrs} Std.` : `vor ${Math.floor(hrs / 24)} T.`;
+  });
+
+  /** Flatten all finding hosts, split comma-separated groups, dedupe. */
+  readonly kiStripHosts = computed((): string[] => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const f of this.kiInsight()?.findings ?? []) {
+      for (const h of (f.host || '').split(',').map(s => s.trim()).filter(Boolean)) {
+        if (!seen.has(h)) { seen.add(h); out.push(h); }
+      }
+    }
+    return out;
+  });
+
+  readonly rationaleSegments = computed((): RationaleSegment[] => {
+    const text = this.generativeRationale();
+    if (!text) return [];
+    const hosts = [...this.generativeHosts()].sort((a, b) => b.length - a.length);
+    if (hosts.length === 0) {
+      // Fallback: FQDN regex
+      const fqdnRe = /\b[a-z](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?)+\b/g;
+      const segs: RationaleSegment[] = [];
+      let last = 0;
+      let m: RegExpExecArray | null;
+      while ((m = fqdnRe.exec(text)) !== null) {
+        if (m.index > last) segs.push({ text: text.slice(last, m.index), host: null });
+        segs.push({ text: m[0], host: m[0] });
+        last = m.index + m[0].length;
+      }
+      if (last < text.length) segs.push({ text: text.slice(last), host: null });
+      return segs;
+    }
+    // Split by known hosts (longest first to avoid partial matches)
+    const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(${hosts.map(escape).join('|')})`, 'g');
+    const parts = text.split(pattern);
+    const hostSet = new Set(hosts);
+    return parts.map(p => ({ text: p, host: hostSet.has(p) ? p : null }));
+  });
+
+  generativeAgo = computed(() => {
+    const ts = this.generativeGeneratedAt();
+    if (!ts) return '';
+    const mins = Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 60000));
+    if (mins < 1) return 'gerade eben';
+    if (mins < 60) return `vor ${mins} Min`;
+    const h = Math.round(mins / 60);
+    return `vor ${h} Std`;
+  });
+
+  warRoomActive = signal(false);
+  loading = signal(true);
+  creatingFromPrompt = signal(false);
+  dashboardPrompt = '';
+  private grid?: GridStack;
+  private wsRegenTimer?: ReturnType<typeof setTimeout>;
+  private injector = inject(Injector);
+  private wsSubscription?: import('rxjs').Subscription;
+  private readonly GEN_KEY = 'cs_generative_mode';
+  readonly i18n = inject(I18nService);
 
   constructor(
-    private alertSvc: AlertService,
-    private ws: WebsocketService,
     private http: HttpClient,
+    private router: Router,
+    private dialog: MatDialog,
+    private snackBar: MatSnackBar,
+    private ws: WebsocketService,
   ) {}
 
-  ngOnInit() {
-    this.loadSummary();
-    this.loadRecentAlerts();
-    this.loadPrometheusChart();
-
-    // Refresh every 60s
-    interval(60_000).pipe(takeUntil(this.destroy$)).subscribe(() => {
-      this.loadSummary();
-      this.loadRecentAlerts();
-    });
-
-    this.ws.messages().pipe(takeUntil(this.destroy$)).subscribe((msg: WsMessage) => {
-      if (msg.type === 'new_alert') {
-        this.loadSummary();
-        this.loadRecentAlerts();
+  ngAfterViewInit() {
+    this.loadDashboards();
+    this.loadKiInsight();
+    // Always listen for critical AI insights to show War Room overlay
+    this.wsSubscription = this.ws.messages().subscribe((msg: any) => {
+      if (msg?.type === 'ai_insight' && (msg.severity === 'critical' || msg.severity === 'high')) {
+        this.warRoomActive.set(true);
+        this.refreshWarRoomWidgets();
+        this.loadKiInsight();
+        // Escalation → recompose the generative dashboard (debounced so a wave
+        // of critical insights triggers a single regeneration, not many).
+        if (this.generativeMode()) {
+          if (this.wsRegenTimer) clearTimeout(this.wsRegenTimer);
+          this.wsRegenTimer = setTimeout(() => this.regenerate(), 8000);
+        }
       }
     });
   }
 
-  ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); }
-
-  loadSummary() {
-    this.alertSvc.summary().subscribe({
-      next: s => {
-        this.summary.set(s);
-        this.updatePieChart(s);
-      },
+  loadKiInsight() {
+    this.http.get<any>(`${environment.apiUrl}/ai/latest-summary`).subscribe({
+      next: data => this.kiInsight.set(data),
+      error: () => {},
     });
   }
 
-  loadRecentAlerts() {
-    this.alertSvc.list({ status: 'new', limit: 10 }).subscribe({
-      next: alerts => this.recentAlerts.set(alerts.slice(0, 10)),
-    });
+  ngOnDestroy() {
+    this.grid?.destroy(false);
+    this.wsSubscription?.unsubscribe();
+    if (this.wsRegenTimer) clearTimeout(this.wsRegenTimer);
   }
 
-  updatePieChart(s: AlertSummary) {
-    const data = this.severities
-      .filter(sev => (s as any)[sev.key] > 0)
-      .map(sev => ({ name: sev.label, value: (s as any)[sev.key], itemStyle: { color: sev.color } }));
+  private readonly STORAGE_KEY = 'cs_selected_dashboard_id';
 
-    this.pieOptions.set({
-      tooltip: { trigger: 'item' },
-      legend: { bottom: 0, textStyle: { fontSize: 11 } },
-      series: [{
-        type: 'pie',
-        radius: ['40%', '70%'],
-        data,
-        label: { show: false },
-      }],
-    });
-  }
-
-  loadPrometheusChart() {
-    // Query the backend for a Prometheus connector, then fetch metrics
-    this.http.get<any[]>(`${environment.apiUrl}/connectors/`).subscribe({
-      next: connectors => {
-        const prom = connectors.find((c: any) => c.type === 'prometheus' && c.enabled);
-        if (!prom) {
-          this.prometheusLoading.set(false);
-          this.cpuOptions.set(this.emptyChart('Kein Prometheus-Connector konfiguriert'));
-          return;
+  loadDashboards() {
+    this.http.get<Dashboard[]>(`${environment.apiUrl}/dashboard-widgets/dashboards`).subscribe({
+      next: dashboards => {
+        this.dashboards.set(dashboards);
+        const saved = localStorage.getItem(this.STORAGE_KEY) ?? '';
+        const validSaved = saved && dashboards.some(d => d.id === saved) ? saved : '';
+        const selected = validSaved || dashboards.find(d => d.is_default)?.id || dashboards[0]?.id || '';
+        this.selectedDashboardId.set(selected);
+        // Generative mode is on by default; only off when user explicitly opted out.
+        if (localStorage.getItem(this.GEN_KEY) !== '0') {
+          this.generativeMode.set(true);
+          this.loadGenerative();
+        } else {
+          this.loadWidgets();
         }
-        // Fetch through backend proxy (connector test endpoint returns health)
-        // For real charts, use Prometheus directly
-        const promUrl = prom.base_url;
-        const end = Math.floor(Date.now() / 1000);
-        const start = end - 3600;
-        this.http.get(`${promUrl}/api/v1/query_range`, {
-          params: {
-            query: '100 - (avg(irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)',
-            start: String(start),
-            end: String(end),
-            step: '60',
-          },
-        }).subscribe({
-          next: (data: any) => {
-            this.prometheusLoading.set(false);
-            const series = data?.data?.result?.[0]?.values ?? [];
-            this.cpuOptions.set({
-              tooltip: { trigger: 'axis' },
-              xAxis: { type: 'category', data: series.map((v: any[]) => new Date(v[0] * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })), axisLabel: { fontSize: 10 } },
-              yAxis: { type: 'value', min: 0, max: 100, axisLabel: { formatter: '{value}%' } },
-              series: [{ type: 'line', data: series.map((v: any[]) => parseFloat(v[1]).toFixed(1)), smooth: true, areaStyle: { opacity: 0.3 }, lineStyle: { color: '#1976d2' }, itemStyle: { color: '#1976d2' } }],
-              grid: { left: '10%', right: '4%', bottom: '15%' },
-            });
-          },
-          error: () => {
-            this.prometheusLoading.set(false);
-            this.cpuOptions.set(this.emptyChart('Prometheus nicht erreichbar'));
-          },
-        });
       },
       error: () => {
-        this.prometheusLoading.set(false);
-        this.cpuOptions.set(this.emptyChart(''));
+        this.loading.set(false);
+        this.snackBar.open('Dashboards could not be loaded', 'OK', { duration: 4000 });
       },
     });
   }
 
-  emptyChart(msg: string): object {
+  selectDashboard(dashboardId: string) {
+    this.selectedDashboardId.set(dashboardId);
+    localStorage.setItem(this.STORAGE_KEY, dashboardId);
+    this.widgetData.set({});
+    // Choosing a classic dashboard leaves the generative view.
+    if (this.generativeMode()) {
+      this.generativeMode.set(false);
+      localStorage.removeItem(this.GEN_KEY);
+    }
+    this.loadWidgets();
+  }
+
+  loadWidgets() {
+    this.loading.set(true);
+    const params: Record<string, string> = {};
+    if (this.selectedDashboardId()) params['dashboard_id'] = this.selectedDashboardId();
+    this.http.get<DashboardWidget[]>(`${environment.apiUrl}/dashboard-widgets/`, { params }).subscribe({
+      next: widgets => {
+        this.widgets.set(widgets);
+        this.loading.set(false);
+        this.rebuildGrid(true);
+      },
+      error: () => {
+        this.loading.set(false);
+        this.snackBar.open('Dashboard konnte nicht geladen werden', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  rebuildGrid(loadData = false) {
+    // afterNextRender fires after Angular has committed the current DOM update,
+    // guaranteeing all grid-stack-item elements from the @for loop are present
+    // before GridStack measures them and sets pixel heights.
+    afterNextRender(() => {
+      this.grid?.destroy(false);
+      this.grid = GridStack.init({
+        cellHeight: 80,
+        minRow: 4,
+        margin: 8,
+        float: false,
+        disableDrag: !this.configMode(),
+        disableResize: !this.configMode(),
+      }, this.gridEl.nativeElement);
+      // Fetch widget data after GridStack has sized all containers so echarts
+      // initialises into elements that already have correct pixel heights.
+      if (loadData) {
+        this.widgets().forEach(w => this.loadWidgetData(w.id));
+      }
+    }, { injector: this.injector });
+  }
+
+  refreshAll() {
+    this.widgets().forEach(w => this.loadWidgetData(w.id));
+  }
+
+  toggleConfigMode() {
+    const next = !this.configMode();
+    this.configMode.set(next);
+    if (next) {
+      this.grid?.enable();
+    } else {
+      this.grid?.disable();
+      this.saveLayout();
+    }
+  }
+
+  cancelConfigMode() {
+    this.configMode.set(false);
+    this.grid?.disable();
+    this.loadWidgets();
+  }
+
+  saveLayout() {
+    const items = this.grid?.getGridItems() ?? [];
+    const updates = items
+      .map(el => this.layoutPatch(el))
+      .filter((patch): patch is { id: string; body: Record<string, number> } => !!patch)
+      .map(patch => this.http.patch(`${environment.apiUrl}/dashboard-widgets/${patch.id}`, patch.body));
+
+    if (!updates.length) return;
+    forkJoin(updates).subscribe({
+      next: () => this.snackBar.open('Dashboard-Layout gespeichert', '', { duration: 2000 }),
+      error: () => this.snackBar.open('Layout konnte nicht gespeichert werden', 'OK', { duration: 4000 }),
+    });
+  }
+
+  private layoutPatch(el: GridItemHTMLElement): { id: string; body: Record<string, number> } | null {
+    const id = el.getAttribute('gs-id');
+    const n = el.gridstackNode;
+    if (!id || !n) return null;
     return {
-      title: { text: msg, left: 'center', top: 'center', textStyle: { color: '#999', fontSize: 12 } },
+      id,
+      body: {
+        gs_x: n.x ?? 0,
+        gs_y: n.y ?? 0,
+        gs_w: n.w ?? 4,
+        gs_h: n.h ?? 3,
+      },
     };
   }
 
-  getSummaryCount(key: string): number {
-    return (this.summary() as Record<string, number>)[key] ?? 0;
+  loadWidgetData(widgetId: string) {
+    this.http.get<WidgetData>(`${environment.apiUrl}/dashboard-widgets/${widgetId}/data`).subscribe({
+      next: data => this.widgetData.update(m => ({ ...m, [widgetId]: data })),
+      error: () => this.widgetData.update(m => ({ ...m, [widgetId]: { error: 'Daten konnten nicht geladen werden', series: [] } })),
+    });
   }
 
-  sevColor(sev: string): string {
-    return (SEVERITY_PALETTE as Record<string, string>)[sev] ?? '#607d8b';
+  editWidget(widget: DashboardWidget) {
+    const ref = this.dialog.open<AddWidgetDialogComponent, unknown, DashboardWidgetCreate>(
+      AddWidgetDialogComponent,
+      { width: '680px', data: { existingWidget: widget } },
+    );
+    ref.afterClosed().subscribe(payload => {
+      if (!payload) return;
+      this.http.patch<DashboardWidget>(`${environment.apiUrl}/dashboard-widgets/${widget.id}`, {
+        title: payload.title,
+        config: payload.config,
+      }).subscribe({
+        next: updated => {
+          this.widgets.update(ws => ws.map(w => w.id === updated.id ? { ...w, ...updated } : w));
+          this.loadWidgetData(updated.id);
+          this.snackBar.open('Widget aktualisiert', '', { duration: 2000 });
+        },
+        error: () => this.snackBar.open('Widget konnte nicht aktualisiert werden', 'OK', { duration: 4000 }),
+      });
+    });
+  }
+
+  addWidget() {
+    const ref = this.dialog.open<AddWidgetDialogComponent, unknown, DashboardWidgetCreate>(
+      AddWidgetDialogComponent,
+      { width: '680px' },
+    );
+    ref.afterClosed().subscribe(payload => {
+      if (!payload) return;
+      this.http.post<DashboardWidget>(`${environment.apiUrl}/dashboard-widgets/`, {
+        ...payload,
+        dashboard_id: this.selectedDashboardId(),
+      }).subscribe({
+        next: widget => {
+          this.widgets.update(ws => [...ws, widget]);
+          this.rebuildGrid();
+          this.loadWidgetData(widget.id);
+        },
+        error: () => this.snackBar.open('Widget konnte nicht angelegt werden', 'OK', { duration: 4000 }),
+      });
+    });
+  }
+
+  createWidgetFromPrompt() {
+    const prompt = this.dashboardPrompt.trim();
+    if (!prompt) return;
+    this.creatingFromPrompt.set(true);
+    this.http.post<{ actions: Array<{ type: string; id: string }>; reply?: string }>(
+      `${environment.apiUrl}/ai/search-assistant`,
+      {
+        message: prompt,
+        context: 'user is configuring the dashboard; create one useful dashboard widget',
+        create_widget: true,
+        dashboard_id: this.selectedDashboardId(),
+        name: 'KI: ' + prompt.slice(0, 48),
+        widget_type: 'list',
+      },
+    ).subscribe({
+      next: res => {
+        this.creatingFromPrompt.set(false);
+        this.dashboardPrompt = '';
+        this.snackBar.open(res.reply || 'Widget erstellt', '', { duration: 2500 });
+        this.loadWidgets();
+      },
+      error: err => {
+        this.creatingFromPrompt.set(false);
+        this.snackBar.open(err?.error?.detail ?? 'KI konnte kein Widget erstellen', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  createDashboardFromPrompt() {
+    const prompt = this.dashboardPrompt.trim();
+    if (!prompt) return;
+    this.creatingFromPrompt.set(true);
+    this.http.post<Dashboard>(`${environment.apiUrl}/dashboard-widgets/dashboards`, {
+      name: 'KI: ' + prompt.slice(0, 64),
+      description: prompt,
+      is_default: false,
+    }).subscribe({
+      next: dashboard => {
+        this.http.post<{ actions: Array<{ type: string; id: string }>; reply?: string }>(
+          `${environment.apiUrl}/ai/search-assistant`,
+          {
+            message: prompt,
+            context: 'create an initial list widget for a new dashboard from this prompt',
+            create_widget: true,
+            dashboard_id: dashboard.id,
+            name: dashboard.name,
+            widget_type: 'list',
+          },
+        ).subscribe({
+          next: res => {
+            this.creatingFromPrompt.set(false);
+            this.dashboardPrompt = '';
+            this.dashboards.update(ds => [...ds, dashboard]);
+            this.selectedDashboardId.set(dashboard.id);
+            this.snackBar.open(res.reply || 'Dashboard erstellt', '', { duration: 2500 });
+            this.loadWidgets();
+          },
+          error: err => {
+            this.creatingFromPrompt.set(false);
+            this.snackBar.open(err?.error?.detail ?? 'Dashboard wurde erstellt, aber kein KI-Widget angelegt', 'OK', { duration: 4000 });
+            this.loadDashboards();
+          },
+        });
+      },
+      error: err => {
+        this.creatingFromPrompt.set(false);
+        this.snackBar.open(err?.error?.detail ?? 'Dashboard konnte nicht erstellt werden', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  resetDefaults() {
+    const dashId = this.selectedDashboardId();
+    if (!dashId) return;
+    this.loading.set(true);
+    this.http.post<DashboardWidget[]>(`${environment.apiUrl}/dashboard-widgets/dashboards/${dashId}/reset-defaults`, {}).subscribe({
+      next: widgets => {
+        this.widgets.set(widgets);
+        this.widgetData.set({});
+        this.loading.set(false);
+        this.rebuildGrid();
+        widgets.forEach(w => this.loadWidgetData(w.id));
+        this.snackBar.open('Standard-Layout wiederhergestellt', 'OK', { duration: 2500 });
+      },
+      error: () => {
+        this.loading.set(false);
+        this.snackBar.open('Fehler beim Zurücksetzen', 'OK', { duration: 3000 });
+      },
+    });
+  }
+
+  deleteWidget(widgetId: string) {
+    this.http.delete(`${environment.apiUrl}/dashboard-widgets/${widgetId}`).subscribe({
+      next: () => {
+        this.widgets.update(ws => ws.filter(w => w.id !== widgetId));
+        this.widgetData.update(data => {
+          const next = { ...data };
+          delete next[widgetId];
+          return next;
+        });
+        this.rebuildGrid();
+      },
+      error: () => this.snackBar.open('Widget konnte nicht gelöscht werden', 'OK', { duration: 4000 }),
+    });
+  }
+
+  // ── Generative Mode (separate AI-composed dashboard) ─────────────────────────
+
+  toggleGenerativeMode() {
+    const next = !this.generativeMode();
+    this.generativeMode.set(next);
+    if (next) {
+      // Leave config mode — the generative canvas is AI-driven, not hand-edited.
+      if (this.configMode()) { this.configMode.set(false); this.grid?.disable(); }
+      localStorage.removeItem(this.GEN_KEY);
+      this.loadGenerative();
+    } else {
+      localStorage.setItem(this.GEN_KEY, '0');
+      this.generativeRationale.set(null);
+      this.generativeGeneratedAt.set(null);
+      this.widgetData.set({});
+      this.loadWidgets();
+    }
+  }
+
+  /** Load the existing AI-composed dashboard; generate one if it's still empty. */
+  loadGenerative() {
+    this.loading.set(true);
+    this.http.get<GenerativePayload>(`${environment.apiUrl}/dashboard-widgets/dashboards/generative`).subscribe({
+      next: payload => {
+        if (!payload.widgets?.length) {
+          this.regenerate();
+          return;
+        }
+        this._applyGenerative(payload);
+      },
+      error: () => {
+        this.loading.set(false);
+        this.snackBar.open('Generatives Dashboard konnte nicht geladen werden', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  /** Trigger a fresh AI composition (one LLM call). */
+  regenerate() {
+    this.generativeLoading.set(true);
+    this.loading.set(true);
+    this.http.post<GenerativePayload>(`${environment.apiUrl}/dashboard-widgets/dashboards/generate`, {}).subscribe({
+      next: payload => {
+        this._applyGenerative(payload);
+        this.generativeLoading.set(false);
+        this.snackBar.open('Dashboard neu komponiert', '', { duration: 2000 });
+      },
+      error: () => {
+        this.generativeLoading.set(false);
+        this.loading.set(false);
+        this.snackBar.open('Komposition fehlgeschlagen', 'OK', { duration: 4000 });
+      },
+    });
+  }
+
+  private _applyGenerative(payload: GenerativePayload) {
+    this.generativeRationale.set(payload.rationale ?? null);
+    this.generativeGeneratedAt.set(payload.generated_at ?? null);
+    this.generativeHosts.set(payload.hosts ?? []);
+    this.widgetData.set({});
+    this.widgets.set(payload.widgets ?? []);
+    this.loading.set(false);
+    this.rebuildGrid(true);
+  }
+
+  dismissWarRoom() { this.warRoomActive.set(false); }
+
+  scrollToWarRoom() {
+    setTimeout(() => {
+      const el = document.querySelector('[gs-type="war_room"]') as HTMLElement | null;
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+  }
+
+  refreshWarRoomWidgets() {
+    const warRoomWidgets = this.widgets().filter(w => w.widget_type === 'war_room');
+    warRoomWidgets.forEach(w => this.loadWidgetData(w.id));
+  }
+
+  createWarRoomTicket(jiraTitle: string) {
+    this.markHandled();
+    this.router.navigate(['/workflow'], { queryParams: { title: jiraTitle, auto_jira: '1' } });
+  }
+
+  toggleWidgetPin(widget: DashboardWidget) {
+    const next = !widget.pinned;
+    this.widgets.update(ws => ws.map(w => w.id === widget.id ? { ...w, pinned: next } : w));
+    this.http.patch(`${environment.apiUrl}/dashboard-widgets/${widget.id}`, { pinned: next }).subscribe();
+  }
+
+  // Set true by a dedicated inner-element handler (chart segment, finding, list item)
+  // so the host-level (click)="openWidget" — fired by the same bubbling DOM click —
+  // does not clobber the navigation with the widget's base config.
+  private suppressWidgetOpen = false;
+  private markHandled() {
+    this.suppressWidgetOpen = true;
+    setTimeout(() => (this.suppressWidgetOpen = false));
+  }
+
+  openFeedItem(itemId: string) {
+    this.markHandled();
+    this.router.navigate(['/feed'], { queryParams: { highlight: itemId } });
+  }
+
+  openFeedFinding(finding: { source: string; host: string | null; severity: string }) {
+    this.markHandled();
+    const qp: Record<string, string> = {};
+    if (finding.source) qp['source'] = finding.source;
+    if (finding.severity) qp['severity'] = finding.severity;
+    if (finding.host) qp['host'] = finding.host;
+    this.router.navigate(['/feed'], { queryParams: qp });
+  }
+
+  openFeedHost(hostName: string) {
+    this.markHandled();
+    this.router.navigate(['/feed'], { queryParams: { host: hostName } });
+  }
+
+  openFeedSeverity(severity: string) {
+    this.markHandled();
+    this.router.navigate(['/feed'], { queryParams: { severity: severity.toLowerCase() } });
+  }
+
+  openInsight(analysisId: string | null) {
+    this.markHandled();
+    const qp = analysisId ? { analysis: analysisId } : {};
+    this.router.navigate(['/ai-insights'], { queryParams: qp });
+  }
+
+  openFeedBar(event: { field: string; value: string }, widget: DashboardWidget) {
+    this.markHandled();
+    const cfg = widget.config;
+    const base = typeof cfg['query_string'] === 'string' && cfg['query_string']
+      ? `(${cfg['query_string']}) AND `
+      : '';
+    const fieldMap: Record<string, string> = {
+      severity: 'severity',
+      source: 'source',
+      'metadata.host': 'host',
+    };
+    const qField = fieldMap[event.field] ?? event.field;
+    this.router.navigate(['/feed'], {
+      queryParams: {
+        q: `${base}${qField}:${event.value}`,
+        index: typeof cfg['index_pattern'] === 'string' ? cfg['index_pattern'] : undefined,
+      },
+    });
+  }
+
+  openWidget(widget: DashboardWidget) {
+    if (this.suppressWidgetOpen) return;
+    if (this.configMode()) return;
+    if (widget.widget_type === 'grafana_panel') return;
+
+    const cfg = widget.config;
+    this.router.navigate(['/feed'], {
+      queryParams: {
+        source: Array.isArray(cfg['sources']) ? cfg['sources'].join(',') : undefined,
+        severity: typeof cfg['severity'] === 'string' ? cfg['severity'] : undefined,
+        search_id: typeof cfg['search_id'] === 'string' ? cfg['search_id'] : undefined,
+        q: typeof cfg['query_string'] === 'string' ? cfg['query_string'] : undefined,
+        index: typeof cfg['index_pattern'] === 'string' ? cfg['index_pattern'] : undefined,
+      },
+    });
   }
 }

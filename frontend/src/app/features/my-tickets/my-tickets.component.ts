@@ -1,7 +1,9 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, Inject, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
+import { TextFieldModule } from '@angular/cdk/text-field';
+import { CdkDragDrop, DragDropModule, moveItemInArray } from '@angular/cdk/drag-drop';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -10,12 +12,15 @@ import { MatInputModule } from '@angular/material/input';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatDividerModule } from '@angular/material/divider';
-import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import {
+  MatDialog, MatDialogModule, MatDialogRef, MAT_DIALOG_DATA,
+} from '@angular/material/dialog';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { WorkSessionDialogComponent } from '../workflow/work-session-dialog.component';
 import { environment } from '../../../environments/environment';
+import { I18nService } from '../../core/services/i18n.service';
 
 interface JqlQuery {
   id: string;
@@ -30,11 +35,12 @@ interface JiraIssue {
   key: string;
   fields: {
     summary: string;
-    status: { name: string };
+    status: { name: string; statusCategory?: { key: string } };
     priority: { name: string };
     assignee: { displayName: string } | null;
     updated: string;
     issuetype: { name: string };
+    comment?: { total: number };
   };
 }
 
@@ -65,11 +71,71 @@ const STATUS_COLOR: Record<string, string> = {
   Ausstehend: '#e65100',
 };
 
+// ── JQL Edit Dialog ────────────────────────────────────────────────────────────
+
+@Component({
+  selector: 'cs-jql-query-dialog',
+  standalone: true,
+  imports: [
+    CommonModule, FormsModule, TextFieldModule,
+    MatDialogModule, MatButtonModule, MatFormFieldModule,
+    MatInputModule, MatIconModule,
+  ],
+  template: `
+    <h2 mat-dialog-title>{{ data.title }}</h2>
+    <mat-dialog-content>
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Name</mat-label>
+        <input matInput [(ngModel)]="name" placeholder="My open tickets" autofocus>
+      </mat-form-field>
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>JQL query</mat-label>
+        <textarea matInput [(ngModel)]="jql"
+                  cdkTextareaAutosize cdkAutosizeMinRows="4" cdkAutosizeMaxRows="10"
+                  placeholder="assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
+                  spellcheck="false"></textarea>
+        <mat-hint>Tip: <code>statusCategory != Done</code> filters out all resolved statuses.</mat-hint>
+      </mat-form-field>
+    </mat-dialog-content>
+    <mat-dialog-actions align="end">
+      <button mat-button (click)="dialogRef.close()">Cancel</button>
+      <button mat-flat-button color="primary" (click)="save()" [disabled]="!name.trim() || !jql.trim()">
+        <mat-icon>save</mat-icon> Save
+      </button>
+    </mat-dialog-actions>
+  `,
+  styles: [`
+    mat-dialog-content { display: flex; flex-direction: column; gap: 16px; padding-top: 8px; min-width: 520px; }
+    .full-width { width: 100%; }
+    code { font-family: monospace; background: var(--mat-sys-surface-variant); padding: 1px 4px; border-radius: 3px; }
+  `],
+})
+export class JqlQueryDialogComponent {
+  name: string;
+  jql: string;
+
+  constructor(
+    public dialogRef: MatDialogRef<JqlQueryDialogComponent>,
+    @Inject(MAT_DIALOG_DATA) public data: { title: string; name: string; jql: string },
+  ) {
+    this.name = data.name;
+    this.jql = data.jql;
+  }
+
+  save() {
+    if (this.name.trim() && this.jql.trim()) {
+      this.dialogRef.close({ name: this.name.trim(), jql: this.jql.trim() });
+    }
+  }
+}
+
+// ── Main Component ──────────────────────────────────────────────────────────────
+
 @Component({
   selector: 'cs-my-tickets',
   standalone: true,
   imports: [
-    CommonModule, FormsModule,
+    CommonModule, FormsModule, DragDropModule,
     MatCardModule, MatButtonModule, MatIconModule,
     MatFormFieldModule, MatInputModule, MatChipsModule,
     MatProgressSpinnerModule, MatDividerModule, MatDialogModule,
@@ -78,13 +144,13 @@ const STATUS_COLOR: Record<string, string> = {
   template: `
     <div class="page-container">
       <div class="page-header">
-        <h2>Meine Tickets</h2>
+        <h2>{{ i18n.t('app.nav.myTickets') }}</h2>
         <div class="header-actions">
           <button mat-stroked-button (click)="loadTickets()">
-            <mat-icon>refresh</mat-icon> Aktualisieren
+            <mat-icon>refresh</mat-icon> Refresh
           </button>
           <button mat-flat-button color="primary" (click)="openQueryManager()">
-            <mat-icon>tune</mat-icon> Filter verwalten
+            <mat-icon>tune</mat-icon> Manage filters
           </button>
         </div>
       </div>
@@ -106,11 +172,14 @@ const STATUS_COLOR: Record<string, string> = {
             @if (group.error) {
               <div class="group-error"><mat-icon>error</mat-icon> {{ group.error }}</div>
             } @else if (group.issues.length === 0) {
-              <div class="group-empty">Keine Tickets gefunden.</div>
+              <div class="group-empty">{{ i18n.t('my_tickets.no_tickets') }}</div>
             } @else {
               <div class="issue-list">
                 @for (issue of group.issues; track issue.key) {
                   <div class="issue-row" (click)="openSession(issue)">
+                    @if (hasUnread(issue)) {
+                      <span class="unread-dot" matTooltip="New activity since your last visit"></span>
+                    }
                     <span class="issue-key">{{ issue.key }}</span>
                     <mat-icon class="issue-type-icon" [matTooltip]="issue.fields.issuetype?.name">
                       {{ issueTypeIcon(issue.fields.issuetype?.name) }}
@@ -137,9 +206,9 @@ const STATUS_COLOR: Record<string, string> = {
         @if (ticketGroups().length === 0) {
           <mat-card class="empty-card">
             <mat-icon>inbox</mat-icon>
-            <p>Keine Ticket-Filter konfiguriert.</p>
+            <p>No ticket filters configured.</p>
             <button mat-flat-button color="primary" (click)="openQueryManager()">
-              Filter einrichten
+              Set up filters
             </button>
           </mat-card>
         }
@@ -150,31 +219,26 @@ const STATUS_COLOR: Record<string, string> = {
         <div class="side-panel-backdrop" (click)="closeQueryManager()"></div>
         <div class="side-panel">
           <div class="panel-header">
-            <h3>Ticket-Filter</h3>
+            <h3>Ticket filters</h3>
             <button mat-icon-button (click)="closeQueryManager()"><mat-icon>close</mat-icon></button>
           </div>
 
-          <div class="query-list">
-            @for (q of queries(); track q.id; let i = $index) {
-              <div class="query-item" [class.disabled]="!q.enabled">
-                <mat-icon class="drag-icon">drag_indicator</mat-icon>
+          <div class="query-list" cdkDropList (cdkDropListDropped)="onDrop($event)">
+            @for (q of queries(); track q.id) {
+              <div class="query-item" cdkDrag [class.disabled]="!q.enabled">
+                <mat-icon class="drag-icon" cdkDragHandle>drag_indicator</mat-icon>
                 <div class="query-info">
-                  @if (editingQueryId() === q.id) {
-                    <input class="edit-name" [(ngModel)]="q.name">
-                    <input class="edit-jql" [(ngModel)]="q.jql">
-                    <div class="edit-actions">
-                      <button mat-stroked-button (click)="saveQuery(q)">Speichern</button>
-                      <button mat-button (click)="cancelEdit()">Abbrechen</button>
-                    </div>
-                  } @else {
-                    <span class="q-name">{{ q.name }}</span>
-                    <span class="q-jql">{{ q.jql }}</span>
-                  }
+                  <span class="q-name">{{ q.name }}</span>
+                  <span class="q-jql">{{ q.jql }}</span>
                 </div>
                 <div class="query-actions">
                   <mat-slide-toggle [checked]="q.enabled" (change)="toggleQuery(q, $event.checked)"></mat-slide-toggle>
-                  <button mat-icon-button (click)="editQuery(q)"><mat-icon>edit</mat-icon></button>
-                  <button mat-icon-button color="warn" (click)="deleteQuery(q)"><mat-icon>delete</mat-icon></button>
+                  <button mat-icon-button [matTooltip]="i18n.t('common.edit')" (click)="editQuery(q)">
+                    <mat-icon>edit</mat-icon>
+                  </button>
+                  <button mat-icon-button color="warn" [matTooltip]="i18n.t('common.delete')" (click)="deleteQuery(q)">
+                    <mat-icon>delete</mat-icon>
+                  </button>
                 </div>
               </div>
             }
@@ -182,22 +246,22 @@ const STATUS_COLOR: Record<string, string> = {
 
           <div class="panel-actions">
             <button mat-stroked-button (click)="addQuery()">
-              <mat-icon>add</mat-icon> Filter hinzufügen
+              <mat-icon>add</mat-icon> {{ i18n.t('common.add') }} filter
             </button>
             <button mat-stroked-button [disabled]="!hasLlm()" (click)="showAiInput.set(!showAiInput())">
-              <mat-icon>psychology</mat-icon> KI erstellen
+              <mat-icon>psychology</mat-icon> Create with AI
             </button>
           </div>
 
           @if (showAiInput()) {
             <div class="ai-input-box">
               <mat-form-field appearance="outline" class="full-width">
-                <mat-label>Beschreiben Sie den gewünschten Filter</mat-label>
-                <input matInput [(ngModel)]="aiDesc" placeholder="z.B. meine Bugs mit hoher Priorität">
+                <mat-label>Describe the desired filter</mat-label>
+                <input matInput [(ngModel)]="aiDesc" placeholder="e.g. my high-priority bugs">
               </mat-form-field>
               <button mat-flat-button color="accent" (click)="generateAiQuery()" [disabled]="aiGenerating()">
-                @if (aiGenerating()) { <mat-spinner diameter="16"></mat-spinner> Generiere… }
-                @else { <mat-icon>auto_awesome</mat-icon> Generieren }
+                @if (aiGenerating()) { <mat-spinner diameter="16"></mat-spinner> Generating… }
+                @else { <ng-container><mat-icon>auto_awesome</mat-icon> Generate</ng-container> }
               </button>
             </div>
           }
@@ -219,6 +283,7 @@ const STATUS_COLOR: Record<string, string> = {
     .group-empty { padding: 16px; text-align: center; color: var(--mat-sys-on-surface-variant); font-size: 13px; }
     .issue-list { display: flex; flex-direction: column; }
     .issue-row { display: flex; align-items: center; gap: 8px; padding: 8px 16px; cursor: pointer; border-bottom: 1px solid var(--mat-sys-outline-variant); transition: background .15s; }
+    .unread-dot { width: 8px; height: 8px; border-radius: 50%; background: #d32f2f; flex-shrink: 0; }
     .issue-row:hover { background: var(--mat-sys-surface-variant); }
     .issue-row:last-child { border-bottom: none; }
     .issue-key { font-family: monospace; font-size: 12px; color: var(--mat-sys-primary); min-width: 80px; font-weight: 500; }
@@ -236,31 +301,34 @@ const STATUS_COLOR: Record<string, string> = {
     .panel-header { display: flex; align-items: center; justify-content: space-between; }
     .panel-header h3 { margin: 0; }
     .query-list { display: flex; flex-direction: column; gap: 6px; }
-    .query-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px; border: 1px solid var(--mat-sys-outline-variant); border-radius: 8px; }
+    .query-item { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--mat-sys-outline-variant); border-radius: 8px; }
     .query-item.disabled { opacity: 0.5; }
-    .drag-icon { color: var(--mat-sys-on-surface-variant); cursor: grab; flex-shrink: 0; margin-top: 2px; }
-    .query-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+    .drag-icon { color: var(--mat-sys-on-surface-variant); cursor: grab; flex-shrink: 0; }
+    .cdk-drag-preview { background: var(--mat-sys-surface); border: 1px solid var(--mat-sys-primary); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.3); opacity: .95; display: flex; align-items: center; gap: 8px; padding: 8px; }
+    .cdk-drag-placeholder { opacity: 0.3; background: var(--mat-sys-surface-variant); border-radius: 8px; }
+    .cdk-drag-animating { transition: transform 200ms ease; }
+    .cdk-drop-list-dragging .query-item:not(.cdk-drag-placeholder) { transition: transform 200ms ease; }
+    .query-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .q-name { font-weight: 500; font-size: 13px; }
     .q-jql { font-family: monospace; font-size: 11px; color: var(--mat-sys-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .edit-name { border: 1px solid var(--mat-sys-outline); border-radius: 4px; padding: 2px 6px; font-weight: 500; font-size: 13px; width: 100%; margin-bottom: 4px; }
-    .edit-jql { border: 1px solid var(--mat-sys-outline); border-radius: 4px; padding: 2px 6px; font-family: monospace; font-size: 11px; width: 100%; }
-    .edit-actions { display: flex; gap: 4px; margin-top: 6px; }
     .query-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
     .panel-actions { display: flex; gap: 8px; }
     .ai-input-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--mat-sys-surface-variant); border-radius: 8px; }
     .full-width { width: 100%; }
   `],
 })
-export class MyTicketsComponent implements OnInit {
+export class MyTicketsComponent implements OnInit, OnDestroy {
+  readonly i18n = inject(I18nService);
   ticketGroups = signal<TicketGroup[]>([]);
   queries = signal<JqlQuery[]>([]);
   loadingTickets = signal(true);
   showQueryManager = signal(false);
-  editingQueryId = signal<string | null>(null);
   showAiInput = signal(false);
   aiGenerating = signal(false);
   aiDesc = '';
   hasLlm = signal(false);
+
+  private seenMap: Record<string, string> = {};
 
   constructor(
     private http: HttpClient,
@@ -269,15 +337,65 @@ export class MyTicketsComponent implements OnInit {
   ) {}
 
   ngOnInit() {
-    this.loadTickets();
+    this.http.get<{ ticket_seen_map: Record<string, string> }>(`${environment.apiUrl}/preferences`)
+      .subscribe({
+        next: prefs => {
+          this.seenMap = prefs.ticket_seen_map ?? {};
+          this.loadTickets();
+        },
+        error: () => this.loadTickets(),
+      });
     this.loadQueries();
     this.checkLlm();
+  }
+
+  ngOnDestroy() {}
+
+  private _persistSeenMap() {
+    this.http.patch(`${environment.apiUrl}/preferences`, { ticket_seen_map: this.seenMap }).subscribe();
+  }
+
+  hasUnread(issue: JiraIssue): boolean {
+    const seen = this.seenMap[issue.key];
+    if (!seen) return false;
+    return new Date(issue.fields.updated) > new Date(seen);
+  }
+
+  markSeen(issue: JiraIssue) {
+    this.seenMap[issue.key] = new Date().toISOString();
+    this._persistSeenMap();
   }
 
   loadTickets() {
     this.loadingTickets.set(true);
     this.http.get<TicketGroup[]>(`${environment.apiUrl}/jira-view/my-tickets`).subscribe({
-      next: data => { this.ticketGroups.set(data); this.loadingTickets.set(false); },
+      next: data => {
+        const now = new Date().toISOString();
+        let changed = false;
+        const allKeys = new Set<string>();
+        for (const group of data) {
+          for (const issue of group.issues) {
+            allKeys.add(issue.key);
+            const isDone = issue.fields.status?.statusCategory?.key === 'done';
+            if (isDone) {
+              // Closed tickets: remove from seen map
+              if (issue.key in this.seenMap) {
+                delete this.seenMap[issue.key];
+                changed = true;
+              }
+            } else {
+              // Open tickets: add to seen map if not tracked yet
+              if (!(issue.key in this.seenMap)) {
+                this.seenMap[issue.key] = now;
+                changed = true;
+              }
+            }
+          }
+        }
+        if (changed) this._persistSeenMap();
+        this.ticketGroups.set(data);
+        this.loadingTickets.set(false);
+      },
       error: () => this.loadingTickets.set(false),
     });
   }
@@ -289,27 +407,64 @@ export class MyTicketsComponent implements OnInit {
   }
 
   checkLlm() {
-    this.http.get<any>(`${environment.apiUrl}/settings`).subscribe({
-      next: d => this.hasLlm.set(!!(d?.['llm.base_url'] && d?.['llm.model'])),
+    this.http.get<{ configured: boolean }>(`${environment.apiUrl}/settings/llm-status`).subscribe({
+      next: data => this.hasLlm.set(!!data?.configured),
     });
   }
 
   openQueryManager() { this.showQueryManager.set(true); }
   closeQueryManager() { this.showQueryManager.set(false); this.loadTickets(); }
 
-  addQuery() {
-    const q: JqlQuery = { id: crypto.randomUUID(), name: 'Neuer Filter', jql: 'assignee = currentUser() ORDER BY updated DESC', position: this.queries().length, enabled: true, show_in_widget: true };
-    this.http.post<any>(`${environment.apiUrl}/preferences/jira-queries`, { name: q.name, jql: q.jql }).subscribe({
-      next: res => { this.queries.update(qs => [...qs, { ...q, id: res.id }]); this.editingQueryId.set(res.id); },
+  onDrop(event: CdkDragDrop<JqlQuery[]>) {
+    if (event.previousIndex === event.currentIndex) return;
+    const qs = [...this.queries()];
+    moveItemInArray(qs, event.previousIndex, event.currentIndex);
+    qs.forEach((q, idx) => { q.position = idx; });
+    this.queries.set(qs);
+    qs.forEach((q, idx) => {
+      this.http.patch(`${environment.apiUrl}/preferences/jira-queries/${q.id}`, { position: idx }).subscribe();
     });
   }
 
-  editQuery(q: JqlQuery) { this.editingQueryId.set(q.id); }
-  cancelEdit() { this.editingQueryId.set(null); }
+  addQuery() {
+    const ref = this.dialog.open(JqlQueryDialogComponent, {
+      width: '580px',
+      data: {
+        title: 'Add filter',
+        name: 'New filter',
+        jql: 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC',
+      },
+    });
+    ref.afterClosed().subscribe((result: { name: string; jql: string } | undefined) => {
+      if (!result) return;
+      this.http.post<{ id: string; name: string; jql: string }>(
+        `${environment.apiUrl}/preferences/jira-queries`,
+        { name: result.name, jql: result.jql },
+      ).subscribe({
+        next: res => {
+          this.queries.update(qs => [...qs, {
+            id: res.id, name: result.name, jql: result.jql,
+            position: qs.length, enabled: true, show_in_widget: true,
+          }]);
+          this.snackBar.open('Filter saved', '', { duration: 2000 });
+        },
+      });
+    });
+  }
 
-  saveQuery(q: JqlQuery) {
-    this.http.patch(`${environment.apiUrl}/preferences/jira-queries/${q.id}`, { name: q.name, jql: q.jql }).subscribe({
-      next: () => { this.editingQueryId.set(null); this.snackBar.open('Filter gespeichert', '', { duration: 2000 }); },
+  editQuery(q: JqlQuery) {
+    const ref = this.dialog.open(JqlQueryDialogComponent, {
+      width: '580px',
+      data: { title: 'Edit filter', name: q.name, jql: q.jql },
+    });
+    ref.afterClosed().subscribe((result: { name: string; jql: string } | undefined) => {
+      if (!result) return;
+      this.http.patch(`${environment.apiUrl}/preferences/jira-queries/${q.id}`, result).subscribe({
+        next: () => {
+          this.queries.update(qs => qs.map(x => x.id === q.id ? { ...x, ...result } : x));
+          this.snackBar.open('Filter saved', '', { duration: 2000 });
+        },
+      });
     });
   }
 
@@ -320,32 +475,46 @@ export class MyTicketsComponent implements OnInit {
   }
 
   deleteQuery(q: JqlQuery) {
+    if (!confirm(`Delete filter "${q.name}"?`)) return;
     this.http.delete(`${environment.apiUrl}/preferences/jira-queries/${q.id}`).subscribe({
-      next: () => { this.queries.update(qs => qs.filter(x => x.id !== q.id)); this.snackBar.open('Filter gelöscht', '', { duration: 2000 }); },
+      next: () => {
+        this.queries.update(qs => qs.filter(x => x.id !== q.id));
+        this.snackBar.open('Filter deleted', '', { duration: 2000 });
+      },
     });
   }
 
   generateAiQuery() {
     if (!this.aiDesc.trim()) return;
     this.aiGenerating.set(true);
-    this.http.post<any>(`${environment.apiUrl}/preferences/jira-queries/generate`, { description: this.aiDesc }).subscribe({
+    this.http.post<{ name: string; jql: string }>(
+      `${environment.apiUrl}/preferences/jira-queries/generate`,
+      { description: this.aiDesc },
+    ).subscribe({
       next: result => {
-        this.http.post<any>(`${environment.apiUrl}/preferences/jira-queries`, { name: result.name, jql: result.jql }).subscribe({
+        this.http.post<{ id: string }>(
+          `${environment.apiUrl}/preferences/jira-queries`,
+          { name: result.name, jql: result.jql },
+        ).subscribe({
           next: res => {
-            this.queries.update(qs => [...qs, { id: res.id, name: result.name, jql: result.jql, position: qs.length, enabled: true, show_in_widget: true }]);
-            this.snackBar.open(`KI-Filter erstellt: "${result.name}"`, '', { duration: 3000 });
+            this.queries.update(qs => [...qs, {
+              id: res.id, name: result.name, jql: result.jql,
+              position: qs.length, enabled: true, show_in_widget: true,
+            }]);
+            this.snackBar.open(`AI filter created: "${result.name}"`, '', { duration: 3000 });
             this.aiDesc = '';
             this.showAiInput.set(false);
             this.aiGenerating.set(false);
           },
         });
       },
-      error: () => { this.aiGenerating.set(false); this.snackBar.open('Fehler beim Generieren', '', { duration: 3000 }); },
+      error: () => { this.aiGenerating.set(false); this.snackBar.open('Error generating filter', '', { duration: 3000 }); },
     });
   }
 
   openSession(issue: JiraIssue) {
-    this.dialog.open(WorkSessionDialogComponent, {
+    this.markSeen(issue);
+    const ref = this.dialog.open(WorkSessionDialogComponent, {
       width: '820px',
       maxWidth: '95vw',
       data: {
@@ -354,6 +523,10 @@ export class MyTicketsComponent implements OnInit {
         jira_issue_id: issue.key,
       },
     });
+    // After closing, the ticket may have new activity (e.g. a comment just posted) →
+    // reload so updated timestamps refresh; hasUnread then shows the dot against the
+    // seen-time recorded when the dialog was opened.
+    ref.afterClosed().subscribe(() => this.loadTickets());
   }
 
   priorityColor(name: string = '') { return PRIORITY_COLOR[name] ?? '#757575'; }

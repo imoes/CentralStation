@@ -1,17 +1,37 @@
+import logging
 from typing import Annotated
 
+import httpx
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import CurrentUser, RequireAdmin
+from app.api.deps import CurrentUser, RequireAdmin, RequireSysAdmin
 from app.core.database import get_db
 from app.models.audit import AuditLog
 from app.models.settings import GlobalSetting
 from app.schemas.settings import SettingItem, SettingUpdate, SettingsResponse
+from app.services.llm_client import generate_text
+from app.services.settings import LLMConfig
 from app.services.settings import get_all_settings, set_setting
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+
+class TestResult(BaseModel):
+    success: bool
+    message: str
+    detail: str | None = None
+
+
+class LLMStatusResponse(BaseModel):
+    configured: bool
+    base_url_set: bool
+    model_set: bool
+
 
 SECRET_MASK = "••••••••"
 
@@ -30,6 +50,21 @@ async def get_settings(db: Annotated[AsyncSession, Depends(get_db)]):
     return SettingsResponse(settings=items)
 
 
+@router.get("/llm-status", response_model=LLMStatusResponse)
+async def get_llm_status(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    s = await get_all_settings(db)
+    base_url_set = bool(s.get("llm.base_url"))
+    model_set = bool(s.get("llm.model"))
+    return LLMStatusResponse(
+        configured=base_url_set and model_set,
+        base_url_set=base_url_set,
+        model_set=model_set,
+    )
+
+
 @router.patch("/{key}", response_model=SettingItem, dependencies=[RequireAdmin])
 async def update_setting(
     key: str,
@@ -39,8 +74,6 @@ async def update_setting(
 ):
     result = await db.execute(select(GlobalSetting).where(GlobalSetting.key == key))
     row = result.scalar_one_or_none()
-    if not row:
-        raise HTTPException(404, f"Setting '{key}' not found")
 
     await set_setting(db, key, data.value)
     db.add(AuditLog(
@@ -48,12 +81,152 @@ async def update_setting(
         resource_type="setting",
         resource_id=key,
         user_id=current_user.id,
-        new_value={"key": key, "value": "<secret>" if row.is_secret else data.value},
+        new_value={"key": key, "value": "<secret>" if (row and row.is_secret) else data.value},
     ))
     await db.commit()
+
+    # Reschedule jobs if an agent interval changed
+    if key in ("agent.interval_minutes", "agent.aggregation_interval_minutes"):
+        try:
+            from app.services.ai_agent.scheduler import reschedule_jobs
+            await reschedule_jobs()
+        except Exception as exc:
+            logger.warning("reschedule_jobs failed (non-fatal): %s", exc)
 
     # Return updated row (re-query after commit)
     result = await db.execute(select(GlobalSetting).where(GlobalSetting.key == key))
     row = result.scalar_one()
     display = SECRET_MASK if (row.is_secret and row.value_encrypted) else row.value_plain
     return SettingItem(key=row.key, value=display, is_secret=row.is_secret)
+
+
+@router.post("/test/{group}", response_model=TestResult, dependencies=[RequireAdmin])
+async def test_setting_group(
+    group: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Test connectivity for a settings group using the currently stored values."""
+    s = await get_all_settings(db)
+
+    if group == "llm":
+        from app.services.settings import get_active_llm_config
+        llm_config = await get_active_llm_config(db)
+        if not llm_config.is_configured:
+            return TestResult(success=False, message="LLM nicht konfiguriert (URL oder Modell fehlt)")
+        provider = s.get("llm.provider") or "custom"
+        provider_label = {
+            "openai-codex": "OpenAI Codex",
+            "claude-oauth": "Claude (OAuth)",
+        }.get(provider, "Lokal")
+        try:
+            text = await generate_text(
+                llm_config,
+                [{"role": "user", "content": "Antworte nur mit OK."}],
+                max_output_tokens=20,
+                reasoning_effort="none",
+            )
+            return TestResult(
+                success=True,
+                message=f"Verbindung OK — {provider_label} / Modell '{llm_config.model}' antwortet",
+                detail=text[:120] or None,
+            )
+        except httpx.ConnectError as e:
+            return TestResult(success=False, message="Verbindung fehlgeschlagen", detail=str(e))
+        except httpx.TimeoutException:
+            return TestResult(success=False, message="Timeout — Server nicht erreichbar")
+        except Exception as e:
+            return TestResult(success=False, message=str(e))
+
+    elif group == "vision":
+        url = (s.get("llm.vision_base_url") or "").rstrip("/")
+        if not url:
+            return TestResult(success=False, message="Vision-URL nicht konfiguriert")
+        api_key = s.get("llm.vision_api_key")
+        model = s.get("llm.vision_model") or ""
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        try:
+            async with httpx.AsyncClient(timeout=8, verify=False) as client:
+                r = await client.get(f"{url}/models", headers=headers)
+            if r.status_code >= 400:
+                return TestResult(
+                    success=False,
+                    message=f"HTTP {r.status_code}",
+                    detail=r.text[:300],
+                )
+            ids = [m.get("id", "") for m in r.json().get("data", [])]
+            found = model in ids if model else None
+            suffix = (
+                f" — Modell '{model}' ✓" if found
+                else f" — Modell '{model}' nicht in der Liste" if found is False
+                else f" — {len(ids)} Modelle verfügbar"
+            )
+            return TestResult(success=True, message=f"Verbindung OK{suffix}")
+        except httpx.ConnectError as e:
+            return TestResult(success=False, message="Verbindung fehlgeschlagen", detail=str(e))
+        except httpx.TimeoutException:
+            return TestResult(success=False, message="Timeout (8 s) — Server nicht erreichbar")
+        except Exception as e:
+            return TestResult(success=False, message=str(e))
+
+    elif group == "searxng":
+        url = (s.get("searxng.base_url") or "").rstrip("/")
+        if not url:
+            return TestResult(success=False, message="SearXNG URL nicht konfiguriert")
+        try:
+            async with httpx.AsyncClient(timeout=8, verify=False) as client:
+                r = await client.get(
+                    f"{url}/search",
+                    params={"q": "test", "format": "json"},
+                )
+            if r.status_code >= 400:
+                return TestResult(
+                    success=False,
+                    message=f"HTTP {r.status_code}",
+                    detail=r.text[:300],
+                )
+            n = len(r.json().get("results", []))
+            return TestResult(success=True, message=f"Verbindung OK — {n} Ergebnisse für 'test'")
+        except httpx.ConnectError as e:
+            return TestResult(success=False, message="Verbindung fehlgeschlagen", detail=str(e))
+        except httpx.TimeoutException:
+            return TestResult(success=False, message="Timeout (8 s) — Server nicht erreichbar")
+        except Exception as e:
+            return TestResult(success=False, message=str(e))
+
+    else:
+        raise HTTPException(400, f"Unbekannte Gruppe '{group}'. Gültig: llm, vision, searxng")
+
+
+@router.get("/jira-projects", dependencies=[RequireAdmin])
+async def list_jira_projects(db: Annotated[AsyncSession, Depends(get_db)]):
+    """List available Jira projects across both connectors (jira + jira_sd).
+
+    Used by the settings UI to let an admin pick the ticket target project.
+    Each entry carries the connector type that hosts it (e.g. IMIT → jira_sd).
+    """
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
+    projects: list[dict] = []
+    seen: set[str] = set()
+    for ctype in ("jira_sd", "jira"):
+        r = await db.execute(
+            select(ConnectorConfig)
+            .where(ConnectorConfig.type == ctype, ConnectorConfig.enabled.is_(True))
+            .order_by(ConnectorConfig.owner_user_id.is_(None))
+        )
+        for conn in r.scalars().all():
+            try:
+                creds = decrypt_credentials(conn.encrypted_credentials)
+                jira = JiraConnector(base_url=conn.base_url, credentials=creds)
+                for p in await jira.list_projects():
+                    dedup = f"{ctype}:{p['key']}"
+                    if dedup in seen:
+                        continue
+                    seen.add(dedup)
+                    projects.append({"key": p["key"], "name": p["name"], "connector": ctype})
+            except Exception as e:
+                logger.warning("list_jira_projects: %s connector failed: %s", ctype, e)
+    projects.sort(key=lambda p: p["key"])
+    return {"projects": projects}

@@ -1,0 +1,824 @@
+:host {
+  display: contents;
+}
+
+// ── Backdrop ──────────────────────────────────────────────────────
+
+.computer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  z-index: 999;
+  backdrop-filter: blur(3px);
+  animation: backdrop-in 0.2s ease;
+}
+
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+// ── Popup window ──────────────────────────────────────────────────
+
+.computer-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 1000;
+  width: min(1180px, 96vw);
+  height: min(760px, 90vh);
+  background: #000;
+  border: 2px solid #ff9933;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  box-shadow:
+    0 0 0 1px rgba(255, 153, 51, 0.25),
+    0 12px 60px rgba(0, 0, 0, 0.95),
+    0 0 40px rgba(255, 153, 51, 0.08);
+  // Hidden state: scaled down, invisible
+  transform: translate(-50%, -50%) scale(0.94);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity   0.18s ease;
+
+  &.open {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+    pointer-events: all;
+  }
+}
+
+// ── LCARS Top Bar ─────────────────────────────────────────────────
+
+.panel-top {
+  display: flex;
+  align-items: center;
+  background: #ff9933;
+  padding: 0 8px;
+  height: 44px;
+  flex-shrink: 0;
+  gap: 8px;
+  // Rounded top corners to match the popup border-radius
+  border-radius: 8px 8px 0 0;
+
+  .cap-tl {
+    width: 24px;
+    height: 24px;
+    background: #000;
+    border-radius: 8px 0 0 24px;
+    flex-shrink: 0;
+  }
+
+  .panel-title {
+    flex: 1;
+    font-family: 'Antonio', sans-serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: #000;
+    padding: 0 4px;
+  }
+
+  .tts-btn {
+    background: none;
+    border: none;
+    color: #000;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+
+    mat-icon {
+      font-size: 1.1rem;
+      width: 1.1rem;
+      height: 1.1rem;
+    }
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.15);
+    }
+
+    &.muted {
+      opacity: 0.45;
+    }
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    color: #000;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    line-height: 1;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.15);
+    }
+  }
+
+  .cap-tr {
+    width: 24px;
+    height: 24px;
+    background: #000;
+    border-radius: 0 8px 24px 0;
+    flex-shrink: 0;
+  }
+}
+
+// ── Body layout ───────────────────────────────────────────────────
+
+.panel-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+// ── Session Rail (LCARS pills) ────────────────────────────────────
+
+.session-rail {
+  width: 180px;
+  flex-shrink: 0;
+  background: #0a0804;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
+  border-right: 2px solid #2a1a08;
+  overflow-y: auto;
+
+  &::-webkit-scrollbar {
+    width: 3px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: #3a2810;
+  }
+}
+
+.rail-head {
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  color: #5a3a18;
+  padding: 0 10px 6px;
+  border-bottom: 1px solid #2a1a08;
+  margin-bottom: 4px;
+}
+
+.rail-pill {
+  background: #ff9933;
+  color: #000;
+  border: none;
+  cursor: pointer;
+  border-radius: 0 18px 18px 0;
+  padding: 6px 10px 6px 12px;
+  margin-right: 6px;
+  text-align: left;
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  line-height: 1.2;
+  position: relative;
+  transition: background 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 154px;
+
+  &:hover:not(.active) {
+    background: #ffb366;
+  }
+
+  &.active {
+    background: #ffcc66;
+  }
+
+  &.new-pill {
+    background: #99ccff;
+    margin-top: 8px;
+
+    &:hover {
+      background: #bbdeff;
+    }
+  }
+
+  &.del-pill {
+    background: #cc4433;
+    color: #fff;
+    margin-top: 2px;
+
+    &:hover {
+      background: #ee5544;
+    }
+  }
+
+  &.resolve-pill {
+    background: #336633;
+    color: #99ff99;
+    margin-top: 2px;
+
+    &:hover {
+      background: #448844;
+    }
+  }
+
+  &.resolved-pill {
+    background: #1a331a;
+    color: #66aa66;
+    cursor: default;
+    margin-top: 2px;
+    opacity: 0.8;
+  }
+
+  &.ticket-pill {
+    background: #ffcc66;
+    color: #000;
+    margin-top: 2px;
+
+    &:hover {
+      background: #ffdd99;
+    }
+  }
+
+  &.workbench-pill {
+    background: #336699;
+    color: #fff;
+    margin-top: 2px;
+
+    &:hover {
+      background: #4488bb;
+    }
+  }
+
+  &.rail-edit {
+    background: #222;
+    color: #ffcc99;
+    border: 1px solid #ff9933;
+    outline: none;
+    width: 140px;
+    padding: 5px 10px 5px 12px;
+    font-family: 'Antonio', sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    cursor: text;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+}
+
+.msg-badge {
+  font-size: 0.6rem;
+  opacity: 0.65;
+  margin-left: 4px;
+}
+
+// ── Conversation area ─────────────────────────────────────────────
+
+.conversation {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #050403;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 8px;
+  opacity: 0.4;
+
+  .empty-icon {
+    font-size: 2rem;
+    color: #ff9933;
+  }
+
+  .empty-text {
+    font-family: 'Antonio', sans-serif;
+    font-size: 1rem;
+    letter-spacing: 0.2em;
+    color: #ff9933;
+  }
+
+  .empty-sub {
+    font-size: 0.72rem;
+    color: #5a3a18;
+    text-align: center;
+    padding: 0 20px;
+  }
+
+  .empty-hint {
+    font-size: 0.62rem;
+    color: #6a4a20;
+    text-align: center;
+    padding: 8px 24px 0;
+    line-height: 1.6;
+    letter-spacing: 0.03em;
+  }
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: #3a2810;
+    border-radius: 2px;
+  }
+}
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+
+  &.user {
+    align-items: flex-end;
+
+    .msg-label {
+      color: #ffcc66;
+    }
+
+    .msg-text {
+      background: #1a1200;
+      border: 1px solid #3a2810;
+      border-radius: 10px 10px 2px 10px;
+    }
+  }
+
+  &.agent {
+    align-items: flex-start;
+
+    .msg-label {
+      color: #ff9933;
+    }
+
+    .msg-text {
+      background: #0d0d00;
+      border: 1px solid #2a1a08;
+      border-radius: 2px 10px 10px 10px;
+    }
+  }
+}
+
+.msg-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.msg-label {
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+}
+
+.tts-msg-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  color: #3a2810;
+  transition: color 0.15s;
+
+  mat-icon {
+    font-size: 0.85rem;
+    width: 0.85rem;
+    height: 0.85rem;
+  }
+
+  &:hover {
+    color: #ff9933;
+  }
+}
+
+.msg-text {
+  color: #ffe8a0;
+  font-size: 0.83rem;
+  line-height: 1.55;
+  word-break: break-word;
+  padding: 7px 10px;
+  max-width: 95%;
+
+  // All messages rendered as markdown — ::ng-deep pierces Angular's view
+  // encapsulation so the HTML injected via [innerHTML] is styled correctly.
+  ::ng-deep {
+    p { margin: 0 0 6px; }
+    p:last-child { margin-bottom: 0; }
+
+    h1, h2, h3 {
+      font-family: 'Antonio', sans-serif;
+      letter-spacing: 0.1em;
+      color: #ff9933;
+      margin: 10px 0 4px;
+    }
+    h1 { font-size: 1rem; }
+    h2 { font-size: 0.92rem; }
+    h3 { font-size: 0.84rem; }
+
+    strong { color: #ffcc66; font-weight: 700; }
+    em     { color: #ffdd99; font-style: italic; }
+
+    ul, ol {
+      margin: 4px 0 6px 16px;
+      padding: 0;
+    }
+    li { margin-bottom: 2px; }
+
+    code {
+      background: #1a1400;
+      color: #99ccff;
+      border: 1px solid #2a2010;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 0.8rem;
+      font-family: 'Courier New', monospace;
+    }
+
+    pre {
+      background: #0d0d00;
+      border: 1px solid #2a2010;
+      border-left: 3px solid #ff9933;
+      border-radius: 4px;
+      padding: 8px 10px;
+      overflow-x: auto;
+      margin: 6px 0;
+      code {
+        background: none;
+        border: none;
+        padding: 0;
+        color: #ffe8a0;
+        font-size: 0.78rem;
+      }
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid #2a1a08;
+      margin: 8px 0;
+    }
+
+    table {
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      margin: 6px 0;
+      width: 100%;
+    }
+    th {
+      background: #1a1000;
+      color: #ff9933;
+      padding: 4px 8px;
+      text-align: left;
+      border: 1px solid #2a1a08;
+      font-family: 'Antonio', sans-serif;
+      letter-spacing: 0.06em;
+    }
+    td {
+      padding: 3px 8px;
+      border: 1px solid #2a1a08;
+      color: #ffe8a0;
+    }
+    tr:nth-child(even) td { background: #0a0800; }
+
+    blockquote {
+      border-left: 3px solid #5a3a18;
+      margin: 4px 0;
+      padding: 4px 10px;
+      color: #c8a060;
+      font-style: italic;
+    }
+  }
+
+  &.streaming {
+    white-space: pre-wrap;
+  }
+}
+
+.thinking {
+  color: #ff9933;
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  padding: 6px 0;
+
+  .cursor {
+    animation: blink 1s step-end infinite;
+  }
+}
+
+.tool-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: #ff9933;
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  opacity: 0.85;
+
+  .tool-spinner {
+    display: inline-block;
+    animation: spin 1.2s linear infinite;
+  }
+}
+
+.tool-log {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  .tool-log-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Antonio', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    color: #7a7a7a;
+
+    .tool-icon {
+      width: 14px;
+      text-align: center;
+      flex-shrink: 0;
+      color: #555;
+    }
+
+    .tool-name {
+      opacity: 0.7;
+    }
+
+    &.running {
+      color: #ff9933;
+
+      .tool-icon {
+        color: #ff9933;
+        animation: spin 1.2s linear infinite;
+      }
+
+      .tool-name {
+        opacity: 1;
+      }
+    }
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+// ── Voice error banner ────────────────────────────────────────────
+
+.voice-error {
+  background: #330a08;
+  border-top: 1px solid #cc4433;
+  color: #ff8877;
+  font-size: 0.72rem;
+  padding: 5px 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+
+  &:hover {
+    background: #440c0a;
+  }
+}
+
+// ── Input Row ─────────────────────────────────────────────────────
+
+.input-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 2px solid #2a1a08;
+  background: #0a0804;
+  flex-shrink: 0;
+  align-items: flex-end;
+}
+
+.lcars-input {
+  flex: 1;
+  background: #141008;
+  color: #ffe8a0;
+  border: 1px solid #3a2810;
+  border-radius: 4px;
+  padding: 7px 10px;
+  font-size: 0.83rem;
+  font-family: 'Antonio', sans-serif;
+  letter-spacing: 0.04em;
+  outline: none;
+  transition: border-color 0.15s;
+  resize: none;
+  overflow-y: hidden;
+  line-height: 1.45;
+  /* Anfangshöhe = 1 Zeile: font-size × line-height + padding oben + unten */
+  height: calc(1.45 * 0.83rem + 14px);
+  min-height: calc(1.45 * 0.83rem + 14px);
+  max-height: 180px;
+
+  &::placeholder {
+    color: #4a3010;
+  }
+
+  &:focus {
+    border-color: #ff9933;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+  }
+}
+
+.icon-btn {
+  background: #1a1208;
+  color: #ff9933;
+  border: 1px solid #3a2810;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 4px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+
+  mat-icon {
+    font-size: 1.1rem;
+    width: 1.1rem;
+    height: 1.1rem;
+  }
+
+  &:hover {
+    border-color: #ff9933;
+    background: #201808;
+  }
+
+  &.active {
+    color: #ff4433;
+    border-color: #ff4433;
+    background: #200a08;
+    animation: pulse 1s ease-in-out infinite;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.send-btn {
+  background: #ff9933;
+  color: #000;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: background 0.15s;
+
+  &:hover:not(:disabled) {
+    background: #ffb366;
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+}
+
+// ── LCARS Bottom Bar ──────────────────────────────────────────────
+
+.panel-bottom {
+  display: flex;
+  align-items: center;
+  background: #ff9933;
+  padding: 4px 8px;
+  gap: 8px;
+  flex-shrink: 0;
+  height: 32px;
+  border-radius: 0 0 8px 8px;
+
+  .cap-bl {
+    width: 20px;
+    height: 20px;
+    background: #000;
+    border-radius: 0 20px 0 8px;
+    flex-shrink: 0;
+  }
+
+  .cap-br {
+    width: 20px;
+    height: 20px;
+    background: #000;
+    border-radius: 20px 0 8px 0;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+}
+
+.num-cell {
+  background: #000;
+  color: #ff9933;
+  padding: 2px 10px;
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  border-radius: 3px;
+  font-weight: 700;
+}
+
+.listening-cell {
+  color: #ff4433;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.loading-cell {
+  color: #ffcc66;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.tts-cell {
+  color: #99ccff;
+}
+
+// ── Stop button (top bar, visible while streaming) ────────────────
+
+.stop-btn {
+  background: #cc2200;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  transition: background 0.15s;
+
+  mat-icon {
+    font-size: 1rem;
+    width: 1rem;
+    height: 1rem;
+  }
+
+  &:hover {
+    background: #ee3311;
+  }
+}
+
+// ── Stop button inline (input row, replaces send) ─────────────────
+
+.stop-inline-btn {
+  background: #200a08;
+  color: #ff4433;
+  border: 1px solid #cc2200;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  animation: pulse 1.2s ease-in-out infinite;
+
+  mat-icon {
+    font-size: 1.1rem;
+    width: 1.1rem;
+    height: 1.1rem;
+  }
+
+  &:hover {
+    background: #300e0c;
+    border-color: #ff4433;
+  }
+}
+

@@ -18,7 +18,7 @@ router = APIRouter(prefix="/preferences", tags=["preferences"])
 DEFAULT_JQL_QUERIES = [
     {
         "name": "Meine offenen Tickets",
-        "jql": "assignee = currentUser() AND status != Done ORDER BY updated DESC",
+        "jql": "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
         "position": 0,
     },
     {
@@ -28,7 +28,7 @@ DEFAULT_JQL_QUERIES = [
     },
     {
         "name": "Hohe Priorität",
-        "jql": "assignee = currentUser() AND priority in (Highest, High) AND status != Done ORDER BY priority ASC, updated DESC",
+        "jql": "assignee = currentUser() AND priority in (Kritisch, Hoch) AND statusCategory != Done ORDER BY priority ASC, updated DESC",
         "position": 2,
     },
 ]
@@ -43,6 +43,18 @@ class PreferenceUpdate(BaseModel):
     o365_mailbox: str | None = None
     o365_folder: str | None = None
     notification_settings: dict | None = None
+    feed_checkmk_min_age_minutes: int | None = None
+    feed_sources_enabled: list | None = None
+    feed_teams_channels: list | None = None
+    checkmk_locations:          list | None = None
+    checkmk_ve:                 list | None = None
+    checkmk_criticality:        list | None = None
+    checkmk_os:                 list | None = None
+    checkmk_hostgroups:         list | None = None
+    feed_disabled_search_ids:   list | None = None
+    ticket_seen_map:            dict | None = None
+    ui_theme:                   str | None = None
+    computer_console_enabled:   bool | None = None
 
 
 class JQLQueryCreate(BaseModel):
@@ -71,15 +83,19 @@ async def _get_or_create_prefs(user: User, db: AsyncSession) -> UserPreference:
         prefs = UserPreference(user_id=user.id)
         db.add(prefs)
         await db.flush()
-        result2 = await db.execute(
-            select(UserJiraQuery).where(UserJiraQuery.user_id == user.id)
-        )
-        if not result2.scalars().all():
-            for q in DEFAULT_JQL_QUERIES:
-                db.add(UserJiraQuery(user_id=user.id, **q))
         await db.commit()
         await db.refresh(prefs)
+    await _ensure_default_jql_queries(user.id, db)
     return prefs
+
+
+async def _ensure_default_jql_queries(user_id: uuid.UUID, db: AsyncSession) -> None:
+    result = await db.execute(select(UserJiraQuery).where(UserJiraQuery.user_id == user_id))
+    if result.scalars().first():
+        return
+    for q in DEFAULT_JQL_QUERIES:
+        db.add(UserJiraQuery(user_id=user_id, **q))
+    await db.commit()
 
 
 @router.get("")
@@ -95,6 +111,18 @@ async def get_preferences(user: CurrentUser, db: Annotated[AsyncSession, Depends
         "o365_mailbox": prefs.o365_mailbox,
         "o365_folder": prefs.o365_folder,
         "notification_settings": prefs.notification_settings,
+        "feed_checkmk_min_age_minutes": prefs.feed_checkmk_min_age_minutes or 5,
+        "feed_sources_enabled": prefs.feed_sources_enabled or ["checkmk", "graylog", "wazuh"],
+        "feed_teams_channels": prefs.feed_teams_channels or [],
+        "checkmk_locations":        prefs.checkmk_locations   or [],
+        "checkmk_ve":               prefs.checkmk_ve          or [],
+        "checkmk_criticality":      prefs.checkmk_criticality or [],
+        "checkmk_os":               prefs.checkmk_os          or [],
+        "checkmk_hostgroups":       prefs.checkmk_hostgroups  or [],
+        "feed_disabled_search_ids": prefs.feed_disabled_search_ids or [],
+        "ticket_seen_map": prefs.ticket_seen_map or {},
+        "ui_theme": getattr(prefs, "ui_theme", None) or "classic",
+        "computer_console_enabled": prefs.computer_console_enabled,
     }
 
 
@@ -116,6 +144,7 @@ async def update_preferences(
 @router.get("/jira-queries")
 async def list_jql_queries(user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]):
     await _get_or_create_prefs(user, db)
+    await _ensure_default_jql_queries(user.id, db)
     result = await db.execute(
         select(UserJiraQuery)
         .where(UserJiraQuery.user_id == user.id)
@@ -146,7 +175,15 @@ async def create_jql_query(
     db.add(q)
     await db.commit()
     await db.refresh(q)
-    return {"id": str(q.id), "name": q.name, "jql": q.jql}
+    return {
+        "id": str(q.id),
+        "name": q.name,
+        "jql": q.jql,
+        "position": q.position,
+        "enabled": q.enabled,
+        "show_in_widget": q.show_in_widget,
+        "created_at": q.created_at.isoformat(),
+    }
 
 
 @router.post("/jira-queries/generate")
@@ -156,13 +193,15 @@ async def generate_jql_query(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Use LLM to generate a Jira JQL query from natural language."""
+    from app.services.ai_language import get_response_language_for_user
     from app.services.settings import get_llm_config
     from app.services.workflow_ai import generate_jql
 
     llm = await get_llm_config(db)
     if not llm.is_configured:
         raise HTTPException(503, "LLM not configured")
-    return await generate_jql(llm, body.description)
+    lang = await get_response_language_for_user(db, user.id)
+    return await generate_jql(llm, body.description, lang=lang)
 
 
 @router.patch("/jira-queries/{query_id}")

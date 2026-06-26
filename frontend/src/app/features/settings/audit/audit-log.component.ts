@@ -1,4 +1,4 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient, HttpParams } from '@angular/common/http';
@@ -11,6 +11,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatChipsModule } from '@angular/material/chips';
 import { environment } from '../../../../environments/environment';
+import { I18nService } from '../../../core/services/i18n.service';
 
 @Component({
   selector: 'cs-audit-log',
@@ -27,18 +28,18 @@ import { environment } from '../../../../environments/environment';
         <h2>Audit Log</h2>
         <div class="header-actions">
           <mat-form-field appearance="outline" class="filter-field">
-            <mat-label>Aktion</mat-label>
+            <mat-label>{{ i18n.t('settings.audit.action_label') }}</mat-label>
             <input matInput [(ngModel)]="filterAction" (ngModelChange)="load()">
           </mat-form-field>
           <mat-form-field appearance="outline" class="filter-field">
-            <mat-label>Ressource</mat-label>
+            <mat-label>{{ i18n.t('settings.audit.resource_label') }}</mat-label>
             <mat-select [(ngModel)]="filterResource" (selectionChange)="load()">
-              <mat-option value="">Alle</mat-option>
-              <mat-option value="user">Benutzer</mat-option>
+              <mat-option value="">{{ i18n.t('common.all') }}</mat-option>
+              <mat-option value="user">{{ i18n.t('common.user') }}</mat-option>
               <mat-option value="connector">Connector</mat-option>
-              <mat-option value="setting">Einstellung</mat-option>
+              <mat-option value="setting">Setting</mat-option>
               <mat-option value="alert">Alert</mat-option>
-              <mat-option value="network_event">Netzwerk</mat-option>
+              <mat-option value="network_event">Network</mat-option>
             </mat-select>
           </mat-form-field>
         </div>
@@ -94,6 +95,7 @@ import { environment } from '../../../../environments/environment';
   `],
 })
 export class AuditLogComponent implements OnInit {
+  readonly i18n = inject(I18nService);
   logs = signal<any[]>([]);
   loading = signal(true);
   filterAction = '';

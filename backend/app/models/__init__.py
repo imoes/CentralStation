@@ -7,6 +7,7 @@ from app.models.network import NetworkSwitchEvent
 from app.models.audit import AuditLog
 from app.models.settings import GlobalSetting
 from app.models.workflow import UserPreference, UserJiraQuery, WorkSession
+from app.models.remediation import RemediationProposal, PlaybookDraft
 
 __all__ = [
     "User", "RefreshToken",
@@ -18,4 +19,6 @@ __all__ = [
     "AuditLog",
     "GlobalSetting",
     "UserPreference", "UserJiraQuery", "WorkSession",
+    "RemediationProposal",
+    "PlaybookDraft",
 ]

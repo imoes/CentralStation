@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: centralstation
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U centralstation"]
       interval: 10s
@@ -19,34 +19,82 @@ services:
     restart: unless-stopped
     command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
-      - redis_data:/data
+      - ./data/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  opensearch:
+    image: opensearchproject/opensearch:2.17.1
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_PASSWORD}
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - ./data/opensearch:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -u admin:${OPENSEARCH_PASSWORD} https://localhost:9200/_cluster/health --insecure | grep -qv '\"status\":\"red\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-      args:
-        HTTP_PROXY: http://proxy.ippen.media:80
-        HTTPS_PROXY: http://proxy.ippen.media:80
-        NO_PROXY: localhost,127.0.0.1,db,redis,.ippen.media
+      context: .
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://centralstation:${POSTGRES_PASSWORD}@db:5432/centralstation
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       SECRET_KEY: ${SECRET_KEY}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      OPENSEARCH_URL: https://opensearch:9200
+      OPENSEARCH_USER: admin
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
+      # Werkbank Web-IDE: backend orchestrates per-user userenv containers.
+      IDE_HOST_SSH_DIR: ${HOME}/.ssh
+      IDE_CONTAINER_PORT: "8080"
+      # Workspaces are bind-mounted from this host path into each cs-userenv container.
+      # The backend also mounts this path so os.makedirs() creates dirs on the host.
+      IDE_WORKSPACES_BASE: ${IDE_WORKSPACES_BASE:-/opt/centralstation/ide-workspaces}
+      # Shared Ansible dir (standard layout: playbooks/, roles/, group_vars/, host_vars/,
+      # inventory/) — same host path AWX mounts as Manual SCM project. Mounted read-write
+      # into each IDE container at /root/workspaces/ansible. Edit in VS Code → AWX sees
+      # the change immediately (no Git sync). publish_playbook writes to ansible/playbooks/.
+      IDE_ANSIBLE_PATH: ${IDE_ANSIBLE_PATH:-/home/mutkluge/Dev/code/CentralStation/ansible}
+      # Unified per-user Werkbank+Hermes container image.
+      USERENV_IMAGE: centralstation-userenv:latest
+      USERENV_NETWORK: centralstation_default
+      # Backend URL passed into per-user containers so Hermes finds the MCP SSE endpoint.
+      CENTRALSTATION_BACKEND_URL: http://backend:8000
+    volumes:
+      # Docker socket so the backend can start/stop per-user cs-userenv-* containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Workspace bind-mount base — same path inside backend = same path on host.
+      - ${IDE_WORKSPACES_BASE:-/opt/centralstation/ide-workspaces}:${IDE_WORKSPACES_BASE:-/opt/centralstation/ide-workspaces}
+      # Ansible dir — same path so backend can write files during publish_playbook().
+      - ${IDE_ANSIBLE_PATH:-/home/mutkluge/Dev/code/CentralStation/ansible}:${IDE_ANSIBLE_PATH:-/home/mutkluge/Dev/code/CentralStation/ansible}
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./backend:/app
+      opensearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     ports:
       - "127.0.0.1:8000:8000"
 
@@ -54,15 +102,22 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      args:
-        HTTP_PROXY: http://proxy.ippen.media:80
-        HTTPS_PROXY: http://proxy.ippen.media:80
-        NO_PROXY: localhost,127.0.0.1,backend,.ippen.media
     restart: unless-stopped
     depends_on:
       - backend
     ports:
       - "127.0.0.1:4200:80"
+
+  # Build-only service: produces the centralstation-userenv:latest image.
+  # Per-user containers (code-server + Hermes in one) are started at runtime by the
+  # backend. Profile "userenv" keeps this out of `compose up`.
+  userenv:
+    build:
+      context: .
+      dockerfile: userenv/Dockerfile
+    image: centralstation-userenv:latest
+    profiles: ["userenv"]
+    command: ["--version"]
 
   nginx:
     image: nginx:alpine
@@ -76,7 +131,3 @@ services:
     depends_on:
       - backend
       - frontend
-
-volumes:
-  postgres_data:
-  redis_data:

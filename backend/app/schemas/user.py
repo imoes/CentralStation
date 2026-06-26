@@ -15,6 +15,7 @@ class UserUpdate(BaseModel):
     full_name: str | None = None
     role: str | None = None
     is_active: bool | None = None
+    computer_console_enabled: bool | None = None
 
 
 class UserResponse(BaseModel):
@@ -24,6 +25,8 @@ class UserResponse(BaseModel):
     role: str
     is_active: bool
     created_at: datetime
+    computer_console_enabled: bool = False
+    has_awx_ng: bool = False
 
     model_config = {"from_attributes": True}
 

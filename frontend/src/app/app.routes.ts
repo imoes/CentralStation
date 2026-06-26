@@ -13,6 +13,11 @@ export const routes: Routes = [
     loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent),
   },
   {
+    path: 'bridge',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/bridge/bridge.component').then(m => m.BridgeComponent),
+  },
+  {
     path: 'alerts',
     canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
     loadComponent: () => import('./features/alerts/alerts.component').then(m => m.AlertsComponent),
@@ -34,24 +39,44 @@ export const routes: Routes = [
   },
   {
     path: 'settings',
-    canActivate: [authGuard, roleGuard('admin')],
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/settings/settings-shell.component').then(m => m.SettingsShellComponent),
     children: [
       { path: '', redirectTo: 'connectors', pathMatch: 'full' },
       {
         path: 'connectors',
+        canActivate: [authGuard],
         loadComponent: () => import('./features/settings/connectors/connectors.component').then(m => m.ConnectorsComponent),
       },
       {
+        path: 'my',
+        canActivate: [authGuard],
+        loadComponent: () => import('./features/settings/my-settings/my-settings.component').then(m => m.MySettingsComponent),
+      },
+      {
         path: 'users',
+        canActivate: [authGuard, roleGuard('admin')],
         loadComponent: () => import('./features/settings/users/users.component').then(m => m.UsersComponent),
       },
       {
         path: 'ai',
+        canActivate: [authGuard, roleGuard('admin')],
         loadComponent: () => import('./features/settings/ai/ai-settings.component').then(m => m.AiSettingsComponent),
       },
       {
         path: 'audit',
+        canActivate: [authGuard, roleGuard('admin')],
         loadComponent: () => import('./features/settings/audit/audit-log.component').then(m => m.AuditLogComponent),
+      },
+      {
+        path: 'feed',
+        canActivate: [authGuard, roleGuard('admin')],
+        loadComponent: () => import('./features/settings/feed/feed-settings.component').then(m => m.FeedSettingsComponent),
+      },
+      {
+        path: 'skills',
+        canActivate: [authGuard],
+        loadComponent: () => import('./features/settings/skills/skills.component').then(m => m.SkillsComponent),
       },
     ],
   },
@@ -64,6 +89,46 @@ export const routes: Routes = [
     path: 'my-tickets',
     canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
     loadComponent: () => import('./features/my-tickets/my-tickets.component').then(m => m.MyTicketsComponent),
+  },
+  {
+    path: 'feed',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin', 'network_technician')],
+    loadComponent: () => import('./features/news-feed/news-feed.component').then(m => m.NewsFeedComponent),
+  },
+  {
+    path: 'problems',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin', 'network_technician')],
+    loadComponent: () => import('./features/problems/problems.component').then(m => m.ProblemsComponent),
+  },
+  {
+    path: 'help',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/help/help.component').then(m => m.HelpComponent),
+  },
+  {
+    path: 'cockpit/:hostname',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/cockpit/cockpit.component').then(m => m.CockpitComponent),
+  },
+  {
+    path: 'topology',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin', 'network_technician')],
+    loadComponent: () => import('./features/topology/topology.component').then(m => m.TopologyComponent),
+  },
+  {
+    path: 'engineering',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
+    loadComponent: () => import('./features/engineering/engineering.component').then(m => m.EngineeringComponent),
+  },
+  {
+    path: 'workbench/:id',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
+    loadComponent: () => import('./features/workbench/workbench.component').then(m => m.WorkbenchComponent),
+  },
+  {
+    path: 'workbench',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
+    loadComponent: () => import('./features/workbench/workbench.component').then(m => m.WorkbenchComponent),
   },
   { path: '**', redirectTo: 'dashboard' },
 ];

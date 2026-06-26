@@ -4,7 +4,7 @@ Provides AI assistance for all user-facing ITIL operations:
 - Priority matrix (impact × urgency → P1-P4)
 - AI comment drafting (progress update, handoff, escalation)
 - AI resolution / closing message generation
-- KEDB matching (known error database search via it-aikb)
+- KEDB matching (known error database search)
 - Root cause analysis suggestions (5-Why, Fishbone)
 - SLA deadline calculation
 - Auto-categorization from ticket title/description
@@ -15,6 +15,9 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
+
+from app.services.ai_language import with_language
+from app.services.llm_client import generate_text
 
 log = logging.getLogger(__name__)
 
@@ -70,8 +73,15 @@ def calculate_priority(impact: str, urgency: str) -> dict:
 COMMENT_SYSTEM = """Du bist ein erfahrener IT-Administrator und schreibst einen professionellen
 Fortschrittskommentar für ein Jira-Ticket auf Deutsch.
 
+WICHTIG: Lies den gesamten bisherigen Ticket-Verlauf (Beschreibung + alle Kommentare) und
+beziehe Dich auf den AKTUELLEN Stand. Wiederhole keine Punkte, die bereits erledigt oder
+beantwortet sind. Berücksichtige besonders den neuesten Kommentar — er spiegelt den
+aktuellen Sachstand wider und darf nicht ignoriert werden.
+
+Falls Wissensdatenbank-Einträge mitgeliefert werden, nutze diese als zusätzlichen Kontext.
+
 Schreibe einen präzisen, sachlichen Kommentar der:
-- den aktuellen Bearbeitungsstand dokumentiert
+- den aktuellen Bearbeitungsstand dokumentiert (basierend auf dem neuesten Kommentar)
 - durchgeführte Schritte beschreibt
 - nächste Schritte nennt (falls bekannt)
 - ggf. auf wen gewartet wird (Pending-Informationen)
@@ -148,20 +158,24 @@ Format:
 }"""
 
 
-async def _invoke_llm(llm_config: Any, system: str, user_content: str) -> str:
-    from langchain_openai import ChatOpenAI
-    llm = ChatOpenAI(
-        base_url=llm_config.base_url,
-        model=llm_config.model,
-        api_key=llm_config.api_key or "none",
-        timeout=llm_config.timeout_seconds,
+async def _invoke_llm(
+    llm_config: Any,
+    system: str,
+    user_content: str,
+    *,
+    lang: str | None = None,
+) -> str:
+    system_prompt = with_language(system, lang) if lang else system
+    response = await generate_text(
+        llm_config,
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
         temperature=0.3,
+        reasoning_effort="low",
     )
-    response = await llm.ainvoke([
-        {"role": "system", "content": system},
-        {"role": "user", "content": user_content},
-    ])
-    return response.content.strip()
+    return response.strip()
 
 
 async def generate_comment(
@@ -170,6 +184,9 @@ async def generate_comment(
     ticket_description: str,
     work_notes: list[dict],
     comment_type: str = "progress",  # progress | pending | escalation | handoff
+    additional_context: str | None = None,
+    db: Any = None,
+    lang: str | None = None,
 ) -> str:
     """Generate an ITIL-compliant ticket comment."""
     notes_text = "\n".join(
@@ -182,14 +199,17 @@ async def generate_comment(
         "escalation": "Eskalation — Warum wird eskaliert, an wen, was wurde bereits versucht",
         "handoff":    "Übergabekommentar — Zusammenfassung für die übernehmende Person",
     }
+
+    context_block = f"\nAktuelle Entwicklungen (vom Bearbeiter angegeben):\n{additional_context}" if additional_context and additional_context.strip() else ""
     prompt = f"""Ticket: {ticket_title}
-Beschreibung: {ticket_description[:300]}
+Verlauf (Beschreibung + Kommentare, neueste zuletzt):
+{ticket_description}
 Kommentartyp: {type_hints.get(comment_type, comment_type)}
 Arbeitsnotizen:
-{notes_text or '(keine Notizen)'}
+{notes_text or '(keine Notizen)'}{context_block}
 
-Schreibe jetzt den Kommentar:"""
-    return await _invoke_llm(llm_config, COMMENT_SYSTEM, prompt)
+Schreibe jetzt den Kommentar basierend auf dem aktuellen Stand (letzter Kommentar im Verlauf):"""
+    return await _invoke_llm(llm_config, COMMENT_SYSTEM, prompt, lang=lang)
 
 
 async def generate_resolution(
@@ -200,6 +220,7 @@ async def generate_resolution(
     root_cause: str | None,
     resolution_type: str = "permanent",
     closure_code: str = "solved_permanently",
+    lang: str | None = None,
 ) -> str:
     """Generate ITIL-compliant resolution/closing documentation."""
     notes_text = "\n".join(
@@ -215,7 +236,7 @@ async def generate_resolution(
         "cancelled":           "Storniert / nicht mehr relevant",
     }
     prompt = f"""Ticket: {ticket_title}
-Problembeschreibung: {ticket_description[:300]}
+Problembeschreibung: {ticket_description}
 Ursache (Root Cause): {root_cause or '(nicht angegeben)'}
 Abschlusstyp: {closure_map.get(closure_code, closure_code)}
 Lösungstyp: {'Dauerlösung' if resolution_type == 'permanent_fix' else 'Workaround'}
@@ -223,18 +244,19 @@ Durchgeführte Schritte:
 {notes_text or '(keine Arbeitsnotizen)'}
 
 Erstelle jetzt die Lösungsdokumentation:"""
-    return await _invoke_llm(llm_config, RESOLUTION_SYSTEM, prompt)
+    return await _invoke_llm(llm_config, RESOLUTION_SYSTEM, prompt, lang=lang)
 
 
 async def auto_categorize(
     llm_config: Any,
     title: str,
     description: str,
+    lang: str | None = None,
 ) -> dict:
     """Auto-categorize a ticket and suggest impact/urgency."""
-    prompt = f"Ticket Titel: {title}\nBeschreibung: {description[:500]}"
+    prompt = f"Ticket Titel: {title}\nBeschreibung: {description}"
     try:
-        raw = await _invoke_llm(llm_config, CATEGORIZE_SYSTEM, prompt)
+        raw = await _invoke_llm(llm_config, CATEGORIZE_SYSTEM, prompt, lang=lang)
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         return json.loads(raw)
@@ -250,11 +272,12 @@ async def suggest_solution(
     description: str,
     use_rag: bool = True,
     use_web: bool = True,
+    lang: str | None = None,
 ) -> dict:
     """Search for solutions using LLM + RAG + optional SearXNG web search."""
-    prompt = f"Problem: {title}\nDetails: {description[:500]}"
+    prompt = f"Problem: {title}\nDetails: {description}"
     try:
-        raw = await _invoke_llm(llm_config, SOLUTION_SEARCH_SYSTEM, prompt)
+        raw = await _invoke_llm(llm_config, SOLUTION_SEARCH_SYSTEM, prompt, lang=lang)
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         plan = json.loads(raw)
@@ -265,26 +288,6 @@ async def suggest_solution(
     rag_results = []
     web_results = []
 
-    if use_rag and plan.get("knowledge_query"):
-        from sqlalchemy import select
-        from app.core.security import decrypt_credentials
-        from app.models.connector import ConnectorConfig
-        result = await db.execute(
-            select(ConnectorConfig).where(
-                ConnectorConfig.type == "it_aikb",
-                ConnectorConfig.enabled.is_(True),
-            )
-        )
-        conn = result.scalars().first()
-        if conn:
-            creds = decrypt_credentials(conn.encrypted_credentials)
-            from app.services.connectors.it_aikb import ITAikbConnector
-            svc = ITAikbConnector(base_url=conn.base_url, credentials=creds)
-            try:
-                rag_results = await svc.search(plan["knowledge_query"], top_k=5)
-            except Exception as e:
-                log.warning("suggest_solution RAG failed: %s", e)
-
     if use_web and plan.get("needs_web_search"):
         from app.services.settings import get_searxng_config
         searxng = await get_searxng_config(db)
@@ -294,7 +297,7 @@ async def suggest_solution(
                 async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
                     r = await client.get(
                         f"{searxng.base_url}/search",
-                        params={"q": plan["knowledge_query"], "format": "json", "language": "de,en"},
+                        params={"q": plan["knowledge_query"], "format": "json"},
                     )
                     if r.status_code == 200:
                         web_results = [
@@ -312,11 +315,16 @@ async def suggest_solution(
     }
 
 
-async def analyze_mail(llm_config: Any, subject: str, preview: str) -> dict:
+async def analyze_mail(
+    llm_config: Any,
+    subject: str,
+    preview: str,
+    lang: str | None = None,
+) -> dict:
     """Extract structured info from an IT support email."""
     prompt = f"Betreff: {subject}\nNachrichtenvorschau: {preview[:600]}"
     try:
-        raw = await _invoke_llm(llm_config, MAIL_EXTRACT_SYSTEM, prompt)
+        raw = await _invoke_llm(llm_config, MAIL_EXTRACT_SYSTEM, prompt, lang=lang)
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         return json.loads(raw)
@@ -336,19 +344,21 @@ Antworte im JSON-Format:
 
 Wichtige JQL-Syntax:
 - assignee = currentUser()  — aktuell eingeloggter Benutzer
-- status != Done / status in (Open, "In Progress")
-- priority in (Highest, High)
+- statusCategory != Done  — NIEMALS status != Done, nur statusCategory verwenden (sprachunabhängig)
+- statusCategory in (new, indeterminate)  — für offene Tickets
+- priority in (Kritisch, Hoch, Normal, Niedrig)  — deutsche Namen, NIEMALS englische (Highest, High, Medium, Low)
 - created >= -7d  /  updated >= startOfDay()
 - project = "IMIT"  — spezifisches Projekt
 - issuetype in (Bug, Task, Story)
+- summary ~ "suchbegriff"  — Textsuche (NIEMALS summary = "...")
 - ORDER BY updated DESC, priority ASC"""
 
 
-async def generate_jql(llm_config: Any, description: str) -> dict:
+async def generate_jql(llm_config: Any, description: str, lang: str | None = None) -> dict:
     """Generate a Jira JQL query from a natural language description."""
     prompt = f"Beschreibung: {description}"
     try:
-        raw = await _invoke_llm(llm_config, JQL_SYSTEM, prompt)
+        raw = await _invoke_llm(llm_config, JQL_SYSTEM, prompt, lang=lang)
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         return json.loads(raw)
@@ -362,21 +372,134 @@ async def generate_jql(llm_config: Any, description: str) -> dict:
         }
 
 
+_EXCLUSION_SYSTEM = """Du bist ein OpenSearch/Lucene-Query-Experte.
+
+Analysiere eine Monitoring-Meldung und erstelle eine OpenSearch Lucene-Ausschluss-Query,
+die ähnliche Meldungen dauerhaft ausblendet — ohne zu viele andere Meldungen zu blockieren.
+
+WICHTIG — Felder:
+- Verwende AUSSCHLIESSLICH die Felder, die im Prompt als "BEFÜLLT" markiert sind.
+- Das Feld `body` ist bei vielen Quellen (z.B. Graylog) leer — steht es nicht als BEFÜLLT im Prompt, DARF es NICHT im Query verwendet werden.
+- BEFÜLLTE Felder stehen im Prompt mit Wert, LEERE Felder stehen als "(leer)".
+- Verwende NUR Felder aus dieser Liste: title, body, metadata.host, metadata.container_name, metadata.agent, source, severity
+
+WILDCARD-REGEL (KRITISCH):
+- Wildcards (* ?) NIEMALS innerhalb von Anführungszeichen: `title:"*kauditd*"` ist FALSCH
+- Wildcards funktionieren nur OHNE Quotes: `title:*kauditd*` ist korrekt
+- Für einfache Keyword-Suche: `title:kauditd_printk_skb` (kein Wildcard nötig)
+
+TIMESTAMP-REGEL (KRITISCH):
+- Kernel/Syslog-Meldungen enthalten Timestamps im Titel wie `[13175113.937408]`, `Apr 15 12:34:56`, `2026-06-10T19:20:22`
+- Diese sind bei jeder Meldung anders — NIEMALS in die Query aufnehmen
+- Nur den stabilen, charakteristischen Teil verwenden: z.B. `title:kauditd_printk_skb` statt `title:"[13175113.937408] kauditd_printk_skb: 16 callbacks suppressed"`
+
+Regeln:
+- Wähle den stabilen, charakteristischen Begriff aus dem Haupttextfeld (z.B. "kauditd_printk_skb", "php-fpm:access", "cci:ccitext")
+- Bei Container-spezifischen Logs: `metadata.container_name:"name"` mit einschließen wenn sinnvoll
+- Nicht zu breit (NICHT nur source:graylog oder severity:info)
+- Nicht zu eng (kein Timestamp, keine wechselnden numerischen Werte, keine spezifischen Zeilennummern)
+- Antworte im JSON-Format: {"query": "...", "name": "Kurzer Name (max 60 Zeichen)"}
+- Antworte NUR mit dem JSON, kein Markdown, keine Erklärung"""
+
+
+def _fix_exclusion_query_fields(query: str, item: dict) -> str:
+    """Auto-correct field references and common LLM mistakes in generated exclusion queries.
+
+    1. Fixes body:/title: field mismatch (body empty → use title, and vice versa).
+    2. Strips kernel/syslog timestamps from quoted title phrases so patterns remain general.
+    3. Removes wildcards inside quoted strings (invalid in OpenSearch phrase queries).
+    """
+    import re
+
+    body_val = (item.get("body") or "").strip()
+    title_val = (item.get("title") or "").strip()
+    if not body_val and "body:" in query:
+        query = query.replace("body:", "title:")
+        log.debug("exclusion query: body→title rewrite (body is empty)")
+    elif not title_val and "title:" in query:
+        query = query.replace("title:", "body:")
+        log.debug("exclusion query: title→body rewrite (title is empty)")
+
+    # Strip kernel uptime timestamps like [13175113.937408] from inside quoted phrases.
+    # These timestamps differ on every log line and make the filter useless.
+    def _strip_timestamps(m: re.Match) -> str:
+        phrase = m.group(0)
+        cleaned = re.sub(r"\[\d+\.\d+\]\s*", "", phrase)
+        # Remove leading/trailing whitespace inside quotes
+        cleaned = re.sub(r'"\s+', '"', cleaned)
+        cleaned = re.sub(r'\s+"', '"', cleaned)
+        return cleaned
+
+    query = re.sub(r'"[^"]*\[\d+\.\d+\][^"]*"', _strip_timestamps, query)
+
+    # Wildcards inside quotes are invalid in OpenSearch (treated as literals).
+    # Detect field:"*...*" pattern and convert to field:*...* (unquoted).
+    def _unquote_wildcard(m: re.Match) -> str:
+        field, phrase = m.group(1), m.group(2)
+        if "*" in phrase or "?" in phrase:
+            # Remove quotes so wildcards are interpreted correctly
+            log.debug("exclusion query: unquoted wildcard in %s:%r", field, phrase)
+            return f"{field}:{phrase}"
+        return m.group(0)
+
+    query = re.sub(r'(\w[\w.]*):("(?:[^"\\]|\\.)*")', _unquote_wildcard, query)
+
+    return query
+
+
+async def generate_exclusion_query(
+    llm_config: Any,
+    item: dict,
+    lang: str | None = None,
+) -> dict:
+    """Generate an OpenSearch exclusion query for a feed item using the LLM."""
+    source = item.get("source", "")
+    title = item.get("title", "")
+    body = (item.get("body") or "").strip()
+    metadata = item.get("metadata") or {}
+    container = metadata.get("container_name", "")
+    host = metadata.get("host", "") or metadata.get("agent", "")
+
+    # Show the LLM explicitly which fields are populated vs empty
+    prompt_parts = [
+        f"Source: {source}",
+        f"title (BEFÜLLT): {title}" if title else "title: (leer)",
+        f"body (BEFÜLLT): {body[:200]}" if (body and body != title) else "body: (leer)",
+    ]
+    if container:
+        prompt_parts.append(f"metadata.container_name (BEFÜLLT): {container}")
+    if host:
+        prompt_parts.append(f"metadata.host (BEFÜLLT): {host}")
+
+    try:
+        raw = await _invoke_llm(llm_config, _EXCLUSION_SYSTEM, "\n".join(prompt_parts), lang=lang)
+        if raw.startswith("```"):
+            raw = raw.split("```")[1].lstrip("json").strip()
+        result = json.loads(raw)
+        query = _fix_exclusion_query_fields(result.get("query", ""), item)
+        return {"query": query, "name": result.get("name", title[:60])}
+    except Exception as e:
+        log.warning("generate_exclusion_query failed: %s", e)
+        safe = title.replace('"', '\\"')[:100]
+        return {"query": f'title:"{safe}"', "name": f"Ignoriert: {title[:50]}"}
+
+
 async def run_5why_analysis(
     llm_config: Any,
     title: str,
     description: str,
     work_notes: list[dict] | None = None,
+    lang: str | None = None,
 ) -> dict:
     """ITIL Problem Management: 5-Why root cause analysis."""
     notes_text = "\n".join(n.get("content", "") for n in (work_notes or [])[-5:])
     prompt = f"""Problembeschreibung: {title}
-Details: {description[:400]}
+Details: {description}
 Arbeitsnotizen: {notes_text or '(keine)'}
 
 Führe eine 5-Why-Analyse durch:"""
     try:
-        raw = await _invoke_llm(llm_config, RCA_5WHY_SYSTEM, prompt)
+        raw = await _invoke_llm(llm_config, RCA_5WHY_SYSTEM, prompt, lang=lang)
         if raw.startswith("```"):
             raw = raw.split("```")[1].lstrip("json").strip()
         return json.loads(raw)

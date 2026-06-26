@@ -68,7 +68,7 @@ async def login(
 
     response.set_cookie(
         key=COOKIE_NAME, value=refresh_token,
-        httponly=True, secure=True, samesite="strict", max_age=7 * 86400
+        httponly=True, secure=False, samesite="lax", max_age=7 * 86400
     )
     return TokenResponse(access_token=access_token)
 
@@ -95,7 +95,7 @@ async def refresh(
             RefreshToken.revoked.is_(False),
         )
     )
-    stored = result.scalar_one_or_none()
+    stored = result.scalars().first()
     if not stored:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="Token revoked or not found")
@@ -112,7 +112,7 @@ async def refresh(
 
     response.set_cookie(
         key=COOKIE_NAME, value=new_refresh,
-        httponly=True, secure=True, samesite="strict", max_age=7 * 86400
+        httponly=True, secure=False, samesite="lax", max_age=7 * 86400
     )
     return TokenResponse(access_token=new_access)
 
@@ -128,7 +128,7 @@ async def logout(
         result = await db.execute(
             select(RefreshToken).where(RefreshToken.token_hash == token_hash)
         )
-        stored = result.scalar_one_or_none()
+        stored = result.scalars().first()
         if stored:
             stored.revoked = True
             await db.commit()
@@ -138,8 +138,26 @@ async def logout(
 
 
 @router.get("/me", response_model=UserResponse)
-async def me(user: CurrentUser):
-    return user
+async def me(user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]):
+    # computer_console_enabled lives on UserPreference (separate table) —
+    # merge it in like list_users/update_user do, otherwise it defaults to False.
+    from app.models.workflow import UserPreference
+    from app.models.connector import ConnectorConfig
+    from sqlalchemy import exists
+    prefs = (
+        await db.execute(select(UserPreference).where(UserPreference.user_id == user.id))
+    ).scalar_one_or_none()
+    has_awx_ng = bool(await db.scalar(
+        select(exists().where(
+            ConnectorConfig.type == "awx_ng",
+            ConnectorConfig.owner_user_id == user.id,
+            ConnectorConfig.enabled.is_(True),
+        ))
+    ))
+    row = UserResponse.model_validate(user)
+    row.computer_console_enabled = prefs.computer_console_enabled if prefs else False
+    row.has_awx_ng = has_awx_ng
+    return row
 
 
 @router.post("/change-password")

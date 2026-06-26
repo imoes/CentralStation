@@ -1,6 +1,7 @@
 # Environment
 .env
 *.env.local
+ssh_config
 
 # Python
 __pycache__/
@@ -26,6 +27,16 @@ frontend/node_modules/
 
 # Docker
 *.log
+docker-compose.override.yml
+
+# Bind mount data directories (persistent volumes)
+data/postgres/
+data/opensearch/
+data/redis/
+
+# Hermes runtime dir (contains OAuth tokens — never commit)
+.hermes/
+centralcore/
 
 # OS
 .DS_Store
@@ -35,3 +46,6 @@ Thumbs.db
 nginx/ssl/*.pem
 nginx/ssl/*.key
 nginx/ssl/*.crt
+nginx/ssl/key.pem
+nginx/ssl/cert.pem
+frontend/.npmrc

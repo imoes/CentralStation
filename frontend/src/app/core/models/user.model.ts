@@ -7,6 +7,8 @@ export interface User {
   role: Role;
   is_active: boolean;
   created_at: string;
+  computer_console_enabled: boolean;
+  has_awx_ng: boolean;
 }
 
 export interface TokenResponse {

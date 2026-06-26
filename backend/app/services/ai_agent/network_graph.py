@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from typing import Any
+
+from app.services.llm_client import generate_text
 
 log = logging.getLogger(__name__)
 
@@ -118,15 +119,6 @@ async def analyze_network(state: dict, llm_config: Any) -> dict:
     if not llm_config.is_configured:
         return {**state, "network_analysis": None}
 
-    from langchain_openai import ChatOpenAI
-    llm = ChatOpenAI(
-        base_url=llm_config.base_url,
-        model=llm_config.model,
-        api_key=llm_config.api_key or "none",
-        timeout=llm_config.timeout_seconds,
-        temperature=0.1,
-    )
-
     events_text = "\n".join(
         f"[{e.get('switch_name','?')}] [{e.get('vendor','?')}] "
         f"{e.get('location_name','?')}: {e.get('message','')[:150]}"
@@ -134,11 +126,16 @@ async def analyze_network(state: dict, llm_config: Any) -> dict:
     )
 
     try:
-        response = await llm.ainvoke([
-            {"role": "system", "content": NETWORK_SYSTEM},
-            {"role": "user", "content": f"Switch-Log-Ereignisse der letzten Stunde:\n{events_text}"},
-        ])
-        raw = response.content.strip()
+        raw = await generate_text(
+            llm_config,
+            [
+                {"role": "system", "content": NETWORK_SYSTEM},
+                {"role": "user", "content": f"Switch-Log-Ereignisse der letzten Stunde:\n{events_text}"},
+            ],
+            temperature=0.1,
+            reasoning_effort="low",
+        )
+        raw = raw.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):

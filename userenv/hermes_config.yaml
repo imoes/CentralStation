@@ -1,0 +1,30 @@
+# Hermes default configuration
+# MCP server: CentralStation exposes IT-Ops tools for Hermes
+
+# ─── LLM provider ────────────────────────────────────────────────────────────
+# By default Hermes auto-detects the provider from environment variables.
+# Uncomment and adjust ONE of the blocks below to pin a specific provider.
+#
+# --- Option A: Claude via OAuth (no API key) ---
+# Requires CLAUDE_CODE_OAUTH_TOKEN env var (from: claude setup-token)
+# or ~/.claude/.credentials.json (from: claude auth login --claudeai).
+# See docs/claude-oauth.md or run: claude setup-token
+#
+# model:
+#   default: "anthropic/claude-opus-4-8"
+#   provider: "auto"
+#
+# --- Option B: OpenAI-compatible endpoint (custom or OpenRouter) ---
+# model:
+#   default: "gpt-4o"
+#   provider: "custom"
+#   base_url: "https://api.openai.com/v1"
+# ─────────────────────────────────────────────────────────────────────────────
+
+mcp_servers:
+  centralstation:
+    transport: sse
+    url: http://backend:8000/api/mcp/sse
+# User-specific MCP servers (vibemk, awx-ng, etc.) are written to a
+# per-user hermes_config.yaml at {workspaces_base}/{user_id}/hermes_config.yaml
+# and mounted over this file when a per-user container starts.

@@ -1,179 +1,1735 @@
 # CentralStation
 
-Zentrales IT-Operations-Dashboard für Linux-Systemadministratoren.  
-Aggregiert Alerts aus Wazuh, Graylog und CheckMK, synchronisiert Jira-Tickets und
-unterstützt mit KI bei der gesamten ITIL-konformen Arbeitsdokumentation.
+Central IT operations dashboard for Linux system administrators.  
+Aggregates alerts from Wazuh, Graylog and CheckMK, synchronises Jira tickets and
+assists with the entire ITIL-compliant work documentation using AI.
+
+> **Language:** the UI defaults to **English** and can be switched to German at runtime.
+> The AI answers in the operator's selected language (user preference `ui_language`).
 
 ---
 
-## Features
+## Table of Contents
 
-| Bereich | Funktionen |
-|---------|------------|
-| **Alert-Aggregation** | CheckMK, Graylog, Wazuh — zentrale Timeline, Acknowledge, Severity-Filter |
-| **Kanban-Board** | Drag-Drop, bidirektionaler Jira-Sync, AI-erstellte Cards |
-| **Meine Tickets** | Per-User JQL-Filter-Verwaltung, KI-JQL-Generator (Freitext → JQL), Live-Jira-Ergebnisse |
-| **Arbeitsdokumentation** | ITIL Work Sessions: Impact/Urgency/Priorität P1–P4, SLA-Tracking, Arbeitsnotizen |
-| **KI-Kommentare** | Fortschritt, Pending, Eskalation, Übergabe — per KI generiert, direkt in Jira kopierbar |
-| **Abschlussdokumentation** | KI-generierte Lösungsdokumentation mit Root Cause, Maßnahmen, Closure Code |
-| **5-Why-Analyse** | ITIL Problem Management — KI führt 5-Why-Analyse durch, schlägt Kernursache vor |
-| **Lösungssuche** | RAG-Suche in it-aikb Wissensdatenbank + SearXNG Web-Suche, HyDE-Pattern |
-| **Mail-Analyse** | O365 E-Mail → strukturierte Ticket-Informationen per KI |
-| **Netzwerk-Modul** | Switch-Alerts (NSA/NSS/NSC), Standort-Zuordnung (ID-Generator), Vendor-Erkennung |
-| **KI-Insights** | LangGraph Agenten (SysAdmin + Network), alle 10 Min., Jira Auto-Create |
-| **Setup-Wizard** | Einrichtungsassistent bei Erstanmeldung (LLM-Check, JQL-Konfiguration) |
-| **RBAC** | Admin / SysAdmin / Network-Technician / Viewer — rollenbasierte UI und API |
-| **Audit-Log** | Protokollierung aller schreibenden Operationen |
+1. [Getting Started](#getting-started)
+2. [Architecture](#architecture)
+3. [CheckMK as the Single Source of Truth](#checkmk-as-the-single-source-of-truth)
+4. [Feature Overview](#feature-overview)
+5. [Operations Cockpit (Dashboard)](#operations-cockpit-dashboard)
+6. [Server Cockpit (Host Detail Panel)](#server-cockpit-host-detail-panel)
+7. [News Feed](#news-feed)
+8. [OpenSearch Searches (FeedSearches)](#opensearch-searches-feedsearches)
+9. [Alert Aggregation and Enrichment](#alert-aggregation-and-enrichment)
+10. [Incident Correlation](#incident-correlation)
+11. [Kanban and Jira](#kanban-and-jira)
+12. [AI Features](#ai-features)
+13. [Computer Console (Hermes AI Panel)](#computer-console-hermes-ai-panel)
+14. [Werkbank (Web-IDE)](#werkbank-web-ide)
+15. [Maschinenraum (Ansible Remediation)](#maschinenraum-ansible-remediation)
+16. [Prometheus Metrics & PromQL](#prometheus-metrics--promql)
+17. [Connectors](#connectors)
+18. [User Management and RBAC](#user-management-and-rbac)
+19. [Settings and Preferences](#settings-and-preferences)
+20. [API Reference](#api-reference)
+21. [Database Migrations](#database-migrations)
+22. [Deployment](#deployment)
+23. [Upgrading](#upgrading)
 
 ---
 
-## Architektur
+## Getting Started
+
+### Requirements
+
+- Docker + Docker Compose (V2)
+- OpenSearch 2.x (or an OpenSearch-compatible cluster)
+- Optional dependencies: LLM endpoint (OpenAI-compatible), Jira, CheckMK, Graylog, Wazuh
+
+### Quick start
+
+```bash
+# 1. Clone the repository
+git clone <repo-url> centralstation
+cd centralstation
+
+# 2. Create the configuration file
+cp .env.example .env
+
+# 3. Set the required fields in .env:
+#    ENCRYPTION_KEY  – Fernet key (32-byte base64): python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+#    DATABASE_URL    – postgresql+asyncpg://user:pass@db/centralstation
+#    REDIS_URL       – redis://redis:6379/0
+#    SECRET_KEY      – random JWT signing key: openssl rand -hex 32
+
+# 4. Start the stack
+docker compose up -d
+
+# 5. Wait until all containers are healthy
+docker compose ps
+
+# 6. Database migrations (applied automatically on first start)
+docker compose exec backend alembic upgrade head
+
+# 7. Create the first admin user
+docker compose exec backend python -c "
+from app.core.database import sync_engine
+from app.core.security import hash_password
+from app.models.user import User, Base
+import sqlalchemy as sa
+Base.metadata.create_all(sync_engine)
+with sync_engine.begin() as conn:
+    conn.execute(sa.insert(User).values(email='admin@example.com', hashed_password='$(python3 -c "from passlib.context import CryptContext; print(CryptContext(schemes=['bcrypt']).hash('changeme'))")', role='admin', is_active=True))
+"
+# Alternatively: use the API endpoint /api/auth/register (if enabled)
+```
+
+### First login and setup wizard
+
+1. Open the browser: `http://localhost` (or the configured host)
+2. Sign in with the admin credentials
+3. The **setup wizard** starts automatically (once per user):
+   - **Step 1 – LLM connection**: OpenAI-compatible endpoint, model ID, API key (optional)
+   - **Step 2 – Configure Jira**: Jira URL, personal token, default project
+   - **Step 3 – Personal filters**: CheckMK locations, VE, criticality (for feed filtering)
+   - **Step 4 – JQL templates**: default JQL queries for the Jira view
+4. After completing the wizard → main dashboard
+
+### Setting up admin connectors
+
+After the first login, create the global system connectors under **Settings → Connectors**:
+
+| Connector | Type | Required for |
+|-----------|------|-------------|
+| CheckMK | `checkmk` | alert aggregation, host metadata, filter values |
+| Graylog | `graylog` | log aggregation |
+| Wazuh | `wazuh` | security alerts |
+| Prometheus | `prometheus` | time-series widgets |
+
+### Recommended: vibeMK MCP server for the Computer Console
+
+The **Computer Console** (the `centralcore` Hermes agent, see [Computer Console](#computer-console-hermes-ai-panel)) talks to MCP servers for live data. In addition to the built-in CentralStation MCP server we recommend adding **[vibeMK](https://github.com/imoes/vibeMK)** — an MCP server that manages CheckMK monitoring via natural language (host/service status, performance metrics, downtimes, acknowledgements, configuration). With it, operators can query *and act on* CheckMK directly from the Computer panel.
+
+```bash
+# Clone alongside CentralStation (Python 3.8+, standard library only)
+git clone https://github.com/imoes/vibeMK.git
+
+# vibeMK needs a CheckMK automation user + API key:
+#   CHECKMK_SERVER_URL   – e.g. https://checkmk.example.com
+#   CHECKMK_SITE         – the CheckMK site name
+#   CHECKMK_USERNAME     – automation user (e.g. vibemk)
+#   CHECKMK_PASSWORD     – the API key generated in CheckMK
+```
+
+Register it under `mcp_servers:` in `centralcore/hermes_config.yaml` (this fills the optional `checkmk` slot the Hermes agent looks for):
+
+```yaml
+mcp_servers:
+  centralstation:
+    transport: sse
+    url: http://backend:8000/api/mcp/sse
+  checkmk:                       # vibeMK
+    transport: stdio
+    command: python3
+    args: ["/absolute/path/to/vibeMK/main.py"]
+    env:
+      CHECKMK_SERVER_URL: "https://checkmk.example.com"
+      CHECKMK_SITE: "<site>"
+      CHECKMK_USERNAME: "vibemk"
+      CHECKMK_PASSWORD: "<api-key>"
+```
+
+See vibeMK's [INSTALL.md](https://github.com/imoes/vibeMK/blob/main/INSTALL.md) for the authoritative setup and transport options.
+
+---
+
+## Architecture
 
 ```
 Browser (Angular 20 LTS)
   └── REST + WebSocket (JWT Bearer)
         └── FastAPI Backend (Python 3.12)
-              ├── PostgreSQL 16 (SQLAlchemy async + Alembic)
-              ├── Redis 7 (WebSocket Pub/Sub, Sessions)
-              ├── LangGraph (SysAdmin + Network AI Agents)
-              └── Externe Systeme (CheckMK, Graylog, Wazuh, Jira, O365, ...)
+              ├── PostgreSQL 16        – users, connectors, kanban, workflows, AI analyses
+              ├── Redis 7              – WebSocket pub/sub, sessions
+              ├── OpenSearch           – cs-feed-* indices (all alert sources)
+              ├── LangGraph            – SysAdmin + Network AI agents
+              └── External systems
+                    ├── CheckMK REST API
+                    ├── Graylog REST API
+                    ├── Wazuh Indexer API
+                    ├── Jira / Jira ServiceDesk
+                    ├── Microsoft O365 / Teams (Graph API)
+                    ├── Prometheus HTTP API
+                    ├── SearXNG (web search)
+                    └── ID-Generator (sites, switches)
+```
+
+### OpenSearch indices
+
+| Index | Source | Key fields |
+|-------|--------|-----------------|
+| `cs-feed-checkmk` | CheckMK REST API | `severity`, `title`, `metadata.host`, `metadata.location`, `metadata.os`, `metadata.ve`, `metadata.criticality`, `metadata.hostgroups` |
+| `cs-feed-graylog` | Graylog REST API | `severity`, `title`, `body`, `metadata.source_host`, `metadata.http_response_code`, `metadata.hyde_relevant`, `metadata.container_name` |
+| `cs-feed-wazuh` | Wazuh Indexer | `severity`, `title`, `metadata.rule_level`, `metadata.agent`, `metadata.agent.name`, `metadata.location` |
+| `cs-feed-o365` | Microsoft Graph | `severity`, `title`, `body`, `user_id`, `metadata.from`, `metadata.received_at` |
+| `cs-feed-teams` | Microsoft Graph | `severity`, `title`, `body`, `user_id`, `metadata.from`, `metadata.channel_id` |
+
+Every document also contains: `id`, `type`, `source`, `status`, `created_at`, `location_name`, `location_city`, `external_url`, `external_id`, `ai_insight`.
+
+---
+
+## CheckMK as the Single Source of Truth
+
+### Concept
+
+CheckMK is the primary inventory and metadata provider for all hosts in the organisation. Every monitored host carries metadata tags in CheckMK:
+
+| CheckMK tag | Meaning | CentralStation field |
+|-------------|---------|----------------------|
+| `tg-os` | operating system (`os-linux`, `os-windows`, …) | `metadata.os` |
+| `tg-location` / `host_filename` | site (WATO folder, e.g. `Munich`) | `metadata.location` |
+| `tg-ve` / `tg-virt_env` | virtualization environment | `metadata.ve` |
+| `tg-criticality` | host criticality | `metadata.criticality` |
+| Host groups | the host's CheckMK host groups | `metadata.hostgroups` |
+
+This metadata is read from CheckMK during alert aggregation and written into the OpenSearch index (`cs-feed-checkmk`).
+
+### Filter mechanism (Single Source of Truth)
+
+When a user sets filters under **My Settings** (e.g. `Location = Munich`, `OS = Linux`), those filters are **applied to all sources**:
+
+1. **CheckMK alerts**: filtered directly via `metadata.os`, `metadata.location`, `metadata.ve`, `metadata.criticality`, `metadata.hostgroups`
+2. **Graylog/Wazuh alerts**: CentralStation derives from the CheckMK index all hosts matching the filter criteria (→ `host_scope`). Only Graylog/Wazuh items whose hostnames fall within that scope are then shown.
+3. **Items without host metadata**: always shown (never hidden by missing fields)
+
+```
+Example:
+  User filter: Location = "Munich"
+  
+  1. CentralStation asks cs-feed-checkmk: "Which hosts have location=Munich?"
+     → [docker001, docker086, srv023, ...]
+  
+  2. The Graylog search is restricted to metadata.source_host IN [docker001, docker086, ...]
+  
+  3. The Wazuh search is restricted to metadata.agent.name IN [docker001, docker086, ...]
+  
+  Effect: the feed only shows events from hosts at the Munich site —
+          regardless of source (CheckMK, Graylog or Wazuh).
+```
+
+### `get_user_checkmk_host_scope(db, user_id)`
+
+Core function in `backend/app/services/feed_index.py`:
+
+1. Reads the user's saved filter preferences (`checkmk_os`, `checkmk_locations`, `checkmk_ve`, `checkmk_criticality`)
+2. If no filter is set → returns an empty list (no scope restriction)
+3. If a filter is active → queries OpenSearch `cs-feed-checkmk` and applies `_apply_metadata_filters()`
+4. Returns the list of `metadata.host` values from the filtered CheckMK items
+
+### Post-processing filter (`_apply_metadata_filters`)
+
+Since OS/location/VE/criticality are CheckMK-native concepts, the filter accesses metadata fields directly **only for CheckMK items**. For all other sources (Graylog, Wazuh), the `host_scope` is used as an indirect filter.
+
+**Logic:** `items with the metadata value + value doesn't match → hidden. Items without the metadata value → always shown.`
+
+---
+
+## Feature Overview
+
+| Bereich | Funktionen |
+|---------|------------|
+| **Operations Cockpit** | Dual-Mode Dashboard (Klassisch/Generativ), Widget-Typen: Stat, Liste, Donut, Balken, Zeitreihe, Forecast, KI-Lagebericht, Top-Hosts, War Room; klickbare Charts; Pin/Reset im generativen Modus; Hostname in Top-Hosts klickbar |
+| **Generatives Dashboard** | KI komponiert situativ ein maßgeschneidertes Dashboard — analysiert Findings, Worklist, Vitals + Forecast-Kandidaten; Rationale als Lage-Briefing; Neu-Generieren-Button + WS-Eskalation-Trigger; CUE-Produktionshosts priorisiert |
+| **Server Cockpit** | Klick auf Hostnamen im News Feed öffnet `/cockpit/:hostname` in neuem Fenster; LCARS-Design; Hero-Gauges (CPU/RAM/Disk) + Sparklines; **Voll-Service-Liste** aller CheckMK-Checks mit Status + Summary; hierarchische Filter-Chips (FEHLER/WARN/CRIT/UNKNOWN); Klick auf Service → on-demand 24h-Graph; Font Roboto; Navbar wird ausgeblendet |
+| **Brücke (Bridge)** | Star-Trek-LCARS-Cockpit unter `/bridge`; drei Themes (Classic/Holo/LCARS); Prioritäten-Worklist, Fleet-Vitals, Forecasts, Sektoren, Live-Logs; Primärer-Incident-Panel; Font Roboto |
+| **Adaptives Alert-Scoring** | Deterministisches Basis-Scoring (Severity/Novelty/Alter/Flapping/Cross-Source); adaptiver Lern-Feedback-Loop (Jira-Tickets, Acks, Ignorieren → `alert_score_adjustments`); Score-Delta-Verfall |
+| **Incident-Korrelation** | Automatische Gruppierung zusammengehöriger Alerts zu Incidents; nur FQDNs als Hosts (Docker-Container-IDs werden abgelehnt); 30-Minuten-Zeitfenster für Incident-Wiederverwendung; Minimum 2 Alerts oder Cross-Source für neuen Incident |
+| **Alert-Aggregation** | CheckMK, Graylog, Wazuh — zentrale Timeline, Acknowledge, Severity-Filter; Graylog: Python-Loglevel-Erkennung (INFO→low, ERROR→high, verhindert Docker-GELF-Fehleinstufung) |
+| **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung, KI-Ignorieren; Hostname anklickbar → Feed-Filter; Severity-Filter ignoriert aktive Saved-Searches korrekt |
+| **KI-Insights** | Befunde + zugehörige Empfehlungen direkt zusammen (kein getrenntes Panel); Datenquelle-Badge je Befund; Hostname/Feed-Links; Empfehlungen fließen in generatives Dashboard ein |
+| **Fehler-Cluster (Root-Cause)** | Die KI fasst im selben Analyse-Lauf mehrere Befunde mit gemeinsamer Ursache zu einer Diagnose zusammen (z.B. „Core-Switch in MUE-0 ausgefallen" erklärt 10 nicht erreichbare Hosts); nutzt Blast-Radius-Topologie; sichtbar in KI-Insights, Hermes-Konsole und Brücke |
+| **Werkbank (Web-IDE)** | Pro-User code-server (VS Code im Browser) unter `/workbench`; integriertes Terminal, Git/GitLab, SSH zu beliebigen Hosts; **vorinstallierte KI-Agenten-Extensions** (Claude Code + OpenAI Codex); Ansible editierbar (geteiltes `ansible/`-Verzeichnis im Standard-Layout: playbooks/roles/host_vars/group_vars/inventory, sofort in AWX sichtbar); Hermes-Analyse als Markdown übergeben |
+| **Maschinenraum (Remediation)** | Engineering-Cockpit unter `/engineering`; KI-gestützte Ansible-Remediation mit Human-in-the-Loop: `playbook_author` → AWX Job Template → `remediation_matcher` → Lern-Loop; cs-meta-Konvention im Playbook-Kopf (`matches`/`params`); Pending/Active/History/Catalog |
+| **AI War Room** | Blast-Radius-Analyse bei Critical/High; Ko-VMs, Ko-lokalisierte Hosts; Empfehlungen mit Ein-Klick-Jira |
+| **CheckMK Metriken** | Collector schreibt CPU/RAM/Disk/Agent-Zeit in `cs-metrics-checkmk`; Bridge zeigt Fleet-Vitals + Forecasts (lineare Regression); stabile Metriken (< 90 % ohne Trend) werden aus generativem Kontext gefiltert |
+| **OpenAI Codex OAuth** | Browser-initiierter Device-Code-Flow (kein CLI nötig); Provider umschaltbar zwischen lokalem LLM und OpenAI Codex (GPT-5.x); Token verschlüsselt in DB, automatischer Refresh |
+| **3 App-weite Themes** | **Classic** (hell, blauer Schleier), **Holo** (dunkelblau/cyan), **LCARS** (schwarz/orange — offizielles Neon Carrot + Golden Tanoi + Anakiwa + Lilac Palette); in Einstellungen wählbar |
+| **Kanban-Board** | Drag-Drop, bidirektionaler Jira-/ServiceDesk-Sync, automatische Jira-Importe, AI-erstellte Cards |
+| **Meine Tickets** | Per-User Jira-Sicht, JQL-Filter-Verwaltung, KI-JQL-Generator; Unread-Badge; roter Punkt bei Aktivität |
+| **Arbeitsdokumentation** | ITIL Work Sessions: Impact/Urgency/Priorität P1–P4, SLA-Tracking, Arbeitsnotizen |
+| **KI-Kommentare** | Fortschritt, Pending, Eskalation, Übergabe — per KI generiert, direkt in Jira kopierbar |
+| **Abschlussdokumentation** | KI-generierte Lösungsdokumentation mit Root Cause, Maßnahmen, Closure Code |
+| **5-Why-Analyse** | ITIL Problem Management — KI führt 5-Why-Analyse durch, schlägt Kernursache vor |
+| **Lösungssuche** | SearXNG Web-Suche + KI-gestützte Lösungsvorschläge |
+| **Netzwerk-Modul** | Switch-Alerts (NSA/NSS/NSC), Standort-Zuordnung (ID-Generator), Vendor-Erkennung |
+| **RBAC** | Admin / SysAdmin / Network-Technician / Viewer — rollenbasierte UI und API |
+| **Audit-Log** | Protokollierung aller schreibenden Operationen |
+
+---
+
+## Operations Cockpit (Dashboard)
+
+The dashboard consists of freely configurable GridStack widgets. Each widget can be resized and moved independently.
+
+### Widget types
+
+| Type | Description | Data source | Required config |
+|------|-------------|-------------|-----------------|
+| `stat` | single number (alert count) | OpenSearch count query | `severity` or `search_id` |
+| `list` | alert list with severity dot + host/container | OpenSearch query | `sources`, `limit` (default 10) |
+| `donut` | severity distribution as a donut chart (ECharts) | OpenSearch aggregation | `sources` |
+| `bar` | bar chart over an aggregation field (ECharts) | OpenSearch terms aggregation | `agg_field`, `limit` (default 10) |
+| `top_hosts` | hosts with the most alerts | OpenSearch aggregation | `sources`, `limit` (default 5) |
+| `ai_summary` | latest AI situation report (findings + recommendations) | PostgreSQL `ai_analyses` | *(none)* |
+| `timeseries` | time-series line chart (ECharts) | Prometheus PromQL / CheckMK RRD | `promql`, `step`, `hours` |
+| `forecast` | CheckMK RRD history + linear trend projection + ±1σ confidence band | CheckMK `get_forecast_data()` | `host`, `service`, `metric_id`, `history_hours` (default 72), `horizon_hours` (default 24) |
+| `grafana_panel` | embedded Grafana panel as an iframe | Grafana embed URL | `panel_url` |
+
+### Widget config schemas
+
+```jsonc
+// stat
+{ "severity": "critical", "sources": ["checkmk", "wazuh"] }
+{ "search_id": "uuid-of-a-saved-search" }
+
+// list
+{ "sources": ["checkmk", "graylog", "wazuh"], "severity": "high", "limit": 10 }
+{ "search_id": "uuid", "limit": 15 }
+
+// donut
+{ "sources": ["checkmk", "graylog", "wazuh"] }
+
+// bar — agg_field: severity | source | metadata.host.keyword | metadata.hostgroups.keyword
+{ "index_pattern": "cs-feed-*", "query_string": "", "agg_field": "severity", "limit": 10 }
+
+// top_hosts
+{ "sources": ["checkmk", "wazuh"], "limit": 5 }
+
+// ai_summary
+{}  // no configuration needed
+
+// timeseries (Prometheus)
+{
+  "data_source": "prometheus",
+  "promql": "100 - (avg(rate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)",
+  "step": "1m",
+  "hours": 4,
+  "unit": "%"
+}
+
+// timeseries (CheckMK multi-host)
+{
+  "data_source": "checkmk",
+  "hosts": ["docker086", "docker001"],
+  "service": "CPU load",
+  "metric": "load1",
+  "hours": 4
+}
+
+// grafana_panel
+{
+  "panel_url": "http://grafana:3000/d-solo/<id>/panel?orgId=1&panelId=5&theme=dark",
+  "refresh_seconds": 30
+}
+```
+
+### Dashboard management
+
+- **Enable config mode**: gear icon → widget drag/resize is unlocked
+- **Add widget**: button opens a multi-step dialog (type → title + sources → type-specific)
+- **Save layout**: automatically on leaving config mode
+- **Multiple dashboards**: tab bar on top; create a new dashboard via the `+` icon
+- **Default layout**: each dashboard can be reset to the default widgets (`POST /api/dashboard-widgets/dashboards/{id}/reset-defaults`)
+
+### Dual mode: Classic ↔ Generative
+
+A toggle button in the dashboard header switches between two modes:
+
+**Classic** (default): manual drag-and-drop layout, `saveLayout` on leaving config mode — as before.
+
+**Generative**: the AI layout engine adapts the dashboard situationally:
+- On activation + on every `ai_insight` WebSocket event, `POST /dashboard-widgets/dashboards/{id}/suggest-layout` is called
+- The engine scores widgets by AI analysis (severity_summary, finding sources) + live OpenSearch counts
+- Relevant widgets move up / grow; quiet widgets shrink / are hidden
+- **Pin button** per widget (NASA override rule): pinned widgets are never moved by the AI
+- **Reset button** restores the default layout in one click
+- The mode is stored in `Dashboard.mode` and restored on the next visit
+- **Click on widget (background)**: opens the News Feed with the widget's matching filters
+- **Click on donut segment**: opens the feed filtered by the clicked severity
+- **Click on bar (`bar`)**: opens the feed filtered by the bar's field value
+- **Click on AI findings**: deep link from the `ai_summary` widget finding into **AI Insights** (`/ai-insights?analysis=<id>`) — the related analysis is highlighted and the findings panel expanded
+- **Internal clicks vs. widget click**: dedicated clicks (donut/bar/finding/item) take precedence; the background click (`openWidget`) is suppressed via a flag so the filter is not overwritten
+
+### Default widgets (created automatically on first login)
+
+| Widget | Type | Position | Config |
+|--------|------|----------|--------|
+| Severity distribution | `donut` | 0,0 (5×5) | all sources |
+| Critical | `stat` | 5,0 (2×2) | severity=critical |
+| High | `stat` | 7,0 (2×2) | severity=high |
+| Newest alerts | `list` | 5,2 (4×3) | all sources, limit=8 |
+| AI situation report | `ai_summary` | 0,5 (5×4) | — |
+| Top hosts | `top_hosts` | 5,5 (4×4) | all sources |
+
+---
+
+## Server Cockpit (Host Detail Panel)
+
+Ein Klick auf einen Servernamen im **News Feed** öffnet das Server Cockpit in einem eigenständigen Browser-Fenster (`window.open`, Route `/cockpit/:hostname`). Das Fenster hat kein Navigationsmenü — es ist ein vollbildiges LCARS-Dashboard für genau einen Host.
+
+### Layout
+
+```
+┌─────────────────────────────────────────────────────┐
+│ ████ COCKPIT — hostname  ██████  [LIVE ●]  [✕]      │  ← orange Cap-Bar
+├─────────────────────────────────────────────────────┤
+│ ██ PERFORMANCE ██████████████████  [cached|live]    │
+│   [CPU Gauge + Sparkline]  [RAM]  [Disk]            │
+├─────────────────────────────────────────────────────┤
+│ ██ SERVICES (N) ██  [ALLE] [FEHLER] [CRIT] [WARN]  │
+│   ● CRIT  Filesystem /var         87% used (...)    │
+│   ● WARN  CPU load                load 3.4 (...)    │
+│   ● OK    Memory                  12.3% used        │
+│   → Klick auf Zeile → 24h-Graph erscheint inline    │
+├─────────────────────────────────────────────────────┤
+│ ██ ALERTS ██  [Severity▼] [Source▼]                 │
+│   sev●  title  host  source  time                   │
+└─────────────────────────────────────────────────────┘
+```
+
+### Performance Block
+
+- **Hero-Gauges**: CPU / RAM / Disk als ECharts-Gauge-Charts (140px), Farbe nach Level: crit `#ff4433` / high `#ffcc00` / ok `#66cc66`
+- **Sparklines**: Kompakte 52px-Liniencharts direkt unterhalb der Gauges (24h-Historie)
+- **Zweistufiges Laden**: Zuerst gecachte Werte aus `cs-metrics-checkmk` (sofort), dann Live-Refresh via CheckMK RRD (`?live=true`, ~1-2s)
+- **LIVE-Badge**: wechselt von `cached` auf `LIVE ●` sobald die aktuellen Werte eintreffen
+
+### Service List
+
+Zeigt alle CheckMK-Services des Hosts mit aktuellem Status und `plugin_output` (menschenlesbare Zusammenfassung, z.B. „15.2% used (3.04 GB of 20.0 GB)").
+
+**Service-Farben:**
+
+| Status | Farbe |
+|--------|-------|
+| CRIT | `#ff4433` (rot) |
+| WARN | `#ffcc00` (gelb) |
+| UNKNOWN | `#99ccff` (hellblau) |
+| OK | `#66cc66` (grün) |
+
+**Hierarchische Filter-Chips:**
+
+| Chip | Zeigt |
+|------|-------|
+| ALLE | alle Services |
+| FEHLER | CRIT + WARN + UNKNOWN (Standard-Ansicht beim Öffnen) |
+| WARN | CRIT + WARN |
+| CRIT | nur CRIT |
+| UNKNOWN | nur UNKNOWN |
+
+Filter-Chips mit 0 Treffern bleiben immer sichtbar, werden aber ausgegraut (`opacity: 0.25`, nicht klickbar).
+
+**On-Demand Graph:**
+- Klick auf eine Service-Zeile → `GET /api/hosts/{host}/graph?service=<name>&metric=<id>`
+- Metric-Inferenz aus Service-Name: `Filesystem*` → `fs_used_percent`, `Memory` → `mem_used_percent`, `CPU*` → `load1`
+- 24h-Linienchart erscheint inline unter der Zeile; erneuter Klick schließt ihn
+
+### API Endpoints (Backend)
+
+| Endpunkt | Beschreibung |
+|----------|-------------|
+| `GET /api/hosts/{hostname}/health` | Performance-Vitals (gecacht + `?live=true`) + Host-Alerts |
+| `GET /api/hosts/{hostname}/services` | Alle CheckMK-Services mit `state_label` + `summary`; sortiert CRIT→WARN→UNKNOWN→OK |
+| `GET /api/hosts/{hostname}/graph` | 24h-Zeitreihe: `?service=<name>&metric=<id>` → `{series, title, unit}` |
+
+### Technical Details
+
+- **Navbar-Ausblendung**: `ngOnInit` setzt `document.body.classList.add('cockpit-active')`; `styles.scss` versteckt `.sidenav` und entfernt `mat-sidenav-content`-Margin (analog zu `bridge-active`)
+- **Font**: Roboto (identisch mit News Feed und Alerts)
+- **Auth**: Verwendet denselben `cs_access_token` aus `localStorage` — kein erneuter Login nötig
+- **Mehrere Tabs**: `window.open` mit `target='cockpit-{hostname}'` — pro Host ein Fenster, kein Duplikat
+
+---
+
+## News Feed
+
+### How it works
+
+The News Feed shows all events from the active OpenSearch indices (`cs-feed-*`) in reverse chronological order.
+
+**Sources** (toggleable):
+- CheckMK alerts (monitoring events)
+- Graylog logs (system logs, container logs)
+- Wazuh alerts (security events, FIM)
+- O365 emails (personal, your own only)
+- Microsoft Teams messages (personal, your own channels only)
+
+### Last-seen divider
+
+- On opening the feed, the view automatically scrolls to the `Last seen` divider
+- New messages (since the last visit) appear **above** the divider
+- Older messages appear **below**
+- After 3 seconds in the feed the timestamp is stored as `feed_last_seen` and the nav badge is reset
+
+### Nav badge (unread count)
+
+- Red number on the "News Feed" nav entry
+- Refreshes automatically every 60 seconds
+- Calls `GET /api/feed/unread-count?since=<ISO>`
+- Disappears after 3 seconds in the feed
+
+### My Tickets — unread indicators
+
+- The red number on the "My Tickets" nav entry shows the number of tickets with new activity
+- A **red dot** on individual ticket rows appears when the ticket was updated since it was last opened (new comment, status change, etc.)
+- On closing the WorkSession dialog, the ticket list is reloaded so the dot appears correctly based on the fresh `updated` time
+- Tracking is **server-side** via `user_preferences.ticket_seen_map` (JSON, `{jira_key: ISO time}`) — persistent across devices and browsers (no more localStorage)
+- Loaded/written via `GET`/`PATCH /api/preferences` (field `ticket_seen_map`)
+- On the first visit to the page all visible open tickets are marked as "seen" (no dots on first visit)
+- **Closed tickets** (`statusCategory = done`) are removed from the map; if a ticket is reopened, tracking restarts
+- The nav badge is recomputed live in the 60-second polling (tickets + `ticket_seen_map`), regardless of whether the "My Tickets" page is open
+
+### Ignore button (AI exclusion)
+
+- Every feed card has an **Ignore** button
+- A click calls `POST /api/feed/{id}/ignore`: the AI generates an OpenSearch Lucene exclusion query from the item (characteristic phrase from `title`/`body`, possibly the container)
+- The query is stored as a **system exclusion search** (`is_system=true, is_exclusion=true`) → similar messages permanently disappear from the feed
+- The clicked item is immediately removed from the list locally
+
+### AI analysis with web search
+
+- The **AI Analysis** button per alert calls `POST /api/feed/{id}/enrich`
+- When `workflow.web_search` is enabled (default on), a SearXNG web search adds context to the AI explanation
+- Automatic enrichment is controlled via `agent.auto_enrich`
+
+### "Newest messages" button
+
+- Appears as a floating button on top once you scroll more than 350px down
+- A click scrolls the page back to the top (smooth scroll)
+
+### Saved searches in the feed
+
+- **Searches panel** (expandable): shows all system searches and personal searches
+- **Toggle switches**: disable individual searches (writes `feed_disabled_search_ids` to preferences)
+- **Create a personal search**: via the `+` icon in the searches panel
+- **AI assistant**: button in the search dialog → free-text input → AI generates the Lucene query automatically
+
+### Highlight mode
+
+When an item is opened directly from a widget or an external source:
+- URL parameter `highlight_id=<OpenSearch doc ID>` and/or `host=`, `source=`, `severity=`
+- The clicked item is **pinned** to the end of the first page if it is older than the current page
+- After loading, the feed **automatically scrolls to the highlighted item** (blue outline, 2.8s)
+- The feed shows matching filter values from the URL parameters
+
+### `GET /api/feed/` — full parameter list
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `limit` | int (max 200) | number of results (default 50) |
+| `offset` | int | pagination |
+| `sources` | string | comma-separated sources: `checkmk,graylog,wazuh` |
+| `severity` | string | severity filter: `critical`, `high`, `medium`, `low`, `info` |
+| `host` | string | hostname search (wildcard, case-insensitive) |
+| `os` | string | OS filter (CheckMK) |
+| `location` | string | location filter (CheckMK) |
+| `criticality` | string | criticality filter (CheckMK) |
+| `ve` | string | VE filter (CheckMK) |
+| `hostgroup` | string | comma-separated CheckMK host groups |
+| `search_id` | UUID | run a saved search directly |
+| `index` | string | OpenSearch index pattern (direct mode) |
+| `q` | string | Lucene query string (direct mode) |
+| `highlight_id` | string | pin + highlight an item |
+
+---
+
+## OpenSearch Searches (FeedSearches)
+
+### Where are searches defined?
+
+- **Admin area**: Settings → Feed → system searches (create, edit, test)
+- **User area**: News Feed → searches panel → `+` personal search
+
+### Search model
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | unique ID |
+| `user_id` | UUID? | NULL = system search, set = personal search |
+| `name` | string | display name |
+| `index_pattern` | string | OpenSearch pattern, e.g. `cs-feed-*`, `cs-feed-wazuh` |
+| `query_string` | string | Lucene query; empty = match_all |
+| `enabled` | bool | active? |
+| `is_system` | bool | visible system-wide (admin) |
+| `is_exclusion` | bool | if true: items are **hidden** from the feed |
+| `position` | int | order in the list |
+
+### Exclusion searches
+
+Searches with `is_exclusion=true` generate `must_not` clauses in **all** feed queries. This permanently hides unwanted messages:
+
+```
+Example: hide /etc/patchmon/config.yml FIM alerts
+  query_string: "metadata.syscheck.path:/etc/patchmon/config.yml"
+  is_exclusion:  true
+```
+
+### Bundled system searches
+
+| Name | Index | Query |
+|------|-------|-------|
+| Filebeat (Hyde-relevant) | `cs-feed-graylog` | `metadata.hyde_relevant:true AND NOT metadata.source_host:(nsa* OR nss* OR nsc*)` |
+| HTTP errors (container) | `cs-feed-graylog` | `metadata.http_response_code:>=400 AND metadata.container_name:*` |
+| Syslog Errors | `cs-feed-graylog` | `metadata.level:<=4 AND NOT body:uprobes` |
+| Wazuh Security Alerts (Level 7+) | `cs-feed-wazuh` | `metadata.rule_level:>=7` |
+| All CheckMK alerts | `cs-feed-checkmk` | *(empty = all)* |
+| All Graylog logs | `cs-feed-graylog` | *(empty = all)* |
+| All Wazuh alerts | `cs-feed-wazuh` | *(empty = all)* |
+| All sources | `cs-feed-*` | *(empty = all)* |
+| Critical and high alerts | `cs-feed-*` | `severity:(critical OR high)` |
+
+### Query syntax (Lucene)
+
+```
+# Graylog: all container errors from docker086
+metadata.container_name:docker086* AND metadata.http_response_code:>=400
+
+# Wazuh: security events level 10+ for a specific host
+metadata.rule_level:>=10 AND metadata.agent.name:docker086
+
+# All: critical alerts
+severity:critical
+
+# Graylog: Hyde-relevant messages excluding NSA/NSS/NSC
+metadata.hyde_relevant:true AND NOT metadata.source_host:(nsa* OR nss* OR nsc*)
+
+# CheckMK: all Linux hosts with high severity
+severity:(high OR critical) AND metadata.os:Linux
 ```
 
 ---
 
-## KI-Templates (workflow_ai.py)
+## Alert Aggregation and Enrichment
 
-Alle KI-Funktionen nutzen OpenAI-kompatible Endpunkte (konfigurierbar über Frontend → Einstellungen → KI).
-
-| Template / Funktion | Endpunkt | Beschreibung |
-|---------------------|----------|--------------|
-| `generate_comment` | `POST /api/workflow/{id}/generate-comment` | Jira-Kommentar (Fortschritt / Pending / Eskalation / Übergabe) |
-| `generate_resolution` | `POST /api/workflow/{id}/generate-resolution` | Lösungsdokumentation mit Root Cause und Maßnahmen |
-| `auto_categorize` | `POST /api/workflow/{id}/auto-categorize` | Kategorie, Unterkategorie, Impact, Urgency aus Titelbeschreibung |
-| `suggest_solution` | `POST /api/workflow/{id}/suggest-solution` | Lösungsschritte + RAG (it-aikb) + SearXNG-Websuche |
-| `analyze_mail` | `POST /api/workflow/analyze-mail` | O365 E-Mail → strukturiertes JSON (Zusammenfassung, Dringlichkeit, Ticket-Key) |
-| `run_5why_analysis` | `POST /api/workflow/{id}/5why` | 5-Why Root Cause Analysis (ITIL Problem Management) |
-| `generate_jql` | `POST /api/preferences/jira-queries/generate` | **KI JQL-Generator**: Freitext-Beschreibung → valide Jira JQL-Query + Name |
-
-### KI JQL-Generator
-
-Beschreiben Sie den gewünschten Ticket-Filter auf Deutsch — das KI-Modell übersetzt automatisch in valide JQL:
+### Pipeline
 
 ```
-Eingabe:  "meine offenen Bugs mit hoher Priorität aus dieser Woche"
-Ausgabe:  { "jql": "assignee = currentUser() AND issuetype = Bug AND priority in (Highest, High) AND created >= -7d AND status != Done ORDER BY priority ASC, updated DESC",
-            "name": "Meine Bugs (hoch, diese Woche)" }
+APScheduler (every 10 min)
+    │
+    └── alert_aggregator.py
+          ├── CheckMKConnector.get_alerts()        → cs-feed-checkmk
+          ├── GraylogConnector.get_alerts()         → cs-feed-graylog
+          ├── WazuhConnector.get_alerts()           → cs-feed-wazuh
+          └── feed_index.index_items()              → OpenSearch bulk index
+                │
+                └── feed_enricher.py (async background task)
+                      └── LLM: 2-3 sentence explanation + first action → ai_insight field
 ```
 
-Aufruf über die UI: **Meine Tickets → Filter verwalten → KI erstellen**
+### CheckMK aggregation
+
+**Endpoint:** `GET /domain-types/host/collections/all` (all hosts + tags)
+
+Fields extracted from CheckMK:
+
+| CheckMK field | Normalization | OpenSearch field |
+|---------------|---------------|------------------|
+| `tags.tg-os` / `tags.operatingsystem` | `_OS_LABEL_MAP` (os-linux → Linux) | `metadata.os` |
+| `extensions.attributes.tag_location` / `host_filename` | folder from the WATO path | `metadata.location` |
+| `tags.tg-criticality` | raw value | `metadata.criticality` |
+| `tags.tg-ve` / `tags.tg-virt_env` | raw value | `metadata.ve` |
+| Host groups | list of all groups | `metadata.hostgroups` |
+| `extensions.attributes.alias` | — | `metadata.alias` |
+
+**Wazuh filter (configurable via the connector form):**
+
+FIM exclusions can be configured through the connector credentials:
+```json
+{
+  "excluded_rule_ids": ["503", "504", "533", "591", "5402", "5501", "5502", "5715"],
+  "excluded_fim_paths": ["/etc/cmk-update-agent.state", "/etc/patchmon/config.yml"]
+}
+```
+If these are not set, the internal defaults apply.
+
+### AI enrichment (ai_insight)
+
+After indexing, new alerts with severity `critical`, `high` or `warning` are enriched in the background by an LLM call:
+
+- **Prompt:** system prompt as an experienced Linux sysadmin; 2-3 sentence explanation + concrete first action, in the operator's language
+- **Input:** `{source}: {title}\n{body}\nHost: {host}\nLocation: {location}`
+- **Result:** plain text (max 400 chars), stored as `ai_insight` in the OpenSearch document
+- **Configuration:** `agent.auto_enrich` (default `true`) — can be disabled under Settings → AI
 
 ---
 
-## ITIL Prioritätsmatrix
+## Incident Correlation
 
-| Impact ↓ / Urgency → | Hoch | Mittel | Niedrig |
-|----------------------|------|--------|---------|
-| **Hoch** | P1 (Response 15min) | P2 (60min) | P3 (4h) |
-| **Mittel** | P2 (60min) | P3 (4h) | P4 (24h) |
-| **Niedrig** | P3 (4h) | P4 (24h) | P4 (24h) |
+CentralStation gruppiert zusammengehörige Alerts automatisch zu **Incidents** (`incidents` + `incident_members`-Tabellen).
 
-SLA-Fristen werden automatisch beim Erstellen einer Work Session berechnet.
+### Correlation Rules
+
+Ein neuer Incident wird nur angelegt wenn **alle** Bedingungen erfüllt sind:
+
+1. **Severity-Schwelle**: Nur `critical`/`high` Alerts können einen Incident auslösen oder erweitern — `low`/`info` werden ignoriert
+2. **Mindestgröße**: Neuer Incident erfordert ≥ 2 korrelierte Alerts (gleicher Host, 30-Min-Fenster) **oder** Cross-Source-Evidenz (gleicher Host, ≥ 2 Quellen)
+3. **Host-Validierung**: Nur FQDNs werden als Hosts akzeptiert (muss mindestens einen Punkt enthalten). Docker-Container-Short-IDs (z.B. `5086bbde056b`) und Container-Namen werden abgelehnt
+
+### Time Window
+
+Offene Incidents werden nur wiederverwendet, wenn `updated_at >= jetzt - 30 Minuten`. Ein älterer Incident wird **nicht** verlängert — stattdessen wird ein neuer Incident angelegt. Das verhindert, dass zeitlich weit auseinanderliegende Alerts fälschlicherweise in denselben Incident gepackt werden.
+
+### Incident Lifecycle
+
+```
+Neuer Alert (critical/high) mit FQDN
+    │
+    ├── Offener Incident für diesen Host? (updated_at < 30 Min alt)
+    │       → Ja: Incident erweitern (Member hinzufügen, Severity eskalieren, updated_at aktualisieren)
+    │       → Nein: neuen Incident anlegen (wenn ≥ 2 Alerts oder Cross-Source)
+    │
+    └── Housekeeping-Job (alle 2h): Incidents ohne neue Member → resolved
+```
+
+### Data Model
+
+| Tabelle | Felder |
+|---------|--------|
+| `incidents` | `id`, `title` (z.B. „host.example.com: 4 Alerts [checkmk/graylog]"), `primary_host`, `severity`, `status` (open/investigating/resolved), `created_at`, `updated_at`, `resolved_at` |
+| `incident_members` | `incident_id`, `external_id`, `source`, `added_at` |
+
+### API Endpoints
+
+| Endpunkt | Beschreibung |
+|----------|-------------|
+| `GET /api/feed/incidents` | Offene Incidents (status: open/investigating) |
+| `GET /api/feed/incidents/{id}/timeline` | Chronologische Timeline (Alerts + Kommentare + KI-Diagnosen) |
+
+---
+
+## Kanban and Jira
+
+### Kanban board
+
+- Drag-and-drop board with five columns: Backlog → Todo → In Progress → Review → Done
+- Status changes via drag-and-drop trigger Jira transitions (bidirectional sync)
+- **Jira import**: Jira tickets can be imported into the board automatically via JQL
+- **AI card creation**: on critical findings the AI agent creates Kanban cards automatically
+- **Alert linking**: cards can be linked to feed alerts
+
+### Bidirectional Jira sync
+
+**Status mapping:**
+
+| CentralStation | Jira status (examples) |
+|----------------|------------------------|
+| `backlog` | Backlog, Open, Selected for Development |
+| `todo` | To Do, Open, Ready |
+| `in_progress` | In Progress, Doing, Implementing |
+| `review` | Review, In Review, Testing, QA |
+| `done` | Done, Resolved, Closed |
+
+### My Tickets (Jira view)
+
+- Shows Jira tickets according to configured JQL queries
+- **JQL templates**: default templates preinstalled, customizable
+- **AI JQL generator**: free text → optimized JQL (`POST /api/preferences/jira-queries/generate`)
+- **Widget display**: selected JQL queries appear as a widget on the Jira page
+
+### ITIL work sessions
+
+Work sessions document the handling of an incident:
+
+1. **Create**: enter the Jira ticket key → CentralStation pulls the ticket data from Jira
+2. **Categorization**: impact/urgency → automatic P1–P4 priority + SLA deadline
+3. **Work notes**: timestamped entries of who did what and when
+4. **AI actions**:
+   - **Generate comment**: choose the type (progress / pending / escalation / handover) → optional free-text field "current developments" → AI drafts a Jira comment
+   - **Resolution documentation**: root cause, actions, lessons learned
+   - **5-whys analysis**: ITIL problem management
+   - **Solution search**: RAG + web search
+
+### ITIL priority matrix
+
+| Impact ↓ / Urgency → | High | Medium | Low |
+|----------------------|------|--------|-----|
+| **High** | P1 (15 min) | P2 (60 min) | P3 (4 h) |
+| **Medium** | P2 (60 min) | P3 (4 h) | P4 (24 h) |
+| **Low** | P3 (4 h) | P4 (24 h) | P4 (24 h) |
+
+---
+
+## AI Features
+
+### LangGraph agents
+
+Two autonomous agents run in the background (APScheduler, every 10 minutes):
+
+#### SysAdmin agent
+
+```
+Node 1: collect_data
+  → CheckMK: open problems (last 1h)
+  → Graylog: ERROR/CRITICAL (last 1h)
+  → Wazuh: security alerts
+  → Jira: new/unassigned tickets
+
+Node 2: enrich
+  → IP → site (ID-Generator)
+  → hostname → device (NetBox)
+  → vendor detection (Juniper/Cisco/VMware from Graylog messages)
+
+Node 3: rag_lookup
+  → LLM decides if additional context is needed (SearXNG web search)
+  → CheckMK metrics for affected hosts
+
+Node 4: analyze
+  → correlate events + web/metrics context
+  → findings + recommendations + error clusters (structured, Pydantic AnalysisResult)
+  → store in PostgreSQL (ai_analyses table; findings, recommendations, clusters)
+
+Node 5: act
+  → critical findings → Jira ticket (JQL dedup prevents duplicate tickets)
+  → WebSocket push → all connected SysAdmin/Admin clients
+```
+
+#### Network agent
+
+```
+Node 1: collect_switch_logs
+  → Graylog: source:(nsa* OR nss* OR nsc*) — last 1h, deduplicated
+
+Node 2: enrich_switches
+  → switch name → ID-Generator (location_id → site name + city)
+  → NetBox: interface/VLAN data
+
+Node 3: analyze_network
+  → STP, LACP, port flapping, MAC flooding
+  → vendor detection (Juniper NSA/NSS patterns)
+
+Node 4: act
+  → findings → PostgreSQL
+  → WebSocket push → Network Technician clients
+```
+
+### Error clusters (root-cause grouping)
+
+In the `analyze` node the SysAdmin agent sees all open alerts at once (plus the
+blast-radius topology). When several findings plausibly share **one** root cause,
+it groups them into an **error cluster** with a single diagnosis instead of
+reporting each symptom in isolation. Typical patterns:
+
+- A network device (router/switch/uplink) down → many downstream hosts unreachable.
+- A shared storage / hypervisor / Proxmox node down → multiple VM or filesystem alerts.
+- A site-wide outage (power, uplink, DNS) → many hosts at the same location at once.
+
+Each cluster carries `diagnosis`, `severity`, `root_cause_host`, `affected_hosts`,
+`explanation` and a `recommendation`. Clusters are a per-run snapshot stored
+alongside the analysis (`ai_analyses.clusters`) — there is no cross-run lifecycle.
+The same anti-hallucination/evidence rules apply: an uncertain diagnosis must start
+with `"Vermutete Korrelation — unbestätigt:"`.
+
+Clusters surface in three places (all read the latest sysadmin run):
+
+- **KI-Insights** view — a "Diagnose / Fehler-Cluster" section above the findings.
+- **Hermes console** ("Computer, prüfe das") — a "KI-Fehler-Cluster (Case-Analyse)"
+  section, shown when the inspected host is in a cluster's `affected_hosts` or is the
+  `root_cause_host`, so Hermes considers the shared cause before looking at the host
+  in isolation (`search_recent_ai_clusters` in `feed_index.py`).
+- **Bridge** (`/bridge`) — a cluster-diagnosis banner above the primary incident
+  (`error_clusters` in `GET /api/bridge/status`, filtered by the user's host scope).
+
+### AI chat endpoints
+
+| Endpoint | Function | Input | Output |
+|----------|----------|-------|--------|
+| `POST /api/ai/search-assistant` | free text → Lucene query + optionally create a FeedSearch/widget | `{"message": "..."}` | `{"reply": "...", "actions": [...]}` |
+| `POST /api/ai/promql-assistant` | free text/Lucene → PromQL | `{"message": "..."}` | `{"promql": "...", "explanation": "..."}` |
+| `POST /api/workflow/{id}/generate-comment` | generate a Jira comment | `{"comment_type": "progress", "additional_context": "..."}` | `{"comment": "..."}` |
+| `POST /api/workflow/{id}/generate-resolution` | closure documentation | — | `{"resolution": "..."}` |
+| `POST /api/workflow/{id}/5why` | 5-whys root cause analysis | — | `{"analysis": "..."}` |
+| `POST /api/workflow/{id}/suggest-solution` | RAG + web solution search | — | `{"steps": [...], "sources": [...]}` |
+| `POST /api/workflow/analyze-mail` | analyze an O365 email | `{"content": "..."}` | `{"summary": "...", "ticket_key": ...}` |
+| `POST /api/preferences/jira-queries/generate` | JQL from free text | `{"description": "..."}` | `{"jql": "...", "name": "..."}` |
+
+### AI settings (Settings → AI)
+
+| Setting key | Description | Default |
+|-------------|-------------|---------|
+| `ui_language` | Per-user UI and AI response language (`en`, `de`) | `en` |
+| `llm.provider` | active LLM provider: `custom` (local endpoint) or `openai-codex` (OAuth) | `custom` |
+| `llm.base_url` | OpenAI-compatible endpoint (only for `custom`) | — |
+| `llm.model` | model ID for the `custom` provider (e.g. `qwen3next-79b`) | — |
+| `llm.api_key` | API key (optional, only for `custom`) | — |
+| `llm.codex_model` | model ID for the `openai-codex` provider (e.g. `gpt-5.5`) | `gpt-4o` |
+| `llm.codex_timeout_seconds` | timeout for Codex requests | `60` |
+| `llm.vision_model_url` | vision model endpoint | — |
+| `llm.vision_model` | vision model ID | — |
+| `llm.thinking_mode` | enable extended thinking (only `custom`) | `false` |
+| `agent.auto_enrich` | automatic AI enrichment after aggregation (off = on-demand) | `true` |
+| `workflow.web_search` | web search (SearXNG) during AI analysis of feed/alerts | `true` |
+| `agent.interval_minutes` | interval for background agents (minutes) | `10` |
+| `agent.auto_jira` | create Jira tickets automatically | `true` |
+| `agent.jira_severity_threshold` | minimum severity to create tickets | `critical` |
+| `searxng.base_url` | SearXNG web search URL | — |
+
+### OpenAI Codex OAuth provider
+
+CentralStation can optionally use OpenAI Codex (GPT-5.x) as the LLM provider — without a paid API key, just a regular ChatGPT account.
+
+**Setup (one-time, in the browser):**
+1. Settings → AI → card **"OpenAI Codex — Sign in"**
+2. Button **"Sign in with OpenAI"** → a browser code is shown (e.g. `28UF-4FKHV`)
+3. Open `https://auth.openai.com/codex/device` in the browser, enter the code, sign in with the ChatGPT account
+4. CentralStation detects the successful login automatically (polling every 5 seconds)
+5. The token is stored Fernet-encrypted in the database and refreshed automatically via the refresh token
+
+**Switch the provider:**
+- Settings → AI → **LLM configuration** → set "LLM Provider" to `OpenAI Codex (OAuth)`
+- Enter the model (e.g. `gpt-5.5`) → Save
+- Test the connection → shows `Connection OK — OpenAI Codex / model 'gpt-5.5' responds`
+
+**Technical background:**
+- Endpoint: `https://chatgpt.com/backend-api/codex/responses` (Responses API, not Chat Completions)
+- Streaming is mandatory (`stream: true`) — the endpoint rejects non-streaming requests
+- `max_output_tokens` is not supported by the endpoint
+- OAuth flow: device code + PKCE (RFC 8628)
+- API endpoints: `GET/DELETE /api/oauth/openai-codex/status|logout`, `POST /api/oauth/openai-codex/start|poll/{session_id}`
+
+**AI output behaviour:**
+- The SysAdmin agent emits all text fields (findings, recommendations) **in the operator's language** (`ui_language`) — even when web context is in another language
+- **No hallucinations**: if context is missing, the AI says so explicitly instead of inventing causes
+
+---
+
+## Computer Console (Hermes AI Panel)
+
+CentralStation includes an interactive AI assistant panel — the **Computer Console** — that wraps a [Hermes](https://github.com/your-org/hermes-agent) AI agent session in a floating LCARS-styled popup. It gives operators a Star Trek-inspired interface for diagnosing alerts and querying the monitoring infrastructure through natural language.
+
+### Architecture
+
+```
+Browser (Computer panel)
+    │  POST /api/computer/sessions/{sid}/message  (SSE stream)
+    ▼
+backend (centralcore_proxy.py)  ←→  JWT auth guard
+    │  HTTP proxy
+    ▼
+centralcore container (FastAPI, port 8001)
+    │  Hermes AIAgent.run_conversation()
+    ▼
+MCP server  (/api/mcp/sse)  →  CentralStation tools
+```
+
+**`centralcore/`** is a standalone Python service that:
+- Manages multiple parallel Hermes sessions
+- Exposes SSE-streaming message endpoints
+- Provides Whisper STT for voice input
+- Connects to the CentralStation MCP server for live IT data
+
+**`backend/app/api/centralcore_proxy.py`** is a JWT-authenticated reverse proxy that forwards browser requests to the `centralcore` service.
+
+**`backend/app/api/mcp_server.py`** exposes CentralStation tools as an MCP server:
+
+| Tool | Description |
+|------|-------------|
+| `get_bridge_status()` | Overall monitoring status |
+| `list_alerts(severity, source, hours)` | Filtered alert list |
+| `search_feed(query)` | Lucene query against all feed indices |
+| `get_checkmk_host(hostname)` | Host status and services |
+| `acknowledge_alert(alert_id)` | Acknowledge an alert |
+| `create_jira_ticket(title, description, priority)` | Create a Jira ticket |
+
+### Computer diagnoses alerts
+
+When the user clicks **"Computer"** on a News Feed alert, `GET /api/feed/{id}/hermes-context` runs automatically:
+1. Looks up the alert in OpenSearch to get host, severity, container name
+2. Runs `run_diagnostics(host)` — CheckMK status, recent logs, metrics, topology, past incidents
+3. Adds **AI error-clusters** for the host (`search_recent_ai_clusters`) so Hermes sees the shared root cause if the host is part of a larger correlated incident (see [Error clusters](#error-clusters-root-cause-grouping))
+4. Searches for **past AI-resolved similar alerts** (see below) and prepends them as context
+5. Returns a structured prompt that is sent directly to the Hermes session
+
+### Computer learns — AI resolution notes
+
+When the operator clicks **✓ RESOLVED** in the Computer panel:
+- The conversation is summarised into a 2–3 sentence English lesson-learned note via LLM
+- The note is saved as an `AlertComment` (kind=`ai`) on the alert timeline
+- The OpenSearch document is updated with `has_ai_resolution: true` and `ai_resolution_text`
+- Future diagnostics for similar problems automatically retrieve this note via `search_ai_resolved()`
+
+### OpenSearch tags
+
+Every indexed alert automatically gets a `tags` keyword array for precise filtering:
+
+| Tag source | Examples |
+|------------|---------|
+| Alert source | `graylog`, `checkmk`, `wazuh` |
+| Severity | `critical`, `high`, `medium`, `low`, `info` |
+| Container presence | `docker` |
+| Service keywords in title/container | `nginx`, `postgres`, `redis`, `cue`, `zipline`, `keycloak`, `ssl`, `dns`, `backup`, … |
+| OS keywords | `linux`, `windows` |
+| Symptom keywords | `oom`, `disk`, `cpu`, `network` |
+| AI resolution | `ai_resolved` (added when Computer marks problem solved) |
+
+**Example OpenSearch queries using tags:**
+```
+tags:postgres                       → all PostgreSQL-related alerts
+tags:docker AND tags:critical       → critical container alerts
+tags:ai_resolved                    → all problems the Computer has solved
+tags:oom                            → out-of-memory events
+```
+
+### Setup
+
+1. Install [Hermes](https://github.com/your-org/hermes-agent) and configure an MCP server pointing at CentralStation:
+   ```yaml
+   # ~/.hermes/config.yaml
+   mcp_servers:
+     centralstation:
+       transport: http
+       url: http://backend:8000/api/mcp/sse
+   ```
+2. Set the `CENTRALCORE_URL` env variable in the backend service (default: `http://centralcore:8001`).
+3. Enable **Computer Console** for a user in Admin → Users.
+4. Add the `centralcore` service to your `docker-compose.yml` (see the included example).
+
+### System prompt
+
+The Computer system prompt (`centralcore/main.py:SYSTEM_PROMPT`) defines the agent's behaviour:
+- Uses MCP tools for all IT queries (never local shell)
+- Searches Graylog (via `search_feed`) for container logs — no SSH needed (Logspout sends all container output to Graylog)
+- Always asks before executing write operations (Jira ticket creation, alert acknowledgement)
+- Appends `[FEED:host=<hostname>]` markers that the frontend renders as clickable feed-filter buttons
+
+---
+
+## Werkbank (Web-IDE)
+
+The **Werkbank** (`/workbench`) is a full VS Code instance in the browser — one
+[code-server](https://github.com/coder/code-server) container per user, started on
+demand by the backend (`ide_manager.ensure_container`). It is the place to write code,
+run commands in an integrated terminal, use Git/GitLab, and edit Ansible playbooks.
+
+### Architecture
+
+```
+Browser  ──/ide/<uid>/──▶  nginx  ──auth_request──▶  backend /api/ide/authz
+                            │  (validates the session cookie, returns the
+                            │   per-user upstream in X-IDE-Upstream)
+                            ▼
+                       cs-ide-<uid>  (code-server, --auth none, no published port)
+```
+
+- **No published host port.** The nginx `auth_request` gate is load-bearing: every
+  request to `/ide/<uid>/` (and the Claude Code WebSocket at `/ws`) is authorised by
+  the backend before being proxied to the user's container.
+- **Per-user bind mounts** under `IDE_WORKSPACES_BASE/<uid>/` (workspaces + VS Code
+  state) so a single `tar`/`rsync` of that directory backs up everything. Claude Code
+  credentials live on a separate named volume.
+- **SSH** to your infrastructure hosts is wired up from the host `~/.ssh` mount
+  by the entrypoint (configure your key in the SSH config).
+
+### Bundled AI coding-agent extensions
+
+The image (`Dockerfile.codeserver`) pre-installs two extensions from Open VSX into a
+staging dir `/opt/cs-extensions` (Claude Code `Anthropic.claude-code`, OpenAI Codex
+`openai.chatgpt`). Because `/root/.local/share/code-server` is a **per-user bind mount**
+at runtime, build-time-installed extensions there would be masked — so the entrypoint
+**seeds** them into each user's extensions dir on first start (idempotent; existing
+extensions are left untouched). The entrypoint also applies several Claude-Code
+compatibility patches (CSP font/style, manual OAuth flow, navigator shim, webview CSS
+inlining) needed to run the extension inside a proxied code-server.
+
+### Ansible
+
+The shared `ansible/` directory follows the standard Ansible layout and is bind-mounted
+into every IDE container at `/root/workspaces/ansible` (same host path that AWX mounts as
+its Manual SCM project root):
+
+```
+ansible/
+  ansible.cfg          # roles_path=./roles, inventory=./inventory/hosts
+  inventory/hosts      # static inventory placeholder (AWX usually supplies its own)
+  group_vars/all.yml   # vars for all hosts (group_vars/<group>.yml per group)
+  host_vars/           # per-host vars: host_vars/<hostname>.yml
+  roles/               # roles (auto-discovered via roles_path)
+  playbooks/           # the playbooks + .cs-validate.py
+```
+
+Edit anything in VS Code → **AWX sees the change immediately**, no Git sync. AWX job
+templates reference playbooks as `playbooks/<name>.yml` (relative to the project root).
+The folder appears directly in the VS Code Explorer. (`IDE_ANSIBLE_PATH` env on the
+backend; see [Maschinenraum](#maschinenraum-ansible-remediation).)
+
+> **Note:** existing `cs-ide-*` containers are reused as-is; after changing the image
+> or the mount set, remove the user's container (`docker rm -f cs-ide-<uid>`) so the
+> backend recreates it with the new image, the playbook mount and the seeded extensions.
+
+### Hermes → Werkbank handoff
+
+From the Computer Console the current Hermes analysis can be exported as an editable
+Markdown file into the user's workspace (`POST /api/ide/open-chat`), and a `CLAUDE.md`
+is injected so Claude Code in the terminal starts with full context.
+
+---
+
+## Maschinenraum (Ansible Remediation)
+
+The **Maschinenraum** (`/engineering`) is the ops cockpit for AI-assisted, Ansible-based
+remediation with a human in the loop. AWX (`docker-compose.awx.yml`) executes the
+playbooks; CentralStation orchestrates matching, approval and learning.
+
+### Remediation loop
+
+```
+alert ─▶ playbook_author (LLM drafts a playbook)
+     ─▶ publish_playbook → AWX Job Template (description + labels + survey)
+     ─▶ remediation_matcher: deterministic label pre-filter, then LLM fallback
+     ─▶ human approves (Pending → Active)  ─▶ AWX runs the job
+     ─▶ remediation_learning: OpenSearch + AlertComment + AIKB runbook
+```
+
+The Maschinenraum has Pending / Active / History / Catalog views for the
+alert-triggered remediations.
+
+### cs-meta convention
+
+Every playbook carries a commented YAML metadata block in its header — the single
+source of truth, parsed by `playbook_meta.parse_meta()` and synced into the AWX Job
+Template (`description`, `labels` from `matches`, `survey` from `params`):
+
+```yaml
+# ─── cs-meta ───────────────────────────────────────────────
+# id: disk-resize
+# title: Disk vergrößern (LVM)
+# description: Vergrößert ein LVM Logical Volume und das Dateisystem online
+# matches: ["checkmk:Filesystem*", "no space left on device"]
+# target: linux            # linux | windows | network | generic
+# risk: medium             # low | medium | high
+# params:
+#   - {name: lv_path,  example: "/dev/vg0/root"}
+#   - {name: add_size, example: "+10G"}
+# ─── /cs-meta ──────────────────────────────────────────────
+```
+
+Required fields: `id, title, description, matches, target, risk`. The `matches` field
+answers *"which alerts does this playbook handle"* — so the matcher uses an exact label
+pre-filter before falling back to the LLM. Authors write/validate playbooks in the
+Werkbank (`.cs-validate.py`, `ansible-lint`); the `~/skills/ansible-playbooks/SKILL.md`
+skill documents the convention.
+
+---
+
+## CheckMK Metrics Collector
+
+### Architecture
+
+An APScheduler job (`run_metrics_collection`) runs every 5 minutes:
+1. Finds all hosts with active WARN/CRIT problems via CheckMK `get_problems()`
+2. Fetches standard metrics (CPU load, memory, disk, cmk_time_agent) per host via `get_graph_data()`
+3. Writes the latest data point as an OpenSearch document into `cs-metrics-checkmk`
+
+**Index:** `cs-metrics-checkmk` — fields: `host`, `service`, `metric`, `value`, `unit`, `timestamp`
+
+### AI correlation
+
+During the `rag_lookup` step the AI agent reads current metric points for the affected hosts from `cs-metrics-checkmk`. This lets the LLM see patterns like *"CPU was 94% → 5 min later OOM kill → CheckMK alert"* in one context instead of searching for them separately.
+
+### AI War Room: blast radius
+
+On critical/high alerts a blast-radius analysis is started automatically (`blast_radius.py`):
+- **Site** of the host via ID-Generator (`resolve_host_to_location()`, uses `virt_servers` SQL)
+- **Co-located VMs** on the same physical host via NetBox (`get_vm_host()`)
+- **Co-located hosts** at the same site via `cs-metrics-checkmk`
+- The blast radius is passed to the LLM as context → causal narrative possible
+
+---
+
+## Prometheus Metrics & PromQL
+
+### Lucene → PromQL converter
+
+In the dashboard, **Add widget → Time series → PromQL converter**:
+
+| Input | Generated PromQL (example) |
+|-------|----------------------------|
+| `CPU usage docker086` | `100 - (avg(rate(node_cpu_seconds_total{instance="docker086:9100",mode="idle"}[5m])) * 100)` |
+| `memory docker086` | `100 * (1 - node_memory_MemAvailable_bytes{instance="docker086:9100"} / node_memory_MemTotal_bytes{instance="docker086:9100"})` |
+| `network traffic srv023` | `rate(node_network_receive_bytes_total{instance="srv023:9100"}[5m])` |
+| `disk` | `100 * (1 - node_filesystem_free_bytes / node_filesystem_size_bytes)` |
+
+### CheckMK metrics — integration direction
+
+> **Important:** CheckMK does **not export** to Prometheus. The native Prometheus integration is one-way — CheckMK *scrapes* Prometheus (CheckMK as a consumer). Native metric export only goes to InfluxDB/Graphite.
+
+Therefore there are two real ways to get CheckMK performance data into CentralStation:
+
+**Option A – CheckMK RRD via REST API (used):**
+`CheckMKConnector.get_graph_data()` pulls RRD time series via `/domain-types/metric/actions/get/invoke`. The `timeseries` widget can access it directly with `data_source: "checkmk"` — **no Prometheus needed**.
+
+**Option B – node_exporter → Prometheus (optional, for host metrics):**
+```bash
+# Ansible deploy on all hosts:
+ansible all -m apt -a "name=prometheus-node-exporter state=present" -b
+ansible all -m service -a "name=prometheus-node-exporter enabled=yes state=started" -b
+```
+Prometheus then scrapes the node_exporters and the `timeseries` widget uses `data_source: "prometheus"` with PromQL.
+
+**Forecast:** CheckMK CEE has **no** forecast REST endpoint (only a GUI dashlet). CentralStation therefore implements its own linear regression on the historical RRD data: `get_forecast_data()` fetches 72h of history, projects it via linear regression + computes a ±1σ confidence band. Result: `series_history`, `series_forecast`, `confidence_band`.
+
+---
+
+## Connectors
+
+### Global connectors (admin)
+
+Global connectors apply to all users and are used by the background agents.
+
+| Type | Auth method | Required credential fields |
+|------|-------------|----------------------------|
+| `checkmk` | Bearer `<user> <password>` | `username`, `password`, optional: `site` (CheckMK instance name) |
+| `graylog` | Basic Auth | `username`, `password` |
+| `wazuh` | JWT (own auth) | `username`, `password`, `indexer_url`, `indexer_username`, `indexer_password`, optional: `excluded_rule_ids`, `excluded_fim_paths` |
+| `icinga2` | Basic Auth (ApiUser) | `username`, `password` (API port 5665) |
+| `prometheus` | optional Basic/Bearer | `username` (optional), `password` (optional) |
+| `netbox` | Bearer Token | `api_token` |
+| `id_generator` | Basic Auth | `username` (`idgen_reader`), `password` |
+
+### Personal connectors (per user)
+
+Personal connectors are created by each user in the setup wizard or under **Settings → Connectors → My Connectors**.
+
+| Type | Auth method | Description |
+|------|-------------|-------------|
+| `jira` | Bearer Token | Jira access (tickets, Kanban sync) |
+| `jira_sd` | Bearer Token | Jira ServiceDesk (separate token possible) |
+| `o365` | OAuth2 device code flow | Microsoft 365 emails via Graph API |
+| `teams` | OAuth2 device code flow | Microsoft Teams channel messages |
+
+**Setting up Microsoft connectors (O365/Teams):**
+1. Create the connector with the Azure **tenant ID** and **client ID** (existing app registration, no admin needed)
+2. Click **"Sign in with Microsoft"** → a device code is shown
+3. Open `microsoft.com/devicelogin`, enter the code, sign in
+4. The connector is saved automatically with a `refresh_token`
+5. The token is refreshed automatically
+
+**Connector priority with multiple connectors of the same type:**  
+A personal connector always takes precedence over the global admin connector.
+
+### Connector actions
+
+- **Test connection**: `POST /api/connectors/{id}/test` — checks reachability and auth
+- **Delete connector**: admins can delete any connector; users can delete their personal connectors (`DELETE /api/connectors/my/{type}`)
+
+---
+
+## Writing your own connectors (Connector SDK)
+
+CentralStation is built around a small, clearly defined connector interface. A new
+connector — whether monitoring, ticketing or inventory — needs only **4 steps**. This
+section is meant as an **LLM skill**: an AI agent (Claude CLI, Codex, your own agent) can
+load it as context and produce a working connector in one pass.
+
+### Architecture at a glance
+
+```
+ConnectorConfig (DB, Fernet-encrypted: base_url + credentials)
+      │
+      ▼
+get_connector(type, base_url, credentials)      # factory  (connectors/__init__.py)
+      │
+      ▼
+class MyConnector(BaseConnector)                # your class (connectors/my.py)
+   ├── test_connection() -> ConnectorTestResult # required: reachability + auth
+   └── get_problems() / get_alerts() / ...      # data method(s)
+      │
+      ▼
+collect_my(connector, time_range_minutes)       # mapping → feed-alert dicts (alert_aggregator.py)
+      │
+      ▼
+cs-feed-{source} (OpenSearch)  →  Feed · Bridge · Dashboard · AI agent
+```
+
+### Step 1 — Connector class
+
+`backend/app/services/connectors/<type>.py`. Extends `BaseConnector` (provides `self.base_url`,
+`self.credentials`, `self._client()` with `verify=False` for self-signed certs).
+
+```python
+from app.schemas.connector import ConnectorTestResult
+from app.services.connectors.base import BaseConnector
+
+
+class MyConnector(BaseConnector):
+    def _headers(self) -> dict:
+        # build auth from the (decrypted) credentials
+        token = self.credentials.get("api_token", "")
+        return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+    async def test_connection(self) -> ConnectorTestResult:
+        """REQUIRED: checks reachability + auth. Used by the 'Test connection' button."""
+        try:
+            async with self._client() as client:
+                r = await client.get(f"{self.base_url}/api/status", headers=self._headers())
+            r.raise_for_status()
+            return ConnectorTestResult(success=True, message="MySystem reachable")
+        except Exception as e:
+            return ConnectorTestResult(success=False, message=str(e))
+
+    async def get_problems(self) -> list[dict]:
+        """Data method: returns open problems in the UNIFIED schema (see below)."""
+        async with self._client() as client:
+            r = await client.get(f"{self.base_url}/api/problems", headers=self._headers())
+        r.raise_for_status()
+        out = []
+        for p in r.json().get("items", []):
+            out.append({
+                "severity": _map_severity(p["state"]),   # critical|high|medium|low|info
+                "host":     p["host"],
+                "service":  p["service"],
+                "output":   p.get("plugin_output", ""),
+                "acknowledged": bool(p.get("acknowledged")),
+                "last_state_change": p.get("last_state_change"),
+                "host_address": p.get("address", ""),
+                "metadata": {"os": p.get("os", ""), "location": p.get("site", "")},
+            })
+        return out
+```
+
+**Unified problem schema** (as expected by the aggregator):
+
+| Field | Type | Required | Meaning |
+|-------|------|----------|---------|
+| `severity` | `critical\|high\|medium\|low\|info` | ✓ | normalized severity |
+| `host` | str | ✓ | hostname (correlation/filter key) |
+| `service` | str | ✓ | affected service/check |
+| `output` | str | – | plugin/status text |
+| `acknowledged` | bool | – | acknowledged? |
+| `last_state_change` | epoch/ISO | – | time of the state change |
+| `host_address` | str | – | IP |
+| `metadata` | dict | – | `os`, `location`, `criticality`, `ve` … (CheckMK filters apply to this) |
+
+### Step 2 — Register in the factory
+
+`backend/app/services/connectors/__init__.py` → import + mapping entry:
+
+```python
+from app.services.connectors.my import MyConnector
+mapping = { ..., "my": MyConnector }
+```
+
+`backend/app/api/connectors.py` → add to `VALID_TYPES` (`"my"`). Optionally add it to
+`USER_MANAGED_TYPES` if every user (not just admins) may create the connector.
+
+### Step 3 — Collector in the aggregator
+
+`backend/app/services/alert_aggregator.py` — maps the connector output to feed-alert dicts:
+
+```python
+async def collect_my(connector: ConnectorConfig, time_range_minutes: int = 60) -> list[dict]:
+    from app.services.connectors.my import MyConnector
+    creds = decrypt_credentials(connector.encrypted_credentials)
+    svc = MyConnector(base_url=connector.base_url, credentials=creds)
+    items = await svc.get_problems()
+    return [{
+        "source": "my",
+        "severity": i["severity"],
+        "title": f"{i['host']} — {i['service']}",
+        "body": i.get("output", ""),
+        "external_id": f"my:{i['host']}:{i['service']}",   # STABLE dedup key!
+        "external_url": f"{connector.base_url}/host/{i['host']}",
+        "metadata": {**(i.get("metadata") or {}), "host": i["host"], "service": i["service"]},
+    } for i in items]
+
+# further down, in the _COLLECTORS map:
+_COLLECTORS = { ..., "my": collect_my }
+```
+
+**`external_id` is the most important value**: a stable, deterministic dedup key across all runs
+(e.g. `my:host:service`). Deduplication, incident correlation, claim/status and timeline all depend on it.
+
+### Step 4 — Frontend form fields (optional)
+
+`frontend/src/app/features/settings/connectors/connector-form/` → extend `CRED_FIELDS` with the
+fields of the new type (e.g. `api_token`, `username`/`password`). Without an entry the connector
+does not appear in the creation dialog (but can still be created via the API/seed).
+
+### Checklist
+
+- [ ] `MyConnector(BaseConnector)` with `test_connection()` + data method
+- [ ] registered in the `get_connector()` factory + `VALID_TYPES`
+- [ ] `collect_my()` + `_COLLECTORS` entry in the aggregator
+- [ ] `external_id` is stable and deterministic
+- [ ] severity normalized to `critical|high|medium|low|info`
+- [ ] (optional) frontend `CRED_FIELDS`
+- [ ] `POST /api/connectors/{id}/test` green
+
+> **Reference implementations:** `checkmk.py` (Bearer, monitoring → `get_problems`),
+> `wazuh.py` (JWT login, security → `get_alerts`), `graylog.py` (Views API, logs),
+> and `icinga2.py` (Basic Auth, monitoring → `get_problems`) as a complete worked example
+> built exactly according to this guide.
+
+---
+
+## User Management and RBAC
+
+### Roles
+
+| Role | Scope | Restrictions |
+|------|-------|--------------|
+| `admin` | everything: user management, connectors, settings, audit log | — |
+| `sysadmin` | all alerts (CheckMK/Wazuh/Graylog general), Kanban, Jira, AI Insights, Feed | no connector/user management |
+| `network` | Graylog switch alerts (nsa*/nss*/nsc*), NetBox, ID-Generator, network Kanban | no SysAdmin alerts, no Wazuh, no connector config |
+| `viewer` | read access to own area | no write operations |
+
+### User preferences
+
+| Preference | Description |
+|------------|-------------|
+| `checkmk_locations` | CheckMK locations for feed filtering (Single Source of Truth) |
+| `checkmk_ve` | virtualization environment filter |
+| `checkmk_criticality` | criticality filter |
+| `checkmk_os` | operating system filter |
+| `checkmk_hostgroups` | host group filter |
+| `feed_disabled_search_ids` | disabled saved searches |
+| `ticket_seen_map` | JSON `{jira_key: ISO time}` — ticket badge tracking (replaces localStorage) |
+| `feed_checkmk_min_age_minutes` | CheckMK minimum age (hide very recent items) |
+| `feed_sources_enabled` | which sources are shown in the feed |
+| `feed_teams_channels` | Microsoft Teams channel IDs for the personal feed |
+| `o365_mailbox` | O365 mailbox address |
+| `o365_folder` | O365 folder (default: `Inbox`) |
+| `jira_project` | default Jira project |
+| `sla_notify_p1_minutes` | SLA notification threshold P1 |
+| `sla_notify_p2_minutes` | SLA notification threshold P2 |
+
+---
+
+## Settings and Preferences
+
+### Global settings (Admin → Settings)
+
+All settings are stored encrypted in the database and managed via `GET/PATCH /api/settings`.
+
+**Language:**
+- `ui_language` — per-user UI and AI response language (`en` default, `de`)
+
+**LLM configuration:**
+- `llm.provider` — `custom` (local endpoint, default) or `openai-codex` (OAuth, no API key needed)
+- `llm.base_url`, `llm.model`, `llm.api_key` — for the `custom` provider
+- `llm.codex_model` — for the `openai-codex` provider (e.g. `gpt-5.5`)
+- `llm.vision_model_url`, `llm.vision_model`
+- `llm.thinking_mode` (extended thinking, default `false`)
+
+**Agent configuration:**
+- `agent.auto_enrich` — automatic AI enrichment after aggregation
+- `agent.interval_minutes` — background agent interval
+- `agent.auto_create_jira` — create tickets automatically
+- `agent.jira_severity_threshold` — minimum severity for auto-ticketing
+
+**Web search:**
+- `searxng.base_url` — SearXNG web search
+
+### Fetch filter values
+
+`GET /api/feed/checkmk-filter-values` — returns the available values for all CheckMK filter dropdowns (OS, location, VE, criticality, host groups) directly from OpenSearch.
+
+---
+
+## API Reference
+
+### Authentication
+
+| Pfad | Methode | Beschreibung |
+|------|---------|-------------|
+| `/api/auth/login` | POST | Login; gibt `access_token` + setzt `refresh_token` HttpOnly-Cookie |
+| `/api/auth/refresh` | POST | Access Token erneuern via Cookie |
+| `/api/auth/logout` | POST | Refresh Token revoken |
+| `/api/auth/me` | GET | Eigenes User-Profil (prüft Token-Gültigkeit) |
+
+**Token-Lebensdauer und Persistenz:**
+- Access Token ist **8 Stunden** gültig (konfigurierbar via `access_token_expire_minutes`)
+- Token wird im Browser unter `localStorage['cs_access_token']` gespeichert — überlebt Seiten-Reload und Browser-Neustart ohne erneutes Login
+- `AuthService` liest Token beim Angular-Start aus `localStorage` → `isLoggedIn()` ist sofort `true`
+- Fehlt das User-Profil (z.B. neuer Tab), wird es via `GET /auth/me` nachgeladen; schlägt das fehl, wird Cookie-basierter Silent-Refresh versucht
+- Logout löscht Token aus `localStorage` und revoked das Refresh-Cookie
+
+### Hosts
+
+| Pfad | Methode | Beschreibung |
+|------|---------|-------------|
+| `/api/hosts/{hostname}/health` | GET | Performance-Vitals (gecacht); `?live=true` für CheckMK-RRD-Refresh |
+| `/api/hosts/{hostname}/services` | GET | Alle CheckMK-Services mit `state_label` + `summary`; sortiert nach Schweregrad |
+| `/api/hosts/{hostname}/graph` | GET | 24h-Zeitreihe: `?service=<name>&metric=<id>` → `{series, title, unit}` |
+
+### Feed
+
+| Pfad | Methode | Beschreibung |
+|------|---------|-------------|
+| `/api/feed/` | GET | Unified Alert Feed (OpenSearch), alle Filter-Parameter |
+| `/api/feed/unread-count` | GET | Ungelesene Alerts seit `?since=<ISO>` |
+| `/api/feed/checkmk-filter-values` | GET | Verfügbare Filter-Werte aus CheckMK-Index |
+| `/api/feed/{item_id}/acknowledge` | POST | Alert als bestätigt markieren |
+| `/api/feed/{item_id}/enrich` | POST | KI-Anreicherung (optional SearXNG) für einzelnes Item |
+| `/api/feed/{item_id}/ignore` | POST | KI generiert OpenSearch-Ausschluss-Query → als System-Exclusion-Suche speichern |
+| `/api/feed/incidents` | GET | Offene Incidents (status: open/investigating) |
+| `/api/feed/incidents/{id}/timeline` | GET | Chronologische Timeline eines Incidents (Alerts + Kommentare + KI-Diagnosen) |
+
+### FeedSearches
+
+| Path | Method | Description |
+|------|--------|-------------|
+| `/api/feed-searches/` | GET | all searches (system + own) |
+| `/api/feed-searches/` | POST | create a new personal search |
+| `/api/feed-searches/system` | POST | create a new system search (admin) |
+| `/api/feed-searches/{id}` | PATCH | edit a search |
+| `/api/feed-searches/{id}` | DELETE | delete a search (own only; system → 403) |
+| `/api/feed-searches/{id}/preview` | GET | preview (5 hits) |
+
+### Dashboard widgets
+
+| Path | Method | Description |
+|------|--------|-------------|
+| `/api/dashboard-widgets/dashboards` | GET | all dashboards of the user |
+| `/api/dashboard-widgets/dashboards` | POST | create a new dashboard |
+| `/api/dashboard-widgets/dashboards/{id}` | PATCH | rename a dashboard |
+| `/api/dashboard-widgets/dashboards/{id}` | DELETE | delete a dashboard |
+| `/api/dashboard-widgets/dashboards/{id}/reset-defaults` | POST | restore the default widgets |
+| `/api/dashboard-widgets/dashboards/{id}/suggest-layout` | POST | compute a generative layout suggestion (does not write itself) |
+| `/api/dashboard-widgets/` | GET | all widgets of the user (by dashboard) |
+| `/api/dashboard-widgets/` | POST | create a new widget |
+| `/api/dashboard-widgets/{id}` | PATCH | edit a widget (layout/config/title) |
+| `/api/dashboard-widgets/{id}` | DELETE | delete a widget |
+| `/api/dashboard-widgets/{id}/data` | GET | fetch widget data (OpenSearch / Prometheus) |
+
+### AI
+
+| Path | Method | Description |
+|------|--------|-------------|
+| `/api/ai/search-assistant` | POST | free text → Lucene query; can create a FeedSearch/widget |
+| `/api/ai/promql-assistant` | POST | Lucene/free text → PromQL |
+| `/api/ai/trigger/{agent_type}` | POST | trigger an agent manually (`sysadmin` / `network`) |
+| `/api/ai/analyses` | GET | latest AI analyses (ai_analyses) |
+| `/api/ai/analyses/{analysis_id}` | GET | a single analysis (deep link from the AI summary widget: `/ai-insights?analysis=<id>`) |
+
+### Preferences
+
+| Path | Method | Description |
+|------|--------|-------------|
+| `/api/preferences/` | GET | own preferences |
+| `/api/preferences/` | PATCH | update preferences (CheckMK filters etc.) |
+| `/api/preferences/jira-queries/` | GET | own JQL queries |
+| `/api/preferences/jira-queries/` | POST | new JQL query |
+| `/api/preferences/jira-queries/{id}` | PATCH | edit a JQL query |
+| `/api/preferences/jira-queries/{id}` | DELETE | delete a JQL query |
+| `/api/preferences/jira-queries/generate` | POST | AI JQL generator |
+
+### Connectors
+
+| Path | Method | Description |
+|------|--------|-------------|
+| `/api/connectors/` | GET | all connectors (admin: all; user: own) |
+| `/api/connectors/` | POST | create a new connector (admin) |
+| `/api/connectors/{id}` | PATCH | edit a connector |
+| `/api/connectors/{id}` | DELETE | delete a connector (admin) |
+| `/api/connectors/{id}/test` | POST | test the connection |
+| `/api/connectors/my` | GET | personal connectors |
+| `/api/connectors/my/{type}` | POST | create/update a personal connector |
+| `/api/connectors/my/{type}` | DELETE | delete a personal connector |
+| `/api/connectors/my/{type}/test` | POST | test a personal connector |
+| `/api/connectors/my/{type}/device-code/start` | POST | start the Microsoft device code flow |
+| `/api/connectors/my/{type}/device-code/poll` | POST | check/finish the device code flow |
+
+### Workflow / Work Sessions
+
+| Path | Method | Description |
+|------|--------|-------------|
+| `/api/workflow/` | GET | all work sessions of the user |
+| `/api/workflow/` | POST | create a new work session |
+| `/api/workflow/{id}` | GET | work session with all notes |
+| `/api/workflow/{id}` | PATCH | edit a work session |
+| `/api/workflow/{id}/notes` | POST | add a note |
+| `/api/workflow/{id}/generate-comment` | POST | generate an AI Jira comment |
+| `/api/workflow/{id}/post-comment` | POST | post a comment to Jira (`{"comment": "..."}`) — AI-generated or manual |
+| `/api/workflow/{id}/generate-resolution` | POST | generate closure documentation |
+| `/api/workflow/{id}/auto-categorize` | POST | AI categorization |
+| `/api/workflow/{id}/suggest-solution` | POST | web solution search |
+| `/api/workflow/{id}/5why` | POST | 5-whys root cause analysis |
+| `/api/workflow/analyze-mail` | POST | analyze an O365 email |
+
+### Other endpoints
+
+| Path | Method | Description |
+|------|--------|-------------|
+| `/api/alerts/` | GET | aggregated alerts from PostgreSQL |
+| `/api/kanban/` | GET, POST, PATCH, DELETE | Kanban cards |
+| `/api/kanban/import-jira` | POST | import Jira tickets into the board |
+| `/api/jira-view/my-tickets` | GET | Jira tickets by JQL filters |
+| `/api/settings/` | GET | global settings (admin) |
+| `/api/settings/` | PATCH | edit global settings (admin) |
+| `/api/settings/test/llm` | POST | test the LLM connection |
+| `/api/users/` | GET, POST | manage users (admin) |
+| `/api/users/{id}` | PATCH, DELETE | edit/delete users (admin) |
+| `/api/audit/` | GET | audit log (admin) |
+| `/api/network/events` | GET | network switch events |
+| `/api/ws` | WebSocket | real-time push (alerts, AI results) |
+| `/api/help/` | GET | context-aware help texts |
+
+---
+
+## Database Migrations
+
+| Revision | Description |
+|----------|-------------|
+| `0001` | initial schema: `users`, `connector_configs`, `alerts`, `kanban_cards`, `ai_analyses`, `audit_logs`, `global_settings` |
+| `0002` | `network_switch_events` + `global_settings` table |
+| `0003` | `workflow_sessions` + `workflow_notes` (ITIL work sessions) |
+| `0004` | `refresh_tokens` + `audit_log` table |
+| `0005` | `user_preferences`: CheckMK filters (`checkmk_locations`, `checkmk_ve`, `checkmk_criticality`) |
+| `0006` | personal connectors: `owner_user_id` FK in `connector_configs` |
+| `0007` | setup wizard state: `setup_completed` in `user_preferences` |
+| `0008` | `user_preferences`: `checkmk_os` + `checkmk_hostgroups` + `jira_project` |
+| `0009` | `feed_searches` Tabelle + `feed_disabled_search_ids` in `user_preferences`; 4 System-Suchen als Seeds |
+| `0010` | `dashboard_widgets` Tabelle |
+| `0011` | `dashboards` Tabelle + `dashboard_id` FK in `dashboard_widgets` |
+| `0012` | `user_preferences.checkmk_hostgroups` (falls fehlend) |
+| `0013` | `feed_searches.is_exclusion` Boolean-Feld |
+| `0014` | `user_preferences.ticket_seen_map` (JSON) — serverseitiges Ticket-Badge-Tracking |
+| `0015` | `dashboards.mode` (`classic`/`generative`), `dashboard_widgets.pinned`, `dashboard_widgets.hidden` — Generativer Modus |
+| `0016` | `alert_score_adjustments` — adaptives Scoring (Feedback-Loop, Deltas mit Verfall) |
+| `0017` | `worklist_snapshots`, `ai_insight_cache` — KI-Worklist-Cache und Alert-Insight-Cache |
+| `0018` | `user_preferences.ui_theme` (`classic`/`holo`/`lcars`) — app-weites Theme |
+| `0019` | `dashboards.rationale`, `dashboards.generated_at` — Generatives Dashboard mit KI-Lagebild |
+| `0020` | `alert_collaboration` + `alert_comments` — kollaboratives Alert-Handling (Claim/Status/Timeline) |
+| `0021` | `incidents` + `incident_members` — automatische Incident-Korrelation (FQDN-only, 30-Min-Zeitfenster, Cross-Source) |
+| `0022` | `user_preferences.computer_console_enabled` + `ui_language` (Computer Console freischalten, per-User UI/KI-Sprache) |
+| `0023` | `computer_sessions` — Persistenz der Computer-Console-Sessions |
+| `0024` | `computer_sessions.external_id` + `resolved` (GELÖST-Button-Persistenz) |
+| `0025` | `work_sessions.computer_session_id` — Verknüpfung Work Session ↔ Computer-Session |
+| `0026` | `work_sessions` GitLab-Spalten — GitLab-Integration |
+| `0027` | `remediation_proposals` — AWX-Remediation-Pipeline (Human-in-the-Loop) |
+| `0028` | `playbook_drafts` — KI-Playbook-Authoring |
+| `0029` | `work_sessions.workspace_path` — Werkbank Web-IDE |
+| `0030` | `ai_analyses.clusters` — KI-Insights Fehler-Cluster (Root-Cause-Diagnosen) |
 
 ---
 
 ## Deployment
 
-```bash
-# Erste Inbetriebnahme
-cp .env.example .env          # ENCRYPTION_KEY, DATABASE_URL, REDIS_URL, SECRET_KEY setzen
-docker compose up -d
-
-# Datenbank-Migrationen
-docker compose exec backend alembic upgrade head
-
-# Frontend Build (Produktion)
-docker compose exec frontend ng build --configuration production
-```
-
-### Minimale ENV-Variablen
+### Minimal ENV variables
 
 ```env
-ENCRYPTION_KEY=<Fernet-Key, 32 Byte Base64>
+# Required
+ENCRYPTION_KEY=<Fernet key, 32-byte base64>
 DATABASE_URL=postgresql+asyncpg://user:pass@db/centralstation
 REDIS_URL=redis://redis:6379/0
-SECRET_KEY=<JWT-Signing-Key>
+SECRET_KEY=<JWT signing key, min. 32 chars>
+
+# OpenSearch
+OPENSEARCH_URL=http://opensearch:9200
+OPENSEARCH_USER=admin
+OPENSEARCH_PASSWORD=<password>
 ```
 
-Alle anderen Konfigurationen (LLM-URL, Connector-Zugangsdaten, SearXNG, RAG) werden verschlüsselt in der Datenbank gespeichert und über das Frontend verwaltet.
+All other configuration (LLM URL, connector credentials, SearXNG) is stored Fernet-encrypted in the database and managed via the frontend.
 
----
-
-## API-Übersicht
-
-| Pfad | Methode | Beschreibung |
-|------|---------|--------------|
-| `/api/auth/login` | POST | Login (rate-limited: 10/min) |
-| `/api/auth/refresh` | POST | Token-Refresh (HttpOnly Cookie) |
-| `/api/preferences` | GET, PATCH | Benutzer-Präferenzen + Setup-Status |
-| `/api/preferences/jira-queries` | GET, POST | JQL-Filter verwalten |
-| `/api/preferences/jira-queries/generate` | POST | **KI JQL-Generator** |
-| `/api/jira-view/my-tickets` | GET | Jira-Tickets nach aktiven JQL-Filtern |
-| `/api/workflow` | GET, POST | Work Sessions (ITIL) |
-| `/api/workflow/{id}` | GET, PATCH, DELETE | Work Session CRUD |
-| `/api/workflow/{id}/notes` | POST | Arbeitsnotiz hinzufügen |
-| `/api/workflow/{id}/generate-comment` | POST | KI-Ticket-Kommentar |
-| `/api/workflow/{id}/generate-resolution` | POST | KI-Lösungsdokumentation |
-| `/api/workflow/{id}/5why` | POST | 5-Why Root Cause Analyse |
-| `/api/workflow/{id}/suggest-solution` | POST | RAG + Web Lösungssuche |
-| `/api/workflow/{id}/auto-categorize` | POST | KI Auto-Kategorisierung |
-| `/api/workflow/analyze-mail` | POST | E-Mail-Analyse |
-| `/api/alerts` | GET | Aggregierte Alerts |
-| `/api/kanban` | GET, POST, PATCH | Kanban-Karten |
-| `/api/ai/trigger/{type}` | POST | KI-Agent manuell triggern |
-| `/api/settings` | GET, PATCH | Globale Einstellungen (Admin) |
-| `/api/audit` | GET | Audit-Log (Admin) |
-| `/ws/{user_id}` | WS | Real-Time Push |
-
----
-
-## Verbindungstypen (Konnektoren)
-
-| Typ | Auth | Beschreibung |
-|-----|------|--------------|
-| `checkmk` | Bearer Token | CheckMK REST API (Monitoring) |
-| `graylog` | Basic Auth | Graylog (Log-Aggregation) |
-| `wazuh` | JWT (eigene Auth) | Wazuh SIEM |
-| `jira` | Bearer PAT | Jira Tickets + Kanban-Sync |
-| `o365` | OAuth2 client_credentials | O365 Microsoft Graph (Mail) |
-| `prometheus` | Optional Basic/Bearer | Metriken |
-| `netbox` | Bearer Token | IP-Inventar, VMs |
-| `id_generator` | Basic Auth (READ-ONLY) | Standort-Stammdaten (ippen.media) |
-| `it_aikb` | Bearer Token | RAG-Wissensdatenbank (it-aikb) |
-
-Alle Zugangsdaten werden mit Fernet (AES-128-CBC) verschlüsselt in der Datenbank gespeichert.
-
----
-
-## Rollen
-
-| Rolle | Zugang |
-|-------|--------|
-| `admin` | Vollzugriff inkl. Benutzer, Konnektoren, Audit-Log |
-| `sysadmin` | Alerts, Kanban, Meine Tickets, KI-Insights, Workflow |
-| `network_technician` | Switch-Alerts, Netzwerk-Kanban |
-| `viewer` | Lesen (rollenbasiert) |
-
----
-
-## Entwicklung
+### Docker Compose
 
 ```bash
-# Backend (dev)
-cd backend
-python -m uvicorn app.main:app --reload --port 8000
+# Start the stack
+docker compose up -d
 
-# Frontend (dev)
-cd frontend
-npm install
-ng serve --port 4200
+# Watch logs
+docker compose logs -f backend
+
+# Apply migrations manually
+docker compose exec backend alembic upgrade head
+
+# Back up the database
+docker compose exec db pg_dump -U postgres centralstation > backup_$(date +%Y%m%d).sql
+
+# Check OpenSearch status
+curl http://localhost:9200/_cluster/health?pretty
 ```
+
+### Production checklist
+
+- [ ] `ENCRYPTION_KEY` generated securely and set in `.env` (never commit to Git)
+- [ ] `SECRET_KEY` with at least 64 chars of entropy
+- [ ] Nginx SSL certificate configured (`nginx/nginx.conf`)
+- [ ] OpenSearch with auth and TLS
+- [ ] regular PostgreSQL backup set up
+- [ ] `docker compose up -d --no-build` for production (use pre-built images)
+- [ ] change the admin password after the first login
+- [ ] rate limiting on `/api/auth/login` (10 requests/minute, already built in)
+
+---
+
+## Upgrading
+
+### Pulling the latest code
+
+```bash
+git pull origin main
+```
+
+### Rebuild and restart containers
+
+```bash
+# Rebuild all images (picks up code changes)
+docker compose build
+
+# Restart with the new images
+docker compose up -d
+```
+
+Only the `backend`, `frontend`, and `centralcore` services contain baked code.
+`db`, `redis`, `opensearch`, and `nginx` use upstream images and only need a
+pull + restart when you want a newer upstream version.
+
+### Apply database migrations
+
+Migrations run automatically when the backend starts. To apply them manually
+(e.g. after a failed start):
+
+```bash
+docker compose exec backend python -m alembic upgrade head
+```
+
+Check current revision:
+
+```bash
+docker compose exec backend python -m alembic current
+```
+
+### Updating a single service
+
+```bash
+# Rebuild and restart only the backend
+docker compose build backend && docker compose up -d --no-deps backend
+
+# Rebuild and restart only the frontend
+docker compose build frontend && docker compose up -d --no-deps frontend
+
+# Rebuild and restart centralcore (includes Hermes re-install)
+docker compose build centralcore && docker compose up -d --no-deps centralcore
+```
+
+### Rollback
+
+```bash
+# Roll back to the previous migration
+docker compose exec backend python -m alembic downgrade -1
+
+# Or roll back to a specific revision
+docker compose exec backend python -m alembic downgrade <revision>
+
+# Restore the database from backup
+docker compose exec -T db psql -U centralstation centralstation < backup_YYYYMMDD.sql
+```
+
+### Zero-downtime upgrade (production)
+
+1. `git pull origin main`
+2. `docker compose build backend frontend`
+3. `docker compose up -d --no-deps backend frontend` — new containers replace old ones
+4. Migrations apply automatically on backend startup
+5. Verify health: `docker compose ps` and `curl http://localhost/api/health`

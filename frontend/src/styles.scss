@@ -5,6 +5,7 @@
 // Learn more about theming and how to use it for your application's
 // custom components at https://material.angular.dev/guide/theming
 @use '@angular/material' as mat;
+@import 'gridstack/dist/gridstack.min.css';
 
 html {
   @include mat.theme((
@@ -37,3 +38,374 @@ body {
 
 html, body { height: 100%; }
 body { margin: 0; font-family: Roboto, "Helvetica Neue", sans-serif; }
+
+/* Global: Schrift 1px größer — alle rem-Werte skalieren proportional */
+html { font-size: 17px; }
+
+/* LCARS: nochmal 1px größer (Cockpit-Ansicht braucht gut lesbare Schrift) */
+html.cs-theme-lcars { font-size: 18px; }
+
+/* ══════════ Bridge full-screen: hide app chrome while the cockpit is open ══════════ */
+body.bridge-active .sidenav,
+body.bridge-active mat-sidenav { display: none !important; }
+body.bridge-active mat-sidenav-content { margin: 0 !important; }
+
+/* ══════════ Server Cockpit window: standalone full-screen, no app navigation ══════════ */
+body.cockpit-active .sidenav,
+body.cockpit-active mat-sidenav { display: none !important; }
+body.cockpit-active mat-sidenav-content { margin: 0 !important; }
+
+/* ══════════ App-wide themes (color reskin via Material system variables) ══════════
+   classic = default (untouched). holo + lcars override --mat-sys-* tokens so all
+   Material components and custom views re-skin globally. */
+
+/* ───── HOLO: dark blue glass + cyan ───── */
+html.cs-theme-holo {
+  color-scheme: dark;
+  --mat-sys-surface: #050d1a;
+  --mat-sys-surface-container: #0a1c2e;
+  --mat-sys-surface-container-high: #0e2236;
+  --mat-sys-surface-container-highest: #123048;
+  --mat-sys-surface-container-low: #07131f;
+  --mat-sys-surface-variant: #0e2236;
+  --mat-sys-on-surface: #cfeeff;
+  --mat-sys-on-surface-variant: #8fb8cf;
+  --mat-sys-primary: #4fd6ff;
+  --mat-sys-on-primary: #00131f;
+  --mat-sys-primary-container: #0e3a52;
+  --mat-sys-on-primary-container: #bfeaff;
+  --mat-sys-secondary: #7fdfff;
+  --mat-sys-tertiary: #6ad7ff;
+  --mat-sys-outline: #2c5a74;
+  --mat-sys-outline-variant: #1b3a4d;
+  --mat-sys-error: #ff5b6e;
+  --mat-sys-background: #02060f;
+}
+html.cs-theme-holo body { background: radial-gradient(circle at 50% 12%, rgba(20,60,90,.45), transparent 40rem), linear-gradient(160deg,#02060f,#050d1a 60%,#02060f); }
+
+/* ───── LCARS: black + orange/gold/blue (authentic TNG palette) ───── */
+/* Dominant: orange structural, gold buttons, blue accents — violet barely exists */
+html.cs-theme-lcars {
+  color-scheme: dark;
+  --mat-sys-surface: #000000;
+  --mat-sys-surface-container: #141008;
+  --mat-sys-surface-container-high: #1e1710;
+  --mat-sys-surface-container-highest: #261f14;
+  --mat-sys-surface-container-low: #0a0804;
+  --mat-sys-surface-variant: #1e1710;
+  --mat-sys-on-surface: #ffe8a0;           /* gold/cream text */
+  --mat-sys-on-surface-variant: #e8a060;   /* amber text */
+  --mat-sys-primary: #FF9933;              /* Neon Carrot — official LCARS orange */
+  --mat-sys-on-primary: #000000;
+  --mat-sys-primary-container: #4a2010;
+  --mat-sys-on-primary-container: #ffe8a0;
+  --mat-sys-secondary: #ffcc66;            /* gold (buttons/labels) */
+  --mat-sys-tertiary: #99CCFF;             /* blue accent (very limited) */
+  --mat-sys-outline: #5a3a18;
+  --mat-sys-outline-variant: #3a2810;
+  --mat-sys-error: #ff4433;
+  --mat-sys-background: #000000;
+}
+html.cs-theme-lcars body { background: #000; color: #ffe8a0; }
+
+/* ── LCARS: set ALL Material 3 text tokens explicitly (--mat-sys-* alone is not enough) ── */
+html.cs-theme-lcars {
+  /* MDC card */
+  --mat-card-title-text-color: #ffe8a0;
+  --mat-card-subtitle-text-color: #e8a060;
+  /* MDC list items */
+  --mdc-list-list-item-label-text-color: #ffe8a0;
+  --mdc-list-list-item-supporting-text-color: #e8a060;
+  --mdc-list-list-item-secondary-text-color: #e8a060;
+  --mdc-list-list-item-trailing-supporting-text-color: #e8a060;
+  /* MDC chips */
+  --mdc-chip-label-text-color: #ffe8a0;
+  /* MDC select / option */
+  --mat-option-label-text-color: #ffe8a0;
+  --mat-select-enabled-trigger-text-color: #ffe8a0;
+  /* MDC form field */
+  --mat-form-field-container-text-color: #ffe8a0;
+  --mat-form-field-label-text-color: #e8a060;
+  --mat-input-element-color: #ffe8a0;
+  /* MDC button text */
+  --mat-text-button-label-text-color: #ffe8a0;
+  --mat-outlined-button-label-text-color: #e8a060;
+  /* MDC table */
+  --mat-table-row-item-label-text-color: #ffe8a0;
+  --mat-table-header-headline-color: #e8a060;
+  /* MDC expansion panel */
+  --mat-expansion-header-text-color: #ffe8a0;
+  --mat-expansion-container-text-color: #ffe8a0;
+  /* MDC sidenav */
+  --mat-sidenav-content-text-color: #ffe8a0;
+  /* MDC tooltip */
+  --mdc-plain-tooltip-supporting-text-color: #000;
+  /* ── Buttons (the most-missed token set) ── */
+  /* mat-raised-button / mat-flat-button color="primary" */
+  --mdc-protected-button-container-color: #FF9933;
+  --mdc-protected-button-label-text-color: #000000;
+  --mdc-protected-button-disabled-container-color: #3a2810;
+  --mdc-protected-button-disabled-label-text-color: #5a3a18;
+  --mdc-filled-button-container-color: #FF9933;
+  --mdc-filled-button-label-text-color: #000000;
+  --mdc-filled-button-disabled-container-color: #3a2810;
+  --mdc-filled-button-disabled-label-text-color: #5a3a18;
+  /* mat-stroked-button / mat-outlined-button */
+  --mdc-outlined-button-label-text-color: #e8a060;
+  --mdc-outlined-button-outline-color: #FF9933;
+  --mdc-outlined-button-disabled-label-text-color: #5a3a18;
+  --mdc-outlined-button-disabled-outline-color: #3a2810;
+  /* mat-button (text only) */
+  --mdc-text-button-label-text-color: #ffe8a0;
+  --mdc-text-button-disabled-label-text-color: #5a3a18;
+  /* Default raised button (no color) */
+  --mat-protected-button-container-color: #1e1710;
+  --mat-protected-button-state-layer-color: #FF9933;
+}
+
+/* Global cascade: any text not covered by tokens gets gold on black */
+html.cs-theme-lcars body,
+html.cs-theme-lcars mat-card,
+html.cs-theme-lcars .mat-mdc-card,
+html.cs-theme-lcars mat-list-item,
+html.cs-theme-lcars .mat-mdc-list-item,
+html.cs-theme-lcars .mdc-list-item__primary-text,
+html.cs-theme-lcars .mdc-list-item__secondary-text { color: #ffe8a0; }
+
+html.cs-theme-lcars .mat-mdc-card-subtitle,
+html.cs-theme-lcars .mat-mdc-card-header-text .mat-mdc-card-subtitle,
+html.cs-theme-lcars small, html.cs-theme-lcars .hint,
+html.cs-theme-lcars .timestamp, html.cs-theme-lcars [class*="meta"],
+html.cs-theme-lcars [class*="subtitle"] { color: #e8a060 !important; }
+
+/* ── Direct button overrides (tokens alone don't always pierce MDC) ── */
+html.cs-theme-lcars button.mat-mdc-raised-button.mat-primary,
+html.cs-theme-lcars button.mat-mdc-raised-button[color="primary"],
+html.cs-theme-lcars button.mat-mdc-unelevated-button.mat-primary,
+html.cs-theme-lcars button.mat-mdc-unelevated-button[color="primary"] {
+  background-color: #FF9933 !important;
+}
+html.cs-theme-lcars button.mat-mdc-raised-button.mat-primary .mdc-button__label,
+html.cs-theme-lcars button.mat-mdc-raised-button[color="primary"] .mdc-button__label,
+html.cs-theme-lcars button.mat-mdc-unelevated-button.mat-primary .mdc-button__label,
+html.cs-theme-lcars button.mat-mdc-unelevated-button[color="primary"] .mdc-button__label,
+html.cs-theme-lcars button.mat-mdc-raised-button.mat-primary span,
+html.cs-theme-lcars button.mat-mdc-unelevated-button.mat-primary span {
+  color: #000 !important;
+}
+/* Stroked/outlined buttons */
+html.cs-theme-lcars button.mat-mdc-outlined-button,
+html.cs-theme-lcars button.mat-mdc-outlined-button span { color: #e8a060 !important; }
+/* Default (no color) raised buttons */
+html.cs-theme-lcars button.mat-mdc-raised-button:not(.mat-primary):not([color]) {
+  background-color: #1e1710 !important;
+}
+html.cs-theme-lcars button.mat-mdc-raised-button:not(.mat-primary):not([color]) span { color: #ffe8a0 !important; }
+
+/* Dashboard widgets use the Bridge panel language (LCARS theme only).
+   Matches .t-lcars .block / .work-row on the bridge: dark body, a single
+   colored left border, header bar, rounded RIGHT corners (flat left = no
+   clipping of the first header characters). The ::before gold rail used to
+   overlap the header and clip the first letter — removed. */
+cs-dashboard-widget .widget-card.lcars-widget {
+  background: #000 !important;
+  border: 0 !important;
+  /* Authentic LCARS elbow: border-left width matches border-radius so the
+     rounded corner arc exactly traces the left edge — no text clipping. */
+  border-left: 22px solid #FF9933 !important;
+  border-radius: 22px 8px 8px 22px !important;
+  box-shadow: none !important;
+  position: relative;
+  overflow: hidden !important;
+  color: #ffe8a0;
+}
+/* small accent cap on the top-right corner (LCARS detail, does not overlap text) */
+cs-dashboard-widget .widget-card.lcars-widget::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: min(28%, 140px);
+  height: 6px;
+  background: #99CCFF;
+  border-radius: 0 14px 0 0;
+  pointer-events: none;
+  z-index: 3;
+}
+cs-dashboard-widget .widget-card.lcars-widget.edit-mode {
+  border-left-color: #ffcc66 !important;
+  outline: 2px solid #99CCFF !important;
+  outline-offset: 2px;
+}
+cs-dashboard-widget .widget-card.lcars-widget .widget-header {
+  min-height: 42px;
+  background: #FF9933;
+  color: #000;
+  padding: 7px 16px;
+  border-radius: 0;
+  position: relative;
+  z-index: 1;
+}
+cs-dashboard-widget .widget-card.lcars-widget .widget-title {
+  color: #000 !important;
+  font-family: 'Antonio', 'Eurostile', 'Roboto Condensed', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  font-weight: 900;
+  font-size: 12px;
+}
+cs-dashboard-widget .widget-card.lcars-widget .widget-subtitle {
+  color: rgba(0,0,0,.62) !important;
+  letter-spacing: .1em;
+}
+cs-dashboard-widget .widget-card.lcars-widget .header-actions button { color: #000 !important; }
+cs-dashboard-widget .widget-card.lcars-widget .widget-body {
+  padding: 10px 14px 12px;
+  color: #ffe8a0;
+  background: #000;
+}
+cs-dashboard-widget .widget-card.lcars-widget .stat-value {
+  color: #ffcc66 !important;
+  font-family: 'Antonio', 'Eurostile', sans-serif;
+  font-size: clamp(40px, 6vw, 66px);   /* fits a 2-row widget without bottom cutoff */
+  letter-spacing: 0;
+}
+cs-dashboard-widget .widget-card.lcars-widget .list-item { border-bottom-color: #2a1d0a !important; }
+cs-dashboard-widget .widget-card.lcars-widget .list-title,
+cs-dashboard-widget .widget-card.lcars-widget .finding,
+cs-dashboard-widget .widget-card.lcars-widget .wr-finding-title,
+cs-dashboard-widget .widget-card.lcars-widget .wr-rec-action {
+  color: #ffe8a0 !important;
+}
+cs-dashboard-widget .widget-card.lcars-widget .list-meta,
+cs-dashboard-widget .widget-card.lcars-widget .host-item,
+cs-dashboard-widget .widget-card.lcars-widget .ai-summary p {
+  color: #e8a060 !important;
+}
+cs-dashboard-widget .widget-card.lcars-widget .list-host,
+cs-dashboard-widget .widget-card.lcars-widget .host-name,
+cs-dashboard-widget .widget-card.lcars-widget .forecast-title,
+cs-dashboard-widget .widget-card.lcars-widget .wr-section-label {
+  color: #ffcc66 !important;
+}
+cs-dashboard-widget .widget-card.lcars-widget .empty { color: #5a3a18 !important; }
+cs-dashboard-widget .widget-card.lcars-widget .loading mat-spinner { --mdc-circular-progress-active-indicator-color: #FF9933; }
+cs-dashboard-widget .widget-card.lcars-widget .clickable:hover { background: rgba(232,124,58,.14) !important; }
+cs-dashboard-widget .widget-card.lcars-widget .host-row,
+cs-dashboard-widget .widget-card.lcars-widget .wr-finding {
+  background: #1e1710 !important;
+  border-left: 3px solid #FF9933;
+  border-radius: 0 8px 8px 0;
+}
+cs-dashboard-widget .widget-card.lcars-widget .host-count {
+  background: #ffcc66 !important;
+  color: #000 !important;
+}
+cs-dashboard-widget .widget-card.lcars-widget .finding-arrow,
+cs-dashboard-widget .widget-card.lcars-widget .wr-host,
+cs-dashboard-widget .widget-card.lcars-widget .wr-jira-btn,
+cs-dashboard-widget .widget-card.lcars-widget .pin-btn {
+  color: #FF9933 !important;
+}
+cs-dashboard-widget .widget-card.lcars-widget .wr-quiet { color: #66aa66 !important; }
+cs-dashboard-widget .widget-card.lcars-widget .wr-desc,
+cs-dashboard-widget .widget-card.lcars-widget .wr-loc,
+cs-dashboard-widget .widget-card.lcars-widget .wr-cohost,
+cs-dashboard-widget .widget-card.lcars-widget .wr-blast,
+cs-dashboard-widget .widget-card.lcars-widget .wr-rec {
+  color: #ffcc99 !important;
+}
+cs-dashboard-widget .widget-card.lcars-widget .wr-finding-body span,
+cs-dashboard-widget .widget-card.lcars-widget .wr-blast span {
+  text-shadow: none;
+}
+/* Official LCARS palette cycling: Neon Carrot / Golden Tanoi / Anakiwa / Lilac */
+.grid-stack-item:nth-child(4n + 1) cs-dashboard-widget .widget-card.lcars-widget {
+  border-left-color: #FF9933 !important; /* Neon Carrot */
+}
+.grid-stack-item:nth-child(4n + 1) cs-dashboard-widget .widget-card.lcars-widget .widget-header {
+  background: #FF9933 !important;
+}
+.grid-stack-item:nth-child(4n + 2) cs-dashboard-widget .widget-card.lcars-widget {
+  border-left-color: #FFCC66 !important; /* Golden Tanoi */
+}
+.grid-stack-item:nth-child(4n + 2) cs-dashboard-widget .widget-card.lcars-widget .widget-header {
+  background: #FFCC66 !important;
+}
+.grid-stack-item:nth-child(4n + 3) cs-dashboard-widget .widget-card.lcars-widget {
+  border-left-color: #99CCFF !important; /* Anakiwa */
+}
+.grid-stack-item:nth-child(4n + 3) cs-dashboard-widget .widget-card.lcars-widget .widget-header {
+  background: #99CCFF !important;
+}
+.grid-stack-item:nth-child(4n) cs-dashboard-widget .widget-card.lcars-widget {
+  border-left-color: #FFCC99 !important; /* Tanoi/Butterscotch — replaces Lilac per user request */
+}
+.grid-stack-item:nth-child(4n) cs-dashboard-widget .widget-card.lcars-widget .widget-header {
+  background: #FFCC99 !important;
+}
+
+/* ── Holo: same full token set ── */
+html.cs-theme-holo body,
+html.cs-theme-holo mat-card,
+html.cs-theme-holo .mat-mdc-card,
+html.cs-theme-holo mat-list-item,
+html.cs-theme-holo .mat-mdc-list-item,
+html.cs-theme-holo .mdc-list-item__primary-text { color: #cfeeff; }
+
+html.cs-theme-holo .mat-mdc-card-subtitle,
+html.cs-theme-holo small, html.cs-theme-holo .hint,
+html.cs-theme-holo .timestamp, html.cs-theme-holo [class*="meta"],
+html.cs-theme-holo [class*="subtitle"],
+html.cs-theme-holo .mdc-list-item__secondary-text { color: #8fb8cf !important; }
+
+html.cs-theme-holo {
+  --mdc-list-list-item-label-text-color: #cfeeff;
+  --mdc-list-list-item-supporting-text-color: #8fb8cf;
+  --mdc-list-list-item-secondary-text-color: #8fb8cf;
+  --mdc-list-list-item-trailing-supporting-text-color: #8fb8cf;
+  --mat-card-title-text-color: #cfeeff;
+  --mat-card-subtitle-text-color: #8fb8cf;
+  --mat-option-label-text-color: #cfeeff;
+  --mat-select-enabled-trigger-text-color: #cfeeff;
+  --mat-form-field-container-text-color: #cfeeff;
+  --mat-form-field-label-text-color: #8fb8cf;
+  --mat-input-element-color: #cfeeff;
+  --mat-expansion-header-text-color: #cfeeff;
+  --mat-expansion-container-text-color: #cfeeff;
+  --mdc-chip-label-text-color: #cfeeff;
+  --mat-table-row-item-label-text-color: #cfeeff;
+  --mat-table-header-headline-color: #8fb8cf;
+  --mat-sidenav-content-text-color: #cfeeff;
+  --mat-text-button-label-text-color: #cfeeff;
+  --mat-outlined-button-label-text-color: #8fb8cf;
+  /* Holo buttons */
+  --mdc-protected-button-container-color: #4fd6ff;
+  --mdc-protected-button-label-text-color: #00131f;
+  --mdc-protected-button-disabled-container-color: #0e2236;
+  --mdc-protected-button-disabled-label-text-color: #2c5a74;
+  --mdc-filled-button-container-color: #4fd6ff;
+  --mdc-filled-button-label-text-color: #00131f;
+  --mdc-outlined-button-label-text-color: #8fb8cf;
+  --mdc-outlined-button-outline-color: #4fd6ff;
+  --mdc-text-button-label-text-color: #cfeeff;
+}
+
+/* Shared ticket dialog — let the component supply its own chrome (no MDC padding). */
+.tkt-panel .mat-mdc-dialog-surface {
+  padding: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  background: transparent;
+}
+
+/* LCARS font for ticket dialog inputs — global override needed because Angular
+   ViewEncapsulation strips parent selectors (.t-lcars .tkt-input → .tkt-input[_ngcontent])
+   and browsers don't inherit font-family into form elements by default. */
+.t-lcars .tkt-input,
+.t-lcars input.tkt-input,
+.t-lcars textarea.tkt-input,
+.t-lcars select.tkt-input {
+  font-family: 'Antonio', 'Eurostile', sans-serif !important;
+  letter-spacing: 0.04em;
+}

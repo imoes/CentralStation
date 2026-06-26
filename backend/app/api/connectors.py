@@ -17,15 +17,380 @@ from app.schemas.connector import (
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
 VALID_TYPES = {
-    "checkmk", "graylog", "wazuh", "jira", "jira_sd",
-    "o365", "prometheus", "netbox", "id_generator", "it_aikb",
+    "checkmk", "graylog", "wazuh", "icinga2", "jira", "jira_sd",
+    "o365", "teams", "prometheus", "netbox", "id_generator", "coroot",
+    "aikb", "smtp", "gitlab", "awx",
+    # user-personal connectors
+    "llm", "mcp_server", "awx_ng", "ssh",
 }  # keep in sync with get_connector() factory
+USER_MANAGED_TYPES = {"o365", "teams", "jira", "jira_sd", "gitlab", "llm", "mcp_server", "awx_ng", "ssh"}
+# Types where only one connector per user is allowed (mcp_server + awx_ng allow multiple)
+SINGLETON_USER_TYPES = USER_MANAGED_TYPES - {"mcp_server", "awx_ng"}
+
+
+def _is_admin(user) -> bool:
+    return user.role == "admin"
+
+
+async def _get_connector_or_404(db: AsyncSession, connector_id: uuid.UUID) -> ConnectorConfig:
+    result = await db.execute(
+        select(ConnectorConfig).where(ConnectorConfig.id == connector_id)
+    )
+    connector = result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(404, "Connector not found")
+    return connector
+
+
+def _assert_can_manage_personal(connector_type: str) -> None:
+    if connector_type not in USER_MANAGED_TYPES:
+        raise HTTPException(403, f"Connector type '{connector_type}' ist nur global durch Admins konfigurierbar")
+
+
+def _assert_access(connector: ConnectorConfig, user) -> None:
+    if _is_admin(user):
+        return
+    if connector.owner_user_id != user.id:
+        raise HTTPException(403, "Kein Zugriff auf diesen Connector")
+
+
+@router.get("/my", response_model=list[ConnectorResponse])
+async def list_my_connectors(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    result = await db.execute(
+        select(ConnectorConfig)
+        .where(
+            ConnectorConfig.owner_user_id == current_user.id,
+            ConnectorConfig.type.in_(USER_MANAGED_TYPES),
+        )
+        .order_by(ConnectorConfig.type, ConnectorConfig.name)
+    )
+    return result.scalars().all()
+
+
+@router.put("/my/{connector_type}", response_model=ConnectorResponse)
+async def upsert_my_connector(
+    connector_type: str,
+    data: ConnectorCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    if connector_type not in VALID_TYPES or data.type != connector_type:
+        raise HTTPException(400, "Connector-Typ im Pfad und Body muss übereinstimmen")
+    _assert_can_manage_personal(connector_type)
+
+    result = await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.owner_user_id == current_user.id,
+            ConnectorConfig.type == connector_type,
+        ).with_for_update()
+    )
+    connector = result.scalar_one_or_none()
+    if connector:
+        existing_credentials = decrypt_credentials(connector.encrypted_credentials)
+        merged_credentials = {**existing_credentials, **data.credentials}
+        connector.name = data.name
+        connector.base_url = data.base_url
+        connector.encrypted_credentials = encrypt_credentials(merged_credentials)
+        connector.enabled = data.enabled
+        action = "connector_updated"
+    else:
+        connector = ConnectorConfig(
+            name=data.name,
+            type=data.type,
+            base_url=data.base_url,
+            encrypted_credentials=encrypt_credentials(data.credentials),
+            enabled=data.enabled,
+            created_by=current_user.id,
+            owner_user_id=current_user.id,
+        )
+        db.add(connector)
+        action = "connector_created"
+
+    db.add(AuditLog(
+        action=action,
+        resource_type="connector",
+        resource_id=f"{connector_type}:{current_user.id}",
+        user_id=current_user.id,
+        new_value={"type": data.type, "name": data.name, "scope": "personal"},
+    ))
+    await db.commit()
+    await db.refresh(connector)
+
+    # SSH live-apply: write new key/config into the running per-user container
+    # immediately so the next terminal command already uses the updated settings.
+    if connector_type == "ssh":
+        creds = decrypt_credentials(connector.encrypted_credentials)
+        import asyncio as _aio
+
+        async def _apply_ssh() -> None:
+            try:
+                from app.services.userenv_manager import configure_ssh
+                await _aio.to_thread(
+                    configure_ssh,
+                    str(current_user.id),
+                    creds.get("username", ""),
+                    creds.get("private_key", ""),
+                    creds.get("password", ""),
+                )
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).debug("SSH live-apply skipped (no container?): %s", exc)
+
+        _aio.ensure_future(_apply_ssh())
+
+    # MCP-Server Konnektor: per-user hermes_config.yaml neu schreiben + Container neu starten.
+    # Die Config wird beim nächsten Session-Create auch automatisch neu geschrieben;
+    # der Neustart hier aktiviert die Änderung sofort ohne neue Session anlegen zu müssen.
+    if connector_type in ("mcp_server", "awx_ng"):
+        import asyncio as _aio
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+
+        async def _restart_for_mcp() -> None:
+            try:
+                from app.models.connector import ConnectorConfig as _CC
+                from app.core.security import decrypt_credentials as _dec
+                import base64 as _b64
+                from sqlalchemy import select as _sel
+                from app.core.database import AsyncSessionLocal
+                from app.services.userenv_manager import write_hermes_config
+                import docker as _docker
+
+                async with AsyncSessionLocal() as _db:
+                    # Alle MCP-Konnektoren laden um vollständige Config zu schreiben
+                    _extra_servers: dict = {}
+                    _mcp_rows = (await _db.execute(
+                        _sel(_CC).where(
+                            _CC.type == "mcp_server",
+                            _CC.owner_user_id == current_user.id,
+                            _CC.enabled.is_(True),
+                        )
+                    )).scalars().all()
+                    for _c in _mcp_rows:
+                        _cr = _dec(_c.encrypted_credentials)
+                        _srv: dict = {
+                            "transport": _cr.get("transport", "streamable-http"),
+                            "url": _c.base_url.rstrip("/"),
+                        }
+                        if _cr.get("token"):
+                            _srv["headers"] = {"Authorization": _cr["token"]}
+                        _extra_servers[_c.name.lower().replace(" ", "-") or "mcp-user"] = _srv
+
+                    _awx = (await _db.execute(
+                        _sel(_CC).where(
+                            _CC.type == "awx_ng",
+                            _CC.owner_user_id == current_user.id,
+                            _CC.enabled.is_(True),
+                        ).limit(1)
+                    )).scalar_one_or_none()
+                    if _awx:
+                        _cr2 = _dec(_awx.encrypted_credentials)
+                        _b = _b64.b64encode(
+                            f"{_cr2.get('username','')}:{_cr2.get('password','')}".encode()
+                        ).decode()
+                        _extra_servers["awx-ng"] = {
+                            "transport": "streamable-http",
+                            "url": _awx.base_url.rstrip("/") + "/mcp/",
+                            "headers": {"Authorization": f"Basic {_b}"},
+                        }
+
+                # Neue Config schreiben
+                import asyncio as _asyncio
+                await _asyncio.to_thread(write_hermes_config, str(current_user.id), _extra_servers)
+
+                # Container neustarten
+                def _do_restart() -> None:
+                    from app.services.userenv_manager import container_name as _cn
+                    cli = _docker.from_env()
+                    try:
+                        c = cli.containers.get(_cn(str(current_user.id)))
+                        c.restart(timeout=15)
+                        _log.info("MCP config changed — restarted container %s", c.name)
+                    except _docker.errors.NotFound:
+                        pass  # kein Container läuft gerade — Config wird beim nächsten Start gelesen
+
+                await _asyncio.to_thread(_do_restart)
+            except Exception as _exc:
+                _log.warning("MCP connector change: config/restart failed: %s", _exc)
+
+        _aio.ensure_future(_restart_for_mcp())
+
+    return connector
+
+
+@router.delete("/my/{connector_type}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_connector(
+    connector_type: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    _assert_can_manage_personal(connector_type)
+    result = await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.owner_user_id == current_user.id,
+            ConnectorConfig.type == connector_type,
+        )
+    )
+    connector = result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(404, "Persönlicher Connector nicht gefunden")
+
+    await db.delete(connector)
+    db.add(AuditLog(
+        action="connector_deleted",
+        resource_type="connector",
+        resource_id=f"{connector_type}:{current_user.id}",
+        user_id=current_user.id,
+    ))
+    await db.commit()
+
+
+@router.post("/my/", response_model=ConnectorResponse, status_code=status.HTTP_201_CREATED)
+async def create_my_connector(
+    data: ConnectorCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """Create a new personal connector (supports multiple entries per type, e.g. mcp_server)."""
+    if data.type not in VALID_TYPES:
+        raise HTTPException(400, f"Unknown connector type: {data.type}")
+    _assert_can_manage_personal(data.type)
+
+    if data.type in SINGLETON_USER_TYPES:
+        existing = await db.execute(
+            select(ConnectorConfig).where(
+                ConnectorConfig.owner_user_id == current_user.id,
+                ConnectorConfig.type == data.type,
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(409, f"Es existiert bereits ein {data.type}-Connector. Bitte den vorhandenen bearbeiten.")
+
+    connector = ConnectorConfig(
+        name=data.name,
+        type=data.type,
+        base_url=data.base_url,
+        encrypted_credentials=encrypt_credentials(data.credentials),
+        enabled=data.enabled,
+        created_by=current_user.id,
+        owner_user_id=current_user.id,
+    )
+    db.add(connector)
+    db.add(AuditLog(
+        action="connector_created",
+        resource_type="connector",
+        resource_id=f"{data.type}:{current_user.id}",
+        user_id=current_user.id,
+        new_value={"type": data.type, "name": data.name, "scope": "personal"},
+    ))
+    await db.commit()
+    await db.refresh(connector)
+    return connector
+
+
+@router.patch("/my/id/{connector_id}", response_model=ConnectorResponse)
+async def update_my_connector_by_id(
+    connector_id: uuid.UUID,
+    data: ConnectorUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    connector = await _get_connector_or_404(db, connector_id)
+    if connector.owner_user_id != current_user.id:
+        raise HTTPException(403, "Kein Zugriff auf diesen Connector")
+
+    if data.name is not None:
+        connector.name = data.name
+    if data.base_url is not None:
+        connector.base_url = data.base_url
+    if data.credentials is not None:
+        existing = decrypt_credentials(connector.encrypted_credentials)
+        connector.encrypted_credentials = encrypt_credentials({**existing, **data.credentials})
+    if data.enabled is not None:
+        connector.enabled = data.enabled
+
+    db.add(AuditLog(action="connector_updated", resource_type="connector",
+                    resource_id=str(connector_id), user_id=current_user.id))
+    await db.commit()
+    await db.refresh(connector)
+    return connector
+
+
+@router.delete("/my/id/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_connector_by_id(
+    connector_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    connector = await _get_connector_or_404(db, connector_id)
+    if connector.owner_user_id != current_user.id:
+        raise HTTPException(403, "Kein Zugriff auf diesen Connector")
+
+    await db.delete(connector)
+    db.add(AuditLog(action="connector_deleted", resource_type="connector",
+                    resource_id=str(connector_id), user_id=current_user.id))
+    await db.commit()
+
+
+@router.get("/my/{connector_type}/credentials")
+async def get_my_connector_credentials(
+    connector_type: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """Return masked credentials for the user's personal connector edit dialog."""
+    _assert_can_manage_personal(connector_type)
+    result = await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.owner_user_id == current_user.id,
+            ConnectorConfig.type == connector_type,
+        )
+    )
+    connector = result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(404, "Persönlicher Connector nicht gefunden")
+    raw = decrypt_credentials(connector.encrypted_credentials)
+    masked = {
+        k: ("••••••••" if any(p in k.lower() for p in _SECRET_KEY_PATTERNS) and v else v)
+        for k, v in raw.items()
+    }
+    return {"credentials": masked}
+
+
+@router.post("/my/{connector_type}/test", response_model=ConnectorTestResult)
+async def test_my_connector(
+    connector_type: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    _assert_can_manage_personal(connector_type)
+    result = await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.owner_user_id == current_user.id,
+            ConnectorConfig.type == connector_type,
+        )
+    )
+    connector = result.scalar_one_or_none()
+    if not connector:
+        raise HTTPException(404, "Persönlicher Connector nicht gefunden")
+
+    credentials = decrypt_credentials(connector.encrypted_credentials)
+    from app.services.connectors import get_connector
+    svc = get_connector(connector.type, connector.base_url, credentials)
+    return await svc.test_connection()
 
 
 @router.get("/", response_model=list[ConnectorResponse], dependencies=[RequireAdmin])
 async def list_connectors(db: Annotated[AsyncSession, Depends(get_db)]):
+    # Only global connectors (owner_user_id IS NULL). Personal per-user connectors
+    # live under /connectors/my and are never shown in the admin global list.
     result = await db.execute(
-        select(ConnectorConfig).order_by(ConnectorConfig.type, ConnectorConfig.name)
+        select(ConnectorConfig)
+        .where(ConnectorConfig.owner_user_id.is_(None))
+        .order_by(ConnectorConfig.type, ConnectorConfig.name)
     )
     return result.scalars().all()
 
@@ -47,6 +412,7 @@ async def create_connector(
         encrypted_credentials=encrypt_credentials(data.credentials),
         enabled=data.enabled,
         created_by=current_user.id,
+        owner_user_id=None,
     )
     db.add(connector)
     db.add(AuditLog(action="connector_created", resource_type="connector",
@@ -65,19 +431,16 @@ async def update_connector(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
 ):
-    result = await db.execute(
-        select(ConnectorConfig).where(ConnectorConfig.id == connector_id)
-    )
-    connector = result.scalar_one_or_none()
-    if not connector:
-        raise HTTPException(404, "Connector not found")
+    connector = await _get_connector_or_404(db, connector_id)
+    _assert_access(connector, current_user)
 
     if data.name is not None:
         connector.name = data.name
     if data.base_url is not None:
         connector.base_url = data.base_url
     if data.credentials is not None:
-        connector.encrypted_credentials = encrypt_credentials(data.credentials)
+        existing = decrypt_credentials(connector.encrypted_credentials)
+        connector.encrypted_credentials = encrypt_credentials({**existing, **data.credentials})
     if data.enabled is not None:
         connector.enabled = data.enabled
 
@@ -88,6 +451,24 @@ async def update_connector(
     return connector
 
 
+_SECRET_KEY_PATTERNS = ("password", "secret", "token", "api_key", "private")
+
+
+@router.get("/{connector_id}/credentials", dependencies=[RequireAdmin])
+async def get_connector_credentials(
+    connector_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return decrypted credentials for the edit dialog. Secret fields are masked."""
+    connector = await _get_connector_or_404(db, connector_id)
+    raw = decrypt_credentials(connector.encrypted_credentials)
+    masked = {
+        k: ("••••••••" if any(p in k.lower() for p in _SECRET_KEY_PATTERNS) and v else v)
+        for k, v in raw.items()
+    }
+    return {"credentials": masked}
+
+
 @router.delete("/{connector_id}", status_code=status.HTTP_204_NO_CONTENT,
                dependencies=[RequireAdmin])
 async def delete_connector(
@@ -95,12 +476,8 @@ async def delete_connector(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
 ):
-    result = await db.execute(
-        select(ConnectorConfig).where(ConnectorConfig.id == connector_id)
-    )
-    connector = result.scalar_one_or_none()
-    if not connector:
-        raise HTTPException(404, "Connector not found")
+    connector = await _get_connector_or_404(db, connector_id)
+    _assert_access(connector, current_user)
 
     await db.delete(connector)
     db.add(AuditLog(action="connector_deleted", resource_type="connector",
@@ -113,17 +490,160 @@ async def delete_connector(
 async def test_connector(
     connector_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
 ):
-    result = await db.execute(
-        select(ConnectorConfig).where(ConnectorConfig.id == connector_id)
-    )
-    connector = result.scalar_one_or_none()
-    if not connector:
-        raise HTTPException(404, "Connector not found")
+    connector = await _get_connector_or_404(db, connector_id)
+    _assert_access(connector, current_user)
 
     credentials = decrypt_credentials(connector.encrypted_credentials)
 
-    # Import connector factory lazily
     from app.services.connectors import get_connector
     svc = get_connector(connector.type, connector.base_url, credentials)
     return await svc.test_connection()
+
+
+# ── Microsoft Device Code Flow ────────────────────────────────────────────────
+
+@router.post("/{connector_id}/ms-device-code")
+async def ms_device_code_start(
+    connector_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """Start a Microsoft Device Code flow for an O365 or Teams connector.
+
+    Returns user_code + verification_url for the user to open in a browser,
+    plus device_code for the client to poll /ms-device-code/complete.
+    """
+    connector = await _get_connector_or_404(db, connector_id)
+    _assert_access(connector, current_user)
+
+    if connector.type not in ("o365", "teams"):
+        raise HTTPException(400, "Nur für O365/Teams-Connectoren verfügbar")
+
+    credentials = decrypt_credentials(connector.encrypted_credentials)
+    tenant_id = credentials.get("tenant_id", "")
+    client_id = credentials.get("client_id", "")
+    if not tenant_id or not client_id:
+        raise HTTPException(400, "tenant_id und client_id müssen gespeichert sein")
+
+    scopes = (
+        "Mail.Read Mail.Send Calendars.ReadWrite offline_access"
+        if connector.type == "o365"
+        else "ChannelMessage.Read.All Team.ReadBasic.All offline_access"
+    )
+
+    import httpx
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.post(
+            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/devicecode",
+            data={"client_id": client_id, "scope": scopes},
+        )
+        if r.status_code != 200:
+            raise HTTPException(502, f"Microsoft-Fehler: {r.text}")
+        data = r.json()
+
+    return {
+        "user_code": data["user_code"],
+        "verification_url": data.get("verification_uri", "https://microsoft.com/devicelogin"),
+        "device_code": data["device_code"],
+        "expires_in": data.get("expires_in", 900),
+        "interval": data.get("interval", 5),
+        "message": data.get("message", ""),
+    }
+
+
+@router.post("/{connector_id}/ms-device-code/complete")
+async def ms_device_code_complete(
+    connector_id: uuid.UUID,
+    body: dict,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """Poll once for the Device Code token. If authorized, saves refresh_token.
+
+    body: { device_code: str }
+    Returns: { status: 'authorized'|'pending'|'error', message?: str }
+    """
+    connector = await _get_connector_or_404(db, connector_id)
+    _assert_access(connector, current_user)
+
+    credentials = decrypt_credentials(connector.encrypted_credentials)
+    tenant_id = credentials.get("tenant_id", "")
+    client_id = credentials.get("client_id", "")
+    client_secret = credentials.get("client_secret", "")
+    device_code = body.get("device_code", "")
+
+    if not device_code:
+        raise HTTPException(400, "device_code fehlt")
+
+    import httpx
+    token_data: dict = {
+        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        "client_id": client_id,
+        "device_code": device_code,
+    }
+    if client_secret:
+        token_data["client_secret"] = client_secret
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.post(
+            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+            data=token_data,
+        )
+        resp = r.json()
+
+    error = resp.get("error", "")
+    if error == "authorization_pending":
+        return {"status": "pending", "message": "Warte auf Benutzer-Bestätigung…"}
+    if error == "expired_token":
+        return {"status": "error", "message": "Code abgelaufen. Bitte erneut starten."}
+    if error:
+        return {"status": "error", "message": resp.get("error_description", error)}
+
+    refresh_token = resp.get("refresh_token", "")
+    if not refresh_token:
+        return {"status": "error", "message": "Kein Refresh-Token erhalten"}
+
+    # Persist refresh_token in connector credentials
+    credentials["refresh_token"] = refresh_token
+    connector.encrypted_credentials = encrypt_credentials(credentials)
+    db.add(AuditLog(
+        action="connector_ms_authorized",
+        resource_type="connector",
+        resource_id=str(connector_id),
+        user_id=current_user.id,
+    ))
+    await db.commit()
+
+    return {"status": "authorized", "message": "Microsoft-Konto erfolgreich verbunden"}
+
+
+# ── Coroot project discovery ──────────────────────────────────────────────────
+
+from pydantic import BaseModel as _BaseModel
+
+
+class _CorootDiscoverBody(_BaseModel):
+    base_url: str
+    email: str
+    password: str
+
+
+@router.post("/coroot/projects", dependencies=[RequireAdmin])
+async def discover_coroot_projects(body: _CorootDiscoverBody) -> list[dict]:
+    """Return available Coroot projects for the project-selector dropdown.
+
+    Called by the frontend connector form when the user clicks 'Projekte laden'.
+    """
+    from app.services.connectors.coroot import CorootConnector
+    svc = CorootConnector(
+        base_url=body.base_url,
+        credentials={"email": body.email, "password": body.password},
+    )
+    try:
+        projects = await svc.list_projects()
+        return projects  # [{id, name}, ...]
+    except Exception as exc:
+        from fastapi import HTTPException
+        raise HTTPException(502, f"Coroot nicht erreichbar: {exc}")
