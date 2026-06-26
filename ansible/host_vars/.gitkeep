@@ -1,2 +1,2 @@
 # Host-specific variables: one file per host, named exactly like the inventory hostname.
-# Example: host_vars/web01.ippen.media.yml
+# Example: host_vars/web01.example.com.yml

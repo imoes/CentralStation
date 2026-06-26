@@ -1,9 +1,7 @@
-# SSH-Konfiguration für centralcore / Hermes
-# Diese Datei liegt im Projektverzeichnis und wird in den Container gemountet.
-# Änderungen werden beim nächsten Container-Restart aktiv (kein Rebuild nötig).
+# SSH configuration for centralcore / Hermes agent
+# Mounted into the container; changes take effect after container restart (no rebuild needed).
+# The SSH user and key are injected per-connection from the database (userenv_manager).
 
-Host *.ippen.media
-    User marvin
-    IdentityFile /root/.ssh/marvin.key
+Host *
     StrictHostKeyChecking accept-new
     ConnectTimeout 10
