@@ -1,4 +1,4 @@
-"""CentralCore — FastAPI wrapper around Hermes AIAgent.
+"""Hermes API — FastAPI wrapper around Hermes AIAgent.
 
 Manages multiple parallel Hermes sessions and exposes:
   POST /sessions                    create new session (with LLM config from CentralStation)
@@ -54,9 +54,9 @@ def _configure_logging() -> None:
 
 
 _configure_logging()
-log = logging.getLogger("centralcore")
+log = logging.getLogger("hermes")
 
-app = FastAPI(title="CentralCore", version="1.0.0")
+app = FastAPI(title="Hermes", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=".*",

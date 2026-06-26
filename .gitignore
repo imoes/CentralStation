@@ -36,9 +36,7 @@ data/redis/
 
 # Hermes runtime dir (contains OAuth tokens — never commit)
 .hermes/
-
-# Claude OAuth credentials — never commit
-centralcore/.claude/
+centralcore/
 
 # OS
 .DS_Store

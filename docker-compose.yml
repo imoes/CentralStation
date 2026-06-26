@@ -59,12 +59,10 @@ services:
       OPENSEARCH_URL: https://opensearch:9200
       OPENSEARCH_USER: admin
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
-      # Werkbank Web-IDE: backend orchestrates per-user code-server containers.
-      IDE_IMAGE: centralstation-codeserver:latest
-      IDE_NETWORK: centralstation_default
+      # Werkbank Web-IDE: backend orchestrates per-user userenv containers.
       IDE_HOST_SSH_DIR: ${HOME}/.ssh
       IDE_CONTAINER_PORT: "8080"
-      # Workspaces are bind-mounted from this host path into each cs-ide container.
+      # Workspaces are bind-mounted from this host path into each cs-userenv container.
       # The backend also mounts this path so os.makedirs() creates dirs on the host.
       IDE_WORKSPACES_BASE: ${IDE_WORKSPACES_BASE:-/opt/centralstation/ide-workspaces}
       # Shared Ansible dir (standard layout: playbooks/, roles/, group_vars/, host_vars/,
@@ -119,17 +117,6 @@ services:
       dockerfile: userenv/Dockerfile
     image: centralstation-userenv:latest
     profiles: ["userenv"]
-    command: ["--version"]
-
-  # Build-only service: produces the centralstation-codeserver:latest image.
-  # Per-user containers are started at runtime by the backend (app/api/ide.py),
-  # NOT by compose — hence the "ide" profile keeps it out of `up`.
-  codeserver:
-    build:
-      context: .
-      dockerfile: Dockerfile.codeserver
-    image: centralstation-codeserver:latest
-    profiles: ["ide"]
     command: ["--version"]
 
   nginx:
