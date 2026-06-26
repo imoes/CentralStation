@@ -14,6 +14,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { environment } from '../../../environments/environment';
 import { ThemeService } from '../../core/services/theme.service';
+import { I18nService } from '../../core/services/i18n.service';
 
 /** How the dialog was opened — drives where the AI draft context comes from. */
 export interface TicketDialogData {
@@ -57,8 +58,8 @@ interface CreateResponse { ok: boolean; jira_key?: string; url?: string | null; 
       <div class="tkt-head">
         <mat-icon class="tkt-head-icon">confirmation_number</mat-icon>
         <div class="tkt-head-text">
-          <span class="tkt-title">Ticket erstellen</span>
-          <span class="tkt-sub">KI-vorausgefüllt · Ziel wählen, prüfen & anpassen</span>
+          <span class="tkt-title">{{ i18n.t('dialog.ticket.title') }}</span>
+          <span class="tkt-sub">{{ i18n.t('dialog.ticket.subtitle') }}</span>
         </div>
         <button class="tkt-x" (click)="close()" aria-label="Schließen">✕</button>
       </div>
@@ -69,7 +70,7 @@ interface CreateResponse { ok: boolean; jira_key?: string; url?: string | null; 
 
       <div class="tkt-body">
         <!-- Target: Jira / Service Desk -->
-        <label class="tkt-label">Ziel-System</label>
+        <label class="tkt-label">{{ i18n.t('dialog.ticket.system_label') }}</label>
         <div class="tkt-targets">
           @for (t of targets(); track t.connector_type) {
             <button class="tkt-target-btn"
@@ -83,7 +84,7 @@ interface CreateResponse { ok: boolean; jira_key?: string; url?: string | null; 
 
         <div class="tkt-row">
           <div class="tkt-field">
-            <label class="tkt-label">Projekt</label>
+            <label class="tkt-label">{{ i18n.t('dialog.ticket.project_label') }}</label>
             <select class="tkt-input" [(ngModel)]="project" [disabled]="creating()">
               @for (p of projects(); track p.key) {
                 <option [value]="p.key">{{ p.key }} — {{ p.name }}</option>
@@ -91,7 +92,7 @@ interface CreateResponse { ok: boolean; jira_key?: string; url?: string | null; 
             </select>
           </div>
           <div class="tkt-field">
-            <label class="tkt-label">Typ</label>
+            <label class="tkt-label">{{ i18n.t('dialog.ticket.type_label') }}</label>
             <select class="tkt-input" [(ngModel)]="issueType" [disabled]="creating()">
               @for (it of issueTypes(); track it) {
                 <option [value]="it">{{ it }}</option>
@@ -99,7 +100,7 @@ interface CreateResponse { ok: boolean; jira_key?: string; url?: string | null; 
             </select>
           </div>
           <div class="tkt-field">
-            <label class="tkt-label">Priorität</label>
+            <label class="tkt-label">{{ i18n.t('dialog.ticket.priority_label') }}</label>
             <select class="tkt-input" [(ngModel)]="priority" [disabled]="creating()">
               @for (p of priorities(); track p) {
                 <option [value]="p">{{ p }}</option>
@@ -108,28 +109,28 @@ interface CreateResponse { ok: boolean; jira_key?: string; url?: string | null; 
           </div>
         </div>
 
-        <label class="tkt-label">Zusammenfassung</label>
+        <label class="tkt-label">{{ i18n.t('dialog.ticket.summary_label') }}</label>
         <input class="tkt-input" [(ngModel)]="summary" maxlength="200"
-               [disabled]="creating()" placeholder="Kurzer Titel" />
+               [disabled]="creating()" [placeholder]="i18n.t('dialog.ticket.summary_placeholder')" />
 
         <label class="tkt-label">
-          Beschreibung
+          {{ i18n.t('dialog.ticket.description_label') }}
           @if (loadingDraft()) {
-            <span class="tkt-drafting"><mat-spinner diameter="13"></mat-spinner> KI formuliert…</span>
+            <span class="tkt-drafting"><mat-spinner diameter="13"></mat-spinner> {{ i18n.t('dialog.ticket.ai_composing') }}</span>
           }
         </label>
         <textarea class="tkt-input tkt-textarea" [(ngModel)]="description" rows="10"
-                  [disabled]="creating()" placeholder="Beschreibung (Jira-Markup)"></textarea>
+                  [disabled]="creating()" [placeholder]="i18n.t('dialog.ticket.description_placeholder')"></textarea>
       </div>
 
       <div class="tkt-actions">
-        <button class="tkt-cancel" (click)="close()" [disabled]="creating()">Abbrechen</button>
+        <button class="tkt-cancel" (click)="close()" [disabled]="creating()">{{ i18n.t('common.cancel') }}</button>
         <button class="tkt-submit" (click)="create()"
                 [disabled]="creating() || loadingDraft() || !summary().trim() || !project()">
           @if (creating()) {
-            <mat-spinner diameter="16"></mat-spinner> Erstelle…
+            <mat-spinner diameter="16"></mat-spinner> {{ i18n.t('dialog.ticket.creating') }}
           } @else {
-            Ticket erstellen
+            {{ i18n.t('dialog.ticket.title') }}
           }
         </button>
       </div>
@@ -141,6 +142,7 @@ export class TicketCreateDialogComponent implements OnInit {
   private http = inject(HttpClient);
   private snack = inject(MatSnackBar);
   private themeService = inject(ThemeService);
+  readonly i18n = inject(I18nService);
   theme = this.themeService.theme;
 
   targets = signal<TicketTarget[]>([]);
@@ -201,7 +203,7 @@ export class TicketCreateDialogComponent implements OnInit {
           this.issueType.set(pick.default_issue_type || pick.issue_types?.[0] || '');
         }
       },
-      error: () => this.loadError.set('Keine Ticket-Ziele verfügbar — Jira/Service-Desk-Connector prüfen.'),
+      error: () => this.loadError.set(this.i18n.t('errors.no_ticket_targets')),
     });
   }
 
@@ -256,12 +258,12 @@ export class TicketCreateDialogComponent implements OnInit {
         if (res.ok && res.url) {
           window.open(res.url, '_blank', 'noopener');
         }
-        this.snack.open(`Ticket erstellt: ${res.jira_key ?? ''}`, 'OK', { duration: 5000 });
+        this.snack.open(`${this.i18n.t('messages.ticket_created')}: ${res.jira_key ?? ''}`, 'OK', { duration: 5000 });
         this.dialogRef.close(res);
       },
       error: err => {
         this.creating.set(false);
-        this.loadError.set(err?.error?.detail || 'Ticket konnte nicht erstellt werden.');
+        this.loadError.set(err?.error?.detail || this.i18n.t('errors.ticket_creation_failed'));
       },
     });
   }

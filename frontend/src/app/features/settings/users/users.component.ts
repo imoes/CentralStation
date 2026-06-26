@@ -1,4 +1,4 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -16,6 +16,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDividerModule } from '@angular/material/divider';
 import { environment } from '../../../../environments/environment';
+import { I18nService } from '../../../core/services/i18n.service';
 
 const ROLES = [
   { value: 'admin',              label: 'Admin',               color: '#c62828' },
@@ -37,9 +38,9 @@ const ROLES = [
   template: `
     <div class="page-container">
       <div class="page-header">
-        <h2>Benutzerverwaltung</h2>
+        <h2>{{ i18n.t('settings.users.title') }}</h2>
         <button mat-flat-button color="primary" (click)="openCreate()">
-          <mat-icon>person_add</mat-icon> Benutzer anlegen
+          <mat-icon>person_add</mat-icon> {{ i18n.t('settings.users.create') }}
         </button>
       </div>
 
@@ -75,7 +76,7 @@ const ROLES = [
                 <button mat-icon-button (click)="openEdit(u)" matTooltip="Bearbeiten">
                   <mat-icon>edit</mat-icon>
                 </button>
-                <button mat-icon-button color="warn" (click)="deleteUser(u)" matTooltip="Löschen">
+                <button mat-icon-button color="warn" (click)="deleteUser(u)" [matTooltip]="i18n.t('common.delete')">
                   <mat-icon>delete</mat-icon>
                 </button>
               </div>
@@ -94,7 +95,7 @@ const ROLES = [
       <div class="dialog-backdrop" (click)="closeDialog()"></div>
       <div class="dialog-panel">
         <div class="dialog-header">
-          <h3>{{ editingUser() ? 'Benutzer bearbeiten' : 'Neuen Benutzer anlegen' }}</h3>
+          <h3>{{ editingUser() ? i18n.t('settings.users.edit') : i18n.t('settings.users.create') }}</h3>
           <button mat-icon-button (click)="closeDialog()"><mat-icon>close</mat-icon></button>
         </div>
 
@@ -136,11 +137,11 @@ const ROLES = [
         </div>
 
         <div class="dialog-actions">
-          <button mat-stroked-button (click)="closeDialog()">Abbrechen</button>
+          <button mat-stroked-button (click)="closeDialog()">{{ i18n.t('common.cancel') }}</button>
           <button mat-flat-button color="primary" (click)="save()" [disabled]="saving()">
             @if (saving()) { <mat-spinner diameter="18"></mat-spinner> }
             @else { <mat-icon>save</mat-icon> }
-            {{ editingUser() ? 'Speichern' : 'Anlegen' }}
+            {{ editingUser() ? i18n.t('common.save') : i18n.t('common.create') }}
           </button>
         </div>
       </div>
@@ -170,6 +171,7 @@ const ROLES = [
   `],
 })
 export class UsersComponent implements OnInit {
+  readonly i18n = inject(I18nService);
   users = signal<any[]>([]);
   loading = signal(true);
   saving = signal(false);

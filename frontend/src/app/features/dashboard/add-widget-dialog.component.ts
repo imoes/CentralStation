@@ -12,6 +12,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { environment } from '../../../environments/environment';
 import { DashboardWidget, DashboardWidgetCreate } from './dashboard-widget.model';
+import { I18nService } from '../../core/services/i18n.service';
 
 interface FeedSearch {
   id: string;
@@ -36,7 +37,7 @@ interface FeedSearch {
     MatTooltipModule,
   ],
   template: `
-    <h2 mat-dialog-title>{{ isEdit ? 'Widget konfigurieren' : 'Widget hinzufügen' }}</h2>
+    <h2 mat-dialog-title>{{ isEdit ? i18n.t('dashboard.widget.configure') : i18n.t('dashboard.widget.add') }}</h2>
     <mat-dialog-content class="dialog-body">
       <div class="type-grid">
         @for (type of widgetTypes; track type.value) {
@@ -48,13 +49,13 @@ interface FeedSearch {
       </div>
 
       <mat-form-field appearance="outline">
-        <mat-label>Titel</mat-label>
+        <mat-label>{{ i18n.t('common.title') }}</mat-label>
         <input matInput [(ngModel)]="title">
       </mat-form-field>
 
       @if (widgetType !== 'timeseries' && widgetType !== 'grafana_panel' && widgetType !== 'ai_summary' && widgetType !== 'top_hosts') {
         <mat-form-field appearance="outline">
-          <mat-label>Gespeicherte Suche optional</mat-label>
+          <mat-label>{{ i18n.t('dashboard.widget.saved_search') }}</mat-label>
           <mat-select [(ngModel)]="selectedSearchId" (ngModelChange)="applySearch()">
             <mat-option value="">Keine</mat-option>
             @for (s of searches(); track s.id) {
@@ -64,28 +65,28 @@ interface FeedSearch {
         </mat-form-field>
 
         <mat-form-field appearance="outline">
-          <mat-label>Index-Pattern</mat-label>
+          <mat-label>{{ i18n.t('dashboard.widget.index_pattern') }}</mat-label>
           <input matInput [(ngModel)]="indexPattern">
         </mat-form-field>
 
         <!-- KI Query-Assistent -->
         <div class="converter-row">
           <mat-form-field appearance="outline" class="converter-field">
-            <mat-label>Query-Beschreibung für KI</mat-label>
+            <mat-label>{{ i18n.t('dashboard.widget.query_description') }}</mat-label>
             <textarea matInput rows="2" [(ngModel)]="queryPrompt"
               placeholder='z.B. "Alle Wazuh-Alerts von docker086" oder "kritische CheckMK-Fehler"'></textarea>
-            <mat-hint>Natürliche Sprache → wird zu OpenSearch-Query konvertiert</mat-hint>
+            <mat-hint>{{ i18n.t('dashboard.widget.natural_language_hint') }}</mat-hint>
           </mat-form-field>
           <button mat-flat-button color="accent" class="convert-btn"
                   [disabled]="!queryPrompt.trim() || convertingQuery()"
                   (click)="convertToQuery()"
-                  matTooltip="Beschreibung in OpenSearch-Query übersetzen (KI)">
+                  [matTooltip]="i18n.t('dashboard.widget.convert_tooltip')">
             @if (convertingQuery()) {
               <mat-spinner diameter="16"></mat-spinner>
             } @else {
               <mat-icon>auto_fix_high</mat-icon>
             }
-            → Query
+            {{ i18n.t('dashboard.widget.convert_to_query') }}
           </button>
         </div>
         @if (queryExplanation) {
@@ -95,14 +96,14 @@ interface FeedSearch {
         }
 
         <mat-form-field appearance="outline">
-          <mat-label>OpenSearch Query</mat-label>
-          <textarea matInput rows="3" [(ngModel)]="queryString" placeholder="Leer = match_all"></textarea>
+          <mat-label>{{ i18n.t('dashboard.widget.opensearch_query') }}</mat-label>
+          <textarea matInput rows="3" [(ngModel)]="queryString" [placeholder]="i18n.t('dashboard.widget.query_empty_hint')"></textarea>
         </mat-form-field>
       }
 
       @if (widgetType === 'bar') {
         <mat-form-field appearance="outline">
-          <mat-label>Aggregation nach</mat-label>
+          <mat-label>{{ i18n.t('dashboard.widget.aggregate_by') }}</mat-label>
           <mat-select [(ngModel)]="aggField">
             <mat-option value="severity">Severity</mat-option>
             <mat-option value="source">Quelle (source)</mat-option>
@@ -116,9 +117,9 @@ interface FeedSearch {
 
       @if (widgetType === 'stat') {
         <mat-form-field appearance="outline">
-          <mat-label>Severity-Schnellfilter</mat-label>
+          <mat-label>{{ i18n.t('dashboard.widget.severity_filter') }}</mat-label>
           <mat-select [(ngModel)]="severity" (ngModelChange)="applySeverity()">
-            <mat-option value="">Query manuell</mat-option>
+            <mat-option value="">{{ i18n.t('dashboard.widget.manual_query') }}</mat-option>
             <mat-option value="critical">critical</mat-option>
             <mat-option value="high">high</mat-option>
             <mat-option value="medium">medium</mat-option>
@@ -129,23 +130,23 @@ interface FeedSearch {
 
       @if (widgetType === 'list') {
         <mat-form-field appearance="outline">
-          <mat-label>Limit</mat-label>
+          <mat-label>{{ i18n.t('dashboard.widget.limit') }}</mat-label>
           <input matInput type="number" min="1" max="50" [(ngModel)]="limit">
         </mat-form-field>
       }
 
       @if (widgetType === 'gauge') {
         <mat-form-field appearance="outline">
-          <mat-label>Gesamt-Query (Nenner)</mat-label>
+          <mat-label>{{ i18n.t('dashboard.widget.total_query') }}</mat-label>
           <input matInput [(ngModel)]="totalQueryString" placeholder="* (alle)">
         </mat-form-field>
         <div style="display:flex;gap:8px">
           <mat-form-field appearance="outline" style="flex:1">
-            <mat-label>Warn %</mat-label>
+            <mat-label>{{ i18n.t('dashboard.widget.warn_percent') }}</mat-label>
             <input matInput type="number" min="0" max="100" [(ngModel)]="gaugeWarn">
           </mat-form-field>
           <mat-form-field appearance="outline" style="flex:1">
-            <mat-label>Kritisch %</mat-label>
+            <mat-label>{{ i18n.t('dashboard.widget.critical_percent') }}</mat-label>
             <input matInput type="number" min="0" max="100" [(ngModel)]="gaugeCritical">
           </mat-form-field>
         </div>

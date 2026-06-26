@@ -38,6 +38,7 @@ import {
   RationaleSegment,
 } from './dashboard-widget.model';
 import { WebsocketService } from '../../core/services/websocket.service';
+import { I18nService } from '../../core/services/i18n.service';
 
 @Component({
   selector: 'cs-dashboard',
@@ -64,15 +65,15 @@ import { WebsocketService } from '../../core/services/websocket.service';
         <div class="war-room-panel" (click)="$event.stopPropagation()">
           <div class="wr-overlay-header">
             <mat-icon class="wr-pulse">warning</mat-icon>
-            <span>INCIDENT DETECTED</span>
+            <span>{{ i18n.t('dashboard.incident_detected') }}</span>
             <button mat-icon-button (click)="dismissWarRoom()"><mat-icon>close</mat-icon></button>
           </div>
-          <p>Der KI-Agent hat einen kritischen Vorfall erkannt. Bitte öffne den War-Room-Widget für Details.</p>
+          <p>{{ i18n.t('dashboard.war_room_message') }}</p>
           <div class="wr-overlay-actions">
             <button mat-flat-button color="warn" (click)="scrollToWarRoom(); dismissWarRoom()">
-              <mat-icon>radar</mat-icon> War Room öffnen
+              <mat-icon>radar</mat-icon> {{ i18n.t('dashboard.open_war_room') }}
             </button>
-            <button mat-button (click)="dismissWarRoom()">Schließen</button>
+            <button mat-button (click)="dismissWarRoom()">{{ i18n.t('common.close') }}</button>
           </div>
         </div>
       </div>
@@ -82,14 +83,14 @@ import { WebsocketService } from '../../core/services/websocket.service';
       <section class="hero">
         <div>
           <p class="eyebrow">CentralStation</p>
-          <h1>Operations Cockpit</h1>
+          <h1>{{ i18n.t('dashboard.title') }}</h1>
           <p class="subtitle">
-            Gespeicherte Suchen, Live-Listen und Metriken als frei arrangierbare Widgets.
+            {{ i18n.t('dashboard.subtitle') }}
           </p>
         </div>
         <div class="hero-actions">
           <mat-form-field appearance="outline" class="dashboard-select">
-            <mat-label>Dashboard</mat-label>
+            <mat-label>{{ i18n.t('dashboard.select_label') }}</mat-label>
             <mat-select [ngModel]="selectedDashboardId()" (ngModelChange)="selectDashboard($event)">
               @for (dashboard of dashboards(); track dashboard.id) {
                 <mat-option [value]="dashboard.id">{{ dashboard.name }}</mat-option>
@@ -100,11 +101,11 @@ import { WebsocketService } from '../../core/services/websocket.service';
             @if (configMode()) {
               <button mat-flat-button color="primary" (click)="addWidget()">
                 <mat-icon>add</mat-icon>
-                Widget hinzufügen
+                {{ i18n.t('dashboard.add_widget') }}
               </button>
-              <button mat-stroked-button color="warn" (click)="resetDefaults()" title="Alle Widgets löschen und Standard-Layout wiederherstellen">
+              <button mat-stroked-button color="warn" (click)="resetDefaults()" [title]="i18n.t('dashboard.reset_defaults_tooltip')">
                 <mat-icon>restore</mat-icon>
-                Defaults
+                {{ i18n.t('dashboard.reset_defaults') }}
               </button>
               <button mat-stroked-button (click)="cancelConfigMode()">
                 <mat-icon>close</mat-icon>
@@ -113,7 +114,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
             }
             <button mat-stroked-button [color]="configMode() ? 'warn' : 'primary'" (click)="toggleConfigMode()">
               <mat-icon>{{ configMode() ? 'done' : 'dashboard_customize' }}</mat-icon>
-              {{ configMode() ? 'Layout speichern' : 'Dashboard anpassen' }}
+              {{ configMode() ? i18n.t('dashboard.save_layout') : i18n.t('dashboard.customize_dashboard') }}
             </button>
           }
 
@@ -125,7 +126,7 @@ import { WebsocketService } from '../../core/services/websocket.service';
             (click)="toggleGenerativeMode()"
             [matTooltip]="generativeMode() ? 'Generativer Modus — KI komponiert das Dashboard für die aktuelle Lage. Klicken für Klassisch.' : 'Generativen Modus aktivieren — die KI komponiert ein Lagebild aus der aktuellen Situation'">
             <mat-icon>auto_awesome</mat-icon>
-            {{ generativeMode() ? 'Generativ' : 'Klassisch' }}
+            {{ generativeMode() ? i18n.t('dashboard.mode.generative') : i18n.t('dashboard.mode.classic') }}
           </button>
 
           <button mat-icon-button (click)="refreshAll()" [disabled]="loading()" title="Aktualisieren">
@@ -137,28 +138,28 @@ import { WebsocketService } from '../../core/services/websocket.service';
       @if (loading()) {
         <mat-card class="loading-card">
           <mat-spinner diameter="32"></mat-spinner>
-          <span>Lade Dashboard...</span>
+          <span>{{ i18n.t('dashboard.loading') }}</span>
         </mat-card>
       }
 
       @if (configMode()) {
         <mat-card class="ai-builder">
           <div>
-            <h3>Dashboard per KI-Prompt erstellen oder erweitern</h3>
-            <p>Beschreibe ein neues Dashboard oder ein einzelnes Widget, z.B. "Wazuh und Graylog Fehler fuer Docker Hosts".</p>
+            <h3>{{ i18n.t('dashboard.ai_builder_title') }}</h3>
+            <p>{{ i18n.t('dashboard.ai_builder_hint') }}</p>
           </div>
           <mat-form-field appearance="outline">
-            <mat-label>Prompt</mat-label>
+            <mat-label>{{ i18n.t('dashboard.prompt_label') }}</mat-label>
             <textarea matInput rows="2" [(ngModel)]="dashboardPrompt"></textarea>
           </mat-form-field>
           <button mat-flat-button color="primary" (click)="createWidgetFromPrompt()" [disabled]="creatingFromPrompt() || !dashboardPrompt.trim()">
             @if (creatingFromPrompt()) { <mat-spinner diameter="18"></mat-spinner> }
             @else { <mat-icon>auto_awesome</mat-icon> }
-            Widget erstellen
+            {{ i18n.t('dashboard.create_widget') }}
           </button>
           <button mat-stroked-button color="primary" (click)="createDashboardFromPrompt()" [disabled]="creatingFromPrompt() || !dashboardPrompt.trim()">
             <mat-icon>dashboard_customize</mat-icon>
-            Neues Dashboard
+            {{ i18n.t('dashboard.new_dashboard') }}
           </button>
         </mat-card>
       }
@@ -186,12 +187,12 @@ import { WebsocketService } from '../../core/services/websocket.service';
           <!-- Header bar — same visual weight as a widget header -->
           <div class="gen-header">
             <mat-icon class="gen-icon" [class.spinning]="generativeLoading()">auto_awesome</mat-icon>
-            <span class="gen-header-title">AI-Composed Situation Report</span>
+            <span class="gen-header-title">{{ i18n.t('dashboard.ai_situation_report') }}</span>
             @if (generativeAgo()) { <span class="gen-ago">{{ generativeAgo() }}</span> }
             <button mat-flat-button color="primary" (click)="regenerate()" [disabled]="generativeLoading()">
               @if (generativeLoading()) { <mat-spinner diameter="18"></mat-spinner> }
               @else { <mat-icon>refresh</mat-icon> }
-              Regenerate
+              {{ i18n.t('dashboard.regenerate') }}
             </button>
           </div>
           <!-- Body — dark background like widget body -->
@@ -716,6 +717,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   private injector = inject(Injector);
   private wsSubscription?: import('rxjs').Subscription;
   private readonly GEN_KEY = 'cs_generative_mode';
+  readonly i18n = inject(I18nService);
 
   constructor(
     private http: HttpClient,

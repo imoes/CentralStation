@@ -1,4 +1,4 @@
-import { Component, OnInit, signal, computed } from '@angular/core';
+import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -19,6 +19,7 @@ import { MatExpansionModule } from '@angular/material/expansion';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { environment } from '../../../../environments/environment';
 import { AuthService } from '../../../core/auth/auth.service';
+import { I18nService } from '../../../core/services/i18n.service';
 
 interface Skill {
   id: string;
@@ -168,7 +169,7 @@ interface SkillForm {
           </mat-form-field>
 
           <mat-form-field appearance="outline" class="full-width">
-            <mat-label>Beschreibung (1–2 Sätze)</mat-label>
+            <mat-label>{{ i18n.t('common.description') }}</mat-label>
             <textarea matInput [(ngModel)]="form.description" rows="2"
                       placeholder="Wann und wofür diesen Skill nutzen?"></textarea>
           </mat-form-field>
@@ -194,10 +195,10 @@ interface SkillForm {
             <mat-label>Sichtbarkeit</mat-label>
             <mat-select [(ngModel)]="form.visibility">
               <mat-option value="public">
-                <mat-icon>public</mat-icon> Öffentlich — für alle sichtbar
+                <mat-icon>public</mat-icon> {{ i18n.t('common.public') }}
               </mat-option>
               <mat-option value="private">
-                <mat-icon>lock</mat-icon> Privat — nur für mich
+                <mat-icon>lock</mat-icon> {{ i18n.t('common.private') }}
               </mat-option>
             </mat-select>
           </mat-form-field>
@@ -261,6 +262,7 @@ interface SkillForm {
   `],
 })
 export class SkillsComponent implements OnInit {
+  readonly i18n = inject(I18nService);
   private readonly apiUrl = environment.apiUrl;
 
   skills = signal<Skill[]>([]);

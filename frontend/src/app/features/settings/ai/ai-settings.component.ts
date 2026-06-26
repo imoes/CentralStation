@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, signal, computed } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../../environments/environment';
@@ -17,6 +17,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatChipsModule } from '@angular/material/chips';
 import { ConnectorService } from '../../../core/services/connector.service';
 import { SettingItem } from '../../../core/models/connector.model';
+import { I18nService } from '../../../core/services/i18n.service';
 
 interface TestResult { success: boolean; message: string; detail: string | null; }
 interface CodexStatus {
@@ -213,7 +214,7 @@ const SECRET_MASK = '••••••••';
           <mat-card-header>
             <mat-card-title>Claude — OAuth Login</mat-card-title>
             <div class="card-header-actions">
-              <button mat-icon-button (click)="loadClaudeStatus()" matTooltip="Status aktualisieren">
+              <button mat-icon-button (click)="loadClaudeStatus()" matTooltip="Refresh status">
                 <mat-icon>refresh</mat-icon>
               </button>
             </div>
@@ -223,10 +224,10 @@ const SECRET_MASK = '••••••••';
               <div class="codex-status-banner" [class.authenticated]="claudeStatus()!.authenticated">
                 <mat-icon>{{ claudeStatus()!.authenticated ? 'verified_user' : 'no_accounts' }}</mat-icon>
                 <div class="codex-status-text">
-                  <strong>{{ claudeStatus()!.authenticated ? 'Eingeloggt' : 'Nicht eingeloggt' }}</strong>
+                  <strong>{{ claudeStatus()!.authenticated ? 'Logged in' : 'Not logged in' }}</strong>
                   <span>{{ claudeStatus()!.message }}</span>
                   @if (claudeStatus()!.authenticated && claudeStatus()!.expires_at) {
-                    <span class="expires">Gültig bis: {{ claudeStatus()!.expires_at | date:'yyyy-MM-dd HH:mm' }}</span>
+                    <span class="expires">Valid until: {{ claudeStatus()!.expires_at | date:'yyyy-MM-dd HH:mm' }}</span>
                   }
                 </div>
               </div>
@@ -236,7 +237,7 @@ const SECRET_MASK = '••••••••';
               <div class="oauth-actions">
                 @if (claudeStatus()?.authenticated) {
                   <button mat-stroked-button color="warn" (click)="logoutClaude()">
-                    <mat-icon>logout</mat-icon> Abmelden
+                    <mat-icon>logout</mat-icon> {{ i18n.t('app.nav.logout') }}
                   </button>
                 }
                 <button mat-raised-button color="primary"
@@ -247,25 +248,25 @@ const SECRET_MASK = '••••••••';
                   } @else {
                     <mat-icon>login</mat-icon>
                   }
-                  {{ claudeStatus()?.authenticated ? 'Erneut anmelden' : 'Mit Claude anmelden' }}
+                  {{ claudeStatus()?.authenticated ? 'Sign in again' : 'Sign in with Claude' }}
                 </button>
               </div>
             } @else {
               <div class="oauth-flow">
                 <p class="oauth-instructions">
-                  1. Öffne den Link, melde dich bei Claude an und autorisiere den Zugriff.<br>
-                  2. Kopiere den angezeigten Code und füge ihn unten ein.
+                  1. Open the link, sign in to Claude, and authorize access.<br>
+                  2. Copy the code shown and paste it below.
                 </p>
                 <a [href]="claudeOAuthUrl()!" target="_blank" rel="noopener">
                   <button mat-stroked-button>
                     <mat-icon>open_in_new</mat-icon>
-                    Bei Claude anmelden
+                    Sign in with Claude
                   </button>
                 </a>
                 <mat-form-field appearance="outline" class="setting-field" style="margin-top:8px">
-                  <mat-label>Autorisierungs-Code</mat-label>
+                  <mat-label>Authorization code</mat-label>
                   <input matInput [(ngModel)]="claudeCode" [ngModelOptions]="{standalone: true}"
-                         placeholder="Code aus dem Browser einfügen">
+                         placeholder="Paste code from browser">
                 </mat-form-field>
                 <div class="oauth-actions">
                   <button mat-raised-button color="primary"
@@ -276,9 +277,9 @@ const SECRET_MASK = '••••••••';
                     } @else {
                       <mat-icon>check</mat-icon>
                     }
-                    Code bestätigen
+                    {{ i18n.t('common.confirm') }}
                   </button>
-                  <button mat-button (click)="cancelClaudeOAuth()">Abbrechen</button>
+                  <button mat-button (click)="cancelClaudeOAuth()">{{ i18n.t('common.cancel') }}</button>
                 </div>
               </div>
             }
@@ -436,6 +437,7 @@ const SECRET_MASK = '••••••••';
   `],
 })
 export class AiSettingsComponent implements OnInit, OnDestroy {
+  readonly i18n = inject(I18nService);
   groups = SETTING_GROUPS;
   loading = signal(true);
   saving = signal(false);
@@ -546,7 +548,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
         this.completingClaudeOAuth.set(false);
         this.cancelClaudeOAuth();
         this.loadClaudeStatus();
-        this.snack.open('Erfolgreich mit Claude angemeldet!', 'OK', { duration: 4000 });
+        this.snack.open('Successfully signed in with Claude!', 'OK', { duration: 4000 });
       },
       error: err => {
         this.completingClaudeOAuth.set(false);
@@ -565,9 +567,9 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
     this.http.delete(`${environment.apiUrl}/oauth/claude-oauth/logout`).subscribe({
       next: () => {
         this.loadClaudeStatus();
-        this.snack.open('Abgemeldet', 'OK', { duration: 3000 });
+        this.snack.open('Signed out', 'OK', { duration: 3000 });
       },
-      error: () => this.snack.open('Fehler beim Abmelden', 'OK', { duration: 3000 }),
+      error: () => this.snack.open('Error signing out', 'OK', { duration: 3000 }),
     });
   }
 

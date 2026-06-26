@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
@@ -18,6 +18,7 @@ import { KanbanService } from '../../core/services/kanban.service';
 import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
 import { KanbanCard, KanbanColumn, KanbanStatus } from '../../core/models/kanban.model';
 import { KanbanCardDialogComponent } from './kanban-card-dialog.component';
+import { I18nService } from '../../core/services/i18n.service';
 
 const COLUMNS: { id: KanbanStatus; label: string; color: string }[] = [
   { id: 'backlog',     label: 'Backlog',     color: '#607d8b' },
@@ -49,7 +50,7 @@ const PRIORITY_COLORS: Record<string, string> = {
       <div class="board-header">
         <h2>Kanban Board</h2>
         <button mat-raised-button color="primary" (click)="openCreate()">
-          <mat-icon>add</mat-icon> Neue Karte
+          <mat-icon>add</mat-icon> {{ i18n.t('kanban.new_card') }}
         </button>
       </div>
 
@@ -82,7 +83,7 @@ const PRIORITY_COLORS: Record<string, string> = {
                         <span class="card-jira-key">{{ card.jira_key }}</span>
                       }
                       @if (card.ai_generated) {
-                        <mat-icon class="ai-icon" matTooltip="KI-generiert">smart_toy</mat-icon>
+                        <mat-icon class="ai-icon" [matTooltip]="i18n.t('kanban.ai_generated')">smart_toy</mat-icon>
                       }
                       <div class="card-actions">
                         <button mat-icon-button (click)="$event.stopPropagation(); openEdit(card)">
@@ -203,6 +204,8 @@ const PRIORITY_COLORS: Record<string, string> = {
   `],
 })
 export class KanbanComponent implements OnInit, OnDestroy {
+  readonly i18n = inject(I18nService);
+
   columns = COLUMNS;
   columnIds = COLUMNS.map(c => c.id);
   loading = signal(true);

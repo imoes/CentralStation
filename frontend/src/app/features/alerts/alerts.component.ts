@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, signal, computed } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, computed, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -16,6 +16,7 @@ import { AlertService } from '../../core/services/alert.service';
 import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
 import { Alert, Severity } from '../../core/models/alert.model';
 import { environment } from '../../../environments/environment';
+import { I18nService } from '../../core/services/i18n.service';
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#d32f2f',
@@ -39,42 +40,42 @@ const SEVERITY_COLORS: Record<string, string> = {
       <div class="page-header">
         <div>
           <h2>Alerts</h2>
-          <p class="page-subtitle">Persistenter Alert-Speicher — Incident-Tracking mit Status-Verwaltung</p>
+          <p class="page-subtitle">{{ i18n.t('alerts.subtitle') }}</p>
         </div>
         <div class="header-actions">
           <mat-form-field appearance="outline" class="filter-field">
-            <mat-label>Quelle</mat-label>
+            <mat-label>{{ i18n.t('alerts.filter.source') }}</mat-label>
             <mat-select [(ngModel)]="filterSource" (selectionChange)="onSourceChange()">
-              <mat-option value="">Alle</mat-option>
+              <mat-option value="">{{ i18n.t('alerts.all_sources') }}</mat-option>
               <mat-option value="checkmk">CheckMK</mat-option>
               <mat-option value="graylog">Graylog</mat-option>
               <mat-option value="wazuh">Wazuh</mat-option>
             </mat-select>
           </mat-form-field>
           <mat-form-field appearance="outline" class="filter-field">
-            <mat-label>Severity</mat-label>
+            <mat-label>{{ i18n.t('alerts.filter.severity') }}</mat-label>
             <mat-select [(ngModel)]="filterSeverity" (selectionChange)="load()">
-              <mat-option value="">Alle</mat-option>
-              <mat-option value="critical">Kritisch</mat-option>
-              <mat-option value="high">Hoch</mat-option>
-              <mat-option value="medium">Mittel</mat-option>
-              <mat-option value="low">Niedrig</mat-option>
-              <mat-option value="info">Info</mat-option>
+              <mat-option value="">{{ i18n.t('alerts.all_sources') }}</mat-option>
+              <mat-option value="critical">{{ i18n.t('severity.critical') }}</mat-option>
+              <mat-option value="high">{{ i18n.t('severity.high') }}</mat-option>
+              <mat-option value="medium">{{ i18n.t('severity.medium') }}</mat-option>
+              <mat-option value="low">{{ i18n.t('severity.low') }}</mat-option>
+              <mat-option value="info">{{ i18n.t('severity.info') }}</mat-option>
             </mat-select>
           </mat-form-field>
           <mat-form-field appearance="outline" class="filter-field">
-            <mat-label>Status</mat-label>
+            <mat-label>{{ i18n.t('common.status') }}</mat-label>
             <mat-select [(ngModel)]="filterStatus" (selectionChange)="load()">
-              <mat-option value="">Alle</mat-option>
-              <mat-option value="new">Neu</mat-option>
-              <mat-option value="acknowledged">Bestätigt</mat-option>
+              <mat-option value="">{{ i18n.t('alerts.all_sources') }}</mat-option>
+              <mat-option value="new">{{ i18n.t('status.new') }}</mat-option>
+              <mat-option value="acknowledged">{{ i18n.t('status.acknowledged') }}</mat-option>
             </mat-select>
           </mat-form-field>
 
           @if (filterSource === 'checkmk') {
             @if (availableCriticalities().length) {
               <mat-form-field appearance="outline" class="filter-field">
-                <mat-label>Criticality</mat-label>
+                <mat-label>{{ i18n.t('alerts.filter.criticality') }}</mat-label>
                 <mat-select multiple [ngModel]="filterCriticality()" (ngModelChange)="filterCriticality.set($event)">
                   @for (v of availableCriticalities(); track v) {
                     <mat-option [value]="v">{{ v }}</mat-option>
@@ -84,7 +85,7 @@ const SEVERITY_COLORS: Record<string, string> = {
             }
             @if (availableVes().length) {
               <mat-form-field appearance="outline" class="filter-field">
-                <mat-label>Umgebung (VE)</mat-label>
+                <mat-label>{{ i18n.t('alerts.filter.ve') }}</mat-label>
                 <mat-select multiple [ngModel]="filterVe()" (ngModelChange)="filterVe.set($event)">
                   @for (v of availableVes(); track v) {
                     <mat-option [value]="v">{{ v }}</mat-option>
@@ -94,7 +95,7 @@ const SEVERITY_COLORS: Record<string, string> = {
             }
             @if (availableLocations().length) {
               <mat-form-field appearance="outline" class="filter-field">
-                <mat-label>Location</mat-label>
+                <mat-label>{{ i18n.t('alerts.filter.location') }}</mat-label>
                 <mat-select multiple [ngModel]="filterLocation()" (ngModelChange)="filterLocation.set($event)">
                   @for (v of availableLocations(); track v) {
                     <mat-option [value]="v">{{ v }}</mat-option>
@@ -114,7 +115,7 @@ const SEVERITY_COLORS: Record<string, string> = {
             }
             @if (availableOs().length) {
               <mat-form-field appearance="outline" class="filter-field">
-                <mat-label>Betriebssystem</mat-label>
+                <mat-label>{{ i18n.t('alerts.filter.os') }}</mat-label>
                 <mat-select multiple [ngModel]="filterOs()" (ngModelChange)="filterOs.set($event)">
                   @for (v of availableOs(); track v) {
                     <mat-option [value]="v">{{ v }}</mat-option>
@@ -127,7 +128,7 @@ const SEVERITY_COLORS: Record<string, string> = {
           <button mat-stroked-button (click)="runAggregation()" [disabled]="aggregating()">
             @if (aggregating()) { <mat-spinner diameter="16"></mat-spinner> }
             @else { <mat-icon>sync</mat-icon> }
-            Jetzt aktualisieren
+            {{ i18n.t('alerts.refresh_now') }}
           </button>
         </div>
       </div>
@@ -192,23 +193,23 @@ const SEVERITY_COLORS: Record<string, string> = {
                     } @else {
                       <mat-icon>psychology</mat-icon>
                     }
-                    {{ alert.ai_insight ? 'Neu analysieren' : 'KI Analyse' }}
+                    {{ alert.ai_insight ? i18n.t('alerts.ai_reanalyze') : i18n.t('alerts.ai_analysis') }}
                   </button>
                 </div>
                 <div class="alert-actions">
                   @if (alert.status === 'new') {
-                    <button mat-icon-button matTooltip="Bestätigen" (click)="acknowledge(alert)">
+                    <button mat-icon-button [matTooltip]="i18n.t('common.acknowledge')" (click)="acknowledge(alert)">
                       <mat-icon>check_circle</mat-icon>
                     </button>
                   } @else {
-                    <mat-icon class="ack-icon" matTooltip="Bestätigt">task_alt</mat-icon>
+                    <mat-icon class="ack-icon" [matTooltip]="i18n.t('status.acknowledged')">task_alt</mat-icon>
                   }
                 </div>
               </div>
             </div>
           }
           @if (filteredAlerts().length === 0) {
-            <div class="empty-state">Keine Alerts gefunden.</div>
+            <div class="empty-state">{{ i18n.t('alerts.no_alerts') }}</div>
           }
         </div>
       }
@@ -353,6 +354,7 @@ const SEVERITY_COLORS: Record<string, string> = {
   `],
 })
 export class AlertsComponent implements OnInit, OnDestroy {
+  readonly i18n = inject(I18nService);
   alerts = signal<Alert[]>([]);
   loading = signal(true);
   aggregating = signal(false);
@@ -495,7 +497,7 @@ export class AlertsComponent implements OnInit, OnDestroy {
   acknowledge(alert: Alert) {
     this.svc.acknowledge(alert.id).subscribe({
       next: () => this.load(),
-      error: () => this.snack.open('Fehler beim Bestätigen', 'OK', { duration: 3000 }),
+      error: () => this.snack.open(this.i18n.t('errors.acknowledge_failed'), 'OK', { duration: 3000 }),
     });
   }
 
@@ -512,7 +514,7 @@ export class AlertsComponent implements OnInit, OnDestroy {
       },
       error: () => {
         this.enrichingIds.update(s => { const n = new Set(s); n.delete(alert.id); return n; });
-        this.snack.open('KI-Analyse fehlgeschlagen', 'OK', { duration: 3000 });
+        this.snack.open(this.i18n.t('errors.ai_analysis_failed'), 'OK', { duration: 3000 });
       },
     });
   }
@@ -527,7 +529,7 @@ export class AlertsComponent implements OnInit, OnDestroy {
       },
       error: () => {
         this.aggregating.set(false);
-        this.snack.open('Aggregation fehlgeschlagen', 'OK', { duration: 3000 });
+        this.snack.open(this.i18n.t('errors.aggregation_failed'), 'OK', { duration: 3000 });
       },
     });
   }

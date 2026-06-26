@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient, HttpParams } from '@angular/common/http';
@@ -14,6 +14,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { Subject, takeUntil } from 'rxjs';
 import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
 import { environment } from '../../../environments/environment';
+import { I18nService } from '../../core/services/i18n.service';
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#d32f2f', high: '#f57c00', medium: '#1976d2', low: '#388e3c', info: '#607d8b',
@@ -58,15 +59,15 @@ const VENDOR_ICONS: Record<string, string> = {
           <mat-form-field appearance="outline" class="filter-field">
             <mat-label>Status</mat-label>
             <mat-select [(ngModel)]="filterStatus" (selectionChange)="load()">
-              <mat-option value="">Alle</mat-option>
-              <mat-option value="new">Neu</mat-option>
-              <mat-option value="acknowledged">Bestätigt</mat-option>
+              <mat-option value="">{{ i18n.t('common.all') }}</mat-option>
+              <mat-option value="new">{{ i18n.t('status.new') }}</mat-option>
+              <mat-option value="acknowledged">{{ i18n.t('status.acknowledged') }}</mat-option>
             </mat-select>
           </mat-form-field>
           <button mat-stroked-button [disabled]="triggering()" (click)="triggerAgent()">
             @if (triggering()) { <mat-spinner diameter="16"></mat-spinner> }
             @else { <mat-icon>network_check</mat-icon> }
-            Netzwerk-Agent ausführen
+            Network Agent
           </button>
         </div>
       </div>
@@ -107,7 +108,7 @@ const VENDOR_ICONS: Record<string, string> = {
               </div>
               <div class="event-actions">
                 @if (event.status === 'new') {
-                  <button mat-icon-button matTooltip="Bestätigen" (click)="acknowledge(event)">
+                  <button mat-icon-button [matTooltip]="i18n.t('common.acknowledge')" (click)="acknowledge(event)">
                     <mat-icon>check_circle</mat-icon>
                   </button>
                 } @else {
@@ -155,6 +156,7 @@ const VENDOR_ICONS: Record<string, string> = {
   `],
 })
 export class NetworkComponent implements OnInit, OnDestroy {
+  readonly i18n = inject(I18nService);
   events = signal<any[]>([]);
   stats = signal<{ location: string; count: number }[]>([]);
   loading = signal(true);

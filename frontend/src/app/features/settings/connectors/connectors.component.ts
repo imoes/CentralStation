@@ -1,4 +1,4 @@
-import { Component, computed, OnInit, signal } from '@angular/core';
+import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule } from '@angular/forms';
 import { MatCardModule } from '@angular/material/card';
@@ -14,6 +14,7 @@ import { ConnectorService } from '../../../core/services/connector.service';
 import { Connector, ConnectorType } from '../../../core/models/connector.model';
 import { ConnectorFormDialogComponent } from './connector-form-dialog.component';
 import { AuthService } from '../../../core/auth/auth.service';
+import { I18nService } from '../../../core/services/i18n.service';
 
 @Component({
   selector: 'cs-connectors',
@@ -28,13 +29,13 @@ import { AuthService } from '../../../core/auth/auth.service';
     <div class="page-container">
       <div class="page-header">
         <div>
-          <h2>{{ isAdmin() ? 'Connectors' : 'Meine Konnektoren' }}</h2>
+          <h2>{{ isAdmin() ? i18n.t('settings.tabs.connectors') : i18n.t('settings.tabs.myConnectors') }}</h2>
           @if (!isAdmin()) {
             <p class="subtle">Hier pflegen Sie Ihre persönlichen Zugänge für Monitoring, Jira, O365 und Teams.</p>
           }
         </div>
         <button mat-raised-button color="primary" (click)="openCreate()">
-          <mat-icon>add</mat-icon> Connector hinzufügen
+          <mat-icon>add</mat-icon> {{ i18n.t('settings.connectors.add') }}
         </button>
       </div>
 
@@ -44,13 +45,13 @@ import { AuthService } from '../../../core/auth/auth.service';
         <mat-card>
           <table mat-table [dataSource]="connectors()" class="full-width">
             <ng-container matColumnDef="type">
-              <th mat-header-cell *matHeaderCellDef>Typ</th>
+              <th mat-header-cell *matHeaderCellDef>{{ i18n.t('common.type') }}</th>
               <td mat-cell *matCellDef="let c">
                 <mat-chip [class]="'chip-' + c.type">{{ c.type }}</mat-chip>
               </td>
             </ng-container>
             <ng-container matColumnDef="name">
-              <th mat-header-cell *matHeaderCellDef>Name</th>
+              <th mat-header-cell *matHeaderCellDef>{{ i18n.t('common.name') }}</th>
               <td mat-cell *matCellDef="let c">{{ c.name }}</td>
             </ng-container>
             <ng-container matColumnDef="base_url">
@@ -58,7 +59,7 @@ import { AuthService } from '../../../core/auth/auth.service';
               <td mat-cell *matCellDef="let c" class="url-cell">{{ c.base_url || '—' }}</td>
             </ng-container>
             <ng-container matColumnDef="enabled">
-              <th mat-header-cell *matHeaderCellDef>Aktiv</th>
+              <th mat-header-cell *matHeaderCellDef>{{ i18n.t('common.enabled') }}</th>
               <td mat-cell *matCellDef="let c">
                 <mat-slide-toggle
                   [checked]="c.enabled"
@@ -67,9 +68,9 @@ import { AuthService } from '../../../core/auth/auth.service';
               </td>
             </ng-container>
             <ng-container matColumnDef="actions">
-              <th mat-header-cell *matHeaderCellDef>Aktionen</th>
+              <th mat-header-cell *matHeaderCellDef>{{ i18n.t('common.actions') }}</th>
               <td mat-cell *matCellDef="let c">
-                <button mat-icon-button (click)="testConnector(c)" title="Verbindung testen"
+                <button mat-icon-button (click)="testConnector(c)" [title]="i18n.t('settings.connectors.test')"
                         [disabled]="testingId() === c.id">
                   @if (testingId() === c.id) {
                     <mat-spinner diameter="20"></mat-spinner>
@@ -77,15 +78,15 @@ import { AuthService } from '../../../core/auth/auth.service';
                     <mat-icon>wifi_tethering</mat-icon>
                   }
                 </button>
-                <button mat-icon-button (click)="openEdit(c)" title="Bearbeiten">
+                <button mat-icon-button (click)="openEdit(c)" [title]="i18n.t('common.edit')">
                   <mat-icon>edit</mat-icon>
                 </button>
                 @if (isAdmin()) {
-                  <button mat-icon-button color="warn" (click)="deleteConnector(c)" title="Löschen">
+                  <button mat-icon-button color="warn" (click)="deleteConnector(c)" [title]="i18n.t('common.delete')">
                     <mat-icon>delete</mat-icon>
                   </button>
                 } @else if (c.owner_user_id) {
-                  <button mat-icon-button color="warn" (click)="deleteMyConnector(c)" title="Löschen">
+                  <button mat-icon-button color="warn" (click)="deleteMyConnector(c)" [title]="i18n.t('common.delete')">
                     <mat-icon>delete</mat-icon>
                   </button>
                 }
@@ -95,7 +96,7 @@ import { AuthService } from '../../../core/auth/auth.service';
             <tr mat-row *matRowDef="let row; columns: columns"></tr>
           </table>
           @if (connectors().length === 0) {
-            <div class="empty-state">Keine Connectors konfiguriert.</div>
+            <div class="empty-state">{{ i18n.t('settings.connectors.no_connectors') }}</div>
           }
         </mat-card>
       }
@@ -114,6 +115,7 @@ import { AuthService } from '../../../core/auth/auth.service';
   `],
 })
 export class ConnectorsComponent implements OnInit {
+  readonly i18n = inject(I18nService);
   columns = ['type', 'name', 'base_url', 'enabled', 'actions'];
   connectors = signal<Connector[]>([]);
   loading = signal(true);
@@ -185,7 +187,7 @@ export class ConnectorsComponent implements OnInit {
       },
       error: () => {
         this.testingId.set(null);
-        this.snack.open('Verbindungstest fehlgeschlagen', 'OK', { duration: 4000 });
+        this.snack.open(this.i18n.t('settings.connectors.test_error'), 'OK', { duration: 4000 });
       },
     });
   }

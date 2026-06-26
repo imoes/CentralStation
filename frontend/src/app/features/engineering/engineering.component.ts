@@ -8,6 +8,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
 import { environment } from '../../../environments/environment';
+import { I18nService } from '../../core/services/i18n.service';
 
 interface Remediation {
   id: string;
@@ -108,16 +109,16 @@ interface PlaybookDraft {
                   <button mat-flat-button color="primary"
                           (click)="approve(r)"
                           [disabled]="approving().has(r.id)"
-                          matTooltip="AWX-Job starten">
+                          matTooltip="Start AWX job">
                     <mat-icon>play_arrow</mat-icon>
-                    Genehmigen &amp; Ausführen
+                    Approve &amp; Execute
                   </button>
                   <button mat-stroked-button
                           (click)="reject(r)"
                           [disabled]="approving().has(r.id)"
-                          matTooltip="Vorschlag ablehnen">
+                          matTooltip="Reject proposal">
                     <mat-icon>close</mat-icon>
-                    Ablehnen
+                    Reject
                   </button>
                 </div>
               </div>
@@ -224,7 +225,7 @@ interface PlaybookDraft {
                 }
                 <!-- YAML Vorschau -->
                 <details class="yaml-details">
-                  <summary class="yaml-summary">YAML anzeigen</summary>
+                  <summary class="yaml-summary">Show YAML</summary>
                   <pre class="yaml-preview">{{ d.yaml }}</pre>
                 </details>
                 @if (d.status === 'drafted') {
@@ -232,13 +233,13 @@ interface PlaybookDraft {
                     <button mat-flat-button color="primary"
                             (click)="approveDraft(d)"
                             [disabled]="publishingDraft().has(d.id)"
-                            matTooltip="In GitLab committen &amp; AWX-Template anlegen">
+                            matTooltip="Commit to GitLab &amp; create AWX template">
                       <mat-icon>upload</mat-icon>
-                      Genehmigen &amp; Publizieren
+                      Approve &amp; Publish
                     </button>
                     <button mat-stroked-button (click)="rejectDraft(d)">
                       <mat-icon>close</mat-icon>
-                      Ablehnen
+                      Reject
                     </button>
                   </div>
                 }
@@ -359,7 +360,7 @@ interface PlaybookDraft {
                   @if (t.description) { <span class="tmpl-desc muted">{{ t.description }}</span> }
                   @if (t.playbook) { <span class="muted" style="margin-left:auto;font-size:0.72rem">{{ t.playbook }}</span> }
                   <button mat-flat-button style="margin-left:8px;font-size:0.72rem;padding:0 8px;min-width:0;height:24px" (click)="launchAwxTemplate(t.id)" [disabled]="awxngLaunching()">
-                    ▶ Starten
+                    ▶ Launch
                   </button>
                 </div>
               }
@@ -372,7 +373,7 @@ interface PlaybookDraft {
       <!-- ── LCARS Bottom ───────────────────────────────────────── -->
       <div class="eng-footer">
         <div class="cap-bl"></div>
-        <span class="foot-cell">{{ allItems().length }} EINTRÄGE</span>
+        <span class="foot-cell">{{ allItems().length }} ENTRIES</span>
         <span class="foot-cell">{{ pendingCount() }} AUSSTEHEND</span>
         <span class="foot-cell">{{ draftCount() }} DRAFTS</span>
         <div class="cap-br"></div>
@@ -479,6 +480,7 @@ interface PlaybookDraft {
 export class EngineeringComponent implements OnInit, OnDestroy {
   private http = inject(HttpClient);
   private snack = inject(MatSnackBar);
+  readonly i18n = inject(I18nService);
 
   readonly tabs = [
     { id: 'pending',   label: 'AUSSTEHEND' },
@@ -567,12 +569,12 @@ export class EngineeringComponent implements OnInit, OnDestroy {
     this.approving.set(next);
     this.http.post<any>(`${environment.apiUrl}/remediations/${r.id}/approve`, {}).subscribe({
       next: res => {
-        this.snack.open(`Job gestartet — AWX #${res?.awx_job_id ?? '…'}`, 'OK', { duration: 3000 });
+        this.snack.open(`Job started — AWX #${res?.awx_job_id ?? '…'}`, 'OK', { duration: 3000 });
         this.loadAll();
         this.approving.update(s => { const n = new Set(s); n.delete(r.id); return n; });
       },
       error: e => {
-        this.snack.open('Fehler: ' + (e?.error?.detail ?? e.message), 'OK', { duration: 4000 });
+        this.snack.open('Error: ' + (e?.error?.detail ?? e.message), 'OK', { duration: 4000 });
         this.approving.update(s => { const n = new Set(s); n.delete(r.id); return n; });
       },
     });
@@ -580,8 +582,8 @@ export class EngineeringComponent implements OnInit, OnDestroy {
 
   reject(r: Remediation): void {
     this.http.post<any>(`${environment.apiUrl}/remediations/${r.id}/reject`, {}).subscribe({
-      next: () => { this.snack.open('Abgelehnt', '', { duration: 2000 }); this.loadAll(); },
-      error: () => this.snack.open('Fehler beim Ablehnen', '', { duration: 2000 }),
+      next: () => { this.snack.open('Rejected', '', { duration: 2000 }); this.loadAll(); },
+      error: () => this.snack.open('Error rejecting', '', { duration: 2000 }),
     });
   }
 
@@ -593,14 +595,14 @@ export class EngineeringComponent implements OnInit, OnDestroy {
       context: this.newTaskCtx.trim(),
     }).subscribe({
       next: d => {
-        this.snack.open(`Playbook "${d.title}" erstellt`, 'OK', { duration: 3000 });
+        this.snack.open(`Playbook "${d.title}" created`, 'OK', { duration: 3000 });
         this.drafts.update(ds => [d, ...ds]);
         this.newTaskDesc = '';
         this.newTaskCtx = '';
         this.authoringInProgress.set(false);
       },
       error: e => {
-        this.snack.open('Fehler: ' + (e?.error?.detail ?? e.message), 'OK', { duration: 4000 });
+        this.snack.open('Error: ' + (e?.error?.detail ?? e.message), 'OK', { duration: 4000 });
         this.authoringInProgress.set(false);
       },
     });
@@ -610,14 +612,14 @@ export class EngineeringComponent implements OnInit, OnDestroy {
     this.publishingDraft.update(s => { const n = new Set(s); n.add(d.id); return n; });
     this.http.post<any>(`${environment.apiUrl}/remediations/playbooks/${d.id}/approve`, {}).subscribe({
       next: res => {
-        const tmpl = res?.awx_template_id ? ` → AWX-Template #${res.awx_template_id}` : '';
-        this.snack.open(`Publiziert${tmpl}`, 'OK', { duration: 4000 });
+        const tmpl = res?.awx_template_id ? ` → AWX Template #${res.awx_template_id}` : '';
+        this.snack.open(`Published${tmpl}`, 'OK', { duration: 4000 });
         this.loadDrafts();
         this.loadTemplates();
         this.publishingDraft.update(s => { const n = new Set(s); n.delete(d.id); return n; });
       },
       error: e => {
-        this.snack.open('Fehler: ' + (e?.error?.detail ?? e.message), 'OK', { duration: 4000 });
+        this.snack.open('Error: ' + (e?.error?.detail ?? e.message), 'OK', { duration: 4000 });
         this.publishingDraft.update(s => { const n = new Set(s); n.delete(d.id); return n; });
       },
     });
@@ -625,7 +627,7 @@ export class EngineeringComponent implements OnInit, OnDestroy {
 
   rejectDraft(d: PlaybookDraft): void {
     this.http.post<any>(`${environment.apiUrl}/remediations/playbooks/${d.id}/reject`, {}).subscribe({
-      next: () => { this.snack.open('Draft abgelehnt', '', { duration: 2000 }); this.loadDrafts(); },
+      next: () => { this.snack.open('Draft rejected', '', { duration: 2000 }); this.loadDrafts(); },
       error: () => {},
     });
   }
@@ -668,21 +670,21 @@ export class EngineeringComponent implements OnInit, OnDestroy {
     this.http.post<any>(`${environment.apiUrl}/awx-ng/job-templates/${templateId}/launch`, {}).subscribe({
       next: d => {
         this.awxngLaunching.set(false);
-        this.snack.open(`Job #${d?.job_id ?? '?'} gestartet`, 'OK', { duration: 3000 });
+        this.snack.open(`Job #${d?.job_id ?? '?'} started`, 'OK', { duration: 3000 });
         this.awxngTab.set('jobs');
         setTimeout(() => this.loadAwxngJobs(), 1000);
       },
       error: e => {
         this.awxngLaunching.set(false);
-        this.snack.open('Fehler: ' + (e?.error?.detail ?? e.message), 'OK', { duration: 4000 });
+        this.snack.open('Error: ' + (e?.error?.detail ?? e.message), 'OK', { duration: 4000 });
       },
     });
   }
 
   cancelAwxJob(jobId: number): void {
     this.http.post<any>(`${environment.apiUrl}/awx-ng/jobs/${jobId}/cancel`, {}).subscribe({
-      next: () => { this.snack.open(`Job #${jobId} abgebrochen`, '', { duration: 2000 }); this.loadAwxngJobs(); },
-      error: () => this.snack.open('Abbrechen fehlgeschlagen', '', { duration: 2000 }),
+      next: () => { this.snack.open(`Job #${jobId} cancelled`, '', { duration: 2000 }); this.loadAwxngJobs(); },
+      error: () => this.snack.open('Cancel failed', '', { duration: 2000 }),
     });
   }
 }

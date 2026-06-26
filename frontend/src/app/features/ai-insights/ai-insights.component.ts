@@ -1,4 +1,5 @@
 import { Component, OnInit, OnDestroy, inject, signal } from '@angular/core';
+import { I18nService } from '../../core/services/i18n.service';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
@@ -41,11 +42,11 @@ const SEVERITY_COLORS: Record<string, string> = {
   template: `
     <div class="page-container">
       <div class="page-header">
-        <h2>KI-Analyse Insights</h2>
+        <h2>{{ i18n.t('ai_insights.title') }}</h2>
         <button mat-raised-button color="primary" [disabled]="triggering()" (click)="trigger()">
           @if (triggering()) { <mat-spinner diameter="18"></mat-spinner> }
           @else { <mat-icon>play_arrow</mat-icon> }
-          Agent jetzt ausführen
+          {{ i18n.t('ai_insights.run_agent') }}
         </button>
       </div>
 
@@ -63,7 +64,7 @@ const SEVERITY_COLORS: Record<string, string> = {
               <span class="alh-dot">·</span>
               <span class="alh-agent">{{ analysis.agent_type | uppercase }}</span>
               <span class="alh-spacer"></span>
-              <span class="alh-counts">{{ analysis.findings_count }} Befunde · {{ analysis.recommendations_count }} Empfehlung{{analysis.recommendations_count !== 1 ? 'en' : ''}}</span>
+              <span class="alh-counts">{{ analysis.findings_count }} {{ i18n.t('ai_insights.findings') }} · {{ analysis.recommendations_count }} {{ i18n.t('ai_insights.recommendations') }}</span>
               @if (analysis.jira_tickets_created?.length) {
                 <span class="alh-dot">·</span>
                 <span class="alh-jira">{{ analysis.jira_tickets_created.length }} Jira</span>
@@ -84,13 +85,13 @@ const SEVERITY_COLORS: Record<string, string> = {
                   <mat-chip class="agent-chip">{{ analysis.agent_type }}</mat-chip>
                 </div>
                 <div class="analysis-counts">
-                  <span>{{ analysis.findings_count }} Befunde</span>
-                  <span>{{ analysis.recommendations_count }} Empfehlungen</span>
+                  <span>{{ analysis.findings_count }} {{ i18n.t('ai_insights.findings') }}</span>
+                  <span>{{ analysis.recommendations_count }} {{ i18n.t('ai_insights.recommendations') }}</span>
                   @if (analysis.clusters?.length) {
-                    <span class="cluster-count">{{ analysis.clusters.length }} Fehler-Cluster</span>
+                    <span class="cluster-count">{{ analysis.clusters.length }} {{ i18n.t('ai_insights.error_clusters') }}</span>
                   }
                   @if (analysis.jira_tickets_created?.length) {
-                    <span class="jira-count">{{ analysis.jira_tickets_created.length }} Jira-Tickets</span>
+                    <span class="jira-count">{{ analysis.jira_tickets_created.length }} {{ i18n.t('ai_insights.jira_tickets') }}</span>
                   }
                 </div>
               </div>
@@ -100,7 +101,7 @@ const SEVERITY_COLORS: Record<string, string> = {
               @if (analysis.clusters?.length) {
                 <div class="cluster-section">
                   <div class="cluster-section-title">
-                    <mat-icon>hub</mat-icon> Diagnose / Fehler-Cluster
+                    <mat-icon>hub</mat-icon> {{ i18n.t('ai_insights.diagnosis_clusters') }}
                   </div>
                   @for (cl of analysis.clusters; track $index) {
                     <div class="cluster-item" [style.border-left-color]="sevColor(cl.severity)">
@@ -113,7 +114,7 @@ const SEVERITY_COLORS: Record<string, string> = {
                       @if (cl.root_cause_host) {
                         <div class="cluster-root">
                           <mat-icon class="host-icon">my_location</mat-icon>
-                          <span>Ursache: </span>
+                          <span>{{ i18n.t('ai_insights.root_cause_label') }} </span>
                           <button class="host-link" (click)="openInFeedByHost(cl.root_cause_host)">{{ cl.root_cause_host }}</button>
                         </div>
                       }
@@ -141,7 +142,7 @@ const SEVERITY_COLORS: Record<string, string> = {
                   <mat-expansion-panel [expanded]="analysis.id === highlightId()">
                     <mat-expansion-panel-header>
                       <mat-panel-title>
-                        Befunde &amp; Empfehlungen
+                        {{ i18n.t('ai_insights.findings_recommendations') }}
                         ({{ analysis.findings_count }} / {{ analysis.recommendations_count }})
                       </mat-panel-title>
                     </mat-expansion-panel-header>
@@ -220,7 +221,7 @@ const SEVERITY_COLORS: Record<string, string> = {
 
                     <!-- Standalone recommendations with no matching finding -->
                     @if (unmatchedRecs(analysis).length) {
-                      <div class="unmatched-label">Weitere Empfehlungen</div>
+                      <div class="unmatched-label">{{ i18n.t('ai_insights.more_recommendations') }}</div>
                       @for (rec of unmatchedRecs(analysis); track $index) {
                         <div class="rec-item">
                           <div class="rec-header">
@@ -239,7 +240,7 @@ const SEVERITY_COLORS: Record<string, string> = {
                 @if (analysis.jira_tickets_created?.length) {
                   <mat-expansion-panel>
                     <mat-expansion-panel-header>
-                      <mat-panel-title>Erstellte Jira-Tickets</mat-panel-title>
+                      <mat-panel-title>{{ i18n.t('ai_insights.created_jira_tickets') }}</mat-panel-title>
                     </mat-expansion-panel-header>
                     <div class="jira-list">
                       @for (ticket of analysis.jira_tickets_created; track ticket) {
@@ -252,7 +253,7 @@ const SEVERITY_COLORS: Record<string, string> = {
                 @if (analysis.rag_queries_used?.length) {
                   <mat-expansion-panel>
                     <mat-expansion-panel-header>
-                      <mat-panel-title>RAG / Websuche Kontext</mat-panel-title>
+                      <mat-panel-title>{{ i18n.t('ai_insights.rag_context') }}</mat-panel-title>
                     </mat-expansion-panel-header>
                     @for (ctx of analysis.rag_queries_used; track $index) {
                       <div class="rag-item">
@@ -268,9 +269,7 @@ const SEVERITY_COLORS: Record<string, string> = {
           </mat-card>
         }
         @if (analyses().length === 0) {
-          <div class="empty-state">
-            Noch keine KI-Analysen vorhanden. Starten Sie den Agenten mit "Agent jetzt ausführen".
-          </div>
+          <div class="empty-state">{{ i18n.t('ai_insights.no_analyses') }}</div>
         }
       }
     </div>

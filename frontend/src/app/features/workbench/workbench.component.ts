@@ -8,6 +8,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { environment } from '../../../environments/environment';
 import { ComputerService } from '../../core/services/computer.service';
+import { I18nService } from '../../core/services/i18n.service';
 
 interface WorkSession {
   id: string;
@@ -34,7 +35,7 @@ interface WorkSession {
       <div class="wb-header">
         <div class="cap-tl"></div>
         <div class="header-bar">
-          <span class="header-title">WERKBANK</span>
+          <span class="header-title">{{ i18n.t('workbench.title') }}</span>
           @if (session(); as s) {
             <span class="ctx-title" [title]="s.title">{{ s.title }}</span>
             @if (s.jira_key) {
@@ -49,10 +50,10 @@ interface WorkSession {
               </a>
             }
           } @else {
-            <span class="ctx-title">Eigener Arbeitsplatz</span>
+            <span class="ctx-title">{{ i18n.t('workbench.own_workspace') }}</span>
           }
           <span class="spacer"></span>
-          <button type="button" class="hbtn" (click)="openHermes()" matTooltip="Hermes-Agent öffnen / fortsetzen">
+          <button type="button" class="hbtn" (click)="openHermes()" [matTooltip]="i18n.t('workbench.open_hermes_tooltip')">
             <svg width="18" height="18" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <rect x="29" y="29" width="42" height="42" rx="7"/>
               <text x="50" y="56" text-anchor="middle" font-family="Arial,sans-serif" font-size="15" font-weight="700" letter-spacing="1" fill="currentColor" stroke="none">AI</text>
@@ -68,12 +69,12 @@ interface WorkSession {
               <rect x="37" y="79" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="48" y="86" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="59" y="79" width="4" height="4" rx="1" fill="currentColor" stroke="none"/>
               <rect x="17" y="37" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="10" y="48" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="17" y="59" width="4" height="4" rx="1" fill="currentColor" stroke="none"/>
               <rect x="79" y="37" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="86" y="48" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="79" y="59" width="4" height="4" rx="1" fill="currentColor" stroke="none"/>
-            </svg> HERMES
+            </svg> {{ i18n.t('workbench.hermes') }}
           </button>
-          <button type="button" class="hbtn" (click)="openTab()" matTooltip="IDE in neuem Tab öffnen">
+          <button type="button" class="hbtn" (click)="openTab()" [matTooltip]="i18n.t('workbench.open_new_tab_tooltip')">
             <mat-icon>open_in_new</mat-icon>
           </button>
-          <button type="button" class="hbtn" (click)="reload()" matTooltip="IDE neu laden">
+          <button type="button" class="hbtn" (click)="reload()" [matTooltip]="i18n.t('workbench.reload_ide_tooltip')">
             <mat-icon>refresh</mat-icon>
           </button>
         </div>
@@ -83,7 +84,7 @@ interface WorkSession {
       <!-- ── IDE iframe ─────────────────────────────────────────── -->
       <div class="wb-body">
         @if (loading()) {
-          <div class="status">IDE wird vorbereitet…</div>
+          <div class="status">{{ i18n.t('workbench.preparing_ide') }}</div>
         } @else if (error()) {
           <div class="status err">{{ error() }}</div>
         }
@@ -95,7 +96,7 @@ interface WorkSession {
 
       <div class="wb-footer">
         <div class="cap-bl"></div>
-        <span class="foot">VS CODE · TERMINAL · GIT</span>
+        <span class="foot">{{ i18n.t('workbench.footer') }}</span>
         <div class="cap-br"></div>
       </div>
     </div>
@@ -136,6 +137,7 @@ export class WorkbenchComponent implements OnInit {
   private san = inject(DomSanitizer);
   private snack = inject(MatSnackBar);
   private computer = inject(ComputerService);
+  readonly i18n = inject(I18nService);
 
   loading = signal(true);
   error = signal<string | null>(null);
@@ -161,7 +163,7 @@ export class WorkbenchComponent implements OnInit {
     if (id) {
       this.http.get<WorkSession>(`${environment.apiUrl}/workflow/${id}`).subscribe({
         next: s => { this.session.set(s); this.provision(id); },
-        error: () => { this.error.set('WorkSession nicht gefunden'); this.loading.set(false); },
+        error: () => { this.error.set(this.i18n.t('errors.worksession_not_found')); this.loading.set(false); },
       });
     } else {
       this.ensureOwn();
