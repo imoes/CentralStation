@@ -2,7 +2,7 @@
 
 Each user gets one `cs-userenv-<user_id>` container that runs both:
   - code-server (VS Code in the browser) on port 8080
-  - Hermes/CentralCore (FastAPI) on port 8001
+  - Hermes (FastAPI) on port 8001
 
 SSH config (user, key) is injected at session creation via configure_ssh().
 All Docker SDK calls are synchronous; callers wrap them in asyncio.to_thread.

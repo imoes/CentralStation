@@ -1,4 +1,4 @@
-"""CentralCore proxy — forwards /api/computer/* to the CentralCore container.
+"""Computer Console proxy — forwards /api/computer/* to the Hermes service in the userenv container.
 
 Adds JWT authentication and checks the computer_console_enabled preference
 before forwarding any request. SSE streaming is passed through transparently.
@@ -162,7 +162,7 @@ async def create_session(
         if _ssh_creds:
             llm_payload["ssh_username"] = _ssh_creds.get("username", "")
     except Exception as exc:
-        log.warning("Could not load LLM config, using CentralCore defaults: %s", exc)
+        log.warning("Could not load LLM config, using Hermes defaults: %s", exc)
         llm_payload = {}
 
     # Write per-user hermes_config.yaml (centralstation + personal connectors).
@@ -183,7 +183,7 @@ async def create_session(
                 _ssh_creds.get("password", ""),
             )
     except Exception as exc:
-        log.warning("Could not ensure userenv container for %s: %s — falling back to shared centralcore", user.id, exc)
+        log.warning("Could not ensure userenv container for %s: %s — falling back to shared Hermes session", user.id, exc)
 
     target = _target_url(user.id)
     async with _internal_client(timeout=90.0) as client:
@@ -193,7 +193,7 @@ async def create_session(
     sid = data["session_id"]
 
     # Use the caller's custom label (handoff host name) when provided. Otherwise
-    # generate a label from the PostgreSQL session count — centralcore's in-memory
+    # generate a label from the PostgreSQL session count — Hermes's in-memory
     # counter resets to 1 after every restart, causing duplicate "Session 1" labels.
     label = (body.label or "").strip()
     if not label:
@@ -219,7 +219,7 @@ async def list_sessions(
     db: Annotated[AsyncSession, Depends(get_db)],
     _: None = _ConsoleEnabled,
 ):
-    """Return sessions from PostgreSQL (survives centralcore restarts)."""
+    """Return sessions from PostgreSQL (survives Hermes restarts)."""
     rows = (await db.execute(
         select(ComputerSession)
         .where(ComputerSession.user_id == user.id)
@@ -281,12 +281,12 @@ async def delete_session(
     db: Annotated[AsyncSession, Depends(get_db)],
     _: None = _ConsoleEnabled,
 ):
-    # Delete from centralcore (best-effort — may already be gone after restart)
+    # Delete from Hermes (best-effort — may already be gone after restart)
     try:
         async with _internal_client(timeout=10.0) as client:
             await client.delete(f"{_target_url(user.id)}/sessions/{sid}")
     except Exception as exc:
-        log.debug("centralcore delete %s: %s (ignored)", sid[:8], exc)
+        log.debug("hermes delete %s: %s (ignored)", sid[:8], exc)
 
     # Delete from PostgreSQL (authoritative)
     await db.execute(
@@ -403,11 +403,11 @@ async def send_message(
 ):
     import json as _json
     body = await request.body()
-    log.debug("proxy message → centralcore session %s", sid[:8])
+    log.debug("proxy message → hermes session %s", sid[:8])
 
-    # Inject active LLM config into every message so centralcore can use it
+    # Inject active LLM config into every message so Hermes can use it
     # when restoring a session after a container restart (env-var defaults are
-    # not configured in the centralcore container).
+    # not configured in the userenv container).
     try:
         from app.services.settings import get_active_llm_config, get_searxng_config, get_setting
         llm = await get_active_llm_config(db, user_id=user.id)
@@ -438,10 +438,10 @@ async def send_message(
             ) as resp:
                 if resp.status_code >= 400:
                     err = await resp.aread()
-                    log.warning("centralcore %s for session %s: %s",
+                    log.warning("hermes %s for session %s: %s",
                                 resp.status_code, sid[:8], err[:200])
                     msg = "Session nicht mehr vorhanden — bitte neue Session starten." if resp.status_code == 404 \
-                        else f"CentralCore-Fehler {resp.status_code}"
+                        else f"Hermes-Fehler {resp.status_code}"
                     import json as _json
                     yield f'data: {_json.dumps({"type": "error", "text": msg})}\n\n'.encode()
                     return
@@ -566,5 +566,5 @@ async def restart_userenv(
 
 def _check(r: httpx.Response) -> None:
     if r.status_code >= 400:
-        log.warning("CentralCore returned %s: %s", r.status_code, r.text[:200])
-        raise HTTPException(r.status_code, f"CentralCore-Fehler: {r.text[:200]}")
+        log.warning("Hermes returned %s: %s", r.status_code, r.text[:200])
+        raise HTTPException(r.status_code, f"Hermes-Fehler: {r.text[:200]}")
