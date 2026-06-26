@@ -107,9 +107,9 @@ SYSTEM_PROMPT = (
     "→ Frage NIE nach etwas, das bereits bekannt ist\n\n"
 
     "Beispiel:\n"
-    "Du: '...Wenn du willst, prüfe ich server01 im Detail.'\n"
+    "Du: '...Wenn du willst, prüfe ich docker50.ippen.media im Detail.'\n"
     "Nutzer: 'ja'\n"
-    "Du: [rufst get_checkmk_host('server01') auf und zeigst das Ergebnis]\n\n"
+    "Du: [rufst get_checkmk_host('docker50.ippen.media') auf und zeigst das Ergebnis]\n\n"
 
     "## SCHREIBOPERATIONEN — IMMER ZUERST FRAGEN:\n"
     "Führe KEINE Schreiboperationen automatisch aus. Frage den Nutzer zuerst.\n"
@@ -155,7 +155,7 @@ SYSTEM_PROMPT = (
 
     "## SSH-ZUGRIFF (Serverdiagnose und Fehlerbehebung):\n"
     "Nutze SSH wenn du einen Server direkt untersuchen oder reparieren sollst.\n"
-    "Befehl: ssh <hostname> '<befehl>'\n"
+    "Befehl: ssh <hostname>.ippen.media '<befehl>'\n"
     "(User und Key sind per SSH-Config voreingestellt — KEIN -i, -l oder -o IdentityFile nötig)\n"
     "System-Diagnose:\n"
     "  ssh <host> 'df -h; du -sh /var/log/* | sort -rh | head -5'\n"
@@ -339,8 +339,10 @@ class CreateSessionBody(BaseModel):
     # Per-session extra MCP servers (user-personal connectors).
     # Each entry: {name, url, transport?, token?}
     extra_mcp_servers: list[dict] | None = None
-    # SSH username from user's SSH connector (overwrites default SSH user in system prompt).
+    # SSH username from user's SSH connector (overwrites "marvin" in system prompt).
     ssh_username: str | None = None
+    # Console agent backend: "hermes" (default) | "claude_cli" | "codex_cli"
+    agent_type: str | None = None
 
 
 def _read_mcp_toolsets_from_config() -> list:
@@ -412,13 +414,13 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
              sid[:8], model or "(default)", base_url or "(default)", api_mode,
              searxng_url or "(none)", f"{timeout_seconds}s" if timeout_seconds else "(default)")
 
-    # Build final system prompt — inject SSH user from DB if configured.
-    ssh_user = (cfg.ssh_username or "").strip()
+    # Build final system prompt — replace default SSH user if user configured their own.
+    ssh_user = (cfg.ssh_username or "").strip() or "marvin"
     system_prompt = SYSTEM_PROMPT
-    if ssh_user:
+    if ssh_user != "marvin":
         system_prompt = system_prompt.replace(
-            "ssh <hostname>",
-            f"ssh {ssh_user}@<hostname>",
+            "ssh marvin@<hostname>.ippen.media",
+            f"ssh {ssh_user}@<hostname>.ippen.media",
         )
 
     # Toolsets are derived from /root/.hermes/config.yaml — the per-user config
@@ -463,12 +465,160 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
 
 # ── Session endpoints ──────────────────────────────────────────────
 
+async def _run_cli_agent(
+    agent_type: str, sid: str, model: str, message: str,
+    history: list[dict], session: dict,
+):
+    """Async generator: stream output from claude/codex CLI subprocess as SSE events.
+
+    Both CLIs run unprivileged inside the per-user container with credentials injected
+    by the backend (claude → ~/.claude/.credentials.json, codex → ~/.codex/config.toml +
+    OPENAI_API_KEY). The console never exposes the CLI itself — only the streamed answer.
+
+    sid is the CentralStation session UUID. Claude uses it as --session-id so the
+    conversation is persisted in ~/.claude/sessions/<sid>.json on the cs-ide-cfg volume
+    and survives container restarts. Codex captures its own internal session ID from the
+    JSONL stream for resume on subsequent turns.
+    """
+    env = {**os.environ, "HOME": "/root"}
+
+    if agent_type == "claude_cli":
+        # --session-id: sets the UUID for a NEW session (first message).
+        # --resume <sid>: continues an EXISTING session (subsequent messages / after restart).
+        # --permission-mode acceptEdits: suppresses interactive approval dialogs.
+        # No manual history prepending — Claude reads it from ~/.claude/projects/.../<sid>.jsonl
+        # (on the cs-ide-cfg named volume — survives container restarts).
+        # Only pass --model when the model string is a Claude model (claude-* prefix);
+        # the injected LLM config model is usually an OpenAI/custom name that Claude rejects.
+        # Determine if a session JSONL already exists for this sid.
+        # After a container restart the in-memory flag is gone, so we also check the
+        # filesystem. Claude stores sessions under ~/.claude/projects/<cwd-slug>/<sid>.jsonl.
+        # The working dir inside the container is /app, so the slug is "-app".
+        claude_started = session.get("claude_session_started", False)
+        if not claude_started:
+            import glob as _glob
+            jsonl_files = _glob.glob(f"/root/.claude/projects/*/{sid}.jsonl")
+            claude_started = bool(jsonl_files)
+            if claude_started:
+                session["claude_session_started"] = True
+        if claude_started:
+            # Session file exists — resume it.
+            cmd = ["claude", "--print", "--resume", sid, "--permission-mode", "acceptEdits"]
+        else:
+            # First call for this sid — create the session file with this UUID.
+            cmd = ["claude", "--print", "--session-id", sid, "--permission-mode", "acceptEdits"]
+        if model and model.lower().startswith("claude"):
+            cmd += ["--model", model]
+        cmd.append(message)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        async for chunk in proc.stdout:
+            text = chunk.decode(errors="replace")
+            if text:
+                yield {"type": "delta", "text": text}
+        await proc.wait()
+        if proc.returncode not in (0, None):
+            err = (await proc.stderr.read()).decode(errors="replace")
+            if err.strip():
+                log.warning("[cli:claude] stderr: %.300s", err)
+                yield {"type": "error", "text": err[:500]}
+        else:
+            # Mark that the session file now exists so the next call uses --resume.
+            session["claude_session_started"] = True
+        yield {"type": "done"}
+        return
+
+    # ── codex_cli ─────────────────────────────────────────────────────
+    # `codex exec --json` emits JSONL events; the answer arrives as an
+    # item.completed event with item.type == "agent_message". We source
+    # /root/.profile first so OPENAI_API_KEY (the ChatGPT OAuth token) is set.
+    # --ask-for-approval never: belt-and-suspenders alongside config.toml approval_policy.
+    # On subsequent turns, use `codex exec resume <codex_session_id>` if we captured
+    # the internal session ID from a previous turn's JSONL stream.
+    codex_session_id = session.get("codex_session_id", "")
+    if codex_session_id:
+        codex_cmd = f"exec resume {codex_session_id} --json --ask-for-approval never"
+        if model:
+            codex_cmd += f' --model "$CODEX_MODEL"'
+        sh_cmd = f'. /root/.profile; exec codex {codex_cmd} "$MSG"'
+    else:
+        codex_cmd = "exec --json --skip-git-repo-check --ask-for-approval never"
+        if model:
+            codex_cmd += f' --model "$CODEX_MODEL"'
+        sh_cmd = f'. /root/.profile; exec codex {codex_cmd} "$MSG"'
+
+    proc = await asyncio.create_subprocess_exec(
+        "sh", "-c", sh_cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={**env, "MSG": message, "CODEX_MODEL": model or ""},
+    )
+    emitted = False
+    async for raw in proc.stdout:
+        line = raw.decode(errors="replace").strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        # Capture codex internal session ID for resume on next turns.
+        ev_type = ev.get("type", "")
+        if ev_type in ("session.started", "session_started") and not codex_session_id:
+            captured = ev.get("session_id") or ev.get("id") or ev.get("session", {}).get("id", "")
+            if captured:
+                session["codex_session_id"] = captured
+                log.info("[cli:codex] captured codex session_id=%s for sid=%s", captured[:12], sid[:8])
+        if ev_type == "item.completed":
+            item = ev.get("item") or {}
+            if item.get("type") == "agent_message":
+                text = item.get("text", "")
+                if text:
+                    # codex emits several agent_message events per turn (interim
+                    # planning + final answer). Separate them with a blank line so
+                    # they don't run together in the console transcript.
+                    if emitted:
+                        text = "\n\n" + text
+                    emitted = True
+                    yield {"type": "delta", "text": text}
+    await proc.wait()
+    if proc.returncode not in (0, None):
+        err = (await proc.stderr.read()).decode(errors="replace")
+        if err.strip():
+            log.warning("[cli:codex] stderr: %.300s", err)
+            if not emitted:
+                yield {"type": "error", "text": err[:500]}
+    yield {"type": "done"}
+
+
 @app.post("/sessions", status_code=201)
 def create_session(body: CreateSessionBody = None):
     body = body or CreateSessionBody()
     sid = str(uuid.uuid4())
     label = f"Session {len(_sessions) + 1}"
-    log.info("Creating session %s (%s)", sid[:8], label)
+    agent_type = (body.agent_type or "hermes").strip()
+    log.info("Creating session %s (%s) agent_type=%s", sid[:8], label, agent_type)
+
+    if agent_type in ("claude_cli", "codex_cli"):
+        # CLI-backed session — no Hermes agent, subprocess invoked per message.
+        _sessions[sid] = {
+            "agent": None,
+            "agent_type": agent_type,
+            "label": label,
+            "msg_count": 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "llm_model": (body.llm_model or "").strip(),
+            "llm_base_url": "",
+            "history": [],  # in-memory conversation history for CLI agents
+        }
+        log.info("Session %s ready (%s) [%s], total active: %d",
+                 sid[:8], label, agent_type, len(_sessions))
+        return {"session_id": sid, "label": label}
+
     try:
         agent = _make_agent(sid, body)
     except ImportError as exc:
@@ -479,6 +629,7 @@ def create_session(body: CreateSessionBody = None):
         raise HTTPException(503, f"Agent-Initialisierung fehlgeschlagen: {exc}")
     _sessions[sid] = {
         "agent": agent,
+        "agent_type": "hermes",
         "label": label,
         "msg_count": 0,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -577,6 +728,8 @@ class MessageBody(BaseModel):
     llm_timeout_seconds: int | None = None
     show_reasoning: bool = True
     extra_mcp_servers: list[dict] | None = None
+    # Console agent type override forwarded from the backend
+    agent_type: str | None = None
 
 
 def _restore_session(sid: str, cfg: CreateSessionBody | None = None) -> bool:
@@ -623,8 +776,24 @@ async def send_message(sid: str, body: MessageBody):
             extra_mcp_servers=body.extra_mcp_servers,
         )
         if not _restore_session(sid, llm_cfg):
-            log.warning("Restore failed for session %s — not found in SessionDB", sid[:8])
-            raise HTTPException(404, "Session nicht gefunden")
+            # CLI agents never write to SessionDB — on container restart their in-memory
+            # entry is gone. Instead of 404, create a fresh entry so the session can
+            # continue. Claude CLI recovers conversation history from its own session file
+            # (~/.claude/sessions/<sid>.json on the cs-ide-cfg volume); Codex history is lost.
+            if body.agent_type in ("claude_cli", "codex_cli"):
+                log.info("CLI session %s: creating fresh entry after container restart (agent_type=%s)",
+                         sid[:8], body.agent_type)
+                _sessions[sid] = {
+                    "agent": None,
+                    "agent_type": body.agent_type,
+                    "label": "Session (restored)",
+                    "msg_count": 0,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "history": [],
+                }
+            else:
+                log.warning("Restore failed for session %s — not found in SessionDB", sid[:8])
+                raise HTTPException(404, "Session nicht gefunden")
 
     else:
         # Session is in memory — check if LLM config changed since it was created.
@@ -663,6 +832,40 @@ async def send_message(sid: str, body: MessageBody):
                 session["llm_api_mode"] = incoming_mode
             except Exception as exc:
                 log.warning("Session %s: LLM re-init failed, keeping old agent: %s", sid[:8], exc)
+
+    # ── CLI agent fast path ─────────────────────────────────────────
+    session_agent_type = _sessions[sid].get("agent_type", "hermes")
+    # Prefer stored session type; fall back to what the proxy injected on this message.
+    effective_agent_type = session_agent_type if session_agent_type != "hermes" else (
+        body.agent_type or "hermes"
+    )
+    if effective_agent_type in ("claude_cli", "codex_cli"):
+        _sessions[sid]["msg_count"] += 1
+        history: list[dict] = _sessions[sid].setdefault("history", [])
+        history.append({"role": "user", "content": body.content})
+
+        async def cli_event_stream():
+            output_parts: list[str] = []
+            try:
+                async for event in _run_cli_agent(effective_agent_type, sid, body.llm_model or "", body.content, history[:-1], _sessions[sid]):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    if event["type"] == "delta":
+                        output_parts.append(event["text"])
+                    if event["type"] in ("done", "error"):
+                        break
+            except Exception as exc:
+                log.error("[%s] cli agent error: %s", sid[:8], exc, exc_info=True)
+                yield f"data: {json.dumps({'type': 'error', 'text': str(exc)})}\n\n"
+            full = "".join(output_parts)
+            if full:
+                history.append({"role": "assistant", "content": full})
+
+        return StreamingResponse(
+            cli_event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    # ────────────────────────────────────────────────────────────────
 
     agent = _sessions[sid]["agent"]
     _sessions[sid]["msg_count"] += 1

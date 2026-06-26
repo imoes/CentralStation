@@ -10,6 +10,27 @@ FROM codercom/code-server:latest
 
 USER root
 
+# Proxy build-args (empty by default — supplied via docker-compose.override.yml).
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG NO_PROXY=""
+
+ENV http_proxy=${HTTP_PROXY} \
+    https_proxy=${HTTPS_PROXY} \
+    no_proxy=${NO_PROXY} \
+    HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY}
+
+# ── APT proxy ─────────────────────────────────────────────────────────
+# apt-get ignores http_proxy/HTTP_PROXY env vars — it needs Acquire::*::Proxy.
+# Without this, every apt layer bypasses the proxy and hangs/times out.
+RUN if [ -n "$HTTP_PROXY" ]; then \
+        printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' \
+            "$HTTP_PROXY" "${HTTPS_PROXY:-$HTTP_PROXY}" \
+            > /etc/apt/apt.conf.d/01proxy; \
+    fi
+
 # ── System tools ──────────────────────────────────────────────────────
 # Includes network diagnostics (Hermes SSH/ping), python3 (Ansible+pip), git.
 RUN apt-get update \
@@ -20,7 +41,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Node.js 22 LTS (required by Hermes browser tools) ────────────────
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | \
+    https_proxy=${HTTPS_PROXY} http_proxy=${HTTP_PROXY} bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
@@ -50,6 +72,9 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
     && (ln -sf /root/.local/bin/claude /usr/local/bin/claude 2>/dev/null || true) \
     && claude --version
 ENV CLAUDE_CONFIG_DIR=/root/.claude
+
+# ── Codex CLI (@openai/codex) ─────────────────────────────────────────
+RUN npm install -g @openai/codex
 
 # ── VS Code extensions baked into image ──────────────────────────────
 # Installed to /opt/cs-extensions (not into /root/.local which is per-user bind mount).

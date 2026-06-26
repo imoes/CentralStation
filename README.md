@@ -247,10 +247,11 @@ Since OS/location/VE/criticality are CheckMK-native concepts, the filter accesse
 | **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung, KI-Ignorieren; Hostname anklickbar → Feed-Filter; Severity-Filter ignoriert aktive Saved-Searches korrekt |
 | **KI-Insights** | Befunde + zugehörige Empfehlungen direkt zusammen (kein getrenntes Panel); Datenquelle-Badge je Befund; Hostname/Feed-Links; Empfehlungen fließen in generatives Dashboard ein |
 | **Fehler-Cluster (Root-Cause)** | Die KI fasst im selben Analyse-Lauf mehrere Befunde mit gemeinsamer Ursache zu einer Diagnose zusammen (z.B. „Core-Switch in MUE-0 ausgefallen" erklärt 10 nicht erreichbare Hosts); nutzt Blast-Radius-Topologie; sichtbar in KI-Insights, Hermes-Konsole und Brücke |
-| **Werkbank (Web-IDE)** | Pro-User code-server (VS Code im Browser) unter `/workbench`; integriertes Terminal, Git/GitLab, SSH zu beliebigen Hosts; **vorinstallierte KI-Agenten-Extensions** (Claude Code + OpenAI Codex); Ansible editierbar (geteiltes `ansible/`-Verzeichnis im Standard-Layout: playbooks/roles/host_vars/group_vars/inventory, sofort in AWX sichtbar); Hermes-Analyse als Markdown übergeben |
+| **Werkbank (Web-IDE)** | Pro-User code-server (VS Code im Browser) unter `/workbench`; integriertes Terminal, Git/GitLab, SSH zu `*.ippen.media`; **vorinstallierte KI-Agenten-Extensions** (Claude Code + OpenAI Codex); Ansible editierbar (geteiltes `ansible/`-Verzeichnis im Standard-Layout: playbooks/roles/host_vars/group_vars/inventory, sofort in AWX sichtbar); Hermes-Analyse als Markdown übergeben |
 | **Maschinenraum (Remediation)** | Engineering-Cockpit unter `/engineering`; KI-gestützte Ansible-Remediation mit Human-in-the-Loop: `playbook_author` → AWX Job Template → `remediation_matcher` → Lern-Loop; cs-meta-Konvention im Playbook-Kopf (`matches`/`params`); Pending/Active/History/Catalog |
 | **AI War Room** | Blast-Radius-Analyse bei Critical/High; Ko-VMs, Ko-lokalisierte Hosts; Empfehlungen mit Ein-Klick-Jira |
 | **CheckMK Metriken** | Collector schreibt CPU/RAM/Disk/Agent-Zeit in `cs-metrics-checkmk`; Bridge zeigt Fleet-Vitals + Forecasts (lineare Regression); stabile Metriken (< 90 % ohne Trend) werden aus generativem Kontext gefiltert |
+| **Computer Console Agent-Auswahl** | Drei Agenten pro User wählbar: **Hermes** (Standard, eigener LLM-Endpunkt), **Claude CLI** (eigener Claude-Account via OAuth, persistente Sessions auf Volume), **Codex CLI** (ChatGPT-Account via Device-Code-Flow, GPT-5.x); OAuth-Flow im Browser, kein CLI nötig; Token verschlüsselt in DB; konfiguriert auch die VS-Code-Extensions in der Werkbank automatisch |
 | **OpenAI Codex OAuth** | Browser-initiierter Device-Code-Flow (kein CLI nötig); Provider umschaltbar zwischen lokalem LLM und OpenAI Codex (GPT-5.x); Token verschlüsselt in DB, automatischer Refresh |
 | **3 App-weite Themes** | **Classic** (hell, blauer Schleier), **Holo** (dunkelblau/cyan), **LCARS** (schwarz/orange — offizielles Neon Carrot + Golden Tanoi + Anakiwa + Lilac Palette); in Einstellungen wählbar |
 | **Kanban-Board** | Drag-Drop, bidirektionaler Jira-/ServiceDesk-Sync, automatische Jira-Importe, AI-erstellte Cards |
@@ -903,32 +904,56 @@ CentralStation can optionally use OpenAI Codex (GPT-5.x) as the LLM provider —
 
 ## Computer Console (Hermes AI Panel)
 
-CentralStation includes an interactive AI assistant panel — the **Computer Console** — that wraps a [Hermes](https://github.com/your-org/hermes-agent) AI agent session in a floating LCARS-styled popup. It gives operators a Star Trek-inspired interface for diagnosing alerts and querying the monitoring infrastructure through natural language.
+CentralStation includes an interactive AI assistant panel — the **Computer Console** — that wraps an AI agent session in a floating LCARS-styled popup. It gives operators a Star Trek-inspired interface for diagnosing alerts and querying the monitoring infrastructure through natural language.
 
 ### Architecture
+
+Each user gets a dedicated **`cs-userenv-{uid}`** container (shared with the Werkbank) that runs both the AI agent (Hermes FastAPI) and code-server. The backend proxies browser requests to this container after JWT authentication.
 
 ```
 Browser (Computer panel)
     │  POST /api/computer/sessions/{sid}/message  (SSE stream)
     ▼
-backend (centralcore_proxy.py)  ←→  JWT auth guard
+backend (computer_proxy.py)  ←→  JWT auth + agent-type dispatch
     │  HTTP proxy
     ▼
-centralcore container (FastAPI, port 8001)
-    │  Hermes AIAgent.run_conversation()
-    ▼
-MCP server  (/api/mcp/sse)  →  CentralStation tools
+cs-userenv-{uid}  (FastAPI on port 8001)
+    ├── Hermes AIAgent.run_conversation()   ← agent_type: "hermes" (default)
+    ├── claude --print --session-id <sid>   ← agent_type: "claude_cli"
+    └── codex exec --json                   ← agent_type: "codex_cli"
+         │
+         ▼
+MCP servers:
+  /api/mcp/sse          (SSE, legacy — Hermes)
+  /api/mcp-http/        (streamable-http — Claude CLI, Codex CLI)
+  + personal connectors (VibeMK, AWX-NG, …)
 ```
 
-**`centralcore/`** is a standalone Python service that:
-- Manages multiple parallel Hermes sessions
-- Exposes SSE-streaming message endpoints
-- Provides Whisper STT for voice input
-- Connects to the CentralStation MCP server for live IT data
+### Agent selection
 
-**`backend/app/api/centralcore_proxy.py`** is a JWT-authenticated reverse proxy that forwards browser requests to the `centralcore` service.
+The Computer Console supports three agent backends, configurable per user under **Settings → Console** or during the Setup Wizard:
 
-**`backend/app/api/mcp_server.py`** exposes CentralStation tools as an MCP server:
+| Agent | Description | Auth |
+|-------|-------------|------|
+| **Hermes** (default) | CentralStation's own Python AI agent; uses the active LLM from general AI settings; full MCP tool access | — (uses system LLM) |
+| **Claude CLI** | Your own Claude account (claude.ai); persistent sessions via `--session-id`; `--permission-mode acceptEdits` for headless operation; credentials also configure the Claude Code VS Code extension in the Werkbank | Claude OAuth (PKCE) |
+| **Codex CLI** | Your own ChatGPT account (GPT-5.x); custom ChatGPT backend provider; session resume via `codex exec resume`; credentials also configure the Codex VS Code extension in the Werkbank | ChatGPT Device Code OAuth |
+
+**Setting up a CLI agent:**
+1. Go to **Settings → Console** (or the Setup Wizard "Console Agent" step)
+2. Click **Connect Claude Account** or **Connect ChatGPT Account** — a browser-based OAuth flow runs, no CLI needed
+3. The token is stored encrypted in the database and auto-injected into the user's container on every session start
+
+**Session persistence:**
+- Hermes: history in `state.db` (host-mounted); survives container restarts
+- Claude CLI: JSONL in `~/.claude/projects/.../<session-id>.jsonl` on the `cs-ide-cfg-{uid}` named volume; survives container restarts — full conversation context is restored automatically
+- Codex CLI: internal session ID captured from JSONL stream; resume via `codex exec resume`; history is in-memory per container lifetime (lost on container restart)
+
+**Session list:** `GET /api/computer/sessions` returns an `agent_type` field (`hermes` | `claude_cli` | `codex_cli`) for each session. The UI shows a `[CL]` / `[CO]` badge next to Claude/Codex sessions.
+
+### MCP tools available to all agents
+
+**`backend/app/services/mcp_server.py`** exposes CentralStation tools as an MCP server:
 
 | Tool | Description |
 |------|-------------|
@@ -939,14 +964,20 @@ MCP server  (/api/mcp/sse)  →  CentralStation tools
 | `acknowledge_alert(alert_id)` | Acknowledge an alert |
 | `create_jira_ticket(title, description, priority)` | Create a Jira ticket |
 
+Two MCP transports are mounted simultaneously:
+- `/api/mcp/sse` — legacy SSE (used by Hermes)
+- `/api/mcp-http/` — streamable-http (used by Claude CLI and Codex CLI native MCP clients)
+
+Personal connectors (MCP-type ConnectorConfigs) and AWX-NG connectors are automatically included in both Hermes config and Codex/Claude config.toml.
+
 ### Computer diagnoses alerts
 
 When the user clicks **"Computer"** on a News Feed alert, `GET /api/feed/{id}/hermes-context` runs automatically:
 1. Looks up the alert in OpenSearch to get host, severity, container name
 2. Runs `run_diagnostics(host)` — CheckMK status, recent logs, metrics, topology, past incidents
-3. Adds **AI error-clusters** for the host (`search_recent_ai_clusters`) so Hermes sees the shared root cause if the host is part of a larger correlated incident (see [Error clusters](#error-clusters-root-cause-grouping))
+3. Adds **AI error-clusters** for the host (`search_recent_ai_clusters`) so the agent sees the shared root cause if the host is part of a larger correlated incident (see [Error clusters](#error-clusters-root-cause-grouping))
 4. Searches for **past AI-resolved similar alerts** (see below) and prepends them as context
-5. Returns a structured prompt that is sent directly to the Hermes session
+5. Returns a structured prompt that is sent directly to the agent session
 
 ### Computer learns — AI resolution notes
 
@@ -980,24 +1011,16 @@ tags:oom                            → out-of-memory events
 
 ### Setup
 
-1. Install [Hermes](https://github.com/your-org/hermes-agent) and configure an MCP server pointing at CentralStation:
-   ```yaml
-   # ~/.hermes/config.yaml
-   mcp_servers:
-     centralstation:
-       transport: http
-       url: http://backend:8000/api/mcp/sse
-   ```
-2. Set the `CENTRALCORE_URL` env variable in the backend service (default: `http://centralcore:8001`).
-3. Enable **Computer Console** for a user in Admin → Users.
-4. Add the `centralcore` service to your `docker-compose.yml` (see the included example).
+1. Enable **Computer Console** for a user in Admin → Users.
+2. The `cs-userenv-{uid}` container starts automatically on the user's first session (no separate `docker-compose.yml` entry needed — the backend manages the lifecycle via the Docker SDK).
+3. **Optional:** Connect a CLI agent in Settings → Console or the Setup Wizard. Hermes works out of the box using the system LLM.
+4. **Optional:** Add personal MCP servers (VibeMK, AWX-NG, etc.) under Settings → Connectors; they are automatically included in the agent's tool list.
 
 ### System prompt
 
-The Computer system prompt (`centralcore/main.py:SYSTEM_PROMPT`) defines the agent's behaviour:
+The Hermes system prompt (`userenv/main.py:SYSTEM_PROMPT`) defines the default agent behaviour:
 - Uses MCP tools for all IT queries (never local shell)
-- Searches Graylog (via `search_feed`) for container logs — no SSH needed (Logspout sends all container output to Graylog)
-- Always asks before executing write operations (Jira ticket creation, alert acknowledgement)
+- Searches Graylog (via `search_feed`) for container logs — no SSH needed
 - Appends `[FEED:host=<hostname>]` markers that the frontend renders as clickable feed-filter buttons
 
 ---
@@ -1025,8 +1048,8 @@ Browser  ──/ide/<uid>/──▶  nginx  ──auth_request──▶  backend
 - **Per-user bind mounts** under `IDE_WORKSPACES_BASE/<uid>/` (workspaces + VS Code
   state) so a single `tar`/`rsync` of that directory backs up everything. Claude Code
   credentials live on a separate named volume.
-- **SSH** to your infrastructure hosts is wired up from the host `~/.ssh` mount
-  by the entrypoint (configure your key in the SSH config).
+- **SSH** to `*.ippen.media` is wired up from the host `~/.ssh` mount (marvin key)
+  by the entrypoint.
 
 ### Bundled AI coding-agent extensions
 
@@ -1729,7 +1752,67 @@ docker compose exec -T db psql -U centralstation centralstation < backup_YYYYMMD
 ### Zero-downtime upgrade (production)
 
 1. `git pull origin main`
-2. `docker compose build backend frontend`
+2. `docker compose build backend frontend userenv`
 3. `docker compose up -d --no-deps backend frontend` — new containers replace old ones
 4. Migrations apply automatically on backend startup
 5. Verify health: `docker compose ps` and `curl http://localhost/api/health`
+6. Per-user userenv containers are recreated automatically on next session start (existing containers continue to run the old image until the user starts a new session or you remove them manually with `docker rm -f cs-userenv-<uid>`)
+
+---
+
+## Changelog
+
+### v0.4.0 — Computer Console CLI Agents + Session Management
+
+**New: Claude CLI and Codex CLI as Computer Console backends**
+
+Users can now choose their preferred AI agent for the Computer Console — per user, configured in Settings → Console or the Setup Wizard. All three agents share the same MCP tool access (alert list, feed search, CheckMK, Jira, …).
+
+- **Hermes** (default): unchanged — uses the system LLM configured in general AI settings
+- **Claude CLI** (`claude_cli`): authenticates via Claude OAuth (PKCE); runs `claude --print --session-id <uuid>` inside the per-user `cs-userenv` container; conversation history persists in `~/.claude/projects/.../<sid>.jsonl` on the `cs-ide-cfg-{uid}` named volume — survives container restarts; only Claude model names (`claude-*`) are forwarded as `--model`, preventing OpenAI model names from causing errors
+- **Codex CLI** (`codex_cli`): authenticates via ChatGPT Device Code OAuth; uses a custom `~/.codex/config.toml` provider pointing at `chatgpt.com/backend-api/codex`; MCP tools via streamable-http (`/api/mcp-http/`); captures internal codex session ID for `codex exec resume` on subsequent turns
+
+**New: MCP streamable-http endpoint**
+
+`/api/mcp-http/` (fastmcp 2.13.3 `http_app`) runs alongside the legacy `/api/mcp/sse` SSE endpoint. Both serve identical tools. Claude CLI and Codex CLI native MCP clients connect to the streamable-http endpoint; Hermes continues using SSE unchanged.
+
+**New: agent_type in session list**
+
+`computer_sessions.agent_type` DB column (migration `0034`). `GET /api/computer/sessions` returns `agent_type` per session. Existing sessions are migrated to `hermes`. The UI shows `[CL]` / `[CO]` badges in the session rail for Claude/Codex sessions.
+
+**Improved: session resume after container restart**
+
+- `send_message` now calls `ensure_container` — the per-user container restarts automatically on the first incoming message after a Docker restart or `docker rm -f`
+- CLI sessions no longer 404 after restart: a fresh in-memory entry is created and Claude picks up its conversation history from the volume-backed JSONL
+- Claude: `--session-id` on first call, `--resume <sid>` on subsequent calls (detected via JSONL glob on the volume)
+- Codex: `--ask-for-approval never` flag; `approval_policy = "never"` in config.toml
+
+**Improved: credential injection**
+
+`configure_claude_credentials` now merges into the existing credentials file (preserves `scopes`, `subscriptionType`, `rateLimitTier` written by the VS Code extension); `expiresAt` is stored as an integer. Missing fields get safe defaults so `claude auth status` reports `loggedIn: true`.
+
+**Fixed: `AiInsightsComponent` and `AddWidgetDialogComponent`** missing `readonly i18n = inject(I18nService)` injection (caused build failure).
+
+---
+
+### v0.3.0 — Werkbank Web-IDE + Infrastructure Topology
+
+- Per-user `cs-userenv-{uid}` containers (code-server + Hermes in one image) replace the shared `centralcore` approach
+- `/workbench` route with nginx `auth_request` gate
+- Pre-installed Claude Code and Codex VS Code extensions; credentials shared with Computer Console CLI agents
+- Infrastructure topology graph (`/topology`) via ECharts force-layout from NetBox + alert overlay
+- Bilingual EN/DE UI across all 25 frontend components
+
+### v0.2.0 — AI Insights + Incident Correlation
+
+- AI error-cluster analysis (root-cause grouping across alerts)
+- Incident correlation with blast-radius topology
+- KI-Insights panel with findings + recommendations
+- Generative dashboard mode
+
+### v0.1.0 — Initial release
+
+- Operations cockpit, news feed, alert aggregation (CheckMK, Graylog, Wazuh)
+- Hermes Computer Console
+- Kanban/Jira integration
+- LCARS design system

@@ -171,7 +171,7 @@ interface FeedSearch {
             <div class="host-row">
               <mat-form-field appearance="outline" class="host-field">
                 <mat-label>Host {{ i + 1 }}</mat-label>
-                <input matInput [(ngModel)]="cmkHosts[i]" placeholder="server01.example.com">
+                <input matInput [(ngModel)]="cmkHosts[i]" placeholder="docker086.ippen.media">
                 <mat-icon matSuffix>computer</mat-icon>
               </mat-form-field>
               @if (cmkHosts.length > 1) {
@@ -317,6 +317,7 @@ interface FeedSearch {
   `],
 })
 export class AddWidgetDialogComponent implements OnInit {
+  readonly i18n = inject(I18nService);
   private dialogData = inject<{ existingWidget?: DashboardWidget } | null>(MAT_DIALOG_DATA, { optional: true });
 
   get isEdit(): boolean { return !!this.dialogData?.existingWidget; }
