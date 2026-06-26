@@ -7,9 +7,9 @@ FROM codercom/code-server:latest
 
 USER root
 
-ARG HTTP_PROXY=http://proxy.ippen.media:80
-ARG HTTPS_PROXY=http://proxy.ippen.media:80
-ARG NO_PROXY=localhost,127.0.0.1,.ippen.media
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG NO_PROXY="localhost,127.0.0.1"
 
 ENV http_proxy=${HTTP_PROXY} \
     https_proxy=${HTTPS_PROXY} \

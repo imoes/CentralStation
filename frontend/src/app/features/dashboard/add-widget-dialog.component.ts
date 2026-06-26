@@ -170,7 +170,7 @@ interface FeedSearch {
             <div class="host-row">
               <mat-form-field appearance="outline" class="host-field">
                 <mat-label>Host {{ i + 1 }}</mat-label>
-                <input matInput [(ngModel)]="cmkHosts[i]" placeholder="docker086.ippen.media">
+                <input matInput [(ngModel)]="cmkHosts[i]" placeholder="server01.example.com">
                 <mat-icon matSuffix>computer</mat-icon>
               </mat-form-field>
               @if (cmkHosts.length > 1) {

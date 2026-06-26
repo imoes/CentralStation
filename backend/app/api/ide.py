@@ -301,7 +301,7 @@ async def provision_workspace(
             "GL_TOKEN": token,
             "GL_HOST": host,
             "GL_USER": (user.full_name or "CentralStation"),
-            "GL_EMAIL": (user.email or "noreply@ippen.media"),
+            "GL_EMAIL": (user.email or "noreply@example.com"),
         }
         code, out = await asyncio.to_thread(ide_manager.exec_sh, uid, script, env)
         if code != 0:

@@ -181,7 +181,7 @@ def ensure_container(user_id: str) -> str:
     _backend_url = os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000")
     from urllib.parse import urlparse as _urlparse
     _backend_host = _urlparse(_backend_url).hostname or "backend"
-    _no_proxy = os.getenv("NO_PROXY", "localhost,127.0.0.1,.ippen.media")
+    _no_proxy = os.getenv("NO_PROXY", "localhost,127.0.0.1")
     if _backend_host not in _no_proxy:
         _no_proxy = f"{_backend_host},{_no_proxy}"
     environment = {
@@ -242,11 +242,10 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
             environment={"KEY": key_pem},
         )
 
-    ssh_user = username.strip() or "marvin"
-    ssh_cfg_lines = [
-        "Host *",
-        f"    User {ssh_user}",
-    ]
+    ssh_user = username.strip()
+    ssh_cfg_lines = ["Host *"]
+    if ssh_user:
+        ssh_cfg_lines.append(f"    User {ssh_user}")
     if key_pem and key_pem.strip():
         ssh_cfg_lines.append("    IdentityFile /root/.ssh/user.key")
     ssh_cfg_lines += [

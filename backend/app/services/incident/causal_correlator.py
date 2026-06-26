@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 
 def _host_to_service(host: str) -> str:
-    """'cue0175.ippen.media' → 'cue0175', 'graylog.ippen.media' → 'graylog'"""
+    """'web01.example.com' → 'web01', 'graylog.example.com' → 'graylog'"""
     return host.split(".")[0].lower()
 
 

@@ -3,4 +3,4 @@
 # host-specific vars in host_vars/<hostname>.yml.
 #
 # Example:
-# ansible_user: marvin
+# ansible_user: deploy

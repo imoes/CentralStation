@@ -107,9 +107,9 @@ SYSTEM_PROMPT = (
     "→ Frage NIE nach etwas, das bereits bekannt ist\n\n"
 
     "Beispiel:\n"
-    "Du: '...Wenn du willst, prüfe ich docker50.ippen.media im Detail.'\n"
+    "Du: '...Wenn du willst, prüfe ich server01 im Detail.'\n"
     "Nutzer: 'ja'\n"
-    "Du: [rufst get_checkmk_host('docker50.ippen.media') auf und zeigst das Ergebnis]\n\n"
+    "Du: [rufst get_checkmk_host('server01') auf und zeigst das Ergebnis]\n\n"
 
     "## SCHREIBOPERATIONEN — IMMER ZUERST FRAGEN:\n"
     "Führe KEINE Schreiboperationen automatisch aus. Frage den Nutzer zuerst.\n"
@@ -155,7 +155,7 @@ SYSTEM_PROMPT = (
 
     "## SSH-ZUGRIFF (Serverdiagnose und Fehlerbehebung):\n"
     "Nutze SSH wenn du einen Server direkt untersuchen oder reparieren sollst.\n"
-    "Befehl: ssh <hostname>.ippen.media '<befehl>'\n"
+    "Befehl: ssh <hostname> '<befehl>'\n"
     "(User und Key sind per SSH-Config voreingestellt — KEIN -i, -l oder -o IdentityFile nötig)\n"
     "System-Diagnose:\n"
     "  ssh <host> 'df -h; du -sh /var/log/* | sort -rh | head -5'\n"
@@ -339,7 +339,7 @@ class CreateSessionBody(BaseModel):
     # Per-session extra MCP servers (user-personal connectors).
     # Each entry: {name, url, transport?, token?}
     extra_mcp_servers: list[dict] | None = None
-    # SSH username from user's SSH connector (overwrites "marvin" in system prompt).
+    # SSH username from user's SSH connector (overwrites default SSH user in system prompt).
     ssh_username: str | None = None
 
 
@@ -412,13 +412,13 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
              sid[:8], model or "(default)", base_url or "(default)", api_mode,
              searxng_url or "(none)", f"{timeout_seconds}s" if timeout_seconds else "(default)")
 
-    # Build final system prompt — replace default SSH user if user configured their own.
-    ssh_user = (cfg.ssh_username or "").strip() or "marvin"
+    # Build final system prompt — inject SSH user from DB if configured.
+    ssh_user = (cfg.ssh_username or "").strip()
     system_prompt = SYSTEM_PROMPT
-    if ssh_user != "marvin":
+    if ssh_user:
         system_prompt = system_prompt.replace(
-            "ssh marvin@<hostname>.ippen.media",
-            f"ssh {ssh_user}@<hostname>.ippen.media",
+            "ssh <hostname>",
+            f"ssh {ssh_user}@<hostname>",
         )
 
     # Toolsets are derived from /root/.hermes/config.yaml — the per-user config

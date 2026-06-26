@@ -10,17 +10,6 @@ FROM codercom/code-server:latest
 
 USER root
 
-ARG HTTP_PROXY=http://proxy.ippen.media:80
-ARG HTTPS_PROXY=http://proxy.ippen.media:80
-ARG NO_PROXY=localhost,127.0.0.1,.ippen.media
-
-ENV http_proxy=${HTTP_PROXY} \
-    https_proxy=${HTTPS_PROXY} \
-    no_proxy=${NO_PROXY} \
-    HTTP_PROXY=${HTTP_PROXY} \
-    HTTPS_PROXY=${HTTPS_PROXY} \
-    NO_PROXY=${NO_PROXY}
-
 # ── System tools ──────────────────────────────────────────────────────
 # Includes network diagnostics (Hermes SSH/ping), python3 (Ansible+pip), git.
 RUN apt-get update \
@@ -31,8 +20,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Node.js 22 LTS (required by Hermes browser tools) ────────────────
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | \
-    https_proxy=${HTTPS_PROXY} http_proxy=${HTTP_PROXY} bash - \
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 

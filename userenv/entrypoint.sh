@@ -1,6 +1,6 @@
 #!/bin/sh
 # Unified Werkbank+Hermes entrypoint.
-# 1. SSH setup (marvin key from host mount — user-specific config injected later via API)
+# 1. SSH setup (from host ~/.ssh mount — user-specific config injected later via API)
 # 2. All VS Code / Claude Code extension patches from entrypoint.codeserver.sh
 # 3. Hermes/CentralCore (uvicorn) in background on :8001
 # 4. code-server in foreground on :8080
@@ -17,18 +17,16 @@ chmod 700 "$SSH_DIR"
 # user config has been written yet (by a previous configure_ssh call).
 if [ ! -f "$SSH_DIR/config" ]; then
     cat > "$SSH_DIR/config" <<EOF
-Host *.ippen.media
-    User marvin
-    IdentityFile $SSH_DIR/marvin.key
+Host *
     StrictHostKeyChecking accept-new
     ConnectTimeout 10
 EOF
     chmod 600 "$SSH_DIR/config"
 fi
 
-# Copy shared marvin key from host ~/.ssh mount (read-only bind mount).
+# Copy SSH keys from host ~/.ssh mount (read-only bind mount).
 if [ -d "$HOST_SSH" ]; then
-    for KEY in id_rsa id_ed25519 id_ecdsa marvin.key; do
+    for KEY in id_rsa id_ed25519 id_ecdsa; do
         if [ -f "$HOST_SSH/$KEY" ]; then
             cp "$HOST_SSH/$KEY" "$SSH_DIR/$KEY"
             chmod 600 "$SSH_DIR/$KEY"

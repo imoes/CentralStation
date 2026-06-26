@@ -217,8 +217,8 @@ class CheckMKConnector(BaseConnector):
             tags: dict = ext.get("host_tags", {}) or {}
             labels: dict = ext.get("host_labels", {}) or {}
 
-            # Extract ippen.media tag groups (keys confirmed from live API)
-            # tg-os, tg-ve, tg-location are ippen-specific prefixed tag groups
+            # Extract tag groups from CheckMK host extensions
+            # tg-os, tg-ve, tg-location are common prefixed tag groups
             raw_os = (
                 tags.get("tg-os")
                 or tags.get("operatingsystem")

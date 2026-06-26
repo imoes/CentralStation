@@ -14,15 +14,14 @@ chmod 700 "$SSH_DIR"
 if [ -f /root/.ssh_project_config ]; then
     cp /root/.ssh_project_config "$SSH_DIR/config"
 else
-    printf 'Host *.ippen.media\n    StrictHostKeyChecking accept-new\n    ConnectTimeout 10\n' \
+    printf 'Host *\n    StrictHostKeyChecking accept-new\n    ConnectTimeout 10\n' \
         > "$SSH_DIR/config"
 fi
 chmod 600 "$SSH_DIR/config"
 
 # Copy SSH keys from host ~/.ssh mount
-# Which key to use is determined by centralcore/ssh_config (IdentityFile)
 if [ -d "$HOST_SSH" ]; then
-    for KEY in id_rsa id_ed25519 id_ecdsa marvin.key; do
+    for KEY in id_rsa id_ed25519 id_ecdsa; do
         if [ -f "$HOST_SSH/$KEY" ]; then
             cp "$HOST_SSH/$KEY" "$SSH_DIR/$KEY"
             chmod 600 "$SSH_DIR/$KEY"

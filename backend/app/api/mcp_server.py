@@ -212,7 +212,7 @@ async def get_checkmk_host(hostname: str) -> dict:
     """Ruft den CheckMK-Status eines Hosts ab: alle Services, offene Probleme, Metriken.
 
     Parameter:
-    - hostname: Hostname oder FQDN (z.B. 'docker086' oder 'docker086.ippen.media')
+    - hostname: Hostname oder FQDN (z.B. 'server01' oder 'server01.example.com')
 
     Nutze dieses Tool wenn der Nutzer den Status eines bestimmten Servers wissen will."""
     from sqlalchemy import select
@@ -537,7 +537,7 @@ async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
     """Durchsucht die interne IT-Wissensdatenbank (IT-AIKB / Confluence KB).
 
     Enthält Runbooks, Server-Dokumentation, Abhängigkeiten, Konfigurationsanleitungen
-    und KB-Artikel für alle ippen.media-Systeme.
+    und KB-Artikel für alle überwachten Systeme.
 
     Parameter:
     - query: Suchbegriff, z.B. 'HAProxy Konfiguration', '[KB] docker50 Abhängigkeiten',

@@ -102,7 +102,7 @@ const ROLES = [
           @if (!editingUser()) {
             <mat-form-field appearance="outline" class="full-width">
               <mat-label>E-Mail</mat-label>
-              <input matInput type="email" [(ngModel)]="form.email" placeholder="name@ippen.media">
+              <input matInput type="email" [(ngModel)]="form.email" placeholder="name@example.com">
               <mat-icon matSuffix>email</mat-icon>
             </mat-form-field>
           }

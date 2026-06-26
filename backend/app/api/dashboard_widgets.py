@@ -858,7 +858,7 @@ async def get_widget_data(
             unit = cfg.get("unit", "")
             series_list = []
             for host, res in zip(hosts, results):
-                label = host.split(".")[0]  # cue0111 from cue0111.ippen.media
+                label = host.split(".")[0]  # server01 from server01.example.com
                 if isinstance(res, Exception):
                     series_list.append({"label": label, "series": [], "error": str(res)})
                 else:

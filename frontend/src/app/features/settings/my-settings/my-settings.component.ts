@@ -222,7 +222,7 @@ import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
         <mat-card-content>
           <mat-form-field appearance="outline" class="ssh-field">
             <mat-label>SSH-Benutzername</mat-label>
-            <input matInput [(ngModel)]="sshUsername" placeholder="z.B. marvin">
+            <input matInput [(ngModel)]="sshUsername" placeholder="z.B. admin">
           </mat-form-field>
           <mat-form-field appearance="outline" class="full-width">
             <mat-label>SSH Private Key (PEM)</mat-label>
