@@ -160,7 +160,8 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  padding-top: 2px;
   padding-bottom: 4px;
 
   &::-webkit-scrollbar {
@@ -296,6 +297,19 @@
     cursor: text;
     white-space: nowrap;
     overflow: hidden;
+  }
+}
+
+// Compact session pills (only inside the scrollable list — action pills keep full size)
+.rail-sessions .rail-pill {
+  padding: 3px 10px 3px 12px;
+  font-size: 0.68rem;
+  letter-spacing: 0.05em;
+  border-radius: 0 12px 12px 0;
+
+  &.rail-edit {
+    padding: 3px 10px 3px 12px;
+    font-size: 0.68rem;
   }
 }
 
