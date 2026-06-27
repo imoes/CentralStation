@@ -104,6 +104,29 @@ async def _upsert_agent_connector(
     await db.commit()
 
 
+async def _get_console_llm_config(db: AsyncSession, user_id) -> "LLMConfig | None":
+    """Return the user's personal Console LLM config (type='console_llm'), or None.
+
+    None means: fall back to get_active_llm_config() (global admin LLM).
+    """
+    from sqlalchemy import select as _sel
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials as _dec
+    from app.services.settings import _llm_config_from_connector
+    res = await db.execute(
+        _sel(ConnectorConfig).where(
+            ConnectorConfig.type == "console_llm",
+            ConnectorConfig.owner_user_id == user_id,
+            ConnectorConfig.enabled.is_(True),
+        ).limit(1)
+    )
+    conn = res.scalar_one_or_none()
+    if not conn:
+        return None
+    creds = _dec(conn.encrypted_credentials)
+    return _llm_config_from_connector(conn, creds)
+
+
 async def _require_console(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -212,6 +235,108 @@ async def get_agent_credentials(
     }
 
 
+# ── Hermes Console LLM Config ──────────────────────────────────────
+
+class _ConsoleLLMBody(BaseModel):
+    api_mode: str = "chat_completions"  # chat_completions | anthropic_messages | codex_responses | bedrock_converse
+    model: str = ""
+    base_url: str = ""
+    api_key: str | None = None          # None = keep existing
+    timeout_seconds: int = 120
+    thinking_mode: bool = False
+    use_global: bool = False            # True = delete personal config, fall back to global
+
+
+@router.get("/hermes-llm")
+async def get_hermes_llm(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: None = _ConsoleEnabled,
+):
+    """Return the user's personal Hermes Console LLM config (or None → uses global)."""
+    from sqlalchemy import select as _sel
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials as _dec
+    res = await db.execute(
+        _sel(ConnectorConfig).where(
+            ConnectorConfig.type == "console_llm",
+            ConnectorConfig.owner_user_id == user.id,
+        ).limit(1)
+    )
+    conn = res.scalar_one_or_none()
+    if not conn:
+        return {"configured": False}
+    creds = _dec(conn.encrypted_credentials)
+    return {
+        "configured": True,
+        "api_mode": creds.get("api_mode") or "chat_completions",
+        "model": creds.get("model") or "",
+        "base_url": conn.base_url or "",
+        "timeout_seconds": int(creds.get("timeout_seconds") or 120),
+        "thinking_mode": str(creds.get("thinking_mode", "false")).lower() == "true",
+        "has_api_key": bool(creds.get("api_key")),
+    }
+
+
+@router.put("/hermes-llm", status_code=200)
+async def put_hermes_llm(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    body: _ConsoleLLMBody,
+    _: None = _ConsoleEnabled,
+):
+    """Save (or delete) the user's personal Hermes Console LLM config."""
+    from sqlalchemy import select as _sel
+    from app.models.connector import ConnectorConfig
+    from app.core.security import encrypt_credentials as _enc, decrypt_credentials as _dec
+
+    res = await db.execute(
+        _sel(ConnectorConfig).where(
+            ConnectorConfig.type == "console_llm",
+            ConnectorConfig.owner_user_id == user.id,
+        ).limit(1)
+    )
+    conn = res.scalar_one_or_none()
+
+    if body.use_global:
+        if conn:
+            await db.delete(conn)
+            await db.commit()
+        return {"status": "deleted", "message": "Nutzt jetzt globale LLM-Konfiguration"}
+
+    # Preserve existing api_key when client sends None (masked field)
+    existing_key = ""
+    if conn and body.api_key is None:
+        existing_key = _dec(conn.encrypted_credentials).get("api_key") or ""
+
+    creds = {
+        "api_mode": body.api_mode,
+        "model": body.model,
+        "api_key": body.api_key if body.api_key is not None else existing_key,
+        "timeout_seconds": body.timeout_seconds,
+        "thinking_mode": "true" if body.thinking_mode else "false",
+    }
+    enc = _enc(creds)
+
+    if conn:
+        conn.base_url = body.base_url
+        conn.encrypted_credentials = enc
+        conn.enabled = True
+    else:
+        conn = ConnectorConfig(
+            name="Computer Console Hermes LLM",
+            type="console_llm",
+            owner_user_id=user.id,
+            enabled=True,
+            base_url=body.base_url,
+            encrypted_credentials=enc,
+        )
+        db.add(conn)
+    await db.commit()
+    log.info("Console LLM config saved for user %s (mode=%s model=%s)", user.id, body.api_mode, body.model)
+    return {"status": "saved"}
+
+
 # ── Session CRUD ───────────────────────────────────────────────────
 
 class _CreateSessionBody(BaseModel):
@@ -237,7 +362,16 @@ async def create_session(
     extra_servers: dict = {}  # personal MCP connectors; defined here so it survives
                               # an early exception in the LLM-config block below.
     try:
-        llm = await get_active_llm_config(db, user_id=user.id)
+        # For Hermes sessions: prefer console-specific LLM config; fall back to global.
+        # CLI sessions (claude_cli/codex_cli) use their own OAuth tokens — LLM config irrelevant.
+        _agent_pref = (await db.execute(
+            select(UserPreference).where(UserPreference.user_id == user.id)
+        )).scalar_one_or_none()
+        _agent_type = getattr(_agent_pref, "computer_agent", None) or "hermes"
+        if _agent_type == "hermes":
+            llm = (await _get_console_llm_config(db, user.id)) or (await get_active_llm_config(db, user_id=user.id))
+        else:
+            llm = await get_active_llm_config(db, user_id=user.id)
         searxng = await get_searxng_config(db)
         llm_payload = {
             "llm_base_url": llm.base_url or None,
@@ -247,9 +381,8 @@ async def create_session(
             "searxng_url": searxng.base_url if searxng.is_configured else None,
             "llm_timeout_seconds": llm.timeout_seconds or None,
         }
-        log.info("Injecting LLM config for new session: model=%s mode=%s searxng=%s timeout=%ss",
-                 llm.model or "(not set)", llm.api_mode,
-                 searxng.base_url if searxng.is_configured else "(none)",
+        log.info("Injecting LLM config for new session (agent=%s): model=%s mode=%s timeout=%ss",
+                 _agent_type, llm.model or "(not set)", llm.api_mode,
                  llm.timeout_seconds or "default")
 
         # Build per-user MCP server config from personal connectors.
@@ -591,7 +724,6 @@ async def send_message(
     # not configured in the userenv container).
     try:
         from app.services.settings import get_active_llm_config, get_searxng_config, get_setting
-        llm = await get_active_llm_config(db, user_id=user.id)
         searxng = await get_searxng_config(db)
         # Admin toggle: show the model's reasoning in the session (default ON).
         show_reasoning = (await get_setting(db, "computer.show_reasoning") or "true") != "false"
@@ -600,6 +732,11 @@ async def send_message(
             select(UserPreference).where(UserPreference.user_id == user.id)
         )).scalar_one_or_none()
         _agent_type = getattr(_msg_pref, "computer_agent", None) or "hermes"
+        # For Hermes sessions: prefer console-specific LLM config; fall back to global.
+        if _agent_type == "hermes":
+            llm = (await _get_console_llm_config(db, user.id)) or (await get_active_llm_config(db, user_id=user.id))
+        else:
+            llm = await get_active_llm_config(db, user_id=user.id)
         body_data.update({
             "llm_base_url": llm.base_url or None,
             "llm_model": llm.model or None,
