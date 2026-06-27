@@ -9,12 +9,13 @@ import { MatButtonModule } from '@angular/material/button';
 import { AuthService } from './core/auth/auth.service';
 import { WebsocketService } from './core/services/websocket.service';
 import { ThemeService } from './core/services/theme.service';
+import { I18nService } from './core/services/i18n.service';
 import { environment } from '../environments/environment';
 import { ComputerComponent } from './features/computer/computer.component';
 
 interface NavItem {
   path: string;
-  label: string;
+  labelKey: string;
   icon: string;
   roles: string[];
 }
@@ -43,9 +44,9 @@ interface NavItem {
             </div>
             @for (item of visibleNavItems(); track item.path) {
               <a class="cs-nav-item" [routerLink]="item.path" routerLinkActive="cs-nav-item-active"
-                 [title]="item.label">
+                 [title]="i18n.t(item.labelKey)">
                 <mat-icon class="cs-nav-icon">{{ item.icon }}</mat-icon>
-                <span class="cs-nav-label">{{ item.label }}</span>
+                <span class="cs-nav-label">{{ i18n.t(item.labelKey) }}</span>
                 @if (item.path === '/feed' && unreadFeedCount() > 0) {
                   <span class="cs-badge">{{ unreadFeedCount() > 99 ? '99+' : unreadFeedCount() }}</span>
                 }
@@ -76,7 +77,7 @@ interface NavItem {
                   </svg>
                 </button>
               }
-              <button mat-icon-button (click)="auth.logout()" title="Abmelden">
+              <button mat-icon-button (click)="auth.logout()" [title]="i18n.t('app.nav.logout')">
                 <mat-icon>logout</mat-icon>
               </button>
             </div>
@@ -103,19 +104,21 @@ export class App implements OnInit, OnDestroy {
   computerEnabled = computed(() => this.auth.user()?.computer_console_enabled ?? false);
   hasAwxNg = computed(() => this.auth.user()?.has_awx_ng ?? false);
 
+  readonly i18n = inject(I18nService);
+
   private readonly navItems: NavItem[] = [
-    { path: '/dashboard',    label: 'Dashboard',        icon: 'dashboard',    roles: ['admin','sysadmin','network_technician','viewer'] },
-    { path: '/bridge',       label: 'Brücke',           icon: 'rocket_launch',roles: ['admin','sysadmin','network_technician','viewer'] },
-    { path: '/feed',         label: 'News Feed',        icon: 'feed',         roles: ['admin','sysadmin','network_technician'] },
-    { path: '/problems',    label: 'Problemboard',     icon: 'report_problem', roles: ['admin','sysadmin','network_technician'] },
-    { path: '/alerts',       label: 'Alerts',           icon: 'notifications',roles: ['admin'] },
-    { path: '/my-tickets',   label: 'Meine Tickets',    icon: 'assignment',   roles: ['admin','sysadmin'] },
-    { path: '/kanban',       label: 'Kanban',           icon: 'view_kanban',  roles: ['admin','sysadmin','network_technician'] },
-    { path: '/ai-insights',  label: 'KI-Insights',      icon: 'psychology',   roles: ['admin','sysadmin'] },
-    { path: '/topology',     label: 'Infrastruktur-Karte', icon: 'account_tree', roles: ['admin','sysadmin','network_technician'] },
-    { path: '/workbench',    label: 'Werkbank',         icon: 'construction', roles: ['admin','sysadmin'] },
-    { path: '/settings',     label: 'Einstellungen',    icon: 'settings',     roles: ['admin','sysadmin','network_technician','viewer'] },
-    { path: '/help',         label: 'Hilfe',            icon: 'help',         roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/dashboard',   labelKey: 'app.nav.dashboard',  icon: 'dashboard',     roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/bridge',      labelKey: 'app.nav.bridge',     icon: 'rocket_launch', roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/feed',        labelKey: 'app.nav.feed',       icon: 'feed',          roles: ['admin','sysadmin','network_technician'] },
+    { path: '/problems',    labelKey: 'app.nav.problems',   icon: 'report_problem',roles: ['admin','sysadmin','network_technician'] },
+    { path: '/alerts',      labelKey: 'app.nav.alerts',     icon: 'notifications', roles: ['admin'] },
+    { path: '/my-tickets',  labelKey: 'app.nav.myTickets',  icon: 'assignment',    roles: ['admin','sysadmin'] },
+    { path: '/kanban',      labelKey: 'app.nav.kanban',     icon: 'view_kanban',   roles: ['admin','sysadmin','network_technician'] },
+    { path: '/ai-insights', labelKey: 'app.nav.aiInsights', icon: 'psychology',    roles: ['admin','sysadmin'] },
+    { path: '/topology',    labelKey: 'app.nav.topology',   icon: 'account_tree',  roles: ['admin','sysadmin','network_technician'] },
+    { path: '/workbench',   labelKey: 'app.nav.workbench',  icon: 'construction',  roles: ['admin','sysadmin'] },
+    { path: '/settings',    labelKey: 'app.nav.settings',   icon: 'settings',      roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/help',        labelKey: 'app.nav.help',       icon: 'help',          roles: ['admin','sysadmin','network_technician','viewer'] },
   ];
 
   unreadFeedCount = signal<number>(0);
@@ -140,7 +143,7 @@ export class App implements OnInit, OnDestroy {
     const role = this.auth.userRole();
     const items = this.navItems.filter(i => role && i.roles.includes(role));
     if (this.hasAwxNg()) {
-      const engineeringItem: NavItem = { path: '/engineering', label: 'Maschinenraum', icon: 'engineering', roles: ['admin','sysadmin'] };
+      const engineeringItem: NavItem = { path: '/engineering', labelKey: 'app.nav.engineering', icon: 'engineering', roles: ['admin','sysadmin'] };
       const workbenchIdx = items.findIndex(i => i.path === '/workbench');
       if (workbenchIdx >= 0) {
         items.splice(workbenchIdx, 0, engineeringItem);
@@ -152,12 +155,14 @@ export class App implements OnInit, OnDestroy {
   });
 
   constructor(public auth: AuthService, private ws: WebsocketService) {
-    // Apply the locally-stored theme immediately (before login / first paint)
+    // Apply locally-stored theme and language immediately (before login / first paint)
     this.themeService.initFromStorage();
+    this.i18n.initFromStorage();
     effect(() => {
       if (this.auth.isLoggedIn()) {
         this.auth.fetchMe();
         this.themeService.loadFromPreference();
+        this.i18n.loadFromPreference();
         this.ws.connect();
         if (!this.badgeInterval) this.startBadgePolling();
       } else {
