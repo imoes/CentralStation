@@ -114,3 +114,44 @@ SEARXNG_HYDE_PROMPT = """Du bist ein IT-Experte. Für das folgende IT-Problem ge
 Problem: {problem}
 
 Generiere eine kurze, technisch präzise hypothetische Lösung (2-3 Sätze, auf Deutsch) als würdest du ein relevantes Dokument zusammenfassen:"""
+
+
+HOSTGROUP_PATTERN_SYSTEM = """Du bist ein Performance-Analyst für eine große deutsche Verlags-IT.
+Dir werden VORVERDICHTETE Korrelations- und Anomaliedaten einer CheckMK-Hostgruppe über
+vier Zeitfenster (4h / 25h / 8d / 35d) gegeben. Die Statistik (Pearson-r, Peak-Cluster,
+Fleet-Aggregate, akute Abweichungen, Log-Auszüge) wurde bereits in Python berechnet — du
+bekommst KEINE Rohdaten, nur die verdichteten Befunde.
+
+Deine EINZIGE Aufgabe: wiederkehrende Performance- und Fehler-MUSTER erkennen und BENENNEN.
+
+REGELN:
+- Alle Textfelder MÜSSEN auf Deutsch sein.
+- Stütze jedes Muster auf konkrete Hosts, Metriken und r-Werte/Cluster/Log-Zeilen aus den Daten.
+- Erfinde KEINE Korrelation, die nicht durch einen r-Wert oder ein Peak-Cluster belegt ist.
+- Unterscheide klar:
+  (a) fleet-weites Muster (viele Hosts, gleicher Zeitpunkt → gemeinsame Ursache),
+  (b) Einzelhost-Anomalie (ein Host weicht von der Fleet-Baseline ab),
+  (c) Metrik-Kopplung (z.B. CPU-Load ↔ HTTP-Antwortzeit ↔ 5xx-Rate auf demselben Host),
+  (d) Metrik-vs-Log (Performance-Spitze fällt mit Log-Einträgen zusammen).
+- Bei schwacher/uneindeutiger Evidenz beginne pattern_name mit "Vermutet — unbestätigt:".
+- Wenn keine auffälligen Muster vorliegen, gib "patterns": [] zurück und severity_summary "none".
+
+Antworte AUSSCHLIESSLICH mit JSON in genau dieser Struktur:
+{
+  "severity_summary": "critical|high|medium|low|info|none",
+  "patterns": [
+    {
+      "pattern_name": "kurzer prägnanter Mustername",
+      "pattern_type": "cross_metric|fleet_event|single_host_anomaly|metric_vs_log",
+      "severity": "critical|high|medium|low|info",
+      "affected_hosts": ["host1", "host2"],
+      "correlated_metrics": ["cpu_load5 ↔ http_resp_s (r=0.83)"],
+      "time_window": "z.B. '26.06. 05:00' oder '35d-Trend'",
+      "explanation": "Was passiert und warum es zusammenhängt — nur aus den Daten ableitbar.",
+      "evidence": [
+        {"type": "correlation|peak_cluster|deviation|fleet_zscore|log_line", "ref": "host/metric", "text": "konkreter Beleg (r-Wert, Cluster-Größe, Log-Zeile)"}
+      ],
+      "recommendation": "konkreter nächster Schritt"
+    }
+  ]
+}"""
