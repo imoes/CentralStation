@@ -62,7 +62,7 @@ const SEVERITY_COLORS: Record<string, string> = {
             <div class="analysis-lcars-header">
               <span class="alh-sev">{{ (analysis.severity_summary || 'none') | uppercase }}</span>
               <span class="alh-dot">·</span>
-              <span class="alh-agent">{{ analysis.agent_type | uppercase }}</span>
+              <span class="alh-agent">{{ agentLabel(analysis.agent_type) }}</span>
               <span class="alh-spacer"></span>
               <span class="alh-counts">{{ analysis.findings_count }} {{ i18n.t('ai_insights.findings') }} · {{ analysis.recommendations_count }} {{ i18n.t('ai_insights.recommendations') }}</span>
               @if (analysis.jira_tickets_created?.length) {
@@ -82,7 +82,7 @@ const SEVERITY_COLORS: Record<string, string> = {
                     {{ analysis.severity_summary || 'none' }}
                   </span>
                   <span class="run-time">{{ analysis.run_at | date:'dd.MM.yyyy HH:mm' }}</span>
-                  <mat-chip class="agent-chip">{{ analysis.agent_type }}</mat-chip>
+                  <mat-chip class="agent-chip">{{ agentLabel(analysis.agent_type) }}</mat-chip>
                 </div>
                 <div class="analysis-counts">
                   <span>{{ analysis.findings_count }} {{ i18n.t('ai_insights.findings') }}</span>
@@ -537,6 +537,16 @@ export class AiInsightsComponent implements OnInit, OnDestroy {
   sevColor(sev: string): string { return SEVERITY_COLORS[sev] ?? '#9e9e9e'; }
   srcLabel(src: string): string { return SOURCE_LABELS[src] ?? src?.toUpperCase() ?? ''; }
   srcColor(src: string): string { return SOURCE_COLORS[src] ?? '#9e9e9e'; }
+
+  /** Friendly label for an analysis agent_type. */
+  agentLabel(agent: string): string {
+    const map: Record<string, string> = {
+      sysadmin: 'SYSADMIN',
+      network: 'NETWORK',
+      hostgroup_pattern: 'PERF-MUSTER',
+    };
+    return map[agent] ?? (agent || '').toUpperCase();
+  }
 
   /** In LCARS mode return null so CSS (not inline style) controls the badge color. */
   badgeBg(sev: string): string | null {

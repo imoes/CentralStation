@@ -58,6 +58,96 @@ async def run_sysadmin_agent() -> None:
         )
 
 
+async def run_hostgroup_pattern_agent() -> None:
+    """Recognise performance/failure patterns across watched CheckMK hostgroups.
+
+    Window-driven (4h/25h/8d/35d), heavy (~2300 RRD fetches per group), so it runs
+    on a 6h cron — not the alert-driven sysadmin interval. Persists named patterns
+    to ai_analyses with agent_type='hostgroup_pattern' (reusing the generic
+    AiAnalysis surfacing) and broadcasts via WebSocket.
+    """
+    import json as _json
+    from sqlalchemy import select
+    from app.core.database import AsyncSessionLocal
+    from app.models.connector import ConnectorConfig
+    from app.models.ai import AiAnalysis
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.checkmk import CheckMKConnector
+    from app.services.settings import get_active_llm_config, get_setting
+    from app.services import hostgroup_analysis as hga
+
+    async with AsyncSessionLocal() as db:
+        cfgs = (await db.execute(select(ConnectorConfig).where(
+            ConnectorConfig.type == "checkmk", ConnectorConfig.enabled.is_(True)
+        ))).scalars().all()
+        if not cfgs:
+            return
+        conn = CheckMKConnector(base_url=cfgs[0].base_url,
+                                credentials=decrypt_credentials(cfgs[0].encrypted_credentials))
+
+        watch_raw = await get_setting(db, "agent.hostgroup_watch")
+        try:
+            groups = _json.loads(watch_raw) if watch_raw else ["cue-prod"]
+        except Exception:
+            groups = ["cue-prod"]
+        llm_config = await get_active_llm_config(db)
+
+        for group in groups:
+            try:
+                bundle = await hga.analyze_hostgroup(conn, group, db=db,
+                                                     correlate_logs=True, fresh=True)
+                if bundle.get("error"):
+                    logger.info("hostgroup_pattern %s: %s", group, bundle["error"])
+                    continue
+                named = await hga.name_patterns(bundle, llm_config)
+                patterns = named.get("patterns", [])
+
+                # Map patterns → AiAnalysis clusters/findings shape for generic surfacing.
+                clusters = [{
+                    "diagnosis": p.get("pattern_name", ""),
+                    "severity": p.get("severity", "medium"),
+                    "root_cause_host": (p.get("affected_hosts") or [None])[0],
+                    "affected_hosts": p.get("affected_hosts", []),
+                    "explanation": p.get("explanation", ""),
+                    "recommendation": p.get("recommendation", ""),
+                } for p in patterns]
+                findings = [{
+                    "title": p.get("pattern_name", ""),
+                    "severity": p.get("severity", "medium"),
+                    "host": (p.get("affected_hosts") or [""])[0],
+                    "description": p.get("explanation", ""),
+                    "evidence": p.get("evidence", []),
+                } for p in patterns]
+
+                record = AiAnalysis(
+                    agent_type="hostgroup_pattern",
+                    sources_checked={"group": group, "host_count": bundle.get("hosts"),
+                                     "windows": bundle.get("windows")},
+                    findings=findings,
+                    recommendations=[],
+                    clusters=clusters,
+                    severity_summary=named.get("severity_summary", "none"),
+                )
+                db.add(record)
+                await db.commit()
+                logger.info("hostgroup_pattern %s: %d patterns persisted", group, len(patterns))
+
+                try:
+                    from app.api.ws import manager
+                    await manager.broadcast({
+                        "type": "ai_insight",
+                        "agent_type": "hostgroup_pattern",
+                        "group": group,
+                        "severity": named.get("severity_summary", "none"),
+                        "patterns_count": len(patterns),
+                        "analysis_id": str(record.id),
+                    }, roles=["admin", "sysadmin"])
+                except Exception as e:
+                    logger.debug("hostgroup_pattern WS broadcast failed: %s", e)
+            except Exception as e:
+                logger.warning("hostgroup_pattern %s failed: %s", group, e)
+
+
 async def run_network_agent() -> None:
     logger.info("Network AI Agent: starting run")
     from app.core.database import AsyncSessionLocal
@@ -291,6 +381,8 @@ async def start_scheduler() -> None:
                        minutes=15, id="ide_reaper", replace_existing=True)
     _scheduler.add_job(run_knowledge_housekeeping, "cron", hour=3, minute=30,
                        id="knowledge_housekeeping", replace_existing=True)
+    _scheduler.add_job(run_hostgroup_pattern_agent, "cron", hour="*/6", minute=15,
+                       id="hostgroup_pattern_agent", replace_existing=True)
     _scheduler.start()
     logger.info(
         "APScheduler started — aggregation: %dmin, agent: %dmin, metrics: 5min",
