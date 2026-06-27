@@ -327,6 +327,15 @@ def configure_claude_credentials(
             environment={"C": creds},
         )
         log.info("userenv_manager: claude credentials written for %s", container_name(user_id))
+
+        # Idempotently register the centralstation MCP server in .claude.json (user scope).
+        # This writes {"centralstation": {"type": "http", "url": "..."}} to mcpServers.
+        # The file lives on the persistent cs-ide-cfg volume — survives container restarts.
+        c.exec_run(
+            ["claude", "mcp", "add", "--transport", "http", "--scope", "user",
+             "centralstation", "http://backend:8000/api/mcp-http/"],
+        )
+        log.info("userenv_manager: centralstation MCP registered for %s", container_name(user_id))
     except _docker.errors.NotFound:
         log.warning("configure_claude_credentials: container %s not found", container_name(user_id))
 
