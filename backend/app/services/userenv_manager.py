@@ -186,6 +186,7 @@ def ensure_container(user_id: str) -> str:
         _no_proxy = f"{_backend_host},{_no_proxy}"
     environment = {
         "HOME": "/root",
+        "CS_USER_ID": user_id,
         "CENTRALSTATION_BACKEND_URL": _backend_url,
         "HTTP_PROXY": os.getenv("HTTP_PROXY", ""),
         "HTTPS_PROXY": os.getenv("HTTPS_PROXY", ""),
