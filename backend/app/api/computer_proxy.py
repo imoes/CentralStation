@@ -178,6 +178,40 @@ async def configure_agent(
     return {"agent": body.agent, "status": "configured"}
 
 
+@router.get("/agent-credentials/{agent_type}", status_code=200)
+async def get_agent_credentials(
+    agent_type: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    request: Request,
+):
+    """Internal endpoint: userenv containers call this to re-inject expired CLI credentials.
+
+    Authentication: The request must carry an X-CS-User-ID header identifying the container's
+    user. This endpoint is only reachable within the Docker-internal cs-net network — no JWT
+    is used since the container has no user session.
+    """
+    import uuid as _uuid
+    user_id = request.headers.get("X-CS-User-ID", "").strip()
+    if not user_id:
+        raise HTTPException(400, "X-CS-User-ID header erforderlich")
+    try:
+        _uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(400, "X-CS-User-ID muss eine gültige UUID sein")
+    if agent_type not in ("claude_cli", "codex_cli"):
+        raise HTTPException(400, "agent_type muss 'claude_cli' oder 'codex_cli' sein")
+
+    creds = await _load_agent_creds(db, user_id, agent_type)
+    if not creds:
+        raise HTTPException(404, f"Keine Credentials für {agent_type} / user {user_id}")
+
+    return {
+        "access_token": creds.get("access_token", ""),
+        "refresh_token": creds.get("refresh_token", ""),
+        "expires_at": creds.get("expires_at", ""),
+    }
+
+
 # ── Session CRUD ───────────────────────────────────────────────────
 
 class _CreateSessionBody(BaseModel):

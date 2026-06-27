@@ -485,11 +485,59 @@ async def _run_cli_agent(
     if agent_type == "claude_cli":
         # --session-id: sets the UUID for a NEW session (first message).
         # --resume <sid>: continues an EXISTING session (subsequent messages / after restart).
-        # --permission-mode acceptEdits: suppresses interactive approval dialogs.
+        # --permission-mode dontAsk: suppresses interactive approval dialogs without the root
+        #   restriction of bypassPermissions. --allowedTools Bash: explicitly grant Bash so
+        #   ssh/commands work (dontAsk still enforces permissions without allowedTools).
         # No manual history prepending — Claude reads it from ~/.claude/projects/.../<sid>.jsonl
         # (on the cs-ide-cfg named volume — survives container restarts).
         # Only pass --model when the model string is a Claude model (claude-* prefix);
         # the injected LLM config model is usually an OpenAI/custom name that Claude rejects.
+
+        # Pre-flight auth check: claude clears .credentials.json on failed token refresh.
+        # Re-inject from backend if the file is missing or has empty tokens.
+        try:
+            import json as _json
+            _creds_path = "/root/.claude/.credentials.json"
+            _creds_ok = False
+            try:
+                _c = _json.load(open(_creds_path))
+                _creds_ok = bool(_c.get("claudeAiOauth", {}).get("accessToken", ""))
+            except Exception:
+                pass
+            if not _creds_ok:
+                # Fetch fresh tokens from backend and re-inject
+                _backend = os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000")
+                _cs_uid = os.getenv("CS_USER_ID", "")
+                import aiohttp as _aiohttp
+                async with _aiohttp.ClientSession() as _s:
+                    async with _s.get(f"{_backend}/api/computer/agent-credentials/claude_cli",
+                                      headers={"X-CS-User-ID": _cs_uid},
+                                      timeout=_aiohttp.ClientTimeout(total=5)) as _r:
+                        if _r.status == 200:
+                            _tok = await _r.json()
+                            _at = _tok.get("access_token", "")
+                            _rt = _tok.get("refresh_token", "")
+                            _exp = _tok.get("expires_at", 0)
+                            if _at:
+                                import time as _t
+                                _exp_i = max(int(_exp) if _exp else 0, int(_t.time() * 1000) + 3_600_000)
+                                _existing: dict = {}
+                                try:
+                                    _existing = _json.load(open(_creds_path))
+                                except Exception:
+                                    pass
+                                _oauth = _existing.get("claudeAiOauth") or {}
+                                _oauth.update({"accessToken": _at, "refreshToken": _rt, "expiresAt": _exp_i})
+                                _oauth.setdefault("scopes", ["user:file_upload","user:inference","user:mcp_servers","user:profile","user:sessions:claude_code"])
+                                _oauth.setdefault("subscriptionType", "pro")
+                                _oauth.setdefault("rateLimitTier", "default_raven")
+                                _existing["claudeAiOauth"] = _oauth
+                                with open(_creds_path, "w") as _f:
+                                    _json.dump(_existing, _f)
+                                log.info("[cli:claude] re-injected credentials from backend")
+        except Exception as _e:
+            log.warning("[cli:claude] credential preflight failed: %s", _e)
+
         # Determine if a session JSONL already exists for this sid.
         # After a container restart the in-memory flag is gone, so we also check the
         # filesystem. Claude stores sessions under ~/.claude/projects/<cwd-slug>/<sid>.jsonl.
@@ -503,13 +551,29 @@ async def _run_cli_agent(
                 session["claude_session_started"] = True
         if claude_started:
             # Session file exists — resume it.
-            cmd = ["claude", "--print", "--resume", sid, "--permission-mode", "acceptEdits"]
+            cmd = ["claude", "--print", "--resume", sid,
+                   "--permission-mode", "dontAsk", "--allowedTools", "Bash"]
         else:
             # First call for this sid — create the session file with this UUID.
-            cmd = ["claude", "--print", "--session-id", sid, "--permission-mode", "acceptEdits"]
+            cmd = ["claude", "--print", "--session-id", sid,
+                   "--permission-mode", "dontAsk", "--allowedTools", "Bash"]
         if model and model.lower().startswith("claude"):
             cmd += ["--model", model]
-        cmd.append(message)
+        # "--" terminates option parsing so the message is not consumed as a tool name
+        # by the variadic --allowedTools argument.
+        cmd += ["--", message]
+
+        # Backup credentials before running — Claude sometimes clears .credentials.json
+        # on a failed internal token refresh (race with VS Code Extension or revoked token).
+        # We restore from backup so the user doesn't lose a valid token permanently.
+        _creds_path_run = "/root/.claude/.credentials.json"
+        _creds_bak_run  = "/root/.claude/.credentials.json.prerun"
+        try:
+            import shutil as _sh
+            _sh.copy2(_creds_path_run, _creds_bak_run)
+        except Exception:
+            _creds_bak_run = None  # no backup possible — skip restore
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -521,6 +585,26 @@ async def _run_cli_agent(
             if text:
                 yield {"type": "delta", "text": text}
         await proc.wait()
+
+        # Restore credentials if Claude cleared them during the run.
+        if _creds_bak_run:
+            try:
+                import json as _json2
+                _cleared = False
+                try:
+                    _cur = _json2.load(open(_creds_path_run))
+                    _cleared = not bool(_cur.get("claudeAiOauth", {}).get("accessToken", ""))
+                except Exception:
+                    _cleared = True
+                if _cleared:
+                    import shutil as _sh2
+                    _sh2.copy2(_creds_bak_run, _creds_path_run)
+                    log.info("[cli:claude] credentials were cleared by claude — restored from backup")
+                import os as _os2
+                _os2.unlink(_creds_bak_run)
+            except Exception as _re:
+                log.warning("[cli:claude] credential restore failed: %s", _re)
+
         if proc.returncode not in (0, None):
             err = (await proc.stderr.read()).decode(errors="replace")
             if err.strip():

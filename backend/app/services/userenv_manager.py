@@ -186,6 +186,7 @@ def ensure_container(user_id: str) -> str:
         _no_proxy = f"{_backend_host},{_no_proxy}"
     environment = {
         "HOME": "/root",
+        "CS_USER_ID": user_id,
         "CENTRALSTATION_BACKEND_URL": _backend_url,
         "HTTP_PROXY": os.getenv("HTTP_PROXY", ""),
         "HTTPS_PROXY": os.getenv("HTTPS_PROXY", ""),
@@ -206,6 +207,7 @@ def ensure_container(user_id: str) -> str:
         labels={"cs-userenv": "1", "cs-userenv-uid": user_id},
         restart_policy={"Name": "no"},
         cap_add=["NET_RAW"],
+        extra_hosts={"host.docker.internal": "host-gateway"},
     )
     _wait_ready(c)
     touch(user_id)
@@ -243,7 +245,20 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
         )
 
     ssh_user = username.strip() or "marvin"
+    # *.ippen.media hosts resolve via sssd on the Docker host (127.0.1.1 alias).
+    # ProxyJump through host.docker.internal lets the container piggy-back on the
+    # host's sssd infrastructure without needing domain-join inside the container.
     ssh_cfg_lines = [
+        "Host *.ippen.media",
+        f"    User {ssh_user}",
+    ]
+    if key_pem and key_pem.strip():
+        ssh_cfg_lines.append("    IdentityFile /root/.ssh/user.key")
+    ssh_cfg_lines += [
+        f"    ProxyJump {ssh_user}@host.docker.internal",
+        "    StrictHostKeyChecking no",
+        "    ConnectTimeout 15",
+        "",
         "Host *",
         f"    User {ssh_user}",
     ]
@@ -261,6 +276,54 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
     )
     log.info("userenv_manager: SSH configured for %s (user=%s key=%s)",
              name, ssh_user, "yes" if key_pem else "no")
+    configure_claude_md(user_id, ssh_user)
+
+
+def configure_claude_md(user_id: str, ssh_user: str = "marvin") -> None:
+    """Write ~/.claude/CLAUDE.md into the container (on cs-ide-cfg volume → persistent).
+
+    Provides Claude CLI with the same environment context that Hermes gets via system
+    prompt: SSH instructions, workspace location, ippen.media topology. Read automatically
+    by every claude CLI invocation as the global user-level CLAUDE.md.
+    """
+    import docker as _docker
+    name = container_name(user_id)
+    try:
+        c = _client().containers.get(name)
+    except _docker.errors.NotFound:
+        return
+
+    content = f"""# CentralStation — Linux-Admin-Umgebung
+
+Du bist ein Linux-Sysadmin-Assistent im CentralStation-Userenv-Container.
+SSH-Zugriff auf alle ippen.media-Server ist vorkonfiguriert.
+
+## SSH-ZUGRIFF
+Befehl: `ssh <hostname>.ippen.media '<befehl>'`
+User und Key sind per ~/.ssh/config voreingestellt — kein -i, -u oder -o IdentityFile nötig.
+SSH-User: `{ssh_user}`
+
+Beispiele:
+```bash
+ssh hal.ippen.media 'hostname && df -h'
+ssh docker0218.ippen.media 'docker ps'
+ssh vpp0221.ippen.media 'free -h; uptime'
+```
+
+## WORKSPACE
+Alle Dateien, Skripte und Artefakte immer in `/root/workspaces/` ablegen — niemals in /tmp.
+
+## REGELN
+- SSH-Fehler sofort und vollständig melden (exit code + stderr), nicht ausweichen
+- subprocess.run() immer mit timeout=120 aufrufen
+- Schreiboperationen auf Produktionssystemen erst nach Bestätigung ausführen
+"""
+
+    c.exec_run(
+        ["sh", "-c", "mkdir -p /root/.claude && printf '%s' \"$MD\" > /root/.claude/CLAUDE.md"],
+        environment={"MD": content},
+    )
+    log.info("userenv_manager: CLAUDE.md written for %s", name)
 
 
 def configure_claude_credentials(
@@ -278,13 +341,19 @@ def configure_claude_credentials(
     expiresAt is stored as an integer (milliseconds since epoch) as the CLI expects.
     """
     import json
+    import time
     import docker as _docker
 
     # expiresAt must be an integer (ms since epoch); cast defensively.
+    # claude --print mode skips OAuth refresh when expiresAt is in the past, immediately
+    # returning "Not logged in". Set the local expiry to NOW + 1h so the CLI trusts the
+    # token without attempting a refresh (the token itself is validated server-side).
     try:
-        expires_int: int | str = int(expires_at) if expires_at else 0
+        expires_raw = int(expires_at) if expires_at else 0
     except (ValueError, TypeError):
-        expires_int = expires_at or 0
+        expires_raw = 0
+    _now_ms = int(time.time() * 1000)
+    expires_int = max(expires_raw, _now_ms + 3_600_000)  # at least 1h from now
 
     try:
         c = _client().containers.get(container_name(user_id))
@@ -304,11 +373,20 @@ def configure_claude_credentials(
         # add defaults when the file was written without them (e.g. after a failed
         # first configure call). The claude CLI requires all these fields.
         oauth = existing.get("claudeAiOauth") or {}
-        oauth.update({
-            "accessToken": access_token,
-            "refreshToken": refresh_token,
-            "expiresAt": expires_int,
-        })
+
+        # If the volume already has a VALID access token (e.g. refreshed by the VS Code
+        # extension), keep it — don't overwrite with the (possibly stale) DB token.
+        # Only inject from DB when the existing token is missing or expired.
+        existing_expires = oauth.get("expiresAt", 0)
+        if existing_expires and existing_expires > _now_ms and oauth.get("accessToken"):
+            # Fresh token on volume — only patch expiresAt to ensure CLI doesn't skip it.
+            oauth["expiresAt"] = max(existing_expires, _now_ms + 3_600_000)
+        else:
+            oauth.update({
+                "accessToken": access_token,
+                "refreshToken": refresh_token,
+                "expiresAt": expires_int,
+            })
         oauth.setdefault("scopes", [
             "user:file_upload", "user:inference", "user:mcp_servers",
             "user:profile", "user:sessions:claude_code",
