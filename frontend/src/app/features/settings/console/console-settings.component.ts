@@ -203,6 +203,22 @@ interface HermesLLM {
               <mat-spinner diameter="24"></mat-spinner>
             }
           </div>
+
+          <!-- Claude Modell-Auswahl — nur wenn verbunden und kein OAuth-Flow aktiv -->
+          @if (claudeStep() === 'idle' && claudeConnected()) {
+            <div class="cli-model-select" (click)="$event.stopPropagation()">
+              <mat-divider style="margin: 12px 0"></mat-divider>
+              <mat-form-field appearance="outline" class="llm-field">
+                <mat-label>Modell</mat-label>
+                <mat-select [(ngModel)]="claudeModel" (ngModelChange)="saveCLIModel('claude', $event)">
+                  @for (m of claudeModels(); track m) {
+                    <mat-option [value]="m">{{ m }}</mat-option>
+                  }
+                </mat-select>
+                <mat-hint>{{ claudeModelsSource() === 'api' ? 'Live von Anthropic API' : 'Statische Auswahl' }}</mat-hint>
+              </mat-form-field>
+            </div>
+          }
         </div>
 
         <!-- ── Codex ───────────────────────────────────────────────── -->
@@ -241,6 +257,22 @@ interface HermesLLM {
               </div>
             }
           </div>
+
+          <!-- Codex Modell-Auswahl — nur wenn verbunden und kein OAuth-Flow aktiv -->
+          @if (codexStep() === 'idle' && codexConnected()) {
+            <div class="cli-model-select" (click)="$event.stopPropagation()">
+              <mat-divider style="margin: 12px 0"></mat-divider>
+              <mat-form-field appearance="outline" class="llm-field">
+                <mat-label>Modell</mat-label>
+                <mat-select [(ngModel)]="codexModel" (ngModelChange)="saveCLIModel('codex', $event)">
+                  @for (m of codexModels(); track m) {
+                    <mat-option [value]="m">{{ m }}</mat-option>
+                  }
+                </mat-select>
+                <mat-hint>{{ codexModelsSource() === 'api' ? 'Live von OpenAI API' : 'Statische Auswahl' }}</mat-hint>
+              </mat-form-field>
+            </div>
+          }
         </div>
 
       </div>
@@ -288,6 +320,7 @@ interface HermesLLM {
       display: flex; align-items: center; gap: 6px; margin: 4px 0 0;
     }
 
+    .cli-model-select { margin-top: 4px; }
     .oauth-flow { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
     .oauth-url { font-size: 0.8rem; word-break: break-all; color: var(--mat-sys-primary); }
     .code-field { width: 100%; }
@@ -325,10 +358,22 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
   claudeSession = signal<ClaudeOAuthSession | null>(null);
   claudeCode = '';
 
+  // Claude model selection
+  claudeModels = signal<string[]>([]);
+  claudeModelsSource = signal<'api' | 'static'>('static');
+  claudeConnected = signal(false);
+  claudeModel = '';
+
   // Codex OAuth state
   codexStep = signal<'idle' | 'loading' | 'polling'>('idle');
   codexSession = signal<CodexOAuthSession | null>(null);
   private codexPollTimer: any = null;
+
+  // Codex model selection
+  codexModels = signal<string[]>([]);
+  codexModelsSource = signal<'api' | 'static'>('static');
+  codexConnected = signal(false);
+  codexModel = '';
 
   ngOnInit(): void {
     this.http.get<any>('/api/preferences').subscribe({
@@ -339,6 +384,8 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
       },
       error: () => {},
     });
+    this.loadCLIModels('claude');
+    this.loadCLIModels('codex');
   }
 
   ngOnDestroy(): void {
@@ -425,6 +472,39 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
     });
   }
 
+  // ── CLI Model Selection ─────────────────────────────────────────────
+
+  loadCLIModels(provider: 'claude' | 'codex'): void {
+    this.http.get<any>(`/api/computer/models/${provider}`).subscribe({
+      next: (res) => {
+        const models: string[] = res.models ?? [];
+        const current: string = res.current_model ?? '';
+        const connected = res.source === 'api' || !!current;
+        if (provider === 'claude') {
+          this.claudeModels.set(models);
+          this.claudeModelsSource.set(res.source ?? 'static');
+          this.claudeConnected.set(connected);
+          if (current) this.claudeModel = current;
+          else if (models.length) this.claudeModel = models[0];
+        } else {
+          this.codexModels.set(models);
+          this.codexModelsSource.set(res.source ?? 'static');
+          this.codexConnected.set(connected);
+          if (current) this.codexModel = current;
+          else if (models.length) this.codexModel = models[0];
+        }
+      },
+      error: () => {},
+    });
+  }
+
+  saveCLIModel(provider: 'claude' | 'codex', model: string): void {
+    this.http.patch('/api/computer/cli-model', { provider, model }).subscribe({
+      next: () => this.snack.open(`${provider === 'claude' ? 'Claude' : 'Codex'} Modell gespeichert: ${model}`, '', { duration: 2500 }),
+      error: (e) => this.snack.open(`Fehler: ${e.error?.detail || e.message}`, '', { duration: 4000 }),
+    });
+  }
+
   // ── Hermes ─────────────────────────────────────────────────────────
 
   selectHermes(): void {
@@ -475,6 +555,7 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
             this.claudeStep.set('idle');
             this.claudeSession.set(null);
             this.snack.open('Claude als Console-Agent konfiguriert', '', { duration: 3000 });
+            this.loadCLIModels('claude');
           },
           error: (e) => {
             this.claudeStep.set('authorize');
@@ -532,6 +613,7 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
               this.codexStep.set('idle');
               this.codexSession.set(null);
               this.snack.open('Codex als Console-Agent konfiguriert', '', { duration: 3000 });
+              this.loadCLIModels('codex');
             },
             error: (e) => {
               this.codexStep.set('idle');
