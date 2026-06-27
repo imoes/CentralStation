@@ -149,10 +149,19 @@
   background: #0a0804;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 0;
+  padding: 10px 0 0;
   border-right: 2px solid #2a1a08;
+  overflow: hidden;
+}
+
+.rail-sessions {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 4px;
 
   &::-webkit-scrollbar {
     width: 5px;
@@ -167,6 +176,15 @@
   &::-webkit-scrollbar-thumb:hover {
     background: #ffb366;
   }
+}
+
+.rail-actions {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0 10px;
+  border-top: 1px solid #2a1a08;
 }
 
 .rail-head {
@@ -210,7 +228,6 @@
 
   &.new-pill {
     background: #99ccff;
-    margin-top: 8px;
 
     &:hover {
       background: #bbdeff;

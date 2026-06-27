@@ -103,61 +103,69 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
         <!-- Session Rail (LCARS pills) -->
         <div class="session-rail">
           <div class="rail-head">SESSIONS</div>
-          @for (s of sessions(); track s.session_id) {
-            @if (editingSid() === s.session_id) {
-              <input class="rail-pill rail-edit"
-                     [value]="s.label"
-                     (keydown.enter)="renameSession(s.session_id, $any($event.target).value)"
-                     (keydown.escape)="editingSid.set(null)"
-                     (blur)="renameSession(s.session_id, $any($event.target).value)"
-                     autofocus>
-            } @else {
-              <button class="rail-pill"
-                      [class.active]="s.session_id === activeTabId()"
-                      (click)="selectTab(s.session_id)"
-                      (dblclick)="editingSid.set(s.session_id)"
-                      [title]="s.label + ' (Doppelklick zum Umbenennen)'">
-                {{ s.label }}
-                @if (s.agent_type === 'claude_cli') {
-                  <span class="agent-badge agent-claude" title="Claude CLI">CL</span>
-                } @else if (s.agent_type === 'codex_cli') {
-                  <span class="agent-badge agent-codex" title="Codex CLI">CO</span>
-                }
-                @if (s.msg_count > 0) {
-                  <span class="msg-badge">{{ s.msg_count }}</span>
-                }
+
+          <!-- Scrollable session list -->
+          <div class="rail-sessions">
+            @for (s of sessions(); track s.session_id) {
+              @if (editingSid() === s.session_id) {
+                <input class="rail-pill rail-edit"
+                       [value]="s.label"
+                       (keydown.enter)="renameSession(s.session_id, $any($event.target).value)"
+                       (keydown.escape)="editingSid.set(null)"
+                       (blur)="renameSession(s.session_id, $any($event.target).value)"
+                       autofocus>
+              } @else {
+                <button class="rail-pill"
+                        [class.active]="s.session_id === activeTabId()"
+                        (click)="selectTab(s.session_id)"
+                        (dblclick)="editingSid.set(s.session_id)"
+                        [title]="s.label + ' (Doppelklick zum Umbenennen)'">
+                  {{ s.label }}
+                  @if (s.agent_type === 'claude_cli') {
+                    <span class="agent-badge agent-claude" title="Claude CLI">CL</span>
+                  } @else if (s.agent_type === 'codex_cli') {
+                    <span class="agent-badge agent-codex" title="Codex CLI">CO</span>
+                  }
+                  @if (s.msg_count > 0) {
+                    <span class="msg-badge">{{ s.msg_count }}</span>
+                  }
+                </button>
+              }
+            }
+          </div>
+
+          <!-- Fixed action buttons -->
+          <div class="rail-actions">
+            <button class="rail-pill new-pill" (click)="newSession()" title="New session">
+              + NEW
+            </button>
+            @if (activeTabId()) {
+              <button class="rail-pill del-pill" (click)="deleteSession()" title="End session">
+                ✕ END
               </button>
             }
-          }
-          <button class="rail-pill new-pill" (click)="newSession()" title="New session">
-            + NEW
-          </button>
-          @if (activeTabId()) {
-            <button class="rail-pill del-pill" (click)="deleteSession()" title="End session">
-              ✕ END
-            </button>
-          }
-          @if (activeSession()?.external_id && !activeSession()?.resolved) {
-            <button class="rail-pill resolve-pill" (click)="resolveSession()"
-                    title="Mark as resolved — saves learning comment on the alert">
-              ✓ RESOLVED
-            </button>
-          }
-          @if (activeSession()?.resolved) {
-            <span class="rail-pill resolved-pill">✓ RESOLVED</span>
-          }
-          @if (activeMessages().length > 0) {
-            <button class="rail-pill ticket-pill" (click)="createTicket()"
-                    title="Create Jira ticket from this conversation">
-              🎫 TICKET
-            </button>
-          }
-          @if (activeTabId()) {
-            <button class="rail-pill workbench-pill" (click)="sendToWorkbench()"
-                    title="Transfer session to workbench">
-              ⬡ WORKBENCH
-            </button>
-          }
+            @if (activeSession()?.external_id && !activeSession()?.resolved) {
+              <button class="rail-pill resolve-pill" (click)="resolveSession()"
+                      title="Mark as resolved — saves learning comment on the alert">
+                ✓ RESOLVED
+              </button>
+            }
+            @if (activeSession()?.resolved) {
+              <span class="rail-pill resolved-pill">✓ RESOLVED</span>
+            }
+            @if (activeMessages().length > 0) {
+              <button class="rail-pill ticket-pill" (click)="createTicket()"
+                      title="Create Jira ticket from this conversation">
+                🎫 TICKET
+              </button>
+            }
+            @if (activeTabId()) {
+              <button class="rail-pill workbench-pill" (click)="sendToWorkbench()"
+                      title="Transfer session to workbench">
+                ⬡ WORKBENCH
+              </button>
+            }
+          </div>
         </div>
 
         <!-- Conversation area -->
