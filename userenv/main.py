@@ -552,11 +552,11 @@ async def _run_cli_agent(
         if claude_started:
             # Session file exists — resume it.
             cmd = ["claude", "--print", "--resume", sid,
-                   "--permission-mode", "dontAsk", "--allowedTools", "Bash"]
+                   "--permission-mode", "dontAsk", "--allowedTools", "Bash,mcp__centralstation"]
         else:
             # First call for this sid — create the session file with this UUID.
             cmd = ["claude", "--print", "--session-id", sid,
-                   "--permission-mode", "dontAsk", "--allowedTools", "Bash"]
+                   "--permission-mode", "dontAsk", "--allowedTools", "Bash,mcp__centralstation"]
         if model and model.lower().startswith("claude"):
             cmd += ["--model", model]
         # "--" terminates option parsing so the message is not consumed as a tool name
