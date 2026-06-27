@@ -619,17 +619,17 @@ async def _run_cli_agent(
     # `codex exec --json` emits JSONL events; the answer arrives as an
     # item.completed event with item.type == "agent_message". We source
     # /root/.profile first so OPENAI_API_KEY (the ChatGPT OAuth token) is set.
-    # --ask-for-approval never: belt-and-suspenders alongside config.toml approval_policy.
+    # approval_policy = "never" is set in config.toml; no CLI flag needed.
     # On subsequent turns, use `codex exec resume <codex_session_id>` if we captured
     # the internal session ID from a previous turn's JSONL stream.
     codex_session_id = session.get("codex_session_id", "")
     if codex_session_id:
-        codex_cmd = f"exec resume {codex_session_id} --json --ask-for-approval never"
+        codex_cmd = f"exec resume {codex_session_id} --json"
         if model:
             codex_cmd += f' --model "$CODEX_MODEL"'
         sh_cmd = f'. /root/.profile; exec codex {codex_cmd} "$MSG"'
     else:
-        codex_cmd = "exec --json --skip-git-repo-check --ask-for-approval never"
+        codex_cmd = "exec --json --skip-git-repo-check"
         if model:
             codex_cmd += f' --model "$CODEX_MODEL"'
         sh_cmd = f'. /root/.profile; exec codex {codex_cmd} "$MSG"'
