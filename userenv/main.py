@@ -789,10 +789,39 @@ def _find_lineage_tip(db, sid: str) -> str:
     return current
 
 
+_CLI_HISTORY_DIR = "/root/.hermes/cli_sessions"
+
+
+def _save_cli_history(sid: str, history: list) -> None:
+    try:
+        os.makedirs(_CLI_HISTORY_DIR, exist_ok=True)
+        with open(f"{_CLI_HISTORY_DIR}/{sid}.json", "w") as f:
+            json.dump(history, f)
+    except Exception as exc:
+        log.warning("[%s] cli history save failed: %s", sid[:8], exc)
+
+
+def _load_cli_history(sid: str) -> list:
+    try:
+        with open(f"{_CLI_HISTORY_DIR}/{sid}.json") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+    except Exception as exc:
+        log.warning("[%s] cli history load failed: %s", sid[:8], exc)
+        return []
+
+
 @app.get("/sessions/{sid}/history")
 def get_history(sid: str):
-    # Always read from SessionDB — it is the authoritative source.
-    # Hermes branches child sessions when run_conversation() is called with
+    # CLI sessions (codex_cli / claude_cli): history lives in _sessions[sid]["history"]
+    # (in-memory) and is persisted to /root/.hermes/cli_sessions/<sid>.json on each turn.
+    if sid in _sessions and _sessions[sid].get("agent_type") in ("claude_cli", "codex_cli"):
+        mem = _sessions[sid].get("history") or []
+        return mem or _load_cli_history(sid)
+
+    # Hermes: always read from SessionDB — it is the authoritative source.
+    # Branches child sessions when run_conversation() is called with
     # conversation_history=[…] — walk to the lineage tip and include ancestors
     # so all turns (parent + child branches) appear in the returned history.
     try:
@@ -809,6 +838,11 @@ def get_history(sid: str):
     if sid in _sessions:
         agent = _sessions[sid]["agent"]
         return getattr(agent, "conversation_history", None) or []
+
+    # Last resort: try the CLI history file (session may have been evicted from memory)
+    cli_hist = _load_cli_history(sid)
+    if cli_hist:
+        return cli_hist
 
     raise HTTPException(404, "Session nicht gefunden")
 
@@ -881,15 +915,16 @@ async def send_message(sid: str, body: MessageBody):
             # continue. Claude CLI recovers conversation history from its own session file
             # (~/.claude/sessions/<sid>.json on the cs-ide-cfg volume); Codex history is lost.
             if body.agent_type in ("claude_cli", "codex_cli"):
-                log.info("CLI session %s: creating fresh entry after container restart (agent_type=%s)",
-                         sid[:8], body.agent_type)
+                restored_history = _load_cli_history(sid)
+                log.info("CLI session %s: creating fresh entry after container restart (agent_type=%s, history=%d turns)",
+                         sid[:8], body.agent_type, len(restored_history))
                 _sessions[sid] = {
                     "agent": None,
                     "agent_type": body.agent_type,
                     "label": "Session (restored)",
-                    "msg_count": 0,
+                    "msg_count": len([m for m in restored_history if m.get("role") == "user"]),
                     "created_at": datetime.now(timezone.utc).isoformat(),
-                    "history": [],
+                    "history": restored_history,
                 }
             else:
                 log.warning("Restore failed for session %s — not found in SessionDB", sid[:8])
@@ -899,39 +934,41 @@ async def send_message(sid: str, body: MessageBody):
         # Session is in memory — check if LLM config changed since it was created.
         # Re-initialize the agent when base_url or model differ so the user does not
         # need to reload after changing the LLM in CentralStation settings.
+        # CLI sessions (codex_cli / claude_cli) do NOT use a Hermes agent — skip re-init.
         session = _sessions[sid]
-        incoming_model   = (body.llm_model    or "").strip()
-        incoming_base    = (body.llm_base_url  or "").strip()
-        incoming_mode    = (body.llm_api_mode  or "").strip()
-        stored_model     = (session.get("llm_model",    "") or "").strip()
-        stored_base      = (session.get("llm_base_url", "") or "").strip()
-        stored_mode      = (session.get("llm_api_mode",  "") or "").strip()
-        if (incoming_model or incoming_base or incoming_mode) and (
-            incoming_model != stored_model
-            or incoming_base != stored_base
-            or incoming_mode != stored_mode
-        ):
-            log.info(
-                "Session %s: LLM config changed (model: %r→%r  base_url: %r→%r  mode: %r→%r) — re-init agent",
-                sid[:8], stored_model, incoming_model, stored_base, incoming_base,
-                stored_mode, incoming_mode,
-            )
-            try:
-                new_cfg = CreateSessionBody(
-                    llm_base_url=body.llm_base_url,
-                    llm_model=body.llm_model,
-                    llm_api_key=body.llm_api_key,
-                    llm_api_mode=body.llm_api_mode,
-                    searxng_url=body.searxng_url,
-                    llm_timeout_seconds=body.llm_timeout_seconds,
+        if session.get("agent_type") not in ("claude_cli", "codex_cli"):
+            incoming_model   = (body.llm_model    or "").strip()
+            incoming_base    = (body.llm_base_url  or "").strip()
+            incoming_mode    = (body.llm_api_mode  or "").strip()
+            stored_model     = (session.get("llm_model",    "") or "").strip()
+            stored_base      = (session.get("llm_base_url", "") or "").strip()
+            stored_mode      = (session.get("llm_api_mode",  "") or "").strip()
+            if (incoming_model or incoming_base or incoming_mode) and (
+                incoming_model != stored_model
+                or incoming_base != stored_base
+                or incoming_mode != stored_mode
+            ):
+                log.info(
+                    "Session %s: LLM config changed (model: %r→%r  base_url: %r→%r  mode: %r→%r) — re-init agent",
+                    sid[:8], stored_model, incoming_model, stored_base, incoming_base,
+                    stored_mode, incoming_mode,
                 )
-                new_agent = _make_agent(sid, new_cfg)
-                session["agent"]       = new_agent
-                session["llm_model"]   = incoming_model
-                session["llm_base_url"] = incoming_base
-                session["llm_api_mode"] = incoming_mode
-            except Exception as exc:
-                log.warning("Session %s: LLM re-init failed, keeping old agent: %s", sid[:8], exc)
+                try:
+                    new_cfg = CreateSessionBody(
+                        llm_base_url=body.llm_base_url,
+                        llm_model=body.llm_model,
+                        llm_api_key=body.llm_api_key,
+                        llm_api_mode=body.llm_api_mode,
+                        searxng_url=body.searxng_url,
+                        llm_timeout_seconds=body.llm_timeout_seconds,
+                    )
+                    new_agent = _make_agent(sid, new_cfg)
+                    session["agent"]       = new_agent
+                    session["llm_model"]   = incoming_model
+                    session["llm_base_url"] = incoming_base
+                    session["llm_api_mode"] = incoming_mode
+                except Exception as exc:
+                    log.warning("Session %s: LLM re-init failed, keeping old agent: %s", sid[:8], exc)
 
     # ── CLI agent fast path ─────────────────────────────────────────
     session_agent_type = _sessions[sid].get("agent_type", "hermes")
@@ -960,6 +997,7 @@ async def send_message(sid: str, body: MessageBody):
             full = "".join(output_parts)
             if full:
                 history.append({"role": "assistant", "content": full})
+                _save_cli_history(sid, history)
 
         return StreamingResponse(
             cli_event_stream(),
