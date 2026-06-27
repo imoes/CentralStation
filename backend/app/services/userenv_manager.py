@@ -422,9 +422,11 @@ def _codex_config_toml(mcp_servers: dict | None) -> str:
         'model = "gpt-5.5"',
         'model_provider = "chatgpt_backend"',
         # Shell-command governance (separate from MCP tool approval below):
-        # read-only sandbox + no interactive prompt → safe headless operation.
+        # danger-full-access: disables bwrap sandboxing so SSH and other network
+        # commands work from the container (bwrap requires unprivileged user
+        # namespaces which Docker containers don't have by default).
         'approval_policy = "never"',
-        'sandbox_mode = "read-only"',
+        'sandbox_mode = "danger-full-access"',
         '',
         '[model_providers.chatgpt_backend]',
         'name = "ChatGPT Backend"',
