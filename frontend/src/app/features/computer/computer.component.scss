@@ -218,6 +218,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 154px;
+  flex-shrink: 0;
 
   &:hover:not(.active) {
     background: #ffb366;
