@@ -217,8 +217,8 @@ class CheckMKConnector(BaseConnector):
             tags: dict = ext.get("host_tags", {}) or {}
             labels: dict = ext.get("host_labels", {}) or {}
 
-            # Extract tag groups from CheckMK host extensions
-            # tg-os, tg-ve, tg-location are common prefixed tag groups
+            # Extract ippen.media tag groups (keys confirmed from live API)
+            # tg-os, tg-ve, tg-location are ippen-specific prefixed tag groups
             raw_os = (
                 tags.get("tg-os")
                 or tags.get("operatingsystem")
@@ -527,3 +527,145 @@ class CheckMKConnector(BaseConnector):
                 "summary": ext.get("plugin_output", ""),
             })
         return services
+
+    # ── Hostgroup + dynamic metric discovery (for pattern analysis) ──────────
+
+    async def get_hosts_in_group(self, group_name: str) -> list[str]:
+        """Return hostnames belonging to a CheckMK hostgroup.
+
+        Uses the livestatus host table via the REST host collection with a
+        'groups' column filter (op '>=' = list-contains). Returns sorted unique
+        names. Never raises — empty list on any failure. Falls back to filtering
+        get_all_hosts() on metadata.hostgroups if the livestatus query fails.
+        """
+        import json as _json
+        try:
+            r = await self._request(
+                "GET",
+                "/domain-types/host/collections/all",
+                params={
+                    "query": _json.dumps({"op": ">=", "left": "groups", "right": group_name}),
+                    "columns": ["name"],
+                },
+            )
+            r.raise_for_status()
+            names = set()
+            for item in r.json().get("value", []):
+                ext = item.get("extensions", {}) or {}
+                name = ext.get("name") or item.get("title") or item.get("id")
+                if name:
+                    names.add(name)
+            if names:
+                return sorted(names)
+        except Exception:
+            pass
+        # Fallback: derive from host_config labels (hg: prefix)
+        try:
+            hosts = await self.get_all_hosts()
+            return sorted({
+                h["hostname"] for h in hosts
+                if group_name in (h.get("metadata", {}).get("hostgroups") or [])
+            })
+        except Exception:
+            return []
+
+    async def discover_group_service_metrics(
+        self, group_name: str
+    ) -> dict[str, dict[str, list[str]]]:
+        """Discover available metric IDs per service for every host in a group.
+
+        Returns {host_name: {service_description: [metric_id, ...]}}.
+        One batched livestatus query instead of N per-host round-trips.
+        Services without metrics are omitted. Never raises — {} on failure.
+        """
+        import json as _json
+        try:
+            r = await self._request(
+                "POST",
+                "/domain-types/service/collections/all",
+                json={
+                    "query": {"op": ">=", "left": "host_groups", "right": group_name},
+                    "columns": ["host_name", "description", "metrics"],
+                },
+            )
+            r.raise_for_status()
+        except Exception:
+            return {}
+        out: dict[str, dict[str, list[str]]] = {}
+        for item in r.json().get("value", []):
+            ext = item.get("extensions", {}) or {}
+            host = ext.get("host_name", "")
+            svc = ext.get("description", "")
+            metrics = ext.get("metrics") or []
+            if not host or not svc or not metrics:
+                continue
+            out.setdefault(host, {})[svc] = metrics
+        return out
+
+    async def discover_service_metrics(self, host_name: str) -> dict[str, list[str]]:
+        """Return {service_description: [metric_id, ...]} for one host.
+
+        Services without metrics are omitted. Never raises — {} on failure.
+        """
+        try:
+            r = await self._request(
+                "POST",
+                "/domain-types/service/collections/all",
+                json={
+                    "query": {"op": "=", "left": "host_name", "right": host_name},
+                    "columns": ["description", "metrics"],
+                },
+            )
+            r.raise_for_status()
+        except Exception:
+            return {}
+        out: dict[str, list[str]] = {}
+        for item in r.json().get("value", []):
+            ext = item.get("extensions", {}) or {}
+            svc = ext.get("description", "")
+            metrics = ext.get("metrics") or []
+            if svc and metrics:
+                out[svc] = metrics
+        return out
+
+    async def get_metric_series_bucketed(
+        self,
+        host_name: str,
+        service_description: str,
+        metric_id: str = "",
+        hours: int = 336,
+        buckets: int = 168,
+    ) -> dict:
+        """Fetch one metric series over a long window, resampled to `buckets`
+        evenly-spaced points (mean per bucket) on a shared time grid.
+
+        Reuses get_graph_data (which handles the multi-base candidates and, when
+        metric_id is empty, the index fallback). Returns
+        {"series": [{"time", "value"}], "title", "unit", "error"?}.
+        Empty series + error string on any failure (never raises).
+        """
+        data = await self.get_graph_data(
+            host_name, service_description, hours=hours, metric_id=metric_id
+        )
+        series = data.get("series", [])
+        if not series:
+            return {"series": [], "title": data.get("title", service_description),
+                    "unit": data.get("unit", ""), "error": data.get("error", "no data")}
+        if len(series) <= buckets:
+            return data
+        # Resample to `buckets` mean-per-bucket points.
+        n = len(series)
+        out: list[dict] = []
+        for b in range(buckets):
+            lo = (b * n) // buckets
+            hi = ((b + 1) * n) // buckets
+            chunk = series[lo:hi] or series[lo:lo + 1]
+            vals = [p["value"] for p in chunk if p.get("value") is not None]
+            if not vals:
+                continue
+            out.append({
+                "time": chunk[len(chunk) // 2]["time"],
+                "value": round(sum(vals) / len(vals), 4),
+            })
+        return {"series": out, "title": data.get("title", service_description),
+                "unit": data.get("unit", "")}

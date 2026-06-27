@@ -207,39 +207,120 @@ async def acknowledge_alert(alert_id: str) -> dict:
 
 # ── Tool 5: Get CheckMK Host ───────────────────────────────────────
 
-@mcp.tool()
-async def get_checkmk_host(hostname: str) -> dict:
-    """Ruft den CheckMK-Status eines Hosts ab: alle Services, offene Probleme, Metriken.
+def _checkmk_trend(series: list[dict]) -> tuple[float | None, float | None, float | None, str]:
+    """Return (current, min, max, trend_arrow) from an RRD time series."""
+    vals = [p["value"] for p in series if p.get("value") is not None]
+    if not vals:
+        return None, None, None, "?"
+    current = vals[-1]
+    mn, mx = min(vals), max(vals)
+    mid = len(vals) // 2 or 1
+    avg_first = sum(vals[:mid]) / mid
+    avg_last = sum(vals[mid:]) / max(len(vals[mid:]), 1)
+    if avg_last > avg_first * 1.07:
+        arrow = "↑"
+    elif avg_last < avg_first * 0.93:
+        arrow = "↓"
+    else:
+        arrow = "→"
+    return current, mn, mx, arrow
 
-    Parameter:
-    - hostname: Hostname oder FQDN (z.B. 'server01' oder 'server01.example.com')
 
-    Nutze dieses Tool wenn der Nutzer den Status eines bestimmten Servers wissen will."""
+async def _checkmk_configs():
+    """Return all enabled CheckMK connector configs + credentials."""
     from sqlalchemy import select
     from app.models.connector import ConnectorConfig
-    from app.services.connectors.checkmk import CheckMKConnector
     from app.core.security import decrypt_credentials
-
     async with (await _get_db_session()) as db:
-        configs = (await db.execute(
+        cfgs = (await db.execute(
             select(ConnectorConfig).where(
                 ConnectorConfig.type == "checkmk",
                 ConnectorConfig.enabled.is_(True),
             )
         )).scalars().all()
+    return [(cfg, decrypt_credentials(cfg.encrypted_credentials)) for cfg in cfgs]
 
+
+async def _fetch_host_performance(hostname: str, hours: int = 2) -> dict:
+    """Fetch fresh RRD metrics for a host from all enabled CheckMK sites.
+
+    Tries every site until the host is found. Returns {site, metrics:[]} or {error}.
+    Each metric entry: {service, metric, current, min, max, trend, unit}.
+    """
+    from app.services.connectors.checkmk import CheckMKConnector
+    from app.services.metrics_collector import _DEFAULT_METRICS
+
+    configs = await _checkmk_configs()
     if not configs:
         return {"error": "Kein CheckMK-Connector konfiguriert"}
 
-    # Multi-location: try every enabled CheckMK site until the host is found.
+    for cfg, creds in configs:
+        connector = CheckMKConnector(base_url=cfg.base_url, credentials=creds)
+        # Verify host exists on this site
+        try:
+            services = await connector.list_services(hostname)
+        except Exception:
+            services = []
+        if not services:
+            continue
+
+        metrics_out: list[dict] = []
+        for m in _DEFAULT_METRICS:
+            data = await connector.get_graph_data(
+                hostname, m["service"], metric_id=m["metric_id"], hours=hours
+            )
+            series = data.get("series", [])
+            if not series:
+                continue
+            cur, mn, mx, arrow = _checkmk_trend(series)
+            unit = m.get("unit", "")
+            # Convert raw bytes to GB for readability
+            if unit == "bytes" and cur is not None:
+                cur, mn, mx = cur / 1e9, mn / 1e9, mx / 1e9
+                unit = "GB"
+            metrics_out.append({
+                "service": m["service"],
+                "metric":  m["metric_id"],
+                "current": round(cur, 2) if cur is not None else None,
+                "min":     round(mn,  2) if mn  is not None else None,
+                "max":     round(mx,  2) if mx  is not None else None,
+                "trend":   arrow,
+                "unit":    unit,
+            })
+        return {"hostname": hostname, "site": cfg.name, "hours": hours, "metrics": metrics_out}
+
+    return {"hostname": hostname, "error": "Host auf keinem CheckMK-Standort gefunden"}
+
+
+@mcp.tool()
+async def get_checkmk_host(hostname: str) -> dict:
+    """Ruft den CheckMK-Status eines Hosts ab: alle Services + aktuelle Performance-Metriken (CPU, RAM, Disk).
+
+    Parameter:
+    - hostname: Hostname oder FQDN (z.B. 'docker086' oder 'docker086.ippen.media')
+
+    Nutze dieses Tool wenn der Nutzer den Status eines bestimmten Servers wissen will."""
+    from app.services.connectors.checkmk import CheckMKConnector
+
+    configs = await _checkmk_configs()
+    if not configs:
+        return {"error": "Kein CheckMK-Connector konfiguriert"}
+
     errors: list[str] = []
-    for cfg in configs:
-        creds = decrypt_credentials(cfg.encrypted_credentials)
+    for cfg, creds in configs:
         connector = CheckMKConnector(base_url=cfg.base_url, credentials=creds)
         try:
             services = await connector.list_services(hostname)
-            if services:
-                return {"hostname": hostname, "site": cfg.name, "services": services}
+            if not services:
+                continue
+            # Fetch fresh performance metrics in parallel with the service query
+            perf = await _fetch_host_performance(hostname, hours=2)
+            return {
+                "hostname": hostname,
+                "site": cfg.name,
+                "services": services,
+                "performance": perf.get("metrics", []),
+            }
         except Exception as exc:
             log.warning("get_checkmk_host %s on '%s': %s", hostname, cfg.name, exc)
             errors.append(f"{cfg.name}: {exc}")
@@ -248,6 +329,130 @@ async def get_checkmk_host(hostname: str) -> dict:
         "hostname": hostname,
         "error": "Host auf keinem CheckMK-Standort gefunden",
         "details": errors or None,
+    }
+
+
+# ── Tool: Get CheckMK Performance Metrics (RRD) ───────────────────────────────
+
+@mcp.tool()
+async def get_checkmk_performance(hostname: str, hours: int = 2) -> dict:
+    """Ruft frische RRD-Performance-Metriken direkt aus CheckMK ab (CPU, RAM, Disk).
+
+    Immer live von CheckMK — kein Cache. Liefert aktuellen Wert, Min/Max im Zeitfenster
+    und Trend-Richtung (↑ steigend / → stabil / ↓ fallend).
+
+    Parameter:
+    - hostname: Hostname (z.B. 'docker086' oder 'docker086.ippen.media')
+    - hours:    Zeitfenster in Stunden für Trend-Berechnung (Standard: 2)
+
+    Nutze dieses Tool um Performance-Entwicklungen, Lastmuster und Kapazitäts-
+    engpässe zu erkennen — z.B. beim Analysieren von Alerts oder bei der Suche
+    nach Anomalien."""
+    return await _fetch_host_performance(hostname, hours=hours)
+
+
+# ── Tools: CheckMK Hostgroup Pattern Analysis ─────────────────────────────────
+
+async def _first_checkmk_connector():
+    """Return a CheckMKConnector for the first enabled site, or None."""
+    from app.services.connectors.checkmk import CheckMKConnector
+    configs = await _checkmk_configs()
+    if not configs:
+        return None
+    cfg, creds = configs[0]
+    return CheckMKConnector(base_url=cfg.base_url, credentials=creds)
+
+
+@mcp.tool()
+async def list_checkmk_hostgroups(search: str = "") -> dict:
+    """Listet CheckMK-Hostgruppen (optional gefiltert per Namens-Substring).
+
+    Parameter:
+    - search: optionaler Teilstring zum Filtern der Gruppennamen (z.B. 'cue')
+
+    Nutze dieses Tool um verfügbare Hostgruppen für eine Performance-Musteranalyse
+    zu finden (z.B. vor get_hostgroup_performance_summary / analyze_hostgroup_patterns)."""
+    conn = await _first_checkmk_connector()
+    if not conn:
+        return {"error": "Kein CheckMK-Connector konfiguriert"}
+    try:
+        r = await conn._request("GET", "/domain-types/host_group_config/collections/all")
+        r.raise_for_status()
+        groups = [g.get("id", "") for g in r.json().get("value", []) if g.get("id")]
+    except Exception as exc:
+        return {"error": f"CheckMK-Abfrage fehlgeschlagen: {exc}"}
+    if search:
+        groups = [g for g in groups if search.lower() in g.lower()]
+    return {"groups": sorted(groups), "count": len(groups)}
+
+
+@mcp.tool()
+async def get_hostgroup_performance_summary(group_name: str, top_n: int = 15) -> dict:
+    """Frische, kompakte Performance-Zusammenfassung einer CheckMK-Hostgruppe.
+
+    Vergleicht Performance-Metriken (CPU, RAM, Disk, HTTP-Antwortzeiten, 5xx-Rate)
+    über mehrere Zeitfenster, erkennt Anomalien und Korrelationen — reine Daten,
+    KEINE LLM. Liefert Fleet-Aggregate, akute Abweichungen, Cross-Metrik-
+    Korrelationen, Peak-Zeit-Cluster und eine Anomalie-Shortlist.
+
+    Parameter:
+    - group_name: CheckMK-Hostgruppe (z.B. 'cue-prod')
+    - top_n: Anzahl der auffälligsten Host/Metrik-Einträge (Standard 15)
+
+    Nutze dieses Tool um selbst über die Daten zu argumentieren. Für bereits
+    benannte Muster siehe analyze_hostgroup_patterns."""
+    from app.services import hostgroup_analysis as hga
+    conn = await _first_checkmk_connector()
+    if not conn:
+        return {"error": "Kein CheckMK-Connector konfiguriert"}
+    async with (await _get_db_session()) as db:
+        bundle = await hga.analyze_hostgroup(
+            conn, group_name, db=db, correlate_logs=False,
+            windows=[hga.ACUTE_WINDOW, hga.CORR_WINDOW], top_n=top_n,
+        )
+    return bundle
+
+
+@mcp.tool()
+async def analyze_hostgroup_patterns(group_name: str, correlate_logs: bool = True) -> dict:
+    """Erkennt und BENENNT Performance-/Fehlermuster über eine CheckMK-Hostgruppe.
+
+    Korreliert Metriken untereinander (z.B. CPU-Load ↔ HTTP-Antwortzeit ↔ 5xx-Rate)
+    und mit Graylog-Logs über vier Zeitfenster (4h/25h/8d/35d), und gibt benannte
+    Muster mit Belegen zurück. Nutzt die Korrelations-/Anomalie-Analyse + ein LLM
+    nur zur Benennung. Daten immer frisch aus CheckMK.
+
+    Parameter:
+    - group_name: CheckMK-Hostgruppe (z.B. 'cue-prod')
+    - correlate_logs: Graylog-Logs der auffälligen Hosts einbeziehen (Standard True)
+
+    Nutze dieses Tool für 'erkenne Muster in Hostgruppe X' / 'vergleiche die letzten
+    Tage'. Das Ergebnis enthält benannte Muster + die zugrundeliegende Evidenz."""
+    from app.services import hostgroup_analysis as hga
+    from app.services.settings import get_active_llm_config
+
+    conn = await _first_checkmk_connector()
+    if not conn:
+        return {"error": "Kein CheckMK-Connector konfiguriert"}
+
+    async with (await _get_db_session()) as db:
+        bundle = await hga.analyze_hostgroup(
+            conn, group_name, db=db, correlate_logs=correlate_logs,
+        )
+        if bundle.get("error"):
+            return bundle
+        llm_config = await get_active_llm_config(db)
+
+    named = await hga.name_patterns(bundle, llm_config)
+    return {
+        "group_name": group_name,
+        "hosts": bundle.get("hosts"),
+        "windows": bundle.get("windows"),
+        "severity_summary": named.get("severity_summary", "none"),
+        "patterns": named.get("patterns", []),
+        "note": named.get("note"),
+        "error": named.get("error"),
+        "raw_shortlist": bundle.get("shortlist", []),
     }
 
 
@@ -537,7 +742,7 @@ async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
     """Durchsucht die interne IT-Wissensdatenbank (IT-AIKB / Confluence KB).
 
     Enthält Runbooks, Server-Dokumentation, Abhängigkeiten, Konfigurationsanleitungen
-    und KB-Artikel für alle überwachten Systeme.
+    und KB-Artikel für alle ippen.media-Systeme.
 
     Parameter:
     - query: Suchbegriff, z.B. 'HAProxy Konfiguration', '[KB] docker50 Abhängigkeiten',
