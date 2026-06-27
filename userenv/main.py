@@ -573,6 +573,9 @@ async def _run_cli_agent(
                    "--permission-mode", "dontAsk", "--allowedTools", _allowed_tools]
         if model and model.lower().startswith("claude"):
             cmd += ["--model", model]
+        # stream-json emits JSONL per event so we can surface tool calls;
+        # --verbose is required when using --output-format with --print.
+        cmd += ["--output-format", "stream-json", "--verbose"]
         # "--" terminates option parsing so the message is not consumed as a tool name
         # by the variadic --allowedTools argument.
         cmd += ["--", message]
@@ -595,10 +598,28 @@ async def _run_cli_agent(
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
-        async for chunk in proc.stdout:
-            text = chunk.decode(errors="replace")
-            if text:
-                yield {"type": "delta", "text": text}
+        pending_tool: str | None = None
+        async for raw in proc.stdout:
+            line = raw.decode(errors="replace").strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if ev.get("type") == "assistant":
+                for block in ev.get("message", {}).get("content", []):
+                    btype = block.get("type", "")
+                    if btype == "tool_use":
+                        pending_tool = block.get("name", "tool")
+                        yield {"type": "tool_start", "tool": pending_tool}
+                    elif btype == "text":
+                        text = block.get("text", "")
+                        if text:
+                            if pending_tool:
+                                yield {"type": "tool_done", "tool": pending_tool}
+                                pending_tool = None
+                            yield {"type": "delta", "text": text}
         await proc.wait()
 
         # Restore credentials if Claude cleared them during the run.
@@ -675,7 +696,13 @@ async def _run_cli_agent(
                 log.info("[cli:codex] captured codex session_id=%s for sid=%s", captured[:12], sid[:8])
         if ev_type == "item.completed":
             item = ev.get("item") or {}
-            if item.get("type") == "agent_message":
+            itype = item.get("type", "")
+            if itype == "function_call":
+                tool_name = item.get("name") or item.get("call_id") or "tool"
+                yield {"type": "tool_start", "tool": tool_name}
+            elif itype == "function_call_output":
+                yield {"type": "tool_done", "tool": "tool"}
+            elif itype == "agent_message":
                 text = item.get("text", "")
                 if text:
                     # codex emits several agent_message events per turn (interim
