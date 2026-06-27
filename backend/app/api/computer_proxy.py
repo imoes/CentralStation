@@ -235,6 +235,119 @@ async def get_agent_credentials(
     }
 
 
+# ── CLI Model Selection ────────────────────────────────────────────
+
+_CLAUDE_FALLBACK = [
+    "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5",
+    "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
+    "claude-3-opus-20240229",
+]
+_CODEX_FALLBACK = [
+    "o3", "o4-mini", "gpt-4.1", "gpt-4.1-mini",
+    "gpt-4o", "gpt-4o-mini", "gpt-4-turbo",
+]
+_CODEX_EXCLUDE = ("embedding", "tts", "whisper", "dall-e", "babbage", "davinci", "ada", "curie")
+
+
+@router.get("/models/{provider}")
+async def list_cli_models(
+    provider: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: None = _ConsoleEnabled,
+):
+    """Return available models for claude or codex CLI, fetched live from the provider API.
+
+    Falls back to a curated static list when the OAuth token is missing or the call fails.
+    Returns the currently stored model preference as current_model.
+    """
+    if provider not in ("claude", "codex"):
+        raise HTTPException(400, "provider muss 'claude' oder 'codex' sein")
+
+    agent_type = "claude_cli" if provider == "claude" else "codex_cli"
+    creds = await _load_agent_creds(db, user.id, agent_type)
+    current_model = (creds or {}).get("model", "") or ""
+    fallback = _CLAUDE_FALLBACK if provider == "claude" else _CODEX_FALLBACK
+
+    if not creds or not creds.get("access_token"):
+        return {"models": fallback, "source": "static", "current_model": current_model}
+
+    access_token = creds["access_token"]
+    try:
+        if provider == "claude":
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                r = await client.get(
+                    "https://api.anthropic.com/v1/models",
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "anthropic-version": "2023-06-01",
+                    },
+                )
+            if r.status_code == 200:
+                models = [m["id"] for m in r.json().get("data", [])]
+                if models:
+                    return {"models": sorted(models), "source": "api", "current_model": current_model}
+        else:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                r = await client.get(
+                    "https://api.openai.com/v1/models",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+            if r.status_code == 200:
+                models = sorted([
+                    m["id"] for m in r.json().get("data", [])
+                    if not any(x in m["id"] for x in _CODEX_EXCLUDE)
+                    and (m["id"].startswith("gpt-") or m["id"].startswith("o")
+                         or m["id"].startswith("codex"))
+                ])
+                if models:
+                    return {"models": models, "source": "api", "current_model": current_model}
+    except Exception as exc:
+        log.debug("Model fetch for %s failed: %s", provider, exc)
+
+    return {"models": fallback, "source": "static", "current_model": current_model}
+
+
+class _CliModelBody(BaseModel):
+    provider: str   # "claude" | "codex"
+    model: str
+
+
+@router.patch("/cli-model", status_code=200)
+async def set_cli_model(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    body: _CliModelBody,
+    _: None = _ConsoleEnabled,
+):
+    """Store model preference inside the CLI agent's ConnectorConfig credentials."""
+    if body.provider not in ("claude", "codex"):
+        raise HTTPException(400, "provider muss 'claude' oder 'codex' sein")
+
+    agent_type = f"{body.provider}_cli"
+    from sqlalchemy import select as _sel
+    from app.models.connector import ConnectorConfig
+    from app.core.security import encrypt_credentials as _enc, decrypt_credentials as _dec
+
+    res = await db.execute(
+        _sel(ConnectorConfig).where(
+            ConnectorConfig.type == agent_type,
+            ConnectorConfig.owner_user_id == user.id,
+        ).limit(1)
+    )
+    conn = res.scalar_one_or_none()
+    if not conn:
+        raise HTTPException(404, f"Kein {agent_type}-Connector für diesen Benutzer")
+
+    creds = _dec(conn.encrypted_credentials)
+    creds["model"] = body.model
+    conn.encrypted_credentials = _enc(creds)
+    await db.commit()
+
+    log.info("CLI model set to '%s' for %s / user %s", body.model, agent_type, user.id)
+    return {"status": "saved", "model": body.model}
+
+
 # ── Hermes Console LLM Config ──────────────────────────────────────
 
 class _ConsoleLLMBody(BaseModel):
@@ -737,9 +850,16 @@ async def send_message(
             llm = (await _get_console_llm_config(db, user.id)) or (await get_active_llm_config(db, user_id=user.id))
         else:
             llm = await get_active_llm_config(db, user_id=user.id)
+        # For CLI agents, override llm_model with the user's stored CLI model preference.
+        # userenv passes body.llm_model as --model flag to the CLI subprocess.
+        cli_model: str | None = None
+        if _agent_type in ("claude_cli", "codex_cli"):
+            _cli_creds = await _load_agent_creds(db, user.id, _agent_type)
+            cli_model = (_cli_creds or {}).get("model") or None
+
         body_data.update({
             "llm_base_url": llm.base_url or None,
-            "llm_model": llm.model or None,
+            "llm_model": cli_model or llm.model or None,
             "llm_api_key": llm.api_key or None,
             "llm_api_mode": llm.api_mode or "chat_completions",
             "searxng_url": searxng.base_url if searxng.is_configured else None,
