@@ -548,14 +548,28 @@ async def _run_cli_agent(
             claude_started = bool(jsonl_files)
             if claude_started:
                 session["claude_session_started"] = True
+
+        # Build --allowedTools dynamically: Bash + every MCP server registered in .claude.json.
+        # configure_claude_credentials writes all personal MCP connectors (centralstation,
+        # VibeMK, AWX-NG, …) into .claude.json at session-create time.
+        _allowed_tools = "Bash"
+        try:
+            import json as _jcfg
+            _cj = _jcfg.load(open("/root/.claude/.claude.json"))
+            _mcp_names = list(_cj.get("mcpServers", {}).keys())
+            if _mcp_names:
+                _allowed_tools += "," + ",".join(f"mcp__{n}" for n in _mcp_names)
+        except Exception:
+            _allowed_tools = "Bash,mcp__centralstation"
+
         if claude_started:
             # Session file exists — resume it.
             cmd = ["claude", "--print", "--resume", sid,
-                   "--permission-mode", "dontAsk", "--allowedTools", "Bash,mcp__centralstation"]
+                   "--permission-mode", "dontAsk", "--allowedTools", _allowed_tools]
         else:
             # First call for this sid — create the session file with this UUID.
             cmd = ["claude", "--print", "--session-id", sid,
-                   "--permission-mode", "dontAsk", "--allowedTools", "Bash,mcp__centralstation"]
+                   "--permission-mode", "dontAsk", "--allowedTools", _allowed_tools]
         if model and model.lower().startswith("claude"):
             cmd += ["--model", model]
         # "--" terminates option parsing so the message is not consumed as a tool name
