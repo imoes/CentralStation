@@ -20,6 +20,10 @@ const TRANSLATIONS: Record<AppLanguage, Record<string, string>> = {
     'app.nav.settings': 'Settings',
     'app.nav.help': 'Help',
     'app.nav.logout': 'Sign out',
+    'app.nav.problems':    'Problem Board',
+    'app.nav.topology':    'Infrastructure Map',
+    'app.nav.workbench':   'Workbench',
+    'app.nav.engineering': 'Engine Room',
     'app.nav.toggle': 'Collapse or expand navigation',
 
     // ── Login ─────────────────────────────────────────────────────────────
@@ -494,6 +498,10 @@ const TRANSLATIONS: Record<AppLanguage, Record<string, string>> = {
     'app.nav.settings': 'Einstellungen',
     'app.nav.help': 'Hilfe',
     'app.nav.logout': 'Abmelden',
+    'app.nav.problems':    'Problemboard',
+    'app.nav.topology':    'Infrastruktur-Karte',
+    'app.nav.workbench':   'Werkbank',
+    'app.nav.engineering': 'Maschinenraum',
     'app.nav.toggle': 'Navigation ein- oder ausklappen',
 
     // ── Login ─────────────────────────────────────────────────────────────
