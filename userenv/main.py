@@ -590,6 +590,7 @@ async def _run_cli_agent(
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.DEVNULL,   # never inherit the server's stdin
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
@@ -651,6 +652,7 @@ async def _run_cli_agent(
 
     proc = await asyncio.create_subprocess_exec(
         "sh", "-c", sh_cmd,
+        stdin=asyncio.subprocess.DEVNULL,   # codex exec else tries to read piped stdin → "Reading additional input from stdin..."
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env={**env, "MSG": message, "CODEX_MODEL": model or ""},
