@@ -351,6 +351,111 @@ async def get_checkmk_performance(hostname: str, hours: int = 2) -> dict:
     return await _fetch_host_performance(hostname, hours=hours)
 
 
+# ── Tools: CheckMK Hostgroup Pattern Analysis ─────────────────────────────────
+
+async def _first_checkmk_connector():
+    """Return a CheckMKConnector for the first enabled site, or None."""
+    from app.services.connectors.checkmk import CheckMKConnector
+    configs = await _checkmk_configs()
+    if not configs:
+        return None
+    cfg, creds = configs[0]
+    return CheckMKConnector(base_url=cfg.base_url, credentials=creds)
+
+
+@mcp.tool()
+async def list_checkmk_hostgroups(search: str = "") -> dict:
+    """Listet CheckMK-Hostgruppen (optional gefiltert per Namens-Substring).
+
+    Parameter:
+    - search: optionaler Teilstring zum Filtern der Gruppennamen (z.B. 'cue')
+
+    Nutze dieses Tool um verfügbare Hostgruppen für eine Performance-Musteranalyse
+    zu finden (z.B. vor get_hostgroup_performance_summary / analyze_hostgroup_patterns)."""
+    conn = await _first_checkmk_connector()
+    if not conn:
+        return {"error": "Kein CheckMK-Connector konfiguriert"}
+    try:
+        r = await conn._request("GET", "/domain-types/host_group_config/collections/all")
+        r.raise_for_status()
+        groups = [g.get("id", "") for g in r.json().get("value", []) if g.get("id")]
+    except Exception as exc:
+        return {"error": f"CheckMK-Abfrage fehlgeschlagen: {exc}"}
+    if search:
+        groups = [g for g in groups if search.lower() in g.lower()]
+    return {"groups": sorted(groups), "count": len(groups)}
+
+
+@mcp.tool()
+async def get_hostgroup_performance_summary(group_name: str, top_n: int = 15) -> dict:
+    """Frische, kompakte Performance-Zusammenfassung einer CheckMK-Hostgruppe.
+
+    Vergleicht Performance-Metriken (CPU, RAM, Disk, HTTP-Antwortzeiten, 5xx-Rate)
+    über mehrere Zeitfenster, erkennt Anomalien und Korrelationen — reine Daten,
+    KEINE LLM. Liefert Fleet-Aggregate, akute Abweichungen, Cross-Metrik-
+    Korrelationen, Peak-Zeit-Cluster und eine Anomalie-Shortlist.
+
+    Parameter:
+    - group_name: CheckMK-Hostgruppe (z.B. 'cue-prod')
+    - top_n: Anzahl der auffälligsten Host/Metrik-Einträge (Standard 15)
+
+    Nutze dieses Tool um selbst über die Daten zu argumentieren. Für bereits
+    benannte Muster siehe analyze_hostgroup_patterns."""
+    from app.services import hostgroup_analysis as hga
+    conn = await _first_checkmk_connector()
+    if not conn:
+        return {"error": "Kein CheckMK-Connector konfiguriert"}
+    async with (await _get_db_session()) as db:
+        bundle = await hga.analyze_hostgroup(
+            conn, group_name, db=db, correlate_logs=False,
+            windows=[hga.ACUTE_WINDOW, hga.CORR_WINDOW], top_n=top_n,
+        )
+    return bundle
+
+
+@mcp.tool()
+async def analyze_hostgroup_patterns(group_name: str, correlate_logs: bool = True) -> dict:
+    """Erkennt und BENENNT Performance-/Fehlermuster über eine CheckMK-Hostgruppe.
+
+    Korreliert Metriken untereinander (z.B. CPU-Load ↔ HTTP-Antwortzeit ↔ 5xx-Rate)
+    und mit Graylog-Logs über vier Zeitfenster (4h/25h/8d/35d), und gibt benannte
+    Muster mit Belegen zurück. Nutzt die Korrelations-/Anomalie-Analyse + ein LLM
+    nur zur Benennung. Daten immer frisch aus CheckMK.
+
+    Parameter:
+    - group_name: CheckMK-Hostgruppe (z.B. 'cue-prod')
+    - correlate_logs: Graylog-Logs der auffälligen Hosts einbeziehen (Standard True)
+
+    Nutze dieses Tool für 'erkenne Muster in Hostgruppe X' / 'vergleiche die letzten
+    Tage'. Das Ergebnis enthält benannte Muster + die zugrundeliegende Evidenz."""
+    from app.services import hostgroup_analysis as hga
+    from app.services.settings import get_active_llm_config
+
+    conn = await _first_checkmk_connector()
+    if not conn:
+        return {"error": "Kein CheckMK-Connector konfiguriert"}
+
+    async with (await _get_db_session()) as db:
+        bundle = await hga.analyze_hostgroup(
+            conn, group_name, db=db, correlate_logs=correlate_logs,
+        )
+        if bundle.get("error"):
+            return bundle
+        llm_config = await get_active_llm_config(db)
+
+    named = await hga.name_patterns(bundle, llm_config)
+    return {
+        "group_name": group_name,
+        "hosts": bundle.get("hosts"),
+        "windows": bundle.get("windows"),
+        "severity_summary": named.get("severity_summary", "none"),
+        "patterns": named.get("patterns", []),
+        "note": named.get("note"),
+        "error": named.get("error"),
+        "raw_shortlist": bundle.get("shortlist", []),
+    }
+
+
 # ── Tool 6: Create Jira Ticket ─────────────────────────────────────
 
 @mcp.tool()

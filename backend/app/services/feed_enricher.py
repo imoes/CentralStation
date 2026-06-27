@@ -113,6 +113,31 @@ async def _fetch_checkmk_metrics_text(host: str) -> str:
                 parts.append(
                     f"{label}: {cur:.1f}{unit} {arrow} (min {mn:.1f} / max {mx:.1f})"
                 )
+
+            # Dynamically add HTTP response-time / error-rate metrics when the host
+            # exposes them (e.g. nginx revproxies) — the fixed _DEFAULT_METRICS miss these.
+            try:
+                svc_metrics = await connector.discover_service_metrics(host)
+                _HTTP_PICK = ["avg_response_time", "http_category_500_599", "total_requests"]
+                for svc, mids in svc_metrics.items():
+                    if "HTTP response statistics" not in svc:
+                        continue
+                    for mid in _HTTP_PICK:
+                        if mid not in mids:
+                            continue
+                        data = await connector.get_graph_data(host, svc, metric_id=mid, hours=2)
+                        vals = [p["value"] for p in data.get("series", []) if p.get("value") is not None]
+                        if not vals:
+                            continue
+                        cur = vals[-1]; mn, mx = min(vals), max(vals)
+                        mid_i = len(vals) // 2 or 1
+                        af = sum(vals[:mid_i]) / mid_i
+                        al = sum(vals[mid_i:]) / max(len(vals[mid_i:]), 1)
+                        arrow = "↑" if al > af * 1.07 else "↓" if al < af * 0.93 else "→"
+                        parts.append(f"HTTP [{mid}]: {cur:.3f} {arrow} (min {mn:.3f} / max {mx:.3f})")
+            except Exception:
+                pass
+
             return " | ".join(parts) if parts else ""
 
     except Exception as e:
