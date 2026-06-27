@@ -859,7 +859,9 @@ async def send_message(
 
         body_data.update({
             "llm_base_url": llm.base_url or None,
-            "llm_model": cli_model or llm.model or None,
+            # CLI agents: use stored CLI model preference; do NOT fall back to Hermes model
+            # (claude-sonnet-4-6 would break codex, o3 would break claude).
+            "llm_model": cli_model or None,
             "llm_api_key": llm.api_key or None,
             "llm_api_mode": llm.api_mode or "chat_completions",
             "searxng_url": searxng.base_url if searxng.is_configured else None,
