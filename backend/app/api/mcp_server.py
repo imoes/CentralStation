@@ -207,39 +207,120 @@ async def acknowledge_alert(alert_id: str) -> dict:
 
 # ── Tool 5: Get CheckMK Host ───────────────────────────────────────
 
-@mcp.tool()
-async def get_checkmk_host(hostname: str) -> dict:
-    """Ruft den CheckMK-Status eines Hosts ab: alle Services, offene Probleme, Metriken.
+def _checkmk_trend(series: list[dict]) -> tuple[float | None, float | None, float | None, str]:
+    """Return (current, min, max, trend_arrow) from an RRD time series."""
+    vals = [p["value"] for p in series if p.get("value") is not None]
+    if not vals:
+        return None, None, None, "?"
+    current = vals[-1]
+    mn, mx = min(vals), max(vals)
+    mid = len(vals) // 2 or 1
+    avg_first = sum(vals[:mid]) / mid
+    avg_last = sum(vals[mid:]) / max(len(vals[mid:]), 1)
+    if avg_last > avg_first * 1.07:
+        arrow = "↑"
+    elif avg_last < avg_first * 0.93:
+        arrow = "↓"
+    else:
+        arrow = "→"
+    return current, mn, mx, arrow
 
-    Parameter:
-    - hostname: Hostname oder FQDN (z.B. 'docker086' oder 'docker086.ippen.media')
 
-    Nutze dieses Tool wenn der Nutzer den Status eines bestimmten Servers wissen will."""
+async def _checkmk_configs():
+    """Return all enabled CheckMK connector configs + credentials."""
     from sqlalchemy import select
     from app.models.connector import ConnectorConfig
-    from app.services.connectors.checkmk import CheckMKConnector
     from app.core.security import decrypt_credentials
-
     async with (await _get_db_session()) as db:
-        configs = (await db.execute(
+        cfgs = (await db.execute(
             select(ConnectorConfig).where(
                 ConnectorConfig.type == "checkmk",
                 ConnectorConfig.enabled.is_(True),
             )
         )).scalars().all()
+    return [(cfg, decrypt_credentials(cfg.encrypted_credentials)) for cfg in cfgs]
 
+
+async def _fetch_host_performance(hostname: str, hours: int = 2) -> dict:
+    """Fetch fresh RRD metrics for a host from all enabled CheckMK sites.
+
+    Tries every site until the host is found. Returns {site, metrics:[]} or {error}.
+    Each metric entry: {service, metric, current, min, max, trend, unit}.
+    """
+    from app.services.connectors.checkmk import CheckMKConnector
+    from app.services.metrics_collector import _DEFAULT_METRICS
+
+    configs = await _checkmk_configs()
     if not configs:
         return {"error": "Kein CheckMK-Connector konfiguriert"}
 
-    # Multi-location: try every enabled CheckMK site until the host is found.
+    for cfg, creds in configs:
+        connector = CheckMKConnector(base_url=cfg.base_url, credentials=creds)
+        # Verify host exists on this site
+        try:
+            services = await connector.list_services(hostname)
+        except Exception:
+            services = []
+        if not services:
+            continue
+
+        metrics_out: list[dict] = []
+        for m in _DEFAULT_METRICS:
+            data = await connector.get_graph_data(
+                hostname, m["service"], metric_id=m["metric_id"], hours=hours
+            )
+            series = data.get("series", [])
+            if not series:
+                continue
+            cur, mn, mx, arrow = _checkmk_trend(series)
+            unit = m.get("unit", "")
+            # Convert raw bytes to GB for readability
+            if unit == "bytes" and cur is not None:
+                cur, mn, mx = cur / 1e9, mn / 1e9, mx / 1e9
+                unit = "GB"
+            metrics_out.append({
+                "service": m["service"],
+                "metric":  m["metric_id"],
+                "current": round(cur, 2) if cur is not None else None,
+                "min":     round(mn,  2) if mn  is not None else None,
+                "max":     round(mx,  2) if mx  is not None else None,
+                "trend":   arrow,
+                "unit":    unit,
+            })
+        return {"hostname": hostname, "site": cfg.name, "hours": hours, "metrics": metrics_out}
+
+    return {"hostname": hostname, "error": "Host auf keinem CheckMK-Standort gefunden"}
+
+
+@mcp.tool()
+async def get_checkmk_host(hostname: str) -> dict:
+    """Ruft den CheckMK-Status eines Hosts ab: alle Services + aktuelle Performance-Metriken (CPU, RAM, Disk).
+
+    Parameter:
+    - hostname: Hostname oder FQDN (z.B. 'docker086' oder 'docker086.ippen.media')
+
+    Nutze dieses Tool wenn der Nutzer den Status eines bestimmten Servers wissen will."""
+    from app.services.connectors.checkmk import CheckMKConnector
+
+    configs = await _checkmk_configs()
+    if not configs:
+        return {"error": "Kein CheckMK-Connector konfiguriert"}
+
     errors: list[str] = []
-    for cfg in configs:
-        creds = decrypt_credentials(cfg.encrypted_credentials)
+    for cfg, creds in configs:
         connector = CheckMKConnector(base_url=cfg.base_url, credentials=creds)
         try:
             services = await connector.list_services(hostname)
-            if services:
-                return {"hostname": hostname, "site": cfg.name, "services": services}
+            if not services:
+                continue
+            # Fetch fresh performance metrics in parallel with the service query
+            perf = await _fetch_host_performance(hostname, hours=2)
+            return {
+                "hostname": hostname,
+                "site": cfg.name,
+                "services": services,
+                "performance": perf.get("metrics", []),
+            }
         except Exception as exc:
             log.warning("get_checkmk_host %s on '%s': %s", hostname, cfg.name, exc)
             errors.append(f"{cfg.name}: {exc}")
@@ -249,6 +330,25 @@ async def get_checkmk_host(hostname: str) -> dict:
         "error": "Host auf keinem CheckMK-Standort gefunden",
         "details": errors or None,
     }
+
+
+# ── Tool: Get CheckMK Performance Metrics (RRD) ───────────────────────────────
+
+@mcp.tool()
+async def get_checkmk_performance(hostname: str, hours: int = 2) -> dict:
+    """Ruft frische RRD-Performance-Metriken direkt aus CheckMK ab (CPU, RAM, Disk).
+
+    Immer live von CheckMK — kein Cache. Liefert aktuellen Wert, Min/Max im Zeitfenster
+    und Trend-Richtung (↑ steigend / → stabil / ↓ fallend).
+
+    Parameter:
+    - hostname: Hostname (z.B. 'docker086' oder 'docker086.ippen.media')
+    - hours:    Zeitfenster in Stunden für Trend-Berechnung (Standard: 2)
+
+    Nutze dieses Tool um Performance-Entwicklungen, Lastmuster und Kapazitäts-
+    engpässe zu erkennen — z.B. beim Analysieren von Alerts oder bei der Suche
+    nach Anomalien."""
+    return await _fetch_host_performance(hostname, hours=hours)
 
 
 # ── Tool 6: Create Jira Ticket ─────────────────────────────────────
