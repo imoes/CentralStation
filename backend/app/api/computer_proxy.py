@@ -334,11 +334,14 @@ async def create_session(
         if agent_type == "claude_cli":
             _claude_creds = await _load_agent_creds(db, user.id, "claude_cli")
             if _claude_creds:
+                # Pass extra_servers so configure_claude_credentials registers all personal
+                # MCP connectors (VibeMK, AWX-NG, etc.) in .claude.json alongside centralstation.
                 await asyncio.to_thread(
                     configure_claude_credentials, str(user.id),
                     _claude_creds.get("access_token", ""),
                     _claude_creds.get("refresh_token", ""),
                     _claude_creds.get("expires_at") or None,
+                    extra_servers,
                 )
         elif agent_type == "codex_cli":
             _codex_creds = await _load_agent_creds(db, user.id, "codex_cli")

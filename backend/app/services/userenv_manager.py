@@ -325,19 +325,10 @@ Alle Dateien, Skripte und Artefakte immer in `/root/workspaces/` ablegen — nie
     )
     log.info("userenv_manager: CLAUDE.md written for %s", name)
 
-    # Ensure centralstation MCP server is registered in .claude.json (user scope).
-    # claude mcp add writes {"centralstation": {"type": "http", "url": "..."}} into
-    # mcpServers — the file lives on the persistent cs-ide-cfg volume so this survives restarts.
-    # We run it idempotently — claude mcp add is a no-op if the entry already exists.
-    c.exec_run(
-        ["claude", "mcp", "add", "--transport", "http", "--scope", "user",
-         "centralstation", "http://backend:8000/api/mcp-http/"],
-    )
-    log.info("userenv_manager: centralstation MCP registered for %s", name)
-
 
 def configure_claude_credentials(
-    user_id: str, access_token: str, refresh_token: str, expires_at: str | None
+    user_id: str, access_token: str, refresh_token: str, expires_at: str | None,
+    extra_servers: dict | None = None,
 ) -> None:
     """Write ~/.claude/.credentials.json into the container (on cs-ide-cfg volume → persistent).
 
@@ -414,6 +405,29 @@ def configure_claude_credentials(
             environment={"C": creds},
         )
         log.info("userenv_manager: claude credentials written for %s", container_name(user_id))
+
+        # Register personal MCP servers (extra_servers) + centralstation in .claude.json.
+        # centralstation is always added; extra_servers come from the user's connector_configs
+        # (type=mcp_server) — same set that Hermes and Codex get.
+        mcp_to_register: dict = {
+            "centralstation": {
+                "transport": "streamable-http",
+                "url": f"{os.getenv('CENTRALSTATION_BACKEND_URL', 'http://backend:8000').rstrip('/')}/api/mcp-http/",
+            },
+            **(extra_servers or {}),
+        }
+        for srv_name, srv_cfg in mcp_to_register.items():
+            url = srv_cfg.get("url", "")
+            if not url:
+                continue
+            transport = "http" if "http" in srv_cfg.get("transport", "streamable-http") else "sse"
+            cmd = ["claude", "mcp", "add", "--transport", transport, "--scope", "user", srv_name, url]
+            # Add auth header if the server requires a bearer token
+            token_header = (srv_cfg.get("headers") or {}).get("Authorization", "")
+            if token_header:
+                cmd += ["--header", f"Authorization: {token_header}"]
+            c.exec_run(cmd)
+            log.info("userenv_manager: MCP server '%s' registered for %s", srv_name, container_name(user_id))
     except _docker.errors.NotFound:
         log.warning("configure_claude_credentials: container %s not found", container_name(user_id))
 
