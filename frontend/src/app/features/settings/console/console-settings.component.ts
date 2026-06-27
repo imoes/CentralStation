@@ -210,13 +210,18 @@ interface HermesLLM {
               <mat-divider style="margin: 12px 0"></mat-divider>
               <mat-form-field appearance="outline" class="llm-field">
                 <mat-label>Modell</mat-label>
-                <mat-select [(ngModel)]="claudeModel" (ngModelChange)="saveCLIModel('claude', $event)">
+                <mat-select [(ngModel)]="claudeModel">
                   @for (m of claudeModels(); track m) {
                     <mat-option [value]="m">{{ m }}</mat-option>
                   }
                 </mat-select>
                 <mat-hint>{{ claudeModelsSource() === 'api' ? 'Live von Anthropic API' : 'Statische Auswahl' }}</mat-hint>
               </mat-form-field>
+              <div class="llm-actions">
+                <button mat-flat-button color="primary" (click)="saveCLIModel('claude', claudeModel)">
+                  <mat-icon>save</mat-icon> Speichern
+                </button>
+              </div>
             </div>
           }
         </div>
@@ -264,13 +269,18 @@ interface HermesLLM {
               <mat-divider style="margin: 12px 0"></mat-divider>
               <mat-form-field appearance="outline" class="llm-field">
                 <mat-label>Modell</mat-label>
-                <mat-select [(ngModel)]="codexModel" (ngModelChange)="saveCLIModel('codex', $event)">
+                <mat-select [(ngModel)]="codexModel">
                   @for (m of codexModels(); track m) {
                     <mat-option [value]="m">{{ m }}</mat-option>
                   }
                 </mat-select>
                 <mat-hint>{{ codexModelsSource() === 'api' ? 'Live von OpenAI API' : 'Statische Auswahl' }}</mat-hint>
               </mat-form-field>
+              <div class="llm-actions">
+                <button mat-flat-button color="primary" (click)="saveCLIModel('codex', codexModel)">
+                  <mat-icon>save</mat-icon> Speichern
+                </button>
+              </div>
             </div>
           }
         </div>
