@@ -54,9 +54,9 @@ def _configure_logging() -> None:
 
 
 _configure_logging()
-log = logging.getLogger("hermes")
+log = logging.getLogger("userenv")
 
-app = FastAPI(title="Hermes", version="1.0.0")
+app = FastAPI(title="UserEnv Agent Service", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=".*",
