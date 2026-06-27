@@ -38,6 +38,8 @@ class UserPreference(Base):
     ticket_seen_map: Mapped[dict | None] = mapped_column(JSON)
     # UI theme: "classic" | "holo" | "lcars"
     ui_theme: Mapped[str | None] = mapped_column(String(20), default="classic")
+    # UI language: "en" | "de"
+    ui_language: Mapped[str | None] = mapped_column(String(10), default="en")
     # Feature flag: Hermes Computer Console (admin activates per user, default off)
     computer_console_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # Console agent: "hermes" | "claude_cli" | "codex_cli"
