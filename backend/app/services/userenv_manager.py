@@ -325,6 +325,16 @@ Alle Dateien, Skripte und Artefakte immer in `/root/workspaces/` ablegen — nie
     )
     log.info("userenv_manager: CLAUDE.md written for %s", name)
 
+    # Ensure centralstation MCP server is registered in .claude.json (user scope).
+    # claude mcp add writes {"centralstation": {"type": "http", "url": "..."}} into
+    # mcpServers — the file lives on the persistent cs-ide-cfg volume so this survives restarts.
+    # We run it idempotently — claude mcp add is a no-op if the entry already exists.
+    c.exec_run(
+        ["claude", "mcp", "add", "--transport", "http", "--scope", "user",
+         "centralstation", "http://backend:8000/api/mcp-http/"],
+    )
+    log.info("userenv_manager: centralstation MCP registered for %s", name)
+
 
 def configure_claude_credentials(
     user_id: str, access_token: str, refresh_token: str, expires_at: str | None
