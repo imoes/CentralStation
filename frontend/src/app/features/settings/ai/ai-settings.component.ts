@@ -88,9 +88,18 @@ const BOOLEAN_KEYS = new Set([
 // Boolean settings that default to ON when no DB row exists yet.
 const DEFAULT_ON_KEYS = new Set(['computer.show_reasoning']);
 const SELECT_KEYS: Record<string, string[]> = {
-  'llm.api_mode': ['chat_completions', 'responses'],
+  'llm.api_mode': ['chat_completions', 'anthropic_messages', 'codex_responses', 'bedrock_converse'],
   'llm.provider': ['custom', 'openai-codex', 'claude-oauth'],
   'agent.jira_severity_threshold': ['critical', 'high', 'medium'],
+};
+
+const SELECT_LABELS: Record<string, Record<string, string>> = {
+  'llm.api_mode': {
+    chat_completions:   'Chat Completions (OpenAI-kompatibel)',
+    anthropic_messages: 'Anthropic Messages API',
+    codex_responses:    'OpenAI Responses API (Codex / GPT-5)',
+    bedrock_converse:   'AWS Bedrock Converse',
+  },
 };
 const OAUTH_PROVIDERS = new Set(['openai-codex', 'claude-oauth']);
 const SECRET_MASK = '••••••••';
@@ -731,6 +740,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
   selectOptions(key: string): string[] { return SELECT_KEYS[key] ?? []; }
 
   selectLabel(key: string, opt: string): string {
+    if (SELECT_LABELS[key]?.[opt]) return SELECT_LABELS[key][opt];
     if (key === 'llm.provider') {
       if (opt === 'custom') return 'Custom / Self-hosted endpoint';
       if (opt === 'openai-codex') return 'OpenAI Codex (OAuth)';
