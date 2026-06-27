@@ -935,10 +935,11 @@ async def send_message(sid: str, body: MessageBody):
 
     # ── CLI agent fast path ─────────────────────────────────────────
     session_agent_type = _sessions[sid].get("agent_type", "hermes")
-    # Prefer stored session type; fall back to what the proxy injected on this message.
-    effective_agent_type = session_agent_type if session_agent_type != "hermes" else (
-        body.agent_type or "hermes"
-    )
+    # Session type is authoritative — never let a per-request body.agent_type override
+    # a session that was created as hermes. Otherwise a codex_cli request body against
+    # a hermes session (e.g. old session selected while in codex_cli mode) would call
+    # codex exec on a hermes session, causing 401 + stdin errors.
+    effective_agent_type = session_agent_type
     if effective_agent_type in ("claude_cli", "codex_cli"):
         _sessions[sid]["msg_count"] += 1
         history: list[dict] = _sessions[sid].setdefault("history", [])
