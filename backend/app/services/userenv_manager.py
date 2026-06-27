@@ -265,7 +265,8 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
 
 
 def configure_claude_credentials(
-    user_id: str, access_token: str, refresh_token: str, expires_at: str | None
+    user_id: str, access_token: str, refresh_token: str, expires_at: str | None,
+    extra_servers: dict | None = None,
 ) -> None:
     """Write ~/.claude/.credentials.json into the container (on cs-ide-cfg volume → persistent).
 
@@ -327,6 +328,28 @@ def configure_claude_credentials(
             environment={"C": creds},
         )
         log.info("userenv_manager: claude credentials written for %s", container_name(user_id))
+
+        # Register centralstation + all personal MCP servers in .claude.json (user scope).
+        # extra_servers come from the user's connector_configs (type=mcp_server) — same set
+        # that Hermes and Codex get (VibeMK, AWX-NG, etc.).
+        mcp_to_register: dict = {
+            "centralstation": {
+                "transport": "streamable-http",
+                "url": f"{os.getenv('CENTRALSTATION_BACKEND_URL', 'http://backend:8000').rstrip('/')}/api/mcp-http/",
+            },
+            **(extra_servers or {}),
+        }
+        for srv_name, srv_cfg in mcp_to_register.items():
+            url = srv_cfg.get("url", "")
+            if not url:
+                continue
+            transport = "http" if "http" in srv_cfg.get("transport", "streamable-http") else "sse"
+            cmd = ["claude", "mcp", "add", "--transport", transport, "--scope", "user", srv_name, url]
+            token_header = (srv_cfg.get("headers") or {}).get("Authorization", "")
+            if token_header:
+                cmd += ["--header", f"Authorization: {token_header}"]
+            c.exec_run(cmd)
+            log.info("userenv_manager: MCP server '%s' registered for %s", srv_name, container_name(user_id))
     except _docker.errors.NotFound:
         log.warning("configure_claude_credentials: container %s not found", container_name(user_id))
 
