@@ -934,7 +934,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
         if (!wasAborted && fullAssistantText) {
           this.speak(fullAssistantText);
         }
-        this._clearActiveTool(sid);
+        this._finalizeTools(sid);
         this.loading.set(false);
         this.scrollToBottom();
       });
@@ -1111,6 +1111,19 @@ export class ComputerComponent implements OnInit, OnDestroy {
       const msgs = [...s.messages];
       if (msgs.length === 0 || msgs[msgs.length - 1].role !== 'assistant') return s;
       msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], activeTool: undefined };
+      return { ...s, messages: msgs };
+    }));
+  }
+
+  /** At stream end: clear spinner AND mark all still-pending tool calls as done. */
+  private _finalizeTools(sid: string): void {
+    this.sessions.update(ss => ss.map(s => {
+      if (s.session_id !== sid) return s;
+      const msgs = [...s.messages];
+      if (msgs.length === 0 || msgs[msgs.length - 1].role !== 'assistant') return s;
+      const prev = msgs[msgs.length - 1];
+      const calls = (prev.toolCalls ?? []).map(tc => tc.done ? tc : { ...tc, done: true });
+      msgs[msgs.length - 1] = { ...prev, activeTool: undefined, toolCalls: calls };
       return { ...s, messages: msgs };
     }));
   }
