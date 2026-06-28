@@ -1228,6 +1228,50 @@ async def forget_knowledge(doc_id: str) -> dict:
 # ── Project MCP tools ──────────────────────────────────────────────
 
 @mcp.tool()
+async def cs_create_project(
+    name: str,
+    description: str = "",
+    status: str = "planning",
+) -> dict:
+    """Erstellt ein neues Projekt in CentralStation.
+
+    name: Projektname.
+    description: Optionale Beschreibung.
+    status: planning | active | done | archived (Standard: planning).
+    Gibt id, name, status zurück.
+    """
+    import app.services.project_service as svc
+    async with (await _get_db_session()) as db:
+        project = await svc.create_project(db, name, description or None, owner_id=None, status=status)
+        return {"id": str(project.id), "name": project.name, "status": project.status}
+
+
+@mcp.tool()
+async def cs_update_project(
+    project_id: str,
+    name: str | None = None,
+    description: str | None = None,
+    status: str | None = None,
+) -> dict:
+    """Aktualisiert Name, Beschreibung oder Status eines Projekts.
+
+    project_id: UUID des Projekts.
+    status: planning | active | done | archived.
+    """
+    import app.services.project_service as svc
+    kwargs = {}
+    if name is not None:
+        kwargs["name"] = name
+    if description is not None:
+        kwargs["description"] = description
+    if status is not None:
+        kwargs["status"] = status
+    async with (await _get_db_session()) as db:
+        project = await svc.update_project(db, project_id, **kwargs)
+        return {"id": str(project.id), "name": project.name, "status": project.status}
+
+
+@mcp.tool()
 async def cs_list_projects(search: str = "") -> list[dict]:
     """Listet alle CentralStation-Projekte auf.
 
@@ -1263,7 +1307,11 @@ async def cs_add_step(
     title: str,
     description: str = "",
     jira_issue_type: str = "task",
+    priority: str = "medium",
     duration_days: int = 1,
+    story_points: int | None = None,
+    assignee: str | None = None,
+    labels: list[str] | None = None,
     depends_on: list[str] | None = None,
     parent_step_id: str | None = None,
 ) -> dict:
@@ -1272,9 +1320,13 @@ async def cs_add_step(
     project_id: UUID des Projekts.
     title: Titel des Schritts.
     jira_issue_type: epic | story | task | subtask | bug.
+    priority: highest | high | medium | low | lowest.
     duration_days: Geschätzte Dauer in Werktagen.
+    story_points: Story-Points-Schätzung (optional).
+    assignee: Name oder E-Mail des Bearbeiters.
+    labels: Liste von Labels z.B. ["backend","infra"].
     depends_on: Liste von step_ids die vorher abgeschlossen sein müssen.
-    parent_step_id: Übergeordneter Schritt (für Epic→Task→Subtask-Hierarchie).
+    parent_step_id: Übergeordneter Schritt (für Epic->Task->Subtask-Hierarchie).
     """
     import app.services.project_service as svc
     async with (await _get_db_session()) as db:
@@ -1283,11 +1335,15 @@ async def cs_add_step(
             title=title,
             description=description or None,
             jira_issue_type=jira_issue_type,
+            priority=priority,
             duration_days=duration_days,
+            story_points=story_points,
+            assignee=assignee,
+            labels=labels,
             depends_on=depends_on or [],
             parent_step_id=parent_step_id,
         )
-        return {"id": str(step.id), "title": step.title, "jira_issue_type": step.jira_issue_type}
+        return {"id": str(step.id), "title": step.title, "jira_issue_type": step.jira_issue_type, "priority": step.priority}
 
 
 @mcp.tool()
@@ -1298,25 +1354,31 @@ async def cs_update_step(
     description: str | None = None,
     duration_days: int | None = None,
     jira_issue_type: str | None = None,
+    priority: str | None = None,
+    story_points: int | None = None,
+    assignee: str | None = None,
+    labels: list[str] | None = None,
+    acceptance_criteria: str | None = None,
 ) -> dict:
-    """Aktualisiert Titel, Beschreibung oder Dauer eines Projektschritts.
+    """Aktualisiert einen Projektschritt (alle Felder optional).
 
     project_id: UUID des Projekts.
     step_id: UUID des Schritts.
+    priority: highest | high | medium | low | lowest.
+    labels: Liste von Labels – ersetzt die bestehenden Labels vollständig.
+    acceptance_criteria: Definition of Done (Markdown).
     """
     import app.services.project_service as svc
-    kwargs = {}
-    if title is not None:
-        kwargs["title"] = title
-    if description is not None:
-        kwargs["description"] = description
-    if duration_days is not None:
-        kwargs["duration_days"] = duration_days
-    if jira_issue_type is not None:
-        kwargs["jira_issue_type"] = jira_issue_type
+    kwargs: dict = {}
+    for k, v in [("title", title), ("description", description), ("duration_days", duration_days),
+                 ("jira_issue_type", jira_issue_type), ("priority", priority),
+                 ("story_points", story_points), ("assignee", assignee),
+                 ("labels", labels), ("acceptance_criteria", acceptance_criteria)]:
+        if v is not None:
+            kwargs[k] = v
     async with (await _get_db_session()) as db:
         step = await svc.update_step(db, step_id, project_id, **kwargs)
-        return {"id": str(step.id), "title": step.title, "status": step.status}
+        return {"id": str(step.id), "title": step.title, "status": step.status, "priority": step.priority}
 
 
 @mcp.tool()
@@ -1357,6 +1419,19 @@ async def cs_remove_dependency(project_id: str, dep_id: str) -> dict:
     async with (await _get_db_session()) as db:
         await svc.remove_dependency(db, dep_id, project_id)
         return {"deleted": dep_id}
+
+
+@mcp.tool()
+async def cs_delete_step(project_id: str, step_id: str) -> dict:
+    """Löscht einen Projektschritt (inkl. aller Abhängigkeiten dieses Schritts).
+
+    project_id: UUID des Projekts.
+    step_id: UUID des Schritts.
+    """
+    import app.services.project_service as svc
+    async with (await _get_db_session()) as db:
+        await svc.delete_step(db, step_id, project_id)
+        return {"deleted": step_id}
 
 
 # ── DB session helper ──────────────────────────────────────────────
