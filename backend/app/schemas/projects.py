@@ -208,9 +208,18 @@ class ProposedStep(BaseModel):
     parent_temp_id: str | None = None
 
 
+class ToolActivity(BaseModel):
+    tool: str          # web_search | web_fetch
+    detail: str        # query or URL
+    ok: bool = True
+
+
 class PlanResponse(BaseModel):
     reply: str
     steps: list[ProposedStep]
+    open_points: list[str] = []
+    sources: list[str] = []
+    tool_activity: list[ToolActivity] = []
 
 
 class SavePlanRequest(BaseModel):
