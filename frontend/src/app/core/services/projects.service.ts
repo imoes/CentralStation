@@ -39,6 +39,7 @@ export interface StepNode {
   jira_key: string | null;
   jira_status: string | null;
   jira_status_category: string | null;
+  implementation_notes: string | null;
 }
 
 export interface DepEdge {
@@ -61,6 +62,8 @@ export interface ProposedStep {
   duration_days: number;
   depends_on: string[];
   parent_temp_id: string | null;
+  code_blocks: CodeBlock[];
+  bash_commands: BashCommand[];
 }
 
 export interface ToolActivity {
