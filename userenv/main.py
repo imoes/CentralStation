@@ -573,6 +573,9 @@ async def _run_cli_agent(
                    "--permission-mode", "dontAsk", "--allowedTools", _allowed_tools]
         if model and model.lower().startswith("claude"):
             cmd += ["--model", model]
+        # stream-json emits JSONL per event so we can surface tool calls;
+        # --verbose is required when using --output-format with --print.
+        cmd += ["--output-format", "stream-json", "--verbose"]
         # "--" terminates option parsing so the message is not consumed as a tool name
         # by the variadic --allowedTools argument.
         cmd += ["--", message]
@@ -593,13 +596,52 @@ async def _run_cli_agent(
             stdin=asyncio.subprocess.DEVNULL,   # never inherit the server's stdin
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=4 * 1024 * 1024,  # 4 MB — stream-json init line can exceed 64 KB default
             env=env,
         )
-        async for chunk in proc.stdout:
-            text = chunk.decode(errors="replace")
-            if text:
-                yield {"type": "delta", "text": text}
+        pending_tool: str | None = None
+        log.info("[cli:claude] subprocess started pid=%s cmd=%s", proc.pid, " ".join(cmd[:6]))
+        async for raw in proc.stdout:
+            line = raw.decode(errors="replace").strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                log.debug("[cli:claude] non-json stdout: %.120s", line)
+                continue
+            ev_type = ev.get("type", "")
+            log.debug("[cli:claude] event type=%s", ev_type)
+            if ev_type == "assistant":
+                for block in ev.get("message", {}).get("content", []):
+                    btype = block.get("type", "")
+                    if btype == "tool_use":
+                        if pending_tool:
+                            # consecutive tool call — close the previous one before opening new
+                            log.info("[cli:claude] tool_done (implicit) tool=%s", pending_tool)
+                            yield {"type": "tool_done", "tool": pending_tool}
+                        pending_tool = block.get("name", "tool")
+                        log.info("[cli:claude] tool_start tool=%s", pending_tool)
+                        yield {"type": "tool_start", "tool": pending_tool}
+                    elif btype == "text":
+                        text = block.get("text", "")
+                        if text:
+                            if pending_tool:
+                                log.info("[cli:claude] tool_done tool=%s", pending_tool)
+                                yield {"type": "tool_done", "tool": pending_tool}
+                                pending_tool = None
+                            log.debug("[cli:claude] delta len=%d", len(text))
+                            yield {"type": "delta", "text": text}
+            elif ev_type == "result":
+                log.info("[cli:claude] result subtype=%s is_error=%s turns=%s",
+                         ev.get("subtype"), ev.get("is_error"), ev.get("num_turns"))
+        log.info("[cli:claude] stdout closed, waiting for process")
+        if pending_tool:
+            log.info("[cli:claude] tool_done (at exit) tool=%s", pending_tool)
+            yield {"type": "tool_done", "tool": pending_tool}
+            pending_tool = None
         await proc.wait()
+        log.info("[cli:claude] process exited rc=%s", proc.returncode)
 
         # Restore credentials if Claude cleared them during the run.
         if _creds_bak_run:
@@ -658,6 +700,7 @@ async def _run_cli_agent(
         env={**env, "MSG": message, "CODEX_MODEL": model or ""},
     )
     emitted = False
+    log.info("[cli:codex] subprocess started pid=%s", proc.pid)
     async for raw in proc.stdout:
         line = raw.decode(errors="replace").strip()
         if not line:
@@ -665,9 +708,11 @@ async def _run_cli_agent(
         try:
             ev = json.loads(line)
         except json.JSONDecodeError:
+            log.debug("[cli:codex] non-json stdout: %.120s", line)
             continue
         # Capture codex internal session ID for resume on next turns.
         ev_type = ev.get("type", "")
+        log.debug("[cli:codex] event type=%s", ev_type)
         if ev_type in ("session.started", "session_started") and not codex_session_id:
             captured = ev.get("session_id") or ev.get("id") or ev.get("session", {}).get("id", "")
             if captured:
@@ -675,7 +720,16 @@ async def _run_cli_agent(
                 log.info("[cli:codex] captured codex session_id=%s for sid=%s", captured[:12], sid[:8])
         if ev_type == "item.completed":
             item = ev.get("item") or {}
-            if item.get("type") == "agent_message":
+            itype = item.get("type", "")
+            log.info("[cli:codex] item.completed type=%s name=%s", itype, item.get("name", ""))
+            if itype == "function_call":
+                tool_name = item.get("name") or item.get("call_id") or "tool"
+                log.info("[cli:codex] tool_start tool=%s", tool_name)
+                yield {"type": "tool_start", "tool": tool_name}
+            elif itype == "function_call_output":
+                log.info("[cli:codex] tool_done")
+                yield {"type": "tool_done", "tool": "tool"}
+            elif itype == "agent_message":
                 text = item.get("text", "")
                 if text:
                     # codex emits several agent_message events per turn (interim
