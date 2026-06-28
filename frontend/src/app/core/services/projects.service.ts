@@ -160,4 +160,43 @@ export class ProjectsService {
   openInWorkbench(projectId: string): Observable<{ ide_url: string; project_id: string }> {
     return this.http.post<{ ide_url: string; project_id: string }>('/api/ide/open-project', { project_id: projectId });
   }
+
+  pullStepFromJira(projectId: string, stepId: string): Observable<StepNode> {
+    return this.http.post<StepNode>(`${this.base}/steps/${stepId}/jira-pull`, {}, { params: { project_id: projectId } });
+  }
+
+  chatWithProject(projectId: string, message: string): Observable<ProjectChatResponse> {
+    return this.http.post<ProjectChatResponse>(`${this.base}/${projectId}/chat`, { message });
+  }
+
+  getReadySteps(): Observable<ReadyStep[]> {
+    return this.http.get<ReadyStep[]>(`${this.base}/ready-steps`);
+  }
+}
+
+export interface ChatAction {
+  type: string;
+  step_id?: string;
+  status?: string;
+  title?: string;
+  description?: string;
+  jira_issue_type?: string;
+  duration_days?: number;
+}
+
+export interface ProjectChatResponse {
+  reply: string;
+  actions: ChatAction[];
+}
+
+export interface ReadyStep {
+  step_id: string;
+  project_id: string;
+  project_name: string;
+  title: string;
+  jira_issue_type: string;
+  priority: string;
+  status: string;
+  jira_key?: string;
+  assignee?: string;
 }

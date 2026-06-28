@@ -226,3 +226,38 @@ class SavePlanRequest(BaseModel):
     name: str
     description: str | None = None
     steps: list[ProposedStep]
+
+
+# ── KI-Projektassistent ───────────────────────────────────────────────────────
+
+class ProjectChatRequest(BaseModel):
+    message: str
+
+
+class ChatAction(BaseModel):
+    type: str          # set_status | update_step | add_step
+    step_id: str | None = None
+    status: str | None = None
+    title: str | None = None
+    description: str | None = None
+    jira_issue_type: str | None = None
+    duration_days: int | None = None
+
+
+class ProjectChatResponse(BaseModel):
+    reply: str
+    actions: list[ChatAction] = []
+
+
+# ── Kanban Ready Steps ────────────────────────────────────────────────────────
+
+class ReadyStep(BaseModel):
+    step_id: str
+    project_id: str
+    project_name: str
+    title: str
+    jira_issue_type: str
+    priority: str
+    status: str
+    jira_key: str | None = None
+    assignee: str | None = None

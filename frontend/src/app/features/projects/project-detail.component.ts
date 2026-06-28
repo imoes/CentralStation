@@ -13,7 +13,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSelectModule } from '@angular/material/select';
 import { Subject, takeUntil } from 'rxjs';
-import { ProjectsService, PlanGraph, StepNode, DepEdge } from '../../core/services/projects.service';
+import { ProjectsService, PlanGraph, StepNode, DepEdge, ChatAction } from '../../core/services/projects.service';
 import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
 import { I18nService } from '../../core/services/i18n.service';
 import { ThemeService } from '../../core/services/theme.service';
@@ -55,6 +55,9 @@ const STATUS_COLORS: Record<string, string> = {
         <div class="header-actions">
           <button mat-button (click)="syncJira()" [disabled]="syncing()">
             <mat-icon>sync</mat-icon> Jira Sync
+          </button>
+          <button mat-raised-button (click)="openChatModal()">
+            <mat-icon>smart_toy</mat-icon> KI-Assistent
           </button>
           <button mat-raised-button (click)="openWorkbench()">
             <mat-icon>code</mat-icon> {{ i18n.t('projects.open_workbench') }}
@@ -170,6 +173,9 @@ const STATUS_COLORS: Record<string, string> = {
         </mat-tab-group>
       }
 
+      </div><!-- /detail-body -->
+
+      <!-- Step card — fixed overlay modal, outside detail-body flex -->
       <cs-step-card
         [step]="selectedStep()"
         [projectId]="projectId"
@@ -177,7 +183,6 @@ const STATUS_COLORS: Record<string, string> = {
         (saved)="loadGraph(true)"
         (ticketChanged)="loadGraph(true)">
       </cs-step-card>
-      </div><!-- /detail-body -->
 
     <!-- Context menu -->
     @if (contextMenu()) {
@@ -265,6 +270,51 @@ const STATUS_COLORS: Record<string, string> = {
           <div class="dialog-actions">
             <button mat-button (click)="attachDialog.set(null)">Abbrechen</button>
             <button mat-raised-button (click)="doAttachTicket()">Verknüpfen</button>
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- AI Chat Modal -->
+    @if (chatDialog()) {
+      <div class="dialog-overlay" (click)="chatDialog.set(false)">
+        <div class="chat-modal" (click)="$event.stopPropagation()">
+          <div class="chat-header">
+            <mat-icon style="color:var(--cs-accent,#FFCC99)">smart_toy</mat-icon>
+            <span>KI-Projektassistent</span>
+            <button mat-icon-button (click)="chatDialog.set(false)" style="margin-left:auto"><mat-icon>close</mat-icon></button>
+          </div>
+          <div class="chat-history" #chatHistoryEl>
+            @for (msg of chatHistory; track $index) {
+              <div class="chat-msg" [class.user]="msg.role==='user'" [class.assistant]="msg.role==='assistant'">
+                <div class="chat-bubble">{{ msg.content }}</div>
+                @if (msg.actions?.length) {
+                  <div class="chat-actions-list">
+                    @for (a of msg.actions!; track $index) {
+                      <div class="chat-action-chip">
+                        <mat-icon style="font-size:12px;width:12px;height:12px">check</mat-icon>
+                        {{ a.type === 'set_status' ? 'Status → ' + a.status : a.type === 'update_step' ? 'Update: ' + a.title : 'Schritt hinzugefügt: ' + a.title }}
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            }
+            @if (chatHistory.length === 0) {
+              <div class="chat-empty">Stellen Sie eine Frage zum Projekt oder sagen Sie, was erledigt wurde.<br><br>
+                <em>Beispiele:</em><br>
+                „Was ist der Status von Schritt X?"<br>
+                „Schritt ‚Deploy' ist fertig."<br>
+                „Füge einen Schritt ‚Monitoring einrichten' hinzu."
+              </div>
+            }
+          </div>
+          <div class="chat-input-row">
+            <input class="chat-input" [(ngModel)]="chatMessage" (keydown.enter)="sendChatMessage()"
+                   placeholder="Nachricht…" [disabled]="chatSending()" />
+            <button mat-icon-button (click)="sendChatMessage()" [disabled]="chatSending() || !chatMessage.trim()">
+              <mat-icon>{{ chatSending() ? 'hourglass_top' : 'send' }}</mat-icon>
+            </button>
           </div>
         </div>
       </div>
@@ -398,6 +448,51 @@ const STATUS_COLORS: Record<string, string> = {
     }
     .dialog-input:focus { border-color: var(--cs-accent, #FFCC99); }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+    /* Chat Modal */
+    .chat-modal {
+      background: var(--cs-surface, #1a1a2e); border: 1px solid var(--cs-accent, #FFCC99);
+      border-radius: 8px; width: 600px; max-width: 96vw; max-height: 80vh;
+      display: flex; flex-direction: column; box-shadow: 0 24px 64px rgba(0,0,0,0.7);
+    }
+    .chat-header {
+      display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+      border-bottom: 1px solid var(--cs-border, #333); flex-shrink: 0;
+      font-weight: 700; font-family: 'Antonio','Eurostile',sans-serif; letter-spacing: .05em;
+      color: var(--cs-accent, #FFCC99);
+    }
+    .chat-history {
+      flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .chat-empty { color: var(--cs-text-muted); font-size: 0.88rem; line-height: 1.7; }
+    .chat-msg { display: flex; flex-direction: column; }
+    .chat-msg.user { align-items: flex-end; }
+    .chat-msg.assistant { align-items: flex-start; }
+    .chat-bubble {
+      max-width: 85%; padding: 8px 12px; border-radius: 8px; font-size: 0.9rem; line-height: 1.5;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .chat-msg.user .chat-bubble {
+      background: var(--cs-accent, #FFCC99); color: #000; border-radius: 8px 8px 2px 8px;
+    }
+    .chat-msg.assistant .chat-bubble {
+      background: var(--cs-bg); border: 1px solid var(--cs-border, #333); border-radius: 8px 8px 8px 2px;
+    }
+    .chat-actions-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .chat-action-chip {
+      display: flex; align-items: center; gap: 4px; padding: 2px 8px;
+      background: rgba(144,238,144,0.15); border: 1px solid #90EE90; border-radius: 10px;
+      font-size: 0.75rem; color: #90EE90;
+    }
+    .chat-input-row {
+      display: flex; align-items: center; gap: 8px; padding: 10px 16px;
+      border-top: 1px solid var(--cs-border, #333); flex-shrink: 0;
+    }
+    .chat-input {
+      flex: 1; background: var(--cs-bg); border: 1px solid var(--cs-border, #333);
+      border-radius: 4px; padding: 8px 12px; color: var(--cs-text); font-size: 0.9rem; outline: none;
+    }
+    .chat-input:focus { border-color: var(--cs-accent, #FFCC99); }
   `],
 })
 export class ProjectDetailComponent implements OnInit, AfterViewInit, OnDestroy {
@@ -425,6 +520,10 @@ export class ProjectDetailComponent implements OnInit, AfterViewInit, OnDestroy 
   ganttDays = signal<number[]>([]);
   selectedStep = signal<StepNode | null>(null);
   ganttLabelWidth = signal(220);
+  chatDialog = signal(false);
+  chatSending = signal(false);
+  chatMessage = '';
+  chatHistory: { role: string; content: string; actions?: ChatAction[] }[] = [];
 
   private ganttDragStartX = 0;
   private ganttDragStartWidth = 0;
@@ -767,6 +866,29 @@ export class ProjectDetailComponent implements OnInit, AfterViewInit, OnDestroy 
     this.svc.openInWorkbench(this.projectId).subscribe({
       next: r => window.open(r.ide_url, '_blank'),
       error: () => this.snack.open('Werkbank konnte nicht geöffnet werden', 'OK', { duration: 3000 }),
+    });
+  }
+
+  openChatModal() { this.chatDialog.set(true); }
+
+  sendChatMessage() {
+    const msg = this.chatMessage.trim();
+    if (!msg || this.chatSending()) return;
+    this.chatHistory.push({ role: 'user', content: msg });
+    this.chatMessage = '';
+    this.chatSending.set(true);
+    this.svc.chatWithProject(this.projectId, msg).subscribe({
+      next: res => {
+        this.chatSending.set(false);
+        this.chatHistory.push({ role: 'assistant', content: res.reply, actions: res.actions });
+        if (res.actions?.length) {
+          this.loadGraph(true);
+        }
+      },
+      error: () => {
+        this.chatSending.set(false);
+        this.chatHistory.push({ role: 'assistant', content: 'Fehler bei der Anfrage. Bitte nochmal versuchen.' });
+      },
     });
   }
 
