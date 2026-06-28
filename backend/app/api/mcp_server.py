@@ -1440,3 +1440,183 @@ async def _get_db_session():
     """Returns an async context manager for a DB session."""
     from app.core.database import AsyncSessionLocal
     return AsyncSessionLocal()
+
+
+# ── Jira Ticket Management ──────────────────────────────────────────────────
+
+async def _get_jira_connector():
+    """Load the first enabled Jira connector. Returns (connector, None) or (None, error_str)."""
+    from sqlalchemy import select
+    from app.models.connector import ConnectorConfig
+    from app.services.connectors.jira import JiraConnector
+    from app.core.security import decrypt_credentials
+
+    async with (await _get_db_session()) as db:
+        result = await db.execute(
+            select(ConnectorConfig).where(
+                ConnectorConfig.type.in_(["jira", "jira_sd"]),
+                ConnectorConfig.enabled.is_(True),
+            ).limit(1)
+        )
+        cfg = result.scalar_one_or_none()
+        if not cfg:
+            return None, "Kein Jira-Connector konfiguriert"
+        creds = decrypt_credentials(cfg.encrypted_credentials)
+        from app.services.connectors.jira import JiraConnector
+        return JiraConnector(base_url=cfg.base_url, credentials=creds), None
+
+
+@mcp.tool()
+async def jira_search_issues(jql: str, max_results: int = 20) -> dict:
+    """Sucht Jira-Tickets via JQL-Abfrage.
+
+    Parameter:
+    - jql: JQL-Abfrage, z.B. 'project=IMIT AND assignee=currentUser() AND statusCategory != Done'
+    - max_results: Max. Anzahl Ergebnisse (Standard: 20)
+
+    Beispiele:
+    - 'project=IMIT AND status="In Progress" ORDER BY updated DESC'
+    - 'issueKey in (IMIT-123, IMIT-124)'
+    - 'assignee=currentUser() AND statusCategory != Done ORDER BY priority DESC'
+    """
+    connector, err = await _get_jira_connector()
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        issues = await connector.search_issues(
+            jql,
+            fields=["summary", "status", "priority", "assignee", "issuetype", "updated", "description"],
+        )
+        return {
+            "ok": True,
+            "count": len(issues),
+            "issues": [
+                {
+                    "key": i.get("key"),
+                    "summary": (i.get("fields") or {}).get("summary"),
+                    "status": ((i.get("fields") or {}).get("status") or {}).get("name"),
+                    "priority": ((i.get("fields") or {}).get("priority") or {}).get("name"),
+                    "assignee": ((i.get("fields") or {}).get("assignee") or {}).get("displayName"),
+                    "type": ((i.get("fields") or {}).get("issuetype") or {}).get("name"),
+                    "updated": (i.get("fields") or {}).get("updated"),
+                }
+                for i in issues[:max_results]
+            ],
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@mcp.tool()
+async def jira_get_issue(issue_key: str) -> dict:
+    """Gibt vollständige Details eines Jira-Tickets zurück inkl. Beschreibung und Kommentare.
+
+    Parameter:
+    - issue_key: Ticket-Schlüssel, z.B. 'IMIT-1234'
+    """
+    connector, err = await _get_jira_connector()
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        detail = await connector.get_issue_detail(issue_key)
+        return {"ok": True, **detail}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@mcp.tool()
+async def jira_update_issue(
+    issue_key: str,
+    summary: str | None = None,
+    description: str | None = None,
+    priority: str | None = None,
+) -> dict:
+    """Aktualisiert Felder eines Jira-Tickets. Nur gesetzte Parameter werden geändert.
+
+    Parameter:
+    - issue_key: Ticket-Schlüssel, z.B. 'IMIT-1234'
+    - summary: Neue Zusammenfassung (optional)
+    - description: Neue Beschreibung (optional)
+    - priority: Neue Priorität, z.B. 'High', 'Medium', 'Low', 'Highest' (optional)
+    """
+    connector, err = await _get_jira_connector()
+    if err:
+        return {"ok": False, "error": err}
+    if not any([summary, description, priority]):
+        return {"ok": False, "error": "Mindestens ein Feld (summary, description, priority) muss angegeben werden"}
+    try:
+        await connector.update_issue(issue_key, summary=summary, description=description, priority=priority)
+        updated = {k: v for k, v in {"summary": summary, "description": description, "priority": priority}.items() if v is not None}
+        return {"ok": True, "issue_key": issue_key, "updated_fields": updated}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@mcp.tool()
+async def jira_add_comment(issue_key: str, body: str) -> dict:
+    """Fügt einen Kommentar zu einem Jira-Ticket hinzu.
+
+    Parameter:
+    - issue_key: Ticket-Schlüssel, z.B. 'IMIT-1234'
+    - body: Kommentartext (Plain Text)
+    """
+    connector, err = await _get_jira_connector()
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        comment = await connector.add_comment(issue_key, body)
+        return {"ok": True, **comment}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@mcp.tool()
+async def jira_transition_issue(issue_key: str, status: str) -> dict:
+    """Ändert den Status/Workflow eines Jira-Tickets.
+
+    Parameter:
+    - issue_key: Ticket-Schlüssel, z.B. 'IMIT-1234'
+    - status: Ziel-Status, z.B. 'In Progress', 'Done', 'Erledigt', 'Offen', 'In Bearbeitung'
+
+    Bei Unsicherheit welche Status verfügbar sind: jira_get_transitions vorher aufrufen.
+    """
+    connector, err = await _get_jira_connector()
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        transitions = await connector.get_transitions(issue_key)
+        target = (
+            next((t for t in transitions if t["name"] == status), None)
+            or next((t for t in transitions if t["name"].lower() == status.lower()), None)
+            or next((t for t in transitions if status.lower() in t["name"].lower()), None)
+        )
+        if not target:
+            available = [t["name"] for t in transitions]
+            return {"ok": False, "error": f"Status '{status}' nicht gefunden. Verfügbar: {available}"}
+        await connector.transition_issue(issue_key, target["name"])
+        return {"ok": True, "issue_key": issue_key, "new_status": target["name"]}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@mcp.tool()
+async def jira_get_transitions(issue_key: str) -> dict:
+    """Listet alle verfügbaren Status-Übergänge für ein Jira-Ticket auf.
+
+    Parameter:
+    - issue_key: Ticket-Schlüssel, z.B. 'IMIT-1234'
+
+    Nützlich um zu prüfen welche Status-Übergänge möglich sind, bevor jira_transition_issue aufgerufen wird.
+    """
+    connector, err = await _get_jira_connector()
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        transitions = await connector.get_transitions(issue_key)
+        return {
+            "ok": True,
+            "issue_key": issue_key,
+            "transitions": [{"id": t["id"], "name": t["name"]} for t in transitions],
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
