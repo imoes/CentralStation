@@ -45,6 +45,54 @@ html { font-size: 17px; }
 /* LCARS: nochmal 1px größer (Cockpit-Ansicht braucht gut lesbare Schrift) */
 html.cs-theme-lcars { font-size: 18px; }
 
+/* ══════════ Projektbereich-Tokens (--cs-*) — theme-aware ══════════
+   Die Projekt-Views (cs-projects, cs-project-detail, cs-project-planner,
+   cs-step-card) konsumieren diese Tokens. Hier pro Theme definiert, damit
+   Layout/Farben dem aktiven Theme folgen (classic | holo | lcars).
+   --cs-title-font: LCARS-Display-Schrift für Überschriften (Antonio);
+   Fließtext bleibt global Roboto. */
+:root {
+  --cs-bg: #ffffff;
+  --cs-surface: #f4f6f9;
+  --cs-border: #d7e0ea;
+  --cs-text: #1f2933;
+  --cs-text-muted: #5b6b7b;
+  --cs-accent: #1565c0;
+  --cs-title-font: 'Antonio', 'Eurostile', 'Roboto Condensed', sans-serif;
+  --cs-title-transform: uppercase;
+  --cs-title-spacing: .06em;
+}
+html.cs-theme-holo {
+  --cs-bg: #02060f;
+  --cs-surface: #0a1c2e;
+  --cs-border: #1b3a4d;
+  --cs-text: #cfeeff;
+  --cs-text-muted: #8fb8cf;
+  --cs-accent: #4fd6ff;
+}
+html.cs-theme-lcars {
+  --cs-bg: #000000;
+  --cs-surface: #15120c;
+  --cs-border: #3a2810;
+  --cs-text: #ffe8a0;
+  --cs-text-muted: #e8a060;
+  --cs-accent: #FF9933;
+  --cs-title-spacing: .1em;
+}
+
+/* Überschriften der Projekt-Views: LCARS-Display-Schrift (House-Style),
+   Fließtext/Beschreibungen erben weiter Roboto. */
+cs-projects .header-title,
+cs-projects .card-title,
+cs-project-planner .header-title,
+cs-project-detail .project-name,
+cs-step-card .section-label,
+cs-step-card .jira-section-title {
+  font-family: var(--cs-title-font);
+  text-transform: var(--cs-title-transform);
+  letter-spacing: var(--cs-title-spacing);
+}
+
 /* ══════════ Bridge full-screen: hide app chrome while the cockpit is open ══════════ */
 body.bridge-active .sidenav,
 body.bridge-active mat-sidenav { display: none !important; }
