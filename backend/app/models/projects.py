@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -53,6 +53,14 @@ class ProjectStep(Base):
     lst_start: Mapped[int | None] = mapped_column(Integer)
     lst_end: Mapped[int | None] = mapped_column(Integer)
     slack: Mapped[int | None] = mapped_column(Integer)
+    # Jira-compatible card fields
+    # highest | high | medium | low | lowest
+    priority: Mapped[str] = mapped_column(String(20), default="medium", nullable=False)
+    assignee: Mapped[str | None] = mapped_column(String(256))        # name or email
+    labels: Mapped[str | None] = mapped_column(Text)                 # JSON array ["label1","label2"]
+    story_points: Mapped[int | None] = mapped_column(Integer)
+    due_date: Mapped[date | None] = mapped_column(Date)
+    acceptance_criteria: Mapped[str | None] = mapped_column(Text)    # markdown
     # Cytoscape layout persistence
     pos_x: Mapped[int | None] = mapped_column(Integer)
     pos_y: Mapped[int | None] = mapped_column(Integer)

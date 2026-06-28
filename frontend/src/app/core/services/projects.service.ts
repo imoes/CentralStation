@@ -19,8 +19,14 @@ export interface StepNode {
   description: string | null;
   status: string;
   jira_issue_type: string;
+  priority: string;
   duration_days: number;
+  story_points: number | null;
   sort_order: number;
+  assignee: string | null;
+  labels: string | null;        // JSON array string, e.g. '["label1","label2"]'
+  due_date: string | null;
+  acceptance_criteria: string | null;
   est_start: number | null;
   est_end: number | null;
   lst_start: number | null;

@@ -16,6 +16,7 @@ import { Subject, takeUntil } from 'rxjs';
 import { ProjectsService, PlanGraph, StepNode, DepEdge } from '../../core/services/projects.service';
 import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
 import { I18nService } from '../../core/services/i18n.service';
+import { StepCardComponent } from './step-card.component';
 
 // Cytoscape type-only import for type safety
 declare const require: (m: string) => any;
@@ -37,10 +38,11 @@ const STATUS_COLORS: Record<string, string> = {
     CommonModule, FormsModule,
     MatButtonModule, MatIconModule, MatTabsModule,
     MatProgressSpinnerModule, MatSnackBarModule, MatTooltipModule, MatSelectModule,
+    StepCardComponent,
   ],
   template: `
     <div class="detail-container">
-      <div class="detail-header lcars-header">
+      <div class="detail-header lcars-header" style="flex-shrink:0">
         <div class="header-elbow"></div>
         <div class="header-info">
           <button mat-icon-button (click)="back()"><mat-icon>arrow_back</mat-icon></button>
@@ -62,6 +64,7 @@ const STATUS_COLORS: Record<string, string> = {
         </div>
       </div>
 
+      <div class="detail-body">
       @if (loading()) {
         <div class="spinner-center"><mat-spinner diameter="48"></mat-spinner></div>
       } @else {
@@ -112,7 +115,7 @@ const STATUS_COLORS: Record<string, string> = {
               } @else {
                 <div class="step-list">
                   @for (s of graph()!.steps; track s.id) {
-                    <div class="step-list-row" [class.critical]="s.critical">
+                    <div class="step-list-row" [class.critical]="s.critical" [class.selected]="selectedStep()?.id === s.id" (click)="selectStep(s)">
                       <div class="step-type-dot" [style.background]="issueTypeColor(s.jira_issue_type)"
                            [matTooltip]="s.jira_issue_type">
                       </div>
@@ -158,7 +161,15 @@ const STATUS_COLORS: Record<string, string> = {
           </mat-tab>
         </mat-tab-group>
       }
-    </div>
+
+      <cs-step-card
+        [step]="selectedStep()"
+        [projectId]="projectId"
+        (close)="selectedStep.set(null)"
+        (saved)="loadGraph(true)"
+        (ticketChanged)="loadGraph(true)">
+      </cs-step-card>
+      </div><!-- /detail-body -->
 
     <!-- Context menu -->
     @if (contextMenu()) {
@@ -280,7 +291,8 @@ const STATUS_COLORS: Record<string, string> = {
     }
   `,
   styles: [`
-    .detail-container { display: flex; flex-direction: column; height: 100%; background: var(--cs-bg); position: relative; }
+    .detail-container { display: flex; flex-direction: column; height: 100%; background: var(--cs-bg); position: relative; overflow: hidden; }
+    .detail-body { display: flex; flex: 1; overflow: hidden; }
 
     .lcars-header { display: flex; align-items: center; gap: 0; padding: 0; flex-shrink: 0; }
     .header-elbow { width: 32px; height: 56px; border-top-left-radius: 24px; background: var(--cs-accent, #FFCC99); flex-shrink: 0; }
@@ -291,7 +303,7 @@ const STATUS_COLORS: Record<string, string> = {
 
     .spinner-center { display: flex; justify-content: center; padding: 80px; }
 
-    .detail-tabs { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .detail-tabs { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
     ::ng-deep .detail-tabs .mat-mdc-tab-body-wrapper { flex: 1; overflow: hidden; }
     ::ng-deep .detail-tabs .mat-mdc-tab-body-content { height: 100%; overflow: hidden; }
 
@@ -321,6 +333,7 @@ const STATUS_COLORS: Record<string, string> = {
       border-radius: 6px; padding: 10px 12px;
     }
     .step-list-row.critical { border-color: #FFCC99; }
+    .step-list-row.selected { border-color: var(--cs-accent, #FFCC99); background: color-mix(in srgb, var(--cs-accent, #FFCC99) 8%, var(--cs-surface)); }
     .step-type-dot { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
     .step-main { flex: 1; }
     .step-title { font-size: 0.9rem; color: var(--cs-text); font-weight: 600; }
@@ -386,6 +399,7 @@ export class ProjectDetailComponent implements OnInit, AfterViewInit, OnDestroy 
   createTicketDialog = signal<StepNode | null>(null);
   ganttRows = signal<GanttRow[]>([]);
   ganttDays = signal<number[]>([]);
+  selectedStep = signal<StepNode | null>(null);
 
   // edit fields
   editTitle = ''; editDescription = ''; editDuration = 1;
@@ -394,7 +408,7 @@ export class ProjectDetailComponent implements OnInit, AfterViewInit, OnDestroy 
   newTicketSummary = ''; newTicketType = 'Task';
   stepStatusMap: Record<string, string> = {};
 
-  private projectId = '';
+  projectId = '';
   private cy: any = null;
   private destroyed$ = new Subject<void>();
   private activeTab = 0;
@@ -434,6 +448,12 @@ export class ProjectDetailComponent implements OnInit, AfterViewInit, OnDestroy 
       next: g => {
         this.graph.set(g);
         g.steps.forEach(s => { this.stepStatusMap[s.id] = s.status; });
+        // Refresh the open step card with latest data
+        const sel = this.selectedStep();
+        if (sel) {
+          const fresh = g.steps.find(s => s.id === sel.id);
+          this.selectedStep.set(fresh ?? null);
+        }
         this.buildGantt(g);
         this.loading.set(false);
         if (this.cy && this.activeTab === 0) {
@@ -614,17 +634,18 @@ export class ProjectDetailComponent implements OnInit, AfterViewInit, OnDestroy 
 
   selectStep(step: StepNode) {
     this.contextMenu.set(null);
-    this.editDialog.set(step);
-    this.editTitle = step.title;
-    this.editDescription = step.description ?? '';
-    this.editDuration = step.duration_days;
+    if (this.selectedStep()?.id === step.id) {
+      this.selectedStep.set(null);
+    } else {
+      this.selectedStep.set(step);
+    }
   }
 
   editStepTitle() {
     const step = this.contextMenu()?.step;
     if (!step) return;
     this.closeCtx();
-    this.selectStep(step);
+    this.selectedStep.set(step);
   }
 
   editStepDescription() {
