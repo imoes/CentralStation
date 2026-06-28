@@ -149,9 +149,10 @@ async def sync_project(project_id: str, db: DB, user: CurrentUser):
 
 @router.post("/plan", response_model=PlanResponse, dependencies=[RequireAnyStaff])
 async def run_planner(body: PlanRequest, db: DB, user: CurrentUser):
-    from app.services.settings import get_active_llm_config
-    from app.services.llm_client import generate_text
+    from app.services.settings import get_active_llm_config, get_agent_config, get_searxng_config
     from app.services.ai_agent.prompts import PROJECT_PLANNER_SYSTEM
+    from app.services.project_planner import run_planner_agent
+    from app.schemas.projects import ToolActivity
 
     llm = await get_active_llm_config(db, user.id)
     messages = [{"role": "system", "content": PROJECT_PLANNER_SYSTEM}]
@@ -162,22 +163,13 @@ async def run_planner(body: PlanRequest, db: DB, user: CurrentUser):
             content = f"{content}\n\n<existing_graph>\n{json.dumps(body.existing_graph, default=str)}\n</existing_graph>"
         messages.append({"role": m.role, "content": content})
 
-    raw = await generate_text(llm, messages, max_output_tokens=4096)
+    # Enable web tools only if SearXNG is configured + agent web search is on.
+    agent_cfg = await get_agent_config(db)
+    searxng = await get_searxng_config(db)
+    searxng_url = searxng.base_url if (agent_cfg.workflow_web_search and searxng.is_configured) else ""
 
-    text = re.sub(r"^```(?:json)?\s*", "", raw.strip())
-    text = re.sub(r"\s*```$", "", text)
+    result = await run_planner_agent(llm, messages, searxng_url)
 
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        m_obj = re.search(r"\{.*\}", text, re.DOTALL)
-        if m_obj:
-            data = json.loads(m_obj.group())
-        else:
-            return PlanResponse(reply=raw, steps=[])
-
-    reply = data.get("reply", "")
-    steps_raw = data.get("steps", [])
     steps = [
         ProposedStep(
             temp_id=s.get("temp_id", f"t{i}"),
@@ -188,9 +180,15 @@ async def run_planner(body: PlanRequest, db: DB, user: CurrentUser):
             depends_on=s.get("depends_on", []),
             parent_temp_id=s.get("parent_temp_id"),
         )
-        for i, s in enumerate(steps_raw)
+        for i, s in enumerate(result.get("steps", []))
     ]
-    return PlanResponse(reply=reply, steps=steps)
+    return PlanResponse(
+        reply=result.get("reply", ""),
+        steps=steps,
+        open_points=result.get("open_points", []),
+        sources=result.get("sources", []),
+        tool_activity=[ToolActivity(**t) for t in result.get("tool_activity", [])],
+    )
 
 
 @router.post("/from-plan", response_model=ProjectResponse, status_code=201, dependencies=[RequireAnyStaff])

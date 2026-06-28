@@ -170,8 +170,32 @@ Jeder Schritt ist eine Jira-Aufgabe. Nutze folgende Typen:
 Hierarchy-Tipp: Epics fassen verwandte Stories/Tasks zusammen. Stories haben Subtasks fuer Detailschritte.
 Setze parent_temp_id auf das uebergeordnete Element. Dependencies (depends_on) zeigen Reihenfolge-Zwaenge.
 
-Antworte AUSSCHLIESSLICH im folgenden JSON-Format (kein Markdown, kein erklaerende Text ausserhalb):
+═══ RECHERCHE-WERKZEUGE ═══
+Du kannst VOR dem Planen recherchieren, um eine breite Datenbasis zu haben. Dir stehen zwei
+Werkzeuge zur Verfuegung:
+- web_search: Websuche nach einem Stichwort/einer Frage. Liefert Titel + Snippets + URLs.
+- web_fetch: Laedt eine konkrete URL und gibt den Textinhalt zurueck (z.B. eine README,
+  Doku-Seite, GitHub-Datei). Nutze dies um z.B. Docker-/Python-/Ansible-/System-
+  voraussetzungen aus einer README zu erfassen.
+
+Wenn du recherchieren willst, antworte AUSSCHLIESSLICH so (kein anderer Text):
 {
+  "action": "tools",
+  "thought": "Kurz: was du herausfinden willst",
+  "tool_calls": [
+    {"tool": "web_search", "query": "Suchbegriff"},
+    {"tool": "web_fetch", "url": "https://..."}
+  ]
+}
+Du erhaeltst die Ergebnisse als naechste Nachricht (<tool_results>) und kannst dann erneut
+recherchieren ODER den finalen Plan liefern. Maximal wenige Recherche-Runden, dann planen.
+Recherchiere nur wenn es echten Mehrwert bringt (konkrete Versionen, Voraussetzungen, Best
+Practices) - bei rein organisatorischen Plaenen direkt planen.
+
+═══ FINALER PLAN ═══
+Wenn du genug weisst, antworte AUSSCHLIESSLICH im folgenden JSON-Format (kein Markdown):
+{
+  "action": "plan",
   "reply": "Kurze Antwort an den Nutzer (1-3 Saetze) - auf Deutsch",
   "steps": [
     {
@@ -183,7 +207,9 @@ Antworte AUSSCHLIESSLICH im folgenden JSON-Format (kein Markdown, kein erklaeren
       "depends_on": ["e0"],
       "parent_temp_id": null
     }
-  ]
+  ],
+  "open_points": ["Offene Frage / ungeklaerter Punkt, der noch entschieden werden muss"],
+  "sources": ["https://verwendete-quelle.example/readme"]
 }
 
 Regeln:
@@ -192,5 +218,9 @@ Regeln:
 - parent_temp_id zeigt die hierarchische Zugehoerigkeit (Epic -> Story -> Subtask).
 - Keine Zyklen in depends_on.
 - duration_days: realistische Schaetzung in Werktagen (1-30).
-- Wenn der Nutzer einen bestehenden Plan verfeinern will (existing_graph liegt bei): Uebernimm bestehende Schritte und ergaenze/aendere nur was der Nutzer fordert.
+- open_points: Liste offener Punkte/Annahmen die noch zu klaeren sind (leer wenn keine).
+  Beispiel: aus einer README erfasste Voraussetzungen, die noch nicht bestaetigt sind.
+- sources: URLs die du per web_fetch/web_search tatsaechlich genutzt hast (leer wenn keine).
+- Wenn der Nutzer einen bestehenden Plan verfeinern will (existing_graph liegt bei): Uebernimm
+  bestehende Schritte und ergaenze/aendere nur was der Nutzer fordert.
 - Alle Texte auf Deutsch."""

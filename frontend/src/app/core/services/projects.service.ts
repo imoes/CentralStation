@@ -63,9 +63,18 @@ export interface ProposedStep {
   parent_temp_id: string | null;
 }
 
+export interface ToolActivity {
+  tool: string;     // web_search | web_fetch
+  detail: string;   // query or URL
+  ok: boolean;
+}
+
 export interface PlanResponse {
   reply: string;
   steps: ProposedStep[];
+  open_points: string[];
+  sources: string[];
+  tool_activity: ToolActivity[];
 }
 
 @Injectable({ providedIn: 'root' })

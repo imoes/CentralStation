@@ -16,6 +16,7 @@ import { Subject, takeUntil } from 'rxjs';
 import { ProjectsService, PlanGraph, StepNode, DepEdge } from '../../core/services/projects.service';
 import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
 import { I18nService } from '../../core/services/i18n.service';
+import { ThemeService } from '../../core/services/theme.service';
 import { StepCardComponent } from './step-card.component';
 
 // Cytoscape type-only import for type safety
@@ -41,9 +42,9 @@ const STATUS_COLORS: Record<string, string> = {
     StepCardComponent,
   ],
   template: `
-    <div class="detail-container">
-      <div class="detail-header lcars-header" style="flex-shrink:0">
-        <div class="header-elbow"></div>
+    <div class="detail-container" [class.t-lcars]="theme()==='lcars'" [class.t-holo]="theme()==='holo'" [class.t-classic]="theme()==='classic'">
+      <div class="detail-header" style="flex-shrink:0">
+        <div class="cap cap-tl"></div>
         <div class="header-info">
           <button mat-icon-button (click)="back()"><mat-icon>arrow_back</mat-icon></button>
           <h2 class="project-name">{{ graph()?.project?.name ?? '…' }}</h2>
@@ -294,10 +295,18 @@ const STATUS_COLORS: Record<string, string> = {
     .detail-container { display: flex; flex-direction: column; height: 100%; background: var(--cs-bg); position: relative; overflow: hidden; }
     .detail-body { display: flex; flex: 1; overflow: hidden; }
 
-    .lcars-header { display: flex; align-items: center; gap: 0; padding: 0; flex-shrink: 0; }
-    .header-elbow { width: 32px; height: 56px; border-top-left-radius: 24px; background: var(--cs-accent, #FFCC99); flex-shrink: 0; }
-    .header-info { display: flex; align-items: center; gap: 12px; padding: 0 16px; flex: 1; }
-    .project-name { margin: 0; font-size: 1.2rem; font-weight: 700; color: var(--cs-accent, #FFCC99); }
+    .detail-header { display: flex; align-items: center; gap: 0; padding: 6px 6px 0; height: 52px; flex-shrink: 0; }
+    .cap { width: 60px; height: 100%; flex-shrink: 0; }
+    .header-info { display: flex; align-items: center; gap: 12px; padding: 0 16px; flex: 1; height: 100%; }
+    .project-name { margin: 0; font-size: 1.2rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; font-family: 'Antonio','Eurostile',sans-serif; color: var(--cs-accent, #FFCC99); }
+
+    /* header theming */
+    .t-classic .cap { display: none; }
+    .t-classic .detail-header { padding: 8px 12px; }
+    .t-holo .cap { display: none; }
+    .t-lcars .cap { background: #FF9933; }
+    .t-lcars .cap-tl { border-radius: 46px 0 0 0; }
+    .t-lcars .header-info { background: linear-gradient(90deg, #15120c, transparent 60%); }
     .status-chip { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
     .header-actions { display: flex; gap: 8px; padding-right: 16px; }
 
@@ -388,6 +397,8 @@ export class ProjectDetailComponent implements OnInit, AfterViewInit, OnDestroy 
   private ws = inject(WebsocketService);
   private cdr = inject(ChangeDetectorRef);
   i18n = inject(I18nService);
+  private themeSvc = inject(ThemeService);
+  theme = this.themeSvc.theme;
 
   graph = signal<PlanGraph | null>(null);
   loading = signal(true);
