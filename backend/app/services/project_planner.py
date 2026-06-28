@@ -107,18 +107,40 @@ def _strip_json(raw: str) -> str:
     return text
 
 
-def _parse(raw: str) -> dict | None:
+def _extract_json_objects(raw: str) -> list[dict]:
+    """Extract ALL top-level JSON objects from the text.
+
+    Robust against a model that concatenates several objects in one completion
+    (e.g. a `tools` request immediately followed by a `plan`). Uses raw_decode
+    to scan object-by-object instead of a greedy regex that would merge them
+    into one invalid blob.
+    """
     text = _strip_json(raw)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", text, re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group())
-            except json.JSONDecodeError:
-                return None
-    return None
+    objs: list[dict] = []
+    decoder = json.JSONDecoder()
+    i, n = 0, len(text)
+    while i < n:
+        start = text.find("{", i)
+        if start == -1:
+            break
+        try:
+            obj, end = decoder.raw_decode(text, start)
+            if isinstance(obj, dict):
+                objs.append(obj)
+            i = end
+        except json.JSONDecodeError:
+            i = start + 1
+    return objs
+
+
+def _as_plan(obj: dict, tool_activity: list[dict]) -> dict:
+    return {
+        "reply": obj.get("reply", ""),
+        "steps": obj.get("steps", []),
+        "open_points": obj.get("open_points", []) or [],
+        "sources": obj.get("sources", []) or [],
+        "tool_activity": tool_activity,
+    }
 
 
 async def run_planner_agent(
@@ -142,17 +164,19 @@ async def run_planner_agent(
             })
 
         raw = await generate_text(llm_config, convo, max_output_tokens=4096, reasoning_effort="low")
-        data = _parse(raw)
+        objs = _extract_json_objects(raw)
 
-        if data is None:
-            # Unparseable — return as plain reply, no steps.
-            return {"reply": raw, "steps": [], "open_points": [], "sources": [],
-                    "tool_activity": tool_activity}
+        plan_obj = next((o for o in objs if o.get("action") == "plan" or "steps" in o), None)
+        tools_obj = next((o for o in objs if o.get("action") == "tools" and o.get("tool_calls")), None)
 
-        action = data.get("action")
+        # Prefer a final plan whenever the model produced one — this also handles
+        # models that concatenate a tools-request and a plan in one completion.
+        if plan_obj is not None:
+            return _as_plan(plan_obj, tool_activity)
 
-        if action == "tools" and not force_plan:
-            calls = data.get("tool_calls", [])[:MAX_TOOL_CALLS_PER_ROUND]
+        # Only a tools request (and research still allowed) → execute + loop.
+        if tools_obj is not None and not force_plan:
+            calls = tools_obj.get("tool_calls", [])[:MAX_TOOL_CALLS_PER_ROUND]
             observations: list[str] = []
             for call in calls:
                 tool = call.get("tool")
@@ -168,7 +192,6 @@ async def run_planner_agent(
                     tool_activity.append({"tool": "web_fetch", "detail": url,
                                           "ok": not res.startswith("(")})
                     observations.append(f"[web_fetch] {url}\n{res}")
-            # Record the assistant's tool request + feed back observations.
             convo.append({"role": "assistant", "content": raw})
             convo.append({
                 "role": "user",
@@ -176,14 +199,9 @@ async def run_planner_agent(
             })
             continue
 
-        # action == "plan" (or anything with steps) → done.
-        return {
-            "reply": data.get("reply", ""),
-            "steps": data.get("steps", []),
-            "open_points": data.get("open_points", []) or [],
-            "sources": data.get("sources", []) or [],
-            "tool_activity": tool_activity,
-        }
+        # No parseable plan and no actionable tools → return raw text as reply.
+        return {"reply": raw, "steps": [], "open_points": [], "sources": [],
+                "tool_activity": tool_activity}
 
     # Loop exhausted without a plan.
     return {"reply": "Konnte keinen Plan erzeugen.", "steps": [], "open_points": [],
