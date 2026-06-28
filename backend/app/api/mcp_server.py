@@ -1225,6 +1225,140 @@ async def forget_knowledge(doc_id: str) -> dict:
     return {"deleted": ok, "id": doc_id}
 
 
+# ── Project MCP tools ──────────────────────────────────────────────
+
+@mcp.tool()
+async def cs_list_projects(search: str = "") -> list[dict]:
+    """Listet alle CentralStation-Projekte auf.
+
+    search: optionaler Suchbegriff für den Projektnamen.
+    Gibt id, name, status, updated_at zurück.
+    """
+    import app.services.project_service as svc
+    async with (await _get_db_session()) as db:
+        projects = await svc.list_projects(db, search)
+        return [
+            {"id": str(p.id), "name": p.name, "status": p.status,
+             "updated_at": p.updated_at.isoformat()}
+            for p in projects
+        ]
+
+
+@mcp.tool()
+async def cs_get_project_plan(project_id: str) -> dict:
+    """Gibt den vollständigen Projektplan zurück: Schritte, Abhängigkeiten und kritischen Pfad.
+
+    project_id: UUID des Projekts (aus cs_list_projects).
+    Gibt project-Metadaten, steps[] mit CPM-Daten, deps[] zurück.
+    """
+    import app.services.project_service as svc
+    async with (await _get_db_session()) as db:
+        graph = await svc.get_project_graph(db, project_id)
+        return graph.model_dump(mode="json")
+
+
+@mcp.tool()
+async def cs_add_step(
+    project_id: str,
+    title: str,
+    description: str = "",
+    jira_issue_type: str = "task",
+    duration_days: int = 1,
+    depends_on: list[str] | None = None,
+    parent_step_id: str | None = None,
+) -> dict:
+    """Fügt dem Projekt einen neuen Schritt hinzu.
+
+    project_id: UUID des Projekts.
+    title: Titel des Schritts.
+    jira_issue_type: epic | story | task | subtask | bug.
+    duration_days: Geschätzte Dauer in Werktagen.
+    depends_on: Liste von step_ids die vorher abgeschlossen sein müssen.
+    parent_step_id: Übergeordneter Schritt (für Epic→Task→Subtask-Hierarchie).
+    """
+    import app.services.project_service as svc
+    async with (await _get_db_session()) as db:
+        step = await svc.add_step(
+            db, project_id,
+            title=title,
+            description=description or None,
+            jira_issue_type=jira_issue_type,
+            duration_days=duration_days,
+            depends_on=depends_on or [],
+            parent_step_id=parent_step_id,
+        )
+        return {"id": str(step.id), "title": step.title, "jira_issue_type": step.jira_issue_type}
+
+
+@mcp.tool()
+async def cs_update_step(
+    project_id: str,
+    step_id: str,
+    title: str | None = None,
+    description: str | None = None,
+    duration_days: int | None = None,
+    jira_issue_type: str | None = None,
+) -> dict:
+    """Aktualisiert Titel, Beschreibung oder Dauer eines Projektschritts.
+
+    project_id: UUID des Projekts.
+    step_id: UUID des Schritts.
+    """
+    import app.services.project_service as svc
+    kwargs = {}
+    if title is not None:
+        kwargs["title"] = title
+    if description is not None:
+        kwargs["description"] = description
+    if duration_days is not None:
+        kwargs["duration_days"] = duration_days
+    if jira_issue_type is not None:
+        kwargs["jira_issue_type"] = jira_issue_type
+    async with (await _get_db_session()) as db:
+        step = await svc.update_step(db, step_id, project_id, **kwargs)
+        return {"id": str(step.id), "title": step.title, "status": step.status}
+
+
+@mcp.tool()
+async def cs_set_step_status(project_id: str, step_id: str, status: str) -> dict:
+    """Setzt den Status eines Projektschritts manuell.
+
+    status: pending | in_progress | done
+    """
+    import app.services.project_service as svc
+    async with (await _get_db_session()) as db:
+        step = await svc.update_step(db, step_id, project_id, status=status)
+        return {"id": str(step.id), "status": step.status}
+
+
+@mcp.tool()
+async def cs_add_dependency(
+    project_id: str,
+    step_id: str,
+    depends_on_step_id: str,
+) -> dict:
+    """Fügt eine Abhängigkeit hinzu: step_id kann erst starten wenn depends_on_step_id fertig ist.
+
+    Gibt Fehler zurück wenn ein Zyklus entstehen würde.
+    """
+    import app.services.project_service as svc
+    async with (await _get_db_session()) as db:
+        dep = await svc.add_dependency(db, project_id, step_id, depends_on_step_id)
+        return {"id": str(dep.id), "step_id": step_id, "depends_on_step_id": depends_on_step_id}
+
+
+@mcp.tool()
+async def cs_remove_dependency(project_id: str, dep_id: str) -> dict:
+    """Entfernt eine Abhängigkeit zwischen zwei Projektschritten.
+
+    dep_id: UUID der Abhängigkeit (aus cs_get_project_plan deps[].id).
+    """
+    import app.services.project_service as svc
+    async with (await _get_db_session()) as db:
+        await svc.remove_dependency(db, dep_id, project_id)
+        return {"deleted": dep_id}
+
+
 # ── DB session helper ──────────────────────────────────────────────
 
 async def _get_db_session():
