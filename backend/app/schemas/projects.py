@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 VALID_PROJECT_STATUSES = {"planning", "active", "done", "archived"}
 VALID_STEP_STATUSES = {"pending", "in_progress", "done"}
 VALID_ISSUE_TYPES = {"epic", "story", "task", "subtask", "bug"}
+VALID_PRIORITIES = {"highest", "high", "medium", "low", "lowest"}
 
 
 # ── Project ──────────────────────────────────────────────────────────────────
@@ -42,10 +43,16 @@ class StepCreate(BaseModel):
     description: str | None = None
     status: str = "pending"
     jira_issue_type: str = "task"
+    priority: str = "medium"
     duration_days: int = 1
+    story_points: int | None = None
     sort_order: int = 0
     parent_step_id: uuid.UUID | None = None
     depends_on: list[uuid.UUID] = []
+    assignee: str | None = None
+    labels: list[str] = []
+    due_date: date | None = None
+    acceptance_criteria: str | None = None
     pos_x: int | None = None
     pos_y: int | None = None
 
@@ -55,9 +62,15 @@ class StepUpdate(BaseModel):
     description: str | None = None
     status: str | None = None
     jira_issue_type: str | None = None
+    priority: str | None = None
     duration_days: int | None = None
+    story_points: int | None = None
     sort_order: int | None = None
     parent_step_id: uuid.UUID | None = None
+    assignee: str | None = None
+    labels: list[str] | None = None
+    due_date: date | None = None
+    acceptance_criteria: str | None = None
     pos_x: int | None = None
     pos_y: int | None = None
 
@@ -72,8 +85,14 @@ class StepResponse(BaseModel):
     description: str | None
     status: str
     jira_issue_type: str
+    priority: str
     duration_days: int
+    story_points: int | None
     sort_order: int
+    assignee: str | None
+    labels: str | None              # stored as JSON string in DB
+    due_date: date | None
+    acceptance_criteria: str | None
     est_start: int | None
     est_end: int | None
     lst_start: int | None
@@ -124,7 +143,7 @@ class CreateTicketRequest(BaseModel):
 # ── Plan graph (the rich read model) ─────────────────────────────────────────
 
 class StepNode(BaseModel):
-    """A step as returned in the project graph — includes CPM + Jira aggregates."""
+    """A step as returned in the project graph — includes CPM + card fields + Jira."""
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -133,8 +152,14 @@ class StepNode(BaseModel):
     description: str | None
     status: str
     jira_issue_type: str
+    priority: str
     duration_days: int
+    story_points: int | None
     sort_order: int
+    assignee: str | None
+    labels: str | None          # JSON string
+    due_date: date | None
+    acceptance_criteria: str | None
     est_start: int | None
     est_end: int | None
     lst_start: int | None
