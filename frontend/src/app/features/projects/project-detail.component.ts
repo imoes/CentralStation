@@ -83,7 +83,11 @@ const STATUS_COLORS: Record<string, string> = {
                 <div class="empty">{{ i18n.t('projects.no_steps') }}</div>
               } @else {
                 <div class="gantt-header">
-                  <div class="gantt-label-col">{{ i18n.t('projects.step') }}</div>
+                  <div class="gantt-label-col" [style.width.px]="ganttLabelWidth()">{{ i18n.t('projects.step') }}</div>
+                  <div class="gantt-splitter"
+                       (mousedown)="ganttSplitterMouseDown($event)"
+                       (dblclick)="ganttSplitterDblClick()"
+                       title="Ziehen zum Verbreitern · Doppelklick für Autofit"></div>
                   <div class="gantt-timeline">
                     @for (d of ganttDays(); track d) {
                       <div class="gantt-day">{{ d }}</div>
@@ -92,7 +96,10 @@ const STATUS_COLORS: Record<string, string> = {
                 </div>
                 @for (row of ganttRows(); track row.step.id) {
                   <div class="gantt-row" (click)="selectStep(row.step)">
-                    <div class="gantt-label" [title]="row.step.title">{{ row.step.title }}</div>
+                    <div class="gantt-label" [style.width.px]="ganttLabelWidth()" [title]="row.step.title">{{ row.step.title }}</div>
+                    <div class="gantt-splitter"
+                         (mousedown)="ganttSplitterMouseDown($event)"
+                         (dblclick)="ganttSplitterDblClick()"></div>
                     <div class="gantt-track">
                       <div
                         class="gantt-bar"
@@ -320,14 +327,20 @@ const STATUS_COLORS: Record<string, string> = {
     .cyto-container { width: 100%; height: 100%; min-height: 500px; background: var(--cs-bg); }
 
     /* Gantt */
-    .gantt-container { padding: 16px; overflow-x: auto; }
+    .gantt-container { padding: 16px; overflow-x: auto; user-select: none; }
     .gantt-header { display: flex; align-items: center; font-size: 0.75rem; color: var(--cs-text-muted); margin-bottom: 4px; }
-    .gantt-label-col { width: 220px; flex-shrink: 0; padding-right: 12px; font-weight: 600; }
+    .gantt-label-col { flex-shrink: 0; padding-right: 8px; font-weight: 600; overflow: hidden; white-space: nowrap; }
+    .gantt-splitter {
+      width: 5px; flex-shrink: 0; cursor: col-resize; align-self: stretch;
+      background: var(--cs-border, #333); border-radius: 2px;
+      transition: background 0.15s;
+    }
+    .gantt-splitter:hover { background: var(--cs-accent, #FFCC99); }
     .gantt-timeline { flex: 1; display: flex; }
     .gantt-day { flex: 1; text-align: center; min-width: 20px; border-left: 1px solid var(--cs-border, #333); }
     .gantt-row { display: flex; align-items: center; margin-bottom: 4px; cursor: pointer; }
     .gantt-row:hover { background: var(--cs-surface, #1a1a2e); }
-    .gantt-label { width: 220px; flex-shrink: 0; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
+    .gantt-label { flex-shrink: 0; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 8px; }
     .gantt-track { flex: 1; height: 24px; background: var(--cs-surface, #1a1a2e); border-radius: 2px; position: relative; }
     .gantt-bar { position: absolute; top: 2px; height: 20px; border-radius: 2px; min-width: 4px; transition: opacity 0.15s; }
     .gantt-bar:hover { opacity: 0.8; }
@@ -411,6 +424,12 @@ export class ProjectDetailComponent implements OnInit, AfterViewInit, OnDestroy 
   ganttRows = signal<GanttRow[]>([]);
   ganttDays = signal<number[]>([]);
   selectedStep = signal<StepNode | null>(null);
+  ganttLabelWidth = signal(220);
+
+  private ganttDragStartX = 0;
+  private ganttDragStartWidth = 0;
+  private ganttDragMoveBound: ((e: MouseEvent) => void) | null = null;
+  private ganttDragUpBound: (() => void) | null = null;
 
   // edit fields
   editTitle = ''; editDescription = ''; editDuration = 1;
@@ -449,6 +468,7 @@ export class ProjectDetailComponent implements OnInit, AfterViewInit, OnDestroy 
     this.destroyed$.complete();
     document.removeEventListener('click', this.closeCtxBound);
     this.cy?.destroy();
+    this.ganttDragCleanup();
   }
 
   private closeCtxBound = () => this.contextMenu.set(null);
@@ -751,4 +771,48 @@ export class ProjectDetailComponent implements OnInit, AfterViewInit, OnDestroy 
   }
 
   back() { this.router.navigate(['/projects']); }
+
+  // ── Gantt column resize ───────────────────────────────────────────────────
+
+  ganttSplitterMouseDown(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.ganttDragStartX = e.clientX;
+    this.ganttDragStartWidth = this.ganttLabelWidth();
+
+    this.ganttDragMoveBound = (ev: MouseEvent) => {
+      const delta = ev.clientX - this.ganttDragStartX;
+      this.ganttLabelWidth.set(Math.max(80, this.ganttDragStartWidth + delta));
+    };
+    this.ganttDragUpBound = () => this.ganttDragCleanup();
+
+    document.addEventListener('mousemove', this.ganttDragMoveBound);
+    document.addEventListener('mouseup', this.ganttDragUpBound);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  ganttSplitterDblClick() {
+    const titles = this.ganttRows().map(r => r.step.title);
+    if (!titles.length) return;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.font = '13.6px Roboto, sans-serif'; // matches 0.85rem
+    const maxPx = Math.max(...titles.map(t => ctx.measureText(t).width));
+    this.ganttLabelWidth.set(Math.ceil(maxPx) + 24); // 24px side padding
+  }
+
+  private ganttDragCleanup() {
+    if (this.ganttDragMoveBound) {
+      document.removeEventListener('mousemove', this.ganttDragMoveBound);
+      this.ganttDragMoveBound = null;
+    }
+    if (this.ganttDragUpBound) {
+      document.removeEventListener('mouseup', this.ganttDragUpBound);
+      this.ganttDragUpBound = null;
+    }
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }
 }
