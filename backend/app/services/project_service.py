@@ -5,8 +5,9 @@ All write operations broadcast a 'project_updated' WS event so the frontend
 """
 from __future__ import annotations
 
+import json
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -124,8 +125,14 @@ async def get_project_graph(db: AsyncSession, project_id: str) -> PlanGraphRespo
             description=s.description,
             status=s.status,
             jira_issue_type=s.jira_issue_type,
+            priority=s.priority,
             duration_days=s.duration_days,
+            story_points=s.story_points,
             sort_order=s.sort_order,
+            assignee=s.assignee,
+            labels=s.labels,
+            due_date=s.due_date,
+            acceptance_criteria=s.acceptance_criteria,
             est_start=cpm_data.get("es"),
             est_end=cpm_data.get("ef"),
             lst_start=cpm_data.get("ls"),
@@ -157,10 +164,16 @@ async def add_step(
     title: str,
     description: str | None = None,
     jira_issue_type: str = "task",
+    priority: str = "medium",
     duration_days: int = 1,
+    story_points: int | None = None,
     sort_order: int = 0,
     parent_step_id: str | None = None,
     depends_on: list[str] | None = None,
+    assignee: str | None = None,
+    labels: list[str] | None = None,
+    due_date: date | None = None,
+    acceptance_criteria: str | None = None,
     pos_x: int | None = None,
     pos_y: int | None = None,
 ) -> ProjectStep:
@@ -172,8 +185,14 @@ async def add_step(
         title=title,
         description=description,
         jira_issue_type=jira_issue_type,
+        priority=priority,
         duration_days=duration_days,
+        story_points=story_points,
         sort_order=sort_order,
+        assignee=assignee,
+        labels=json.dumps(labels) if labels is not None else None,
+        due_date=due_date,
+        acceptance_criteria=acceptance_criteria,
         pos_x=pos_x,
         pos_y=pos_y,
     )
@@ -202,7 +221,11 @@ async def update_step(db: AsyncSession, step_id: str, project_id: str, **kwargs)
         raise HTTPException(404, f"Step {step_id} not found")
 
     for k, v in kwargs.items():
-        if v is not None and hasattr(step, k):
+        if v is None or not hasattr(step, k):
+            continue
+        if k == "labels" and isinstance(v, list):
+            setattr(step, k, json.dumps(v))
+        else:
             setattr(step, k, v)
     step.updated_at = datetime.now(timezone.utc)
     await db.commit()
