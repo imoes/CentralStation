@@ -187,10 +187,13 @@ Wenn du recherchieren willst, antworte AUSSCHLIESSLICH so (kein anderer Text):
     {"tool": "web_fetch", "url": "https://..."}
   ]
 }
-Du erhaeltst die Ergebnisse als naechste Nachricht (<tool_results>) und kannst dann erneut
-recherchieren ODER den finalen Plan liefern. Maximal wenige Recherche-Runden, dann planen.
-Recherchiere nur wenn es echten Mehrwert bringt (konkrete Versionen, Voraussetzungen, Best
-Practices) - bei rein organisatorischen Plaenen direkt planen.
+WICHTIG: Wenn du recherchierst, gib AUSSCHLIESSLICH den tools-Block aus und sonst NICHTS.
+STOPPE danach und warte auf die naechste Nachricht (<tool_results>). Gib NIEMALS den
+tools-Block und einen Plan in derselben Antwort aus - das fuehrt dazu, dass die Recherche
+ignoriert wird. Erst recherchieren, Ergebnisse abwarten, DANN in einer separaten Antwort planen.
+Maximal wenige Recherche-Runden, dann planen. Recherchiere nur wenn es echten Mehrwert bringt
+(konkrete Versionen, Voraussetzungen, Best Practices) - bei rein organisatorischen Plaenen
+direkt planen.
 
 ═══ FINALER PLAN ═══
 Wenn du genug weisst, antworte AUSSCHLIESSLICH im folgenden JSON-Format (kein Markdown):
