@@ -116,6 +116,7 @@ export class App implements OnInit, OnDestroy {
     { path: '/kanban',      labelKey: 'app.nav.kanban',     icon: 'view_kanban',   roles: ['admin','sysadmin','network_technician'] },
     { path: '/ai-insights', labelKey: 'app.nav.aiInsights', icon: 'psychology',    roles: ['admin','sysadmin'] },
     { path: '/topology',    labelKey: 'app.nav.topology',   icon: 'account_tree',  roles: ['admin','sysadmin','network_technician'] },
+    { path: '/projects',    labelKey: 'app.nav.projects',   icon: 'folder_open',   roles: ['admin','sysadmin'] },
     { path: '/workbench',   labelKey: 'app.nav.workbench',  icon: 'construction',  roles: ['admin','sysadmin'] },
     { path: '/settings',    labelKey: 'app.nav.settings',   icon: 'settings',      roles: ['admin','sysadmin','network_technician','viewer'] },
     { path: '/help',        labelKey: 'app.nav.help',       icon: 'help',          roles: ['admin','sysadmin','network_technician','viewer'] },

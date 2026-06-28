@@ -313,3 +313,108 @@ async def provision_workspace(
 
     _set_ide_cookie(response, uid)
     return {"ide_url": f"/ide/{uid}/?folder={folder}", "workspace_path": folder, "repo_dir": repo_dir}
+
+
+# ── Project → Werkbank handoff ─────────────────────────────────────────────
+
+class OpenProjectRequest(BaseModel):
+    project_id: str
+
+
+@router.post("/open-project")
+async def open_project_in_ide(
+    body: OpenProjectRequest,
+    user: CurrentUser,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Write a project plan into the IDE workspace and return the code-server URL.
+
+    Creates:
+      project-plan.puml   — PlantUML source (network diagram), readable by PlantUML extension
+      project-plan.md     — Human-readable plan
+      .centralstation/project.json — Machine-readable project context (id, steps, deps)
+      CLAUDE.md           — Instructions for Claude/Codex to use MCP tools for all writes
+    """
+    import json as _json
+    from app.services import project_plantuml
+    import app.services.project_service as svc
+
+    uid = str(user.id)
+    try:
+        await asyncio.to_thread(ide_manager.ensure_container, uid)
+    except Exception as e:
+        raise HTTPException(503, f"IDE could not be started: {e}") from e
+
+    graph = await svc.get_project_graph(db, body.project_id)
+    proj = graph.project
+
+    ws_dir = ide_manager.workspace_dir(uid)
+    os.makedirs(ws_dir, exist_ok=True)
+    cs_dir = os.path.join(ws_dir, ".centralstation")
+    os.makedirs(cs_dir, exist_ok=True)
+
+    step_dicts = [s.model_dump(mode="json") for s in graph.steps]
+    dep_dicts = [d.model_dump(mode="json") for d in graph.deps]
+
+    # project-plan.puml
+    puml_network = project_plantuml.render_network(proj.name, step_dicts, dep_dicts)
+    with open(os.path.join(ws_dir, "project-plan.puml"), "w", encoding="utf-8") as f:
+        f.write(puml_network)
+
+    # project-plan.md
+    md = project_plantuml.render_markdown(proj.name, proj.description, step_dicts, dep_dicts)
+    with open(os.path.join(ws_dir, "project-plan.md"), "w", encoding="utf-8") as f:
+        f.write(md)
+
+    # .centralstation/project.json
+    project_ctx = {
+        "project_id": body.project_id,
+        "name": proj.name,
+        "steps": step_dicts,
+        "deps": dep_dicts,
+    }
+    with open(os.path.join(cs_dir, "project.json"), "w", encoding="utf-8") as f:
+        _json.dump(project_ctx, f, indent=2, default=str)
+
+    # CLAUDE.md — instructs the AI to use MCP for all writes
+    step_ids_preview = "\n".join(
+        f"  - {s.get('title', '?')} → id: {s.get('id', '?')}"
+        for s in step_dicts[:10]
+    )
+    claude_md = f"""# CentralStation Projekt: {proj.name}
+
+Dieses Workspace ist mit CentralStation-Projekt `{body.project_id}` verknüpft.
+
+## WICHTIG: Nur MCP für Änderungen am Plan
+
+Lese und ändere den Live-Plan **ausschließlich** über die `centralstation`-MCP-Tools.
+Die `.puml`-Datei ist nur die generierte Anzeige, nicht die Wahrheit.
+
+## Verfügbare MCP-Tools (prefix: `centralstation`)
+
+- `cs_get_project_plan(project_id)` — aktuellen Plan abrufen
+- `cs_add_step(project_id, title, description, jira_issue_type, duration_days, depends_on, parent_step_id)` — Schritt hinzufügen
+- `cs_update_step(project_id, step_id, title?, description?, duration_days?)` — Schritt aktualisieren
+- `cs_set_step_status(project_id, step_id, status)` — Status setzen (pending|in_progress|done)
+- `cs_add_dependency(project_id, step_id, depends_on_step_id)` — Abhängigkeit hinzufügen
+- `cs_remove_dependency(project_id, dep_id)` — Abhängigkeit entfernen
+
+## Projekt-ID
+
+Immer `project_id="{body.project_id}"` übergeben.
+
+## Aktuelle Schritte (Kurzübersicht)
+
+{step_ids_preview}
+
+Vollständiger Plan: `cs_get_project_plan("{body.project_id}")`
+"""
+    with open(os.path.join(ws_dir, "CLAUDE.md"), "w", encoding="utf-8") as f:
+        f.write(claude_md)
+
+    _set_ide_cookie(response, uid)
+    return {
+        "ide_url": f"/ide/{uid}/?folder={ide_manager.WORKSPACES_DIR}",
+        "project_id": body.project_id,
+    }

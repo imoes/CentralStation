@@ -135,5 +135,20 @@ export const routes: Routes = [
     canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
     loadComponent: () => import('./features/workbench/workbench.component').then(m => m.WorkbenchComponent),
   },
+  {
+    path: 'projects/planner',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
+    loadComponent: () => import('./features/projects/project-planner.component').then(m => m.ProjectPlannerComponent),
+  },
+  {
+    path: 'projects/:id',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
+    loadComponent: () => import('./features/projects/project-detail.component').then(m => m.ProjectDetailComponent),
+  },
+  {
+    path: 'projects',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
+    loadComponent: () => import('./features/projects/projects.component').then(m => m.ProjectsComponent),
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];
