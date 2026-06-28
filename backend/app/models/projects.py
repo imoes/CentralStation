@@ -72,6 +72,8 @@ class ProjectStep(Base):
     # new | indeterminate | done
     jira_status_category: Mapped[str | None] = mapped_column(String(30))
     jira_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # JSON: {"code_blocks": [...], "bash_commands": [...]} — filled by planner
+    implementation_notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

@@ -1,5 +1,5 @@
 import {
-  Component, Input, Output, EventEmitter, OnChanges, SimpleChanges, inject, signal,
+  Component, Input, Output, EventEmitter, OnChanges, SimpleChanges, inject, signal, computed,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -133,6 +133,44 @@ const PRIORITY_COLORS: Record<string, string> = {
           <textarea class="card-textarea" [(ngModel)]="editState.acceptance_criteria" rows="4"
                     placeholder="Definition of Done (Markdown)"></textarea>
         </div>
+
+        <!-- Implementation Notes: code blocks + bash commands from planner -->
+        @if (implNotes().code_blocks.length || implNotes().bash_commands.length) {
+          <div class="card-section impl-section">
+            <div class="section-label-row">
+              <label class="section-label">Implementierungshinweise</label>
+              <button class="impl-edit-btn" (click)="editingImplNotes.set(!editingImplNotes())" [title]="editingImplNotes() ? 'Vorschau' : 'Bearbeiten'">
+                <mat-icon>{{ editingImplNotes() ? 'visibility' : 'edit' }}</mat-icon>
+              </button>
+            </div>
+
+            @if (editingImplNotes()) {
+              <textarea class="card-textarea" rows="10" [(ngModel)]="editState.implementation_notes"
+                        placeholder='{"code_blocks":[...],"bash_commands":[...]}'></textarea>
+            } @else {
+              @for (cb of implNotes().code_blocks; track $index) {
+                <div class="impl-code-block">
+                  <div class="impl-code-header">
+                    <span class="impl-lang">{{ cb.lang }}</span>
+                    @if (cb.filename) { <span class="impl-filename">{{ cb.filename }}</span> }
+                    <button class="impl-copy-btn" (click)="copy(cb.content)"><mat-icon>content_copy</mat-icon></button>
+                  </div>
+                  <pre class="impl-pre"><code>{{ cb.content }}</code></pre>
+                </div>
+              }
+              @for (cmd of implNotes().bash_commands; track $index) {
+                <div class="impl-bash-block">
+                  <div class="impl-bash-header">
+                    <mat-icon>terminal</mat-icon>
+                    <span>{{ cmd.purpose }}</span>
+                    <button class="impl-copy-btn" (click)="copy(cmd.command)"><mat-icon>content_copy</mat-icon></button>
+                  </div>
+                  <pre class="impl-bash-cmd">{{ cmd.command }}</pre>
+                </div>
+              }
+            }
+          </div>
+        }
 
         <!-- CPM info (read-only) -->
         @if (step.est_start != null) {
@@ -336,6 +374,34 @@ const PRIORITY_COLORS: Record<string, string> = {
     .sync-err { font-size: 0.75rem; color: #CC4444; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .spin { animation: spin 1s linear infinite; display: inline-block; }
+
+    /* Implementation Notes */
+    .impl-section { gap: 10px; }
+    .section-label-row { display: flex; align-items: center; justify-content: space-between; }
+    .impl-edit-btn { background: none; border: none; cursor: pointer; color: var(--cs-text-muted); padding: 0; display: flex; align-items: center; }
+    .impl-edit-btn mat-icon { font-size: 16px; width: 16px; height: 16px; }
+    .impl-edit-btn:hover { color: var(--cs-accent, #FFCC99); }
+
+    .impl-code-block { border-radius: 6px; overflow: hidden; border: 1px solid var(--cs-border, #333); }
+    .impl-code-header {
+      display: flex; align-items: center; gap: 8px; padding: 4px 10px;
+      background: color-mix(in srgb, var(--cs-bg) 80%, transparent);
+      font-size: 0.72rem; font-weight: 700; letter-spacing: .05em;
+    }
+    .impl-lang { text-transform: uppercase; color: var(--cs-text-muted); }
+    .impl-filename { font-family: 'Fira Code', monospace; color: var(--cs-text-muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .impl-copy-btn { margin-left: auto; background: none; border: none; cursor: pointer; color: var(--cs-text-muted); padding: 2px 4px; border-radius: 3px; display: flex; align-items: center; }
+    .impl-copy-btn:hover { color: var(--cs-accent, #FFCC99); }
+    .impl-copy-btn mat-icon { font-size: 13px; width: 13px; height: 13px; }
+    .impl-pre { margin: 0; padding: 10px 12px; font-family: 'Fira Code', monospace; font-size: 0.78rem; line-height: 1.6; overflow-x: auto; white-space: pre; background: var(--cs-bg); color: var(--cs-text); }
+
+    .impl-bash-block { border-radius: 6px; overflow: hidden; border: 1px solid var(--cs-border, #333); }
+    .impl-bash-header {
+      display: flex; align-items: center; gap: 6px; padding: 4px 10px;
+      background: #1a1a1a; color: #90EE90; font-size: 0.72rem; font-weight: 700;
+    }
+    .impl-bash-header mat-icon { font-size: 13px; width: 13px; height: 13px; }
+    .impl-bash-cmd { margin: 0; padding: 8px 12px; font-family: 'Fira Code', monospace; font-size: 0.8rem; background: #111; color: #90EE90; overflow-x: auto; white-space: pre; }
   `],
 })
 export class StepCardComponent implements OnChanges {
@@ -353,6 +419,20 @@ export class StepCardComponent implements OnChanges {
   syncOk = signal<boolean | null>(null);
   showAttach = signal(false);
   showCreate = signal(false);
+  editingImplNotes = signal(false);
+
+  private _implNotesRaw = signal<string>('');
+  implNotes = computed(() => {
+    try {
+      const parsed = JSON.parse(this._implNotesRaw());
+      return {
+        code_blocks: Array.isArray(parsed.code_blocks) ? parsed.code_blocks : [],
+        bash_commands: Array.isArray(parsed.bash_commands) ? parsed.bash_commands : [],
+      };
+    } catch {
+      return { code_blocks: [], bash_commands: [] };
+    }
+  });
 
   editState = this.emptyState();
   labelList: string[] = [];
@@ -362,6 +442,7 @@ export class StepCardComponent implements OnChanges {
 
   ngOnChanges(changes: SimpleChanges) {
     if (changes['step'] && this.step) {
+      const implNotes = this.step.implementation_notes ?? '';
       this.editState = {
         title: this.step.title,
         description: this.step.description ?? '',
@@ -373,7 +454,9 @@ export class StepCardComponent implements OnChanges {
         assignee: this.step.assignee ?? '',
         due_date: this.step.due_date ?? '',
         acceptance_criteria: this.step.acceptance_criteria ?? '',
+        implementation_notes: implNotes,
       };
+      this._implNotesRaw.set(implNotes);
       try {
         this.labelList = this.step.labels ? JSON.parse(this.step.labels) : [];
       } catch {
@@ -381,6 +464,7 @@ export class StepCardComponent implements OnChanges {
       }
       this.showAttach.set(false);
       this.showCreate.set(false);
+      this.editingImplNotes.set(false);
       this.createSummary = this.step.title;
     }
   }
@@ -389,7 +473,7 @@ export class StepCardComponent implements OnChanges {
     return {
       title: '', description: '', status: 'pending', jira_issue_type: 'task',
       priority: 'medium', duration_days: 1, story_points: null as number | null,
-      assignee: '', due_date: '', acceptance_criteria: '',
+      assignee: '', due_date: '', acceptance_criteria: '', implementation_notes: '',
     };
   }
 
@@ -434,7 +518,9 @@ export class StepCardComponent implements OnChanges {
       labels: this.labelList,
       due_date: this.editState.due_date || null,
       acceptance_criteria: this.editState.acceptance_criteria || null,
+      implementation_notes: this.editState.implementation_notes || null,
     };
+    this._implNotesRaw.set(this.editState.implementation_notes ?? '');
     this.svc.updateStep(this.projectId, this.step.id, payload).subscribe({
       next: () => {
         this.saving.set(false);
@@ -469,6 +555,8 @@ export class StepCardComponent implements OnChanges {
       error: () => this.snack.open('Fehler beim Erstellen', 'OK', { duration: 3000 }),
     });
   }
+
+  copy(text: string) { navigator.clipboard.writeText(text).catch(() => {}); }
 
   onBackdropClick(e: MouseEvent) {
     this.close.emit();

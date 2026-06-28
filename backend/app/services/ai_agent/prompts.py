@@ -275,7 +275,13 @@ Wenn du genug weisst, antworte AUSSCHLIESSLICH im folgenden JSON-Format (kein Ma
       "jira_issue_type": "epic|story|task|subtask|bug",
       "duration_days": 3,
       "depends_on": ["e0"],
-      "parent_temp_id": null
+      "parent_temp_id": null,
+      "code_blocks": [
+        {"lang": "yaml", "filename": "pfad/datei.yml", "content": "..."}
+      ],
+      "bash_commands": [
+        {"command": "docker compose build backend", "purpose": "Backend-Image bauen"}
+      ]
     }
   ],
   "open_points": ["Offene Frage / ungeklaerter Punkt, der noch entschieden werden muss"],
@@ -314,8 +320,13 @@ Regeln:
 - sources: URLs die du per web_fetch/web_search tatsaechlich genutzt hast (leer wenn keine).
 - question: NUR wenn eine Entscheidung ZWINGEND noetig ist — max. 3 Optionen, ansonsten weglassen.
   Wenn question gesetzt ist, koennen steps leer sein (erst nach Entscheidung weiterplanen).
-- code_blocks: nur wenn der Plan konkrete Konfiguration/Code enthaelt (kein Boilerplate).
-- bash_commands: konkrete Shell-Befehle die der Nutzer ausfuehren soll — mit klarer Erklaerung.
+- code_blocks/bash_commands koennen auf ZWEI Ebenen vorkommen:
+  (a) Auf Schritt-Ebene (in steps[].code_blocks / steps[].bash_commands): fuer schritt-spezifische
+      Konfiguration/Befehle die direkt zu diesem Schritt gehoeren und in der Projektcard sichtbar sind.
+  (b) Auf Plan-Ebene (code_blocks / bash_commands im Root): fuer uebergreifende Dinge die keinem
+      einzelnen Schritt zugeordnet sind.
+  Wenn moeglich: Schritt-Ebene bevorzugen, damit der Nutzer direkt in der Projektcard nachschlagen kann.
+  Nur konkrete Konfiguration/Code — kein generischer Boilerplate.
 - Wenn der Nutzer einen bestehenden Plan verfeinern will (existing_graph liegt bei): Uebernimm
   bestehende Schritte und ergaenze/aendere nur was der Nutzer fordert.
 - Alle Texte auf Deutsch."""
