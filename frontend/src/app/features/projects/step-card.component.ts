@@ -26,7 +26,8 @@ const PRIORITY_COLORS: Record<string, string> = {
   standalone: true,
   imports: [CommonModule, FormsModule, MatButtonModule, MatIconModule, MatTooltipModule, MatSnackBarModule],
   template: `
-    <div class="card-panel" [class.open]="!!step">
+    <div class="card-panel" [class.open]="!!step" (click)="onBackdropClick($event)">
+      <div class="card-inner" (click)="$event.stopPropagation()">
       @if (step) {
         <!-- Header -->
         <div class="card-header">
@@ -166,10 +167,16 @@ const PRIORITY_COLORS: Record<string, string> = {
               <a class="jira-key-link" [href]="jiraUrl()" target="_blank">
                 {{ step.jira_key }} öffnen
               </a>
+              <button mat-icon-button [matTooltip]="'Von Jira aktualisieren'" (click)="pullFromJira()" [disabled]="syncing()">
+                <mat-icon [class.spin]="syncing()">sync</mat-icon>
+              </button>
+              @if (syncOk() === true) { <span class="sync-ok">✓ Jira aktualisiert</span> }
+              @if (syncOk() === false) { <span class="sync-err">✗ Sync fehlgeschlagen</span> }
               <button mat-stroked-button (click)="unlinkTicket()">
                 <mat-icon>link_off</mat-icon> Entkoppeln
               </button>
             </div>
+            <div class="jira-push-hint">Speichern überträgt Titel, Beschreibung, Status und Priorität automatisch nach Jira.</div>
           } @else {
             <div class="jira-row">
               <button mat-stroked-button (click)="showAttach.set(!showAttach())">
@@ -204,18 +211,29 @@ const PRIORITY_COLORS: Record<string, string> = {
           }
         </div>
       }
+      </div><!-- /card-inner -->
     </div>
   `,
   styles: [`
+    /* Backdrop overlay — only visible when .open */
     .card-panel {
-      width: 0; overflow: hidden; transition: width 0.25s ease;
-      background: var(--cs-surface, #1a1a2e);
-      border-left: 2px solid var(--cs-border, #333);
-      display: flex; flex-direction: column;
-      height: 100%; box-sizing: border-box;
-      flex-shrink: 0;
+      display: none;
+      position: fixed; inset: 0; z-index: 1200;
+      background: rgba(0,0,0,0.65);
+      align-items: center; justify-content: center;
     }
-    .card-panel.open { width: 420px; overflow-y: auto; }
+    .card-panel.open { display: flex; }
+
+    /* The actual modal card */
+    .card-inner {
+      background: var(--cs-surface, #1a1a2e);
+      border: 1px solid var(--cs-accent, #FFCC99);
+      border-radius: 8px;
+      width: 680px; max-width: 96vw;
+      max-height: 90vh; overflow-y: auto;
+      display: flex; flex-direction: column;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.7);
+    }
 
     /* Header */
     .card-header {
@@ -313,6 +331,11 @@ const PRIORITY_COLORS: Record<string, string> = {
     .jira-status-badge.cat-indeterminate { background: #5A4A00; color: #FFCC66; }
     .jira-status-badge.cat-new { background: var(--cs-bg); color: var(--cs-text-muted); }
     .jira-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .jira-push-hint { font-size: 0.72rem; color: var(--cs-text-muted); font-style: italic; }
+    .sync-ok { font-size: 0.75rem; color: #90EE90; }
+    .sync-err { font-size: 0.75rem; color: #CC4444; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin 1s linear infinite; display: inline-block; }
   `],
 })
 export class StepCardComponent implements OnChanges {
@@ -326,6 +349,8 @@ export class StepCardComponent implements OnChanges {
   private snack = inject(MatSnackBar);
 
   saving = signal(false);
+  syncing = signal(false);
+  syncOk = signal<boolean | null>(null);
   showAttach = signal(false);
   showCreate = signal(false);
 
@@ -442,6 +467,19 @@ export class StepCardComponent implements OnChanges {
     }).subscribe({
       next: () => { this.showCreate.set(false); this.ticketChanged.emit(); },
       error: () => this.snack.open('Fehler beim Erstellen', 'OK', { duration: 3000 }),
+    });
+  }
+
+  onBackdropClick(e: MouseEvent) {
+    this.close.emit();
+  }
+
+  pullFromJira() {
+    if (!this.step?.jira_key) return;
+    this.syncing.set(true);
+    this.svc.pullStepFromJira(this.projectId, this.step.id).subscribe({
+      next: () => { this.syncing.set(false); this.syncOk.set(true); this.saved.emit(); setTimeout(() => this.syncOk.set(null), 3000); },
+      error: () => { this.syncing.set(false); this.syncOk.set(false); setTimeout(() => this.syncOk.set(null), 3000); },
     });
   }
 

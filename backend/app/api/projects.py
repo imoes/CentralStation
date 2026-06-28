@@ -13,16 +13,20 @@ from app.api.deps import CurrentUser, RequireAnyStaff
 from app.core.database import get_db
 from app.schemas.projects import (
     AttachTicketRequest,
+    ChatAction,
     CreateTicketRequest,
     DepCreate,
     DepResponse,
     PlanGraphResponse,
     PlanRequest,
     PlanResponse,
+    ProjectChatRequest,
+    ProjectChatResponse,
     ProjectCreate,
     ProjectResponse,
     ProjectUpdate,
     ProposedStep,
+    ReadyStep,
     SavePlanRequest,
     StepCreate,
     StepResponse,
@@ -198,3 +202,81 @@ async def save_plan(body: SavePlanRequest, db: DB, user: CurrentUser):
         db, body.name, body.description, steps_dicts, str(user.id)
     )
     return project
+
+
+# ── KI-Projektassistent ───────────────────────────────────────────────────────
+
+@router.post("/{project_id}/chat", response_model=ProjectChatResponse, dependencies=[RequireAnyStaff])
+async def project_chat(project_id: str, body: ProjectChatRequest, db: DB, user: CurrentUser):
+    import json as _json
+    from app.services.settings import get_active_llm_config
+    from app.services.llm_client import generate_text
+    from app.services.ai_agent.prompts import PROJECT_AGENT_SYSTEM
+    from app.services.project_planner import _extract_json_objects
+
+    graph = await svc.get_project_graph(db, project_id)
+
+    # Build compact project context for the LLM
+    lines = [f"Projekt: {graph.project.name} ({graph.project.status})"]
+    lines.append("Schritte:")
+    for s in graph.steps:
+        deps = [str(d.depends_on_step_id)[:8] for d in graph.deps if str(d.step_id) == str(s.id)]
+        dep_str = f" | deps: {', '.join(deps)}" if deps else ""
+        lines.append(f"  [{s.jira_issue_type.upper()}] {s.title} — id={s.id} status={s.status} priority={s.priority}{dep_str}")
+
+    context = "\n".join(lines)
+
+    llm = await get_active_llm_config(db, user.id)
+    messages = [
+        {"role": "system", "content": PROJECT_AGENT_SYSTEM},
+        {"role": "user", "content": f"<project>\n{context}\n</project>\n\n{body.message}"},
+    ]
+    raw = await generate_text(llm, messages, max_output_tokens=1024, reasoning_effort="low")
+
+    objs = _extract_json_objects(raw)
+    result = objs[0] if objs else {}
+    reply = result.get("reply", raw[:300] if raw else "Keine Antwort")
+    actions_raw = result.get("actions", [])
+
+    # Execute actions
+    executed: list[ChatAction] = []
+    for a in actions_raw:
+        atype = a.get("type")
+        sid = a.get("step_id")
+        try:
+            if atype == "set_status" and sid:
+                await svc.update_step(db, sid, project_id, status=a["status"])
+                executed.append(ChatAction(**a))
+            elif atype == "update_step" and sid:
+                upd = {k: v for k, v in a.items() if k not in ("type", "step_id") and v is not None}
+                if upd:
+                    await svc.update_step(db, sid, project_id, **upd)
+                    executed.append(ChatAction(**a))
+            elif atype == "add_step":
+                await svc.add_step(
+                    db, project_id,
+                    title=a.get("title", "Neuer Schritt"),
+                    description=a.get("description"),
+                    jira_issue_type=a.get("jira_issue_type", "task"),
+                    duration_days=int(a.get("duration_days", 1)),
+                )
+                executed.append(ChatAction(**a))
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Chat action failed: %s", exc)
+
+    return ProjectChatResponse(reply=reply, actions=executed)
+
+
+# ── Jira Pull (einzelner Schritt) ─────────────────────────────────────────────
+
+@router.post("/steps/{step_id}/jira-pull", response_model=StepResponse, dependencies=[RequireAnyStaff])
+async def jira_pull(step_id: str, project_id: str, db: DB, user: CurrentUser):
+    return await svc.pull_step_from_jira(db, step_id, project_id)
+
+
+# ── Ready Steps (Kanban) ──────────────────────────────────────────────────────
+
+@router.get("/ready-steps", response_model=list[ReadyStep])
+async def get_ready_steps(db: DB, user: CurrentUser):
+    return await svc.get_ready_steps(db)
