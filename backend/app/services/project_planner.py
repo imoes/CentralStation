@@ -140,6 +140,9 @@ def _as_plan(obj: dict, tool_activity: list[dict]) -> dict:
         "open_points": obj.get("open_points", []) or [],
         "sources": obj.get("sources", []) or [],
         "tool_activity": tool_activity,
+        "question": obj.get("question"),
+        "code_blocks": obj.get("code_blocks", []) or [],
+        "bash_commands": obj.get("bash_commands", []) or [],
     }
 
 

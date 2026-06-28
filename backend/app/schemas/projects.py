@@ -214,12 +214,31 @@ class ToolActivity(BaseModel):
     ok: bool = True
 
 
+class CodeBlock(BaseModel):
+    lang: str = "text"
+    filename: str | None = None
+    content: str
+
+
+class BashCommand(BaseModel):
+    command: str
+    purpose: str
+
+
+class PlanQuestion(BaseModel):
+    text: str
+    options: list[str]
+
+
 class PlanResponse(BaseModel):
     reply: str
     steps: list[ProposedStep]
     open_points: list[str] = []
     sources: list[str] = []
     tool_activity: list[ToolActivity] = []
+    question: PlanQuestion | None = None
+    code_blocks: list[CodeBlock] = []
+    bash_commands: list[BashCommand] = []
 
 
 class SavePlanRequest(BaseModel):
