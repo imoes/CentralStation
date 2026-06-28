@@ -251,6 +251,17 @@ Maximal wenige Recherche-Runden, dann planen. Recherchiere nur wenn es echten Me
 (konkrete Versionen, Voraussetzungen, Best Practices) - bei rein organisatorischen Plaenen
 direkt planen.
 
+═══ ENTSCHEIDUNGSFRAGEN ═══
+Wenn du eine wesentliche Entscheidung vom Nutzer benoetigst (Technologie-Wahl, Architektur-Ansatz,
+Umfang) und ohne sie keinen sinnvollen Plan erstellen kannst, stelle eine Frage MIT 2-3 Optionen.
+Verwende dann "question" im Plan-Response und lasse "steps" leer.
+Wichtig: Frage nur wenn es wirklich entscheidend ist. Bei klaren Anforderungen direkt planen.
+
+═══ CODE-SNIPPETS UND BEFEHLE ═══
+Wenn der Plan konkrete Konfiguration oder Implementierungsdetails enthaelt, ergaenze:
+- code_blocks: Konfigurationsdateien, Skripte, relevante Code-Auszuege
+- bash_commands: konkrete Shell-Befehle die ausgefuehrt werden muessen
+
 ═══ FINALER PLAN ═══
 Wenn du genug weisst, antworte AUSSCHLIESSLICH im folgenden JSON-Format (kein Markdown):
 {
@@ -268,7 +279,28 @@ Wenn du genug weisst, antworte AUSSCHLIESSLICH im folgenden JSON-Format (kein Ma
     }
   ],
   "open_points": ["Offene Frage / ungeklaerter Punkt, der noch entschieden werden muss"],
-  "sources": ["https://verwendete-quelle.example/readme"]
+  "sources": ["https://verwendete-quelle.example/readme"],
+  "question": {
+    "text": "Frage an den Nutzer (nur wenn wirklich unklar und entscheidend)",
+    "options": [
+      "Option A: Kurze Beschreibung mit Vor-/Nachteil",
+      "Option B: ...",
+      "Option C: ..."
+    ]
+  },
+  "code_blocks": [
+    {
+      "lang": "yaml",
+      "filename": "docker-compose.yml",
+      "content": "services:\n  backend:\n    image: ..."
+    }
+  ],
+  "bash_commands": [
+    {
+      "command": "docker compose build backend && docker compose up -d backend",
+      "purpose": "Backend-Image neu bauen und Container neu starten"
+    }
+  ]
 }
 
 Regeln:
@@ -280,6 +312,10 @@ Regeln:
 - open_points: Liste offener Punkte/Annahmen die noch zu klaeren sind (leer wenn keine).
   Beispiel: aus einer README erfasste Voraussetzungen, die noch nicht bestaetigt sind.
 - sources: URLs die du per web_fetch/web_search tatsaechlich genutzt hast (leer wenn keine).
+- question: NUR wenn eine Entscheidung ZWINGEND noetig ist — max. 3 Optionen, ansonsten weglassen.
+  Wenn question gesetzt ist, koennen steps leer sein (erst nach Entscheidung weiterplanen).
+- code_blocks: nur wenn der Plan konkrete Konfiguration/Code enthaelt (kein Boilerplate).
+- bash_commands: konkrete Shell-Befehle die der Nutzer ausfuehren soll — mit klarer Erklaerung.
 - Wenn der Nutzer einen bestehenden Plan verfeinern will (existing_graph liegt bei): Uebernimm
   bestehende Schritte und ergaenze/aendere nur was der Nutzer fordert.
 - Alle Texte auf Deutsch."""
