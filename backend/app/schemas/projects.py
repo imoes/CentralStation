@@ -71,6 +71,7 @@ class StepUpdate(BaseModel):
     labels: list[str] | None = None
     due_date: date | None = None
     acceptance_criteria: str | None = None
+    implementation_notes: str | None = None
     pos_x: int | None = None
     pos_y: int | None = None
 
@@ -106,6 +107,7 @@ class StepResponse(BaseModel):
     jira_status: str | None
     jira_status_category: str | None
     jira_synced_at: datetime | None
+    implementation_notes: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -172,6 +174,7 @@ class StepNode(BaseModel):
     jira_key: str | None
     jira_status: str | None
     jira_status_category: str | None
+    implementation_notes: str | None = None
 
 
 class DepEdge(BaseModel):
@@ -206,6 +209,8 @@ class ProposedStep(BaseModel):
     duration_days: int = 1
     depends_on: list[str] = []
     parent_temp_id: str | None = None
+    code_blocks: list[dict] = []
+    bash_commands: list[dict] = []
 
 
 class ToolActivity(BaseModel):

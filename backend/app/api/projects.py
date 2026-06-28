@@ -186,6 +186,8 @@ async def run_planner(body: PlanRequest, db: DB, user: CurrentUser):
             duration_days=int(s.get("duration_days", 1)),
             depends_on=s.get("depends_on", []),
             parent_temp_id=s.get("parent_temp_id"),
+            code_blocks=[b for b in s.get("code_blocks", []) if isinstance(b, dict)],
+            bash_commands=[c for c in s.get("bash_commands", []) if isinstance(c, dict)],
         )
         for i, s in enumerate(result.get("steps", []))
     ]

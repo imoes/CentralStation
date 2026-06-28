@@ -683,6 +683,11 @@ async def create_project_from_plan(
     for i, s in enumerate(proposed_steps):
         temp_id = s.get("temp_id", f"t{i}")
         parent_temp = s.get("parent_temp_id")
+        code_blocks = s.get("code_blocks", [])
+        bash_commands = s.get("bash_commands", [])
+        impl_notes: str | None = None
+        if code_blocks or bash_commands:
+            impl_notes = json.dumps({"code_blocks": code_blocks, "bash_commands": bash_commands}, ensure_ascii=False)
         step = ProjectStep(
             project_id=project.id,
             title=s["title"],
@@ -690,6 +695,7 @@ async def create_project_from_plan(
             jira_issue_type=s.get("jira_issue_type", "task"),
             duration_days=int(s.get("duration_days", 1)),
             sort_order=i,
+            implementation_notes=impl_notes,
         )
         db.add(step)
         await db.flush()
