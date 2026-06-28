@@ -20,6 +20,7 @@ import { ProjectsService, ReadyStep } from '../../core/services/projects.service
 import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
 import { KanbanCard, KanbanColumn, KanbanStatus } from '../../core/models/kanban.model';
 import { KanbanCardDialogComponent } from './kanban-card-dialog.component';
+import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-create-dialog.component';
 import { I18nService } from '../../core/services/i18n.service';
 
 const COLUMNS: { id: KanbanStatus; label: string; color: string }[] = [
@@ -52,9 +53,14 @@ const PRIORITY_COLORS: Record<string, string> = {
     <div class="board-container">
       <div class="board-header">
         <h2>Kanban Board</h2>
-        <button mat-raised-button color="primary" (click)="openCreate()">
-          <mat-icon>add</mat-icon> {{ i18n.t('kanban.new_card') }}
-        </button>
+        <div class="header-actions">
+          <button mat-stroked-button (click)="openTicketCreate()">
+            <mat-icon>confirmation_number</mat-icon> Jira-Ticket erstellen
+          </button>
+          <button mat-raised-button color="primary" (click)="openCreate()">
+            <mat-icon>add</mat-icon> {{ i18n.t('kanban.new_card') }}
+          </button>
+        </div>
       </div>
 
       @if (loading()) {
@@ -144,6 +150,7 @@ const PRIORITY_COLORS: Record<string, string> = {
     .board-container { padding: 16px; height: calc(100vh - 64px); overflow: hidden; display: flex; flex-direction: column; }
     .board-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-shrink: 0; }
     .board-header h2 { margin: 0; }
+    .header-actions { display: flex; gap: 8px; align-items: center; }
     .board { display: flex; gap: 12px; flex: 1; overflow-x: auto; align-items: flex-start; }
     .column { width: 240px; min-width: 240px; display: flex; flex-direction: column; }
     /* Classic column header */
@@ -359,6 +366,13 @@ export class KanbanComponent implements OnInit, OnDestroy {
 
   priorityColor(priority: string): string {
     return PRIORITY_COLORS[priority] ?? '#607d8b';
+  }
+
+  openTicketCreate() {
+    this.dialog.open(TicketCreateDialogComponent, {
+      width: '680px', maxWidth: '95vw',
+      data: { mode: 'feed' },
+    });
   }
 
   openCreate() {

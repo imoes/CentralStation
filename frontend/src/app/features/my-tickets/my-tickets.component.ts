@@ -19,6 +19,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { WorkSessionDialogComponent } from '../workflow/work-session-dialog.component';
+import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-create-dialog.component';
 import { environment } from '../../../environments/environment';
 import { I18nService } from '../../core/services/i18n.service';
 
@@ -148,6 +149,9 @@ export class JqlQueryDialogComponent {
         <div class="header-actions">
           <button mat-stroked-button (click)="loadTickets()">
             <mat-icon>refresh</mat-icon> Refresh
+          </button>
+          <button mat-stroked-button (click)="openTicketCreate()">
+            <mat-icon>confirmation_number</mat-icon> Ticket erstellen
           </button>
           <button mat-flat-button color="primary" (click)="openQueryManager()">
             <mat-icon>tune</mat-icon> Manage filters
@@ -510,6 +514,14 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
       },
       error: () => { this.aiGenerating.set(false); this.snackBar.open('Error generating filter', '', { duration: 3000 }); },
     });
+  }
+
+  openTicketCreate() {
+    const ref = this.dialog.open(TicketCreateDialogComponent, {
+      width: '680px', maxWidth: '95vw',
+      data: { mode: 'feed' },
+    });
+    ref.afterClosed().subscribe(result => { if (result?.ok) this.loadTickets(); });
   }
 
   openSession(issue: JiraIssue) {
