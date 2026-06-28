@@ -13,11 +13,14 @@ from app.api.deps import CurrentUser, RequireAnyStaff
 from app.core.database import get_db
 from app.schemas.projects import (
     AttachTicketRequest,
+    BashCommand,
     ChatAction,
+    CodeBlock,
     CreateTicketRequest,
     DepCreate,
     DepResponse,
     PlanGraphResponse,
+    PlanQuestion,
     PlanRequest,
     PlanResponse,
     ProjectChatRequest,
@@ -186,12 +189,16 @@ async def run_planner(body: PlanRequest, db: DB, user: CurrentUser):
         )
         for i, s in enumerate(result.get("steps", []))
     ]
+    q = result.get("question")
     return PlanResponse(
         reply=result.get("reply", ""),
         steps=steps,
         open_points=result.get("open_points", []),
         sources=result.get("sources", []),
         tool_activity=[ToolActivity(**t) for t in result.get("tool_activity", [])],
+        question=PlanQuestion(**q) if isinstance(q, dict) and q.get("text") else None,
+        code_blocks=[CodeBlock(**b) for b in result.get("code_blocks", []) if isinstance(b, dict)],
+        bash_commands=[BashCommand(**c) for c in result.get("bash_commands", []) if isinstance(c, dict)],
     )
 
 

@@ -69,12 +69,31 @@ export interface ToolActivity {
   ok: boolean;
 }
 
+export interface CodeBlock {
+  lang: string;
+  filename?: string;
+  content: string;
+}
+
+export interface BashCommand {
+  command: string;
+  purpose: string;
+}
+
+export interface PlanQuestion {
+  text: string;
+  options: string[];
+}
+
 export interface PlanResponse {
   reply: string;
   steps: ProposedStep[];
   open_points: string[];
   sources: string[];
   tool_activity: ToolActivity[];
+  question?: PlanQuestion;
+  code_blocks: CodeBlock[];
+  bash_commands: BashCommand[];
 }
 
 @Injectable({ providedIn: 'root' })

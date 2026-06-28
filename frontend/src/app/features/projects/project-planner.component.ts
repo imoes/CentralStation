@@ -7,7 +7,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
-import { ProjectsService, ProposedStep, ToolActivity } from '../../core/services/projects.service';
+import { ProjectsService, ProposedStep, ToolActivity, CodeBlock, BashCommand, PlanQuestion } from '../../core/services/projects.service';
 import { I18nService } from '../../core/services/i18n.service';
 import { ThemeService } from '../../core/services/theme.service';
 
@@ -17,6 +17,9 @@ interface ChatMsg {
   activity?: ToolActivity[];
   sources?: string[];
   openPoints?: string[];
+  question?: PlanQuestion;
+  codeBlocks?: CodeBlock[];
+  bashCommands?: BashCommand[];
 }
 
 const ISSUE_COLORS: Record<string, string> = {
@@ -68,6 +71,63 @@ const ISSUE_COLORS: Record<string, string> = {
                   </div>
                 }
                 <div class="msg-bubble">{{ msg.content }}</div>
+
+                <!-- Decision question -->
+                @if (msg.question && $last) {
+                  <div class="question-block">
+                    <div class="question-text"><mat-icon>help_outline</mat-icon> {{ msg.question.text }}</div>
+                    <div class="option-list">
+                      @for (opt of msg.question.options; track $index) {
+                        <button class="option-btn" (click)="selectOption(opt)">{{ opt }}</button>
+                      }
+                    </div>
+                    @if (showOtherInput()) {
+                      <div class="other-row">
+                        <input class="other-input" [(ngModel)]="otherText" placeholder="Eigene Antwort…" (keydown.enter)="sendOther()" />
+                        <button class="option-btn send-other" (click)="sendOther()"><mat-icon>send</mat-icon></button>
+                      </div>
+                    } @else {
+                      <button class="option-btn other-btn" (click)="showOtherInput.set(true)">
+                        <mat-icon>edit</mat-icon> Andere…
+                      </button>
+                    }
+                  </div>
+                }
+
+                <!-- Code blocks -->
+                @if (msg.codeBlocks?.length) {
+                  @for (cb of msg.codeBlocks!; track $index) {
+                    <div class="code-block">
+                      <div class="code-header">
+                        <span class="code-lang">{{ cb.lang }}</span>
+                        @if (cb.filename) { <span class="code-filename">{{ cb.filename }}</span> }
+                        <button class="copy-btn" (click)="copy(cb.content)" title="Kopieren">
+                          <mat-icon>content_copy</mat-icon>
+                        </button>
+                      </div>
+                      <pre class="code-pre"><code>{{ cb.content }}</code></pre>
+                    </div>
+                  }
+                }
+
+                <!-- Bash commands -->
+                @if (msg.bashCommands?.length) {
+                  <div class="bash-section">
+                    @for (cmd of msg.bashCommands!; track $index) {
+                      <div class="bash-block">
+                        <div class="bash-header">
+                          <mat-icon>terminal</mat-icon>
+                          <span class="bash-purpose">{{ cmd.purpose }}</span>
+                          <button class="copy-btn" (click)="copy(cmd.command)" title="Kopieren">
+                            <mat-icon>content_copy</mat-icon>
+                          </button>
+                        </div>
+                        <pre class="bash-cmd">{{ cmd.command }}</pre>
+                      </div>
+                    }
+                  </div>
+                }
+
                 @if (msg.openPoints?.length) {
                   <div class="annot open-points">
                     <div class="annot-label"><mat-icon>flag</mat-icon> {{ i18n.t('projects.open_points') }}</div>
@@ -350,6 +410,85 @@ const ISSUE_COLORS: Record<string, string> = {
     .t-lcars .btn-solid { background:#FF9933; color:#000; }
     .t-lcars .preview-label, .t-lcars .dialog h3 { color:#FF9933; }
     .t-lcars .preview-empty, .t-lcars .chat-welcome { color:#e8a060; }
+
+    /* ── Decision questions ── */
+    .question-block { max-width:88%; padding:12px 14px; border-radius:10px; display:flex; flex-direction:column; gap:8px; }
+    .question-text { display:flex; align-items:flex-start; gap:6px; font-size:.9rem; font-weight:600; }
+    .question-text mat-icon { font-size:18px; width:18px; height:18px; flex-shrink:0; margin-top:1px; }
+    .option-list { display:flex; flex-direction:column; gap:6px; }
+    .option-btn {
+      display:flex; align-items:center; gap:6px;
+      border:none; border-radius:6px; padding:8px 12px; cursor:pointer;
+      font-size:.85rem; font-weight:600; text-align:left; line-height:1.4;
+      transition:filter .12s;
+    }
+    .option-btn:hover { filter:brightness(1.12); }
+    .other-btn { opacity:.75; }
+    .other-row { display:flex; align-items:center; gap:6px; }
+    .other-input { flex:1; border-radius:6px; padding:7px 10px; font-size:.9rem; outline:none; }
+    .send-other { padding:7px 10px; }
+
+    /* ── Code blocks ── */
+    .code-block { max-width:100%; border-radius:8px; overflow:hidden; }
+    .code-header {
+      display:flex; align-items:center; gap:8px; padding:5px 10px; font-size:.74rem; font-weight:700; letter-spacing:.06em;
+    }
+    .code-lang { text-transform:uppercase; opacity:.7; }
+    .code-filename { font-family:'Fira Code',monospace; opacity:.85; }
+    .code-header .copy-btn { margin-left:auto; border:none; background:transparent; cursor:pointer; opacity:.6; padding:2px 4px; border-radius:4px; display:flex; align-items:center; }
+    .code-header .copy-btn:hover { opacity:1; }
+    .code-header .copy-btn mat-icon { font-size:14px; width:14px; height:14px; }
+    .code-pre { margin:0; padding:12px 14px; font-size:.82rem; font-family:'Fira Code',monospace; overflow-x:auto; line-height:1.6; white-space:pre; }
+
+    /* ── Bash commands ── */
+    .bash-section { display:flex; flex-direction:column; gap:8px; max-width:100%; }
+    .bash-block { border-radius:8px; overflow:hidden; }
+    .bash-header {
+      display:flex; align-items:center; gap:6px; padding:5px 10px; font-size:.74rem; font-weight:700;
+    }
+    .bash-header mat-icon { font-size:14px; width:14px; height:14px; }
+    .bash-purpose { flex:1; }
+    .bash-header .copy-btn { border:none; background:transparent; cursor:pointer; opacity:.6; padding:2px 4px; border-radius:4px; display:flex; align-items:center; }
+    .bash-header .copy-btn:hover { opacity:1; }
+    .bash-header .copy-btn mat-icon { font-size:14px; width:14px; height:14px; }
+    .bash-cmd { margin:0; padding:10px 14px; font-size:.85rem; font-family:'Fira Code',monospace; overflow-x:auto; white-space:pre; }
+
+    /* ── theme: CLASSIC ── */
+    .t-classic .question-block { background:#eef4fb; border:1px solid #b8d0ea; }
+    .t-classic .question-text { color:#1565c0; }
+    .t-classic .option-btn { background:#e3eef9; color:#1565c0; border:1px solid #b8d0ea; }
+    .t-classic .other-input { background:#fff; border:1px solid #d7e0ea; color:#1f2933; }
+    .t-classic .code-block { background:#f7f9fc; border:1px solid #d7e0ea; }
+    .t-classic .code-header { background:#eef2f7; color:#3a5a78; }
+    .t-classic .code-pre { background:#f7f9fc; color:#1f2933; }
+    .t-classic .bash-block { background:#1a1a1a; }
+    .t-classic .bash-header { background:#2a2a2a; color:#90EE90; }
+    .t-classic .bash-cmd { background:#1a1a1a; color:#90EE90; }
+
+    /* ── theme: HOLO ── */
+    .t-holo .question-block { background:rgba(79,214,255,.08); border:1px solid rgba(79,214,255,.3); }
+    .t-holo .question-text { color:#9fe8ff; }
+    .t-holo .option-btn { background:rgba(79,214,255,.12); color:#9fe8ff; border:1px solid rgba(79,214,255,.4); }
+    .t-holo .other-input { background:rgba(2,6,15,.6); border:1px solid rgba(79,214,255,.3); color:#cfeeff; }
+    .t-holo .code-block { background:rgba(10,20,30,.7); border:1px solid rgba(79,214,255,.2); }
+    .t-holo .code-header { background:rgba(79,214,255,.1); color:#9fe8ff; }
+    .t-holo .code-pre { background:rgba(10,20,30,.7); color:#cfeeff; }
+    .t-holo .bash-block { background:rgba(5,15,25,.8); border:1px solid rgba(79,214,255,.2); }
+    .t-holo .bash-header { background:rgba(79,214,255,.1); color:#7fe87f; }
+    .t-holo .bash-cmd { background:rgba(5,15,25,.8); color:#7fe87f; }
+
+    /* ── theme: LCARS ── */
+    .t-lcars .question-block { background:#15120c; border-left:5px solid #FFCC99; }
+    .t-lcars .question-text { color:#FFCC99; }
+    .t-lcars .option-btn { background:#1a1206; color:#ffe8a0; border:1px solid #3a2810; }
+    .t-lcars .option-btn:hover { background:#262010; }
+    .t-lcars .other-input { background:#15120c; border:1px solid #3a2810; color:#ffe8a0; }
+    .t-lcars .code-block { background:#0a0804; border:1px solid #3a2810; }
+    .t-lcars .code-header { background:#15120c; color:#99CCFF; }
+    .t-lcars .code-pre { background:#0a0804; color:#ffe8a0; }
+    .t-lcars .bash-block { background:#0a0804; border:1px solid #2a1a08; }
+    .t-lcars .bash-header { background:#15120c; color:#90EE90; }
+    .t-lcars .bash-cmd { background:#0a0804; color:#90EE90; }
   `],
 })
 export class ProjectPlannerComponent implements AfterViewInit {
@@ -369,7 +508,9 @@ export class ProjectPlannerComponent implements AfterViewInit {
   showSaveDialog = signal(false);
   saving = signal(false);
   editing = signal<ProposedStep | null>(null);
+  showOtherInput = signal(false);
   inputText = '';
+  otherText = '';
   saveName = '';
   saveDescription = '';
 
@@ -395,9 +536,14 @@ export class ProjectPlannerComponent implements AfterViewInit {
     this.svc.runPlanner(allMsgs).subscribe({
       next: resp => {
         this.thinking.set(false);
+        this.showOtherInput.set(false);
+        this.otherText = '';
         this.messages.update(ms => [...ms, {
           role: 'assistant', content: resp.reply,
           activity: resp.tool_activity, sources: resp.sources, openPoints: resp.open_points,
+          question: resp.question,
+          codeBlocks: resp.code_blocks,
+          bashCommands: resp.bash_commands,
         }]);
         if (resp.steps.length > 0) this.proposedSteps.set(resp.steps);
         if (!this.saveName) this.saveName = this.guessName(content);
@@ -477,6 +623,24 @@ export class ProjectPlannerComponent implements AfterViewInit {
       },
       error: () => { this.saving.set(false); this.snack.open('Fehler beim Speichern', 'OK', { duration: 3000 }); },
     });
+  }
+
+  selectOption(opt: string) {
+    this.showOtherInput.set(false);
+    this.inputText = opt;
+    this.send();
+  }
+
+  sendOther() {
+    if (!this.otherText.trim()) return;
+    this.inputText = this.otherText.trim();
+    this.otherText = '';
+    this.showOtherInput.set(false);
+    this.send();
+  }
+
+  copy(text: string) {
+    navigator.clipboard.writeText(text).catch(() => {});
   }
 
   back() { this.router.navigate(['/projects']); }
