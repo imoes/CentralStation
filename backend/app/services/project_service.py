@@ -6,12 +6,15 @@ All write operations broadcast a 'project_updated' WS event so the frontend
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+log = logging.getLogger(__name__)
 
 from app.models.projects import Project, ProjectStep, ProjectStepDep
 from app.schemas.projects import (
@@ -220,6 +223,13 @@ async def update_step(db: AsyncSession, step_id: str, project_id: str, **kwargs)
         from fastapi import HTTPException
         raise HTTPException(404, f"Step {step_id} not found")
 
+    # Track which Jira-relevant fields changed before saving
+    jira_changes: dict[str, Any] = {}
+    if step.jira_key:
+        for field in ("title", "description", "priority", "status"):
+            if field in kwargs and kwargs[field] != getattr(step, field, None):
+                jira_changes[field] = kwargs[field]
+
     for k, v in kwargs.items():
         if v is None or not hasattr(step, k):
             continue
@@ -227,6 +237,93 @@ async def update_step(db: AsyncSession, step_id: str, project_id: str, **kwargs)
             setattr(step, k, json.dumps(v))
         else:
             setattr(step, k, v)
+    step.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(step)
+    await _broadcast(project_id)
+
+    # Push changed fields to Jira (non-blocking — failure never aborts the save)
+    if step.jira_key and jira_changes:
+        try:
+            await _push_step_to_jira(db, step, jira_changes)
+        except Exception as exc:
+            log.warning("Jira push failed for step %s: %s", step_id, exc)
+
+    return step
+
+
+async def _push_step_to_jira(db: AsyncSession, step: ProjectStep, changes: dict[str, Any]) -> None:
+    """Push local step changes to the linked Jira ticket."""
+    from app.api.kanban import _get_preferred_connector
+    from app.services.connectors.jira import JiraConnector
+
+    connector_type = step.jira_connector_type or "jira"
+    connector = await _get_preferred_connector(db, connector_type, None)
+    if not connector:
+        return
+    jira = JiraConnector(connector)
+
+    # Map priority to Jira priority names
+    PRIORITY_MAP = {
+        "highest": "Highest", "high": "High", "medium": "Medium",
+        "low": "Low", "lowest": "Lowest",
+    }
+
+    # Collect field updates
+    update_kwargs: dict[str, Any] = {}
+    if "title" in changes:
+        update_kwargs["summary"] = changes["title"]
+    if "description" in changes:
+        update_kwargs["description"] = changes["description"] or ""
+    if "priority" in changes:
+        update_kwargs["priority"] = PRIORITY_MAP.get(changes["priority"], "Medium")
+
+    if update_kwargs:
+        await jira.update_issue(step.jira_key, **update_kwargs)
+
+    # Status → transition
+    if "status" in changes:
+        STATUS_CANDIDATES = {
+            "done":        ["Done", "Erledigt", "Closed", "Resolved", "Fertig"],
+            "in_progress": ["In Progress", "In Bearbeitung", "In Arbeit", "Open", "Offen"],
+            "pending":     ["To Do", "Offen", "Open", "New", "Backlog"],
+        }
+        candidates = STATUS_CANDIDATES.get(changes["status"], [])
+        if candidates:
+            await jira.transition_issue_by_candidates(step.jira_key, candidates)
+
+
+async def pull_step_from_jira(db: AsyncSession, step_id: str, project_id: str) -> ProjectStep:
+    """Fetch latest Jira status and sync it back to the step."""
+    step = await _get_step(db, step_id, project_id)
+    if not step.jira_key:
+        from fastapi import HTTPException
+        raise HTTPException(400, "Step has no linked Jira ticket")
+
+    from app.api.kanban import _get_preferred_connector
+    from app.services.connectors.jira import JiraConnector
+
+    connector_type = step.jira_connector_type or "jira"
+    connector = await _get_preferred_connector(db, connector_type, None)
+    if not connector:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Jira connector not found")
+
+    jira = JiraConnector(connector)
+    issue = await jira.get_issue_detail(step.jira_key)
+    fields = issue.get("fields", {})
+
+    step.jira_status = fields.get("status", {}).get("name")
+    cat = fields.get("status", {}).get("statusCategory", {}).get("key", "")
+    step.jira_status_category = _map_jira_category(cat)
+    step.jira_synced_at = datetime.now(timezone.utc)
+    _derive_step_status(step)
+
+    # Sync back assignee if available
+    assignee = fields.get("assignee") or {}
+    if assignee.get("displayName"):
+        step.assignee = assignee["displayName"]
+
     step.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(step)
@@ -496,6 +593,69 @@ def _derive_step_status(step: ProjectStep) -> None:
         step.status = "in_progress"
     else:
         step.status = "pending"
+
+
+# ── Ready steps (für Kanban) ──────────────────────────────────────────────────
+
+async def get_ready_steps(db: AsyncSession) -> list[dict[str, Any]]:
+    """Return all steps that are actionable: not done, and all upstream deps done."""
+    # Load all non-done steps + their projects
+    from sqlalchemy.orm import selectinload
+    steps_res = await db.execute(
+        select(ProjectStep).where(ProjectStep.status != "done")
+    )
+    steps = list(steps_res.scalars())
+    if not steps:
+        return []
+
+    step_ids = [s.id for s in steps]
+    all_ids = {s.id for s in steps}
+
+    # Load deps for these steps
+    deps_res = await db.execute(
+        select(ProjectStepDep).where(ProjectStepDep.step_id.in_(step_ids))
+    )
+    deps = list(deps_res.scalars())
+
+    # For each step find its upstream deps
+    step_to_deps: dict[Any, list[Any]] = {s.id: [] for s in steps}
+    for d in deps:
+        step_to_deps[d.step_id].append(d.depends_on_step_id)
+
+    # Load statuses of upstream deps (they may be done and thus not in `steps`)
+    upstream_ids = {d.depends_on_step_id for d in deps}
+    done_ids: set[Any] = set()
+    if upstream_ids:
+        up_res = await db.execute(
+            select(ProjectStep.id, ProjectStep.status).where(ProjectStep.id.in_(upstream_ids))
+        )
+        for row in up_res:
+            if row.status == "done":
+                done_ids.add(row.id)
+
+    # Projects lookup
+    project_ids = {s.project_id for s in steps}
+    proj_res = await db.execute(select(Project).where(Project.id.in_(project_ids)))
+    projects = {p.id: p for p in proj_res.scalars()}
+
+    ready = []
+    for s in steps:
+        upstream = step_to_deps[s.id]
+        # A step is "ready" if it has no upstream deps OR all upstream are done
+        if all(dep_id in done_ids for dep_id in upstream):
+            proj = projects.get(s.project_id)
+            ready.append({
+                "step_id": str(s.id),
+                "project_id": str(s.project_id),
+                "project_name": proj.name if proj else "?",
+                "title": s.title,
+                "jira_issue_type": s.jira_issue_type,
+                "priority": s.priority,
+                "status": s.status,
+                "jira_key": s.jira_key,
+                "assignee": s.assignee,
+            })
+    return ready
 
 
 # ── Bulk create from KI plan ──────────────────────────────────────────────────

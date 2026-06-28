@@ -14,7 +14,9 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatBadgeModule } from '@angular/material/badge';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { Subject, takeUntil } from 'rxjs';
+import { RouterModule } from '@angular/router';
 import { KanbanService } from '../../core/services/kanban.service';
+import { ProjectsService, ReadyStep } from '../../core/services/projects.service';
 import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
 import { KanbanCard, KanbanColumn, KanbanStatus } from '../../core/models/kanban.model';
 import { KanbanCardDialogComponent } from './kanban-card-dialog.component';
@@ -44,6 +46,7 @@ const PRIORITY_COLORS: Record<string, string> = {
     MatCardModule, MatButtonModule, MatIconModule,
     MatChipsModule, MatDialogModule, MatProgressSpinnerModule,
     MatTooltipModule, MatBadgeModule, MatSnackBarModule,
+    RouterModule,
   ],
   template: `
     <div class="board-container">
@@ -64,6 +67,30 @@ const PRIORITY_COLORS: Record<string, string> = {
                 <span class="col-title">{{ col.label }}</span>
                 <span class="col-count">{{ getColumn(col.id).length }}</span>
               </div>
+              <!-- Ready project steps (only in Todo column) -->
+              @if (col.id === 'todo' && readySteps().length > 0) {
+                <div class="ready-steps-section">
+                  <div class="ready-steps-header">
+                    <mat-icon style="font-size:12px;width:12px;height:12px">folder_open</mat-icon>
+                    Projektaufgaben
+                  </div>
+                  @for (step of readySteps(); track step.step_id) {
+                    <div class="ready-step-card" [attr.data-type]="step.jira_issue_type">
+                      <div class="ready-step-header">
+                        <span class="ready-step-type">{{ step.jira_issue_type.toUpperCase() }}</span>
+                        @if (step.jira_key) {
+                          <span class="ready-step-jira">{{ step.jira_key }}</span>
+                        }
+                        <a class="ready-step-project" [routerLink]="['/projects', step.project_id]">{{ step.project_name }}</a>
+                      </div>
+                      <div class="ready-step-title">{{ step.title }}</div>
+                      <button class="ready-step-done" (click)="markStepDone(step)">
+                        <mat-icon style="font-size:13px;width:13px;height:13px">check</mat-icon> Erledigt
+                      </button>
+                    </div>
+                  }
+                </div>
+              }
               <div
                 cdkDropList
                 [id]="col.id"
@@ -197,6 +224,43 @@ const PRIORITY_COLORS: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .card-desc { color: #e8a060; }
     .empty-column { text-align: center; padding: 16px; color: var(--mat-sys-on-surface-variant); font-size: 12px; }
     .spinner-center { display: flex; justify-content: center; padding: 40px; }
+
+    /* Ready Project Steps */
+    .ready-steps-section { margin-bottom: 8px; }
+    .ready-steps-header {
+      display: flex; align-items: center; gap: 4px;
+      font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+      color: var(--mat-sys-on-surface-variant); padding: 4px 8px 6px;
+    }
+    .ready-step-card {
+      background: var(--mat-sys-surface); border-left: 4px solid #1976d2;
+      border-radius: 4px; padding: 8px 10px; margin-bottom: 6px;
+      font-size: 12px;
+    }
+    .ready-step-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+    .ready-step-type {
+      font-size: 10px; font-weight: 700; background: #1976d233; color: #1976d2;
+      padding: 1px 5px; border-radius: 3px;
+    }
+    .ready-step-jira {
+      font-size: 10px; font-weight: 700; font-family: 'Fira Code', monospace;
+      background: rgba(0,82,204,.15); color: #0052cc; padding: 1px 5px; border-radius: 3px;
+    }
+    .ready-step-project {
+      font-size: 10px; color: var(--mat-sys-on-surface-variant); text-decoration: none; margin-left: auto;
+    }
+    .ready-step-project:hover { text-decoration: underline; }
+    .ready-step-title { font-weight: 600; font-size: 12px; margin-bottom: 6px; line-height: 1.3; }
+    .ready-step-done {
+      display: flex; align-items: center; gap: 4px;
+      background: #388e3c22; border: 1px solid #388e3c; color: #388e3c;
+      border-radius: 3px; padding: 2px 8px; font-size: 11px; cursor: pointer;
+      transition: background .15s;
+    }
+    .ready-step-done:hover { background: #388e3c44; }
+    :host-context(html.cs-theme-lcars) .ready-step-card { background: #0a0804; border-left-color: #FFCC99; }
+    :host-context(html.cs-theme-lcars) .ready-step-type { background: #FFCC9933; color: #FFCC99; }
+    :host-context(html.cs-theme-lcars) .ready-step-title { color: #ffe8a0; }
     .cdk-drag-preview { box-shadow: 0 8px 16px rgba(0,0,0,.4); }
     .cdk-drag-placeholder { opacity: 0.3; }
     .cdk-drag-animating { transition: transform 200ms; }
@@ -205,10 +269,12 @@ const PRIORITY_COLORS: Record<string, string> = {
 })
 export class KanbanComponent implements OnInit, OnDestroy {
   readonly i18n = inject(I18nService);
+  private projectsSvc = inject(ProjectsService);
 
   columns = COLUMNS;
   columnIds = COLUMNS.map(c => c.id);
   loading = signal(true);
+  readySteps = signal<ReadyStep[]>([]);
 
   private cards = signal<KanbanCard[]>([]);
   private destroy$ = new Subject<void>();
@@ -222,14 +288,35 @@ export class KanbanComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.load();
+    this.loadReadySteps();
     this.ws.messages().pipe(takeUntil(this.destroy$)).subscribe((msg: WsMessage) => {
       if (msg.type === 'kanban_update' || msg.type === 'kanban_move') {
         this.load();
+      }
+      if (msg.type === 'project_updated') {
+        this.loadReadySteps();
       }
     });
   }
 
   ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); }
+
+  loadReadySteps() {
+    this.projectsSvc.getReadySteps().subscribe({
+      next: steps => this.readySteps.set(steps),
+      error: () => {},
+    });
+  }
+
+  markStepDone(step: ReadyStep) {
+    this.projectsSvc.updateStep(step.project_id, step.step_id, { status: 'done' } as any).subscribe({
+      next: () => {
+        this.snack.open(`"${step.title}" als erledigt markiert`, 'OK', { duration: 2000 });
+        this.loadReadySteps();
+      },
+      error: () => this.snack.open('Fehler beim Aktualisieren', 'OK', { duration: 2000 }),
+    });
+  }
 
   load() {
     this.svc.list().subscribe({
