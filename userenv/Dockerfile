@@ -104,6 +104,25 @@ RUN code-server \
     && chmod -R a+rX /opt/cs-extensions \
     && ls -1 /opt/cs-extensions
 
+# ── Navigator shim (build-time, needs root write access to /usr/lib) ──
+# Patched at image build so the entrypoint (running as yolo) doesn't need
+# root to modify /usr/lib/code-server. Only applied if pattern is still present.
+RUN _ep="/usr/lib/code-server/lib/vscode/out/vs/workbench/api/node/extensionHostProcess.js"; \
+    if grep -qF 'vscode-extensions/navigator' "$_ep" && \
+       ! grep -qF 'userAgent:"node"' "$_ep"; then \
+        sed -i \
+            's|get:()=>{ea(new Zs("navigator is now a global in nodejs, please see https://aka.ms/vscode-extensions/navigator for additional info on this error."))}|get:()=>({userAgent:"node",platform:process.platform,language:"en-US",languages:["en-US"],onLine:!0,hardwareConcurrency:2,cookieEnabled:!1,appName:"Netscape",appVersion:"5.0",product:"Gecko"})|g' \
+            "$_ep" && echo "Dockerfile: patched navigator shim"; \
+    fi; \
+    true
+
+# ── Persistent pip user packages ──────────────────────────────────────
+# A user virtualenv lives at /home/yolo/pip/venv (on volume cs-pip-<uid>).
+# The entrypoint creates it on first start if it doesn't exist yet.
+# PATH is prepended so the user venv wins over the system /opt/venv.
+ENV PATH=/home/yolo/pip/venv/bin:$PATH
+RUN mkdir -p /home/yolo/pip && chown yolo:yolo /home/yolo/pip
+
 RUN touch /home/yolo/.bashrc && chown yolo:yolo /home/yolo/.bashrc
 
 COPY userenv/entrypoint.sh /usr/local/bin/cs-entrypoint.sh
