@@ -384,6 +384,8 @@ import { I18nService } from '../../core/services/i18n.service';
     .wr-overlay-header button { margin-left: auto; }
     @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
     .wr-pulse { animation: pulse 1.2s infinite; }
+    @keyframes wrFlash { 0%,100% { box-shadow: none; } 30%,70% { box-shadow: 0 0 0 3px #c62828, 0 0 24px rgba(198,40,40,.6); } }
+    .wr-highlight { animation: wrFlash 2s ease; }
     .wr-overlay-actions { display: flex; gap: 10px; margin-top: 16px; justify-content: flex-end; }
     .loading-card {
       display: flex;
@@ -1108,10 +1110,24 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   dismissWarRoom() { this.warRoomActive.set(false); }
 
   scrollToWarRoom() {
-    setTimeout(() => {
-      const el = document.querySelector('[gs-type="war_room"]') as HTMLElement | null;
-      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 100);
+    const wrWidget = this.widgets().find(w => w.widget_type === 'war_room');
+    if (wrWidget) {
+      setTimeout(() => {
+        const el = document.querySelector(`[gs-id="${wrWidget.id}"]`) as HTMLElement | null;
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('wr-highlight');
+          setTimeout(() => el.classList.remove('wr-highlight'), 2000);
+        }
+      }, 100);
+    } else {
+      // No war_room widget yet — regenerate; the generative designer inserts one at critical/high
+      if (!this.generativeMode()) {
+        this.generativeMode.set(true);
+        localStorage.setItem(this.GEN_KEY, '1');
+      }
+      this.regenerate();
+    }
   }
 
   refreshWarRoomWidgets() {
