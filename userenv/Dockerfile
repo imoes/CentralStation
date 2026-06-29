@@ -1,9 +1,12 @@
 # Per-user unified Werkbank+Hermes image.
 # Runs both code-server (VS Code in the browser, port 8080) and Hermes
-# (FastAPI, port 8001) in the same container so they share /root/.ssh and /root/workspaces.
+# (FastAPI, port 8001) in the same container so they share ~/.ssh and ~/workspaces.
 #
 # Base: codercom/code-server:latest — ships /usr/lib/code-server/lib/node needed by
 # the CSP/OAuth entrypoint patches.  Python 3.11 and Hermes are added on top.
+#
+# Runtime user: yolo (UID 1000) — non-root so Claude Code's
+# --dangerously-skip-permissions is available (blocked for root since 2.1.195).
 #
 # Build:  docker compose build userenv   (tags centralstation-userenv:latest)
 FROM codercom/code-server:latest
@@ -35,7 +38,7 @@ RUN if [ -n "$HTTP_PROXY" ]; then \
 # Includes network diagnostics (Hermes SSH/ping), python3 (Ansible+pip), git.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        git openssh-client ca-certificates curl jq wget \
+        git openssh-client ca-certificates curl jq wget sudo \
         python3 python3-pip python3-venv \
         iputils-ping traceroute nmap dnsutils netcat-openbsd mtr-tiny iproute2 \
     && rm -rf /var/lib/apt/lists/*
@@ -46,8 +49,19 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# ── Runtime user: yolo (UID 1000) ────────────────────────────────────
+# The base image ships user "coder" at UID 1000; we rename it to "yolo" so
+# claude --dangerously-skip-permissions works (blocked for root ≥2.1.195).
+# Passwordless sudo retained for maintenance tasks inside the container.
+RUN usermod -l yolo coder \
+    && usermod -d /home/yolo -m yolo \
+    && groupmod -n yolo coder \
+    && echo 'yolo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
 # ── Python venv (avoids Debian PEP 668 protection + RECORD-less system packages) ─
-RUN python3 -m venv /opt/venv
+# World-readable so yolo can use it.
+RUN python3 -m venv /opt/venv \
+    && chmod -R a+rX /opt/venv
 ENV PATH=/opt/venv/bin:$PATH \
     VIRTUAL_ENV=/opt/venv
 
@@ -56,7 +70,8 @@ RUN pip install --no-cache-dir ansible ansible-lint
 
 # ── Hermes AI agent ───────────────────────────────────────────────────
 RUN git clone --depth=1 https://github.com/NousResearch/hermes-agent /opt/hermes \
-    && pip install --no-cache-dir /opt/hermes
+    && pip install --no-cache-dir /opt/hermes \
+    && chmod -R a+rX /opt/hermes
 
 WORKDIR /app
 COPY userenv/requirements.txt ./requirements.txt
@@ -66,28 +81,33 @@ COPY userenv/main.py ./main.py
 COPY userenv/hermes_config.yaml ./hermes_config.yaml
 ENV PYTHONPATH=/opt/hermes
 
-# ── Claude Code CLI ───────────────────────────────────────────────────
-ENV PATH=/root/.local/bin:$PATH
+# ── Claude Code CLI (installed as yolo so it lands in /home/yolo/.local/bin) ──
+USER yolo
 RUN curl -fsSL https://claude.ai/install.sh | bash \
-    && (ln -sf /root/.local/bin/claude /usr/local/bin/claude 2>/dev/null || true) \
-    && claude --version
-ENV CLAUDE_CONFIG_DIR=/root/.claude
+    && /home/yolo/.local/bin/claude --version
+USER root
+# Symlink so all users (and exec_run) can reach the binary via PATH.
+RUN ln -sf /home/yolo/.local/bin/claude /usr/local/bin/claude
+ENV PATH=/home/yolo/.local/bin:$PATH \
+    CLAUDE_CONFIG_DIR=/home/yolo/.claude
 
-# ── Codex CLI (@openai/codex) ─────────────────────────────────────────
+# ── Codex CLI (@openai/codex) — global so yolo can use it ────────────
 RUN npm install -g @openai/codex
 
 # ── VS Code extensions baked into image ──────────────────────────────
-# Installed to /opt/cs-extensions (not into /root/.local which is per-user bind mount).
+# Installed to /opt/cs-extensions (not into $HOME which is per-user bind mount).
 # The entrypoint seeds them into each user's extensions dir on first start.
 RUN code-server \
         --extensions-dir /opt/cs-extensions \
         --install-extension Anthropic.claude-code \
         --install-extension openai.chatgpt \
+    && chmod -R a+rX /opt/cs-extensions \
     && ls -1 /opt/cs-extensions
 
-RUN touch /root/.bashrc
+RUN touch /home/yolo/.bashrc && chown yolo:yolo /home/yolo/.bashrc
 
 COPY userenv/entrypoint.sh /usr/local/bin/cs-entrypoint.sh
 RUN chmod +x /usr/local/bin/cs-entrypoint.sh
 
+USER yolo
 ENTRYPOINT ["/usr/local/bin/cs-entrypoint.sh"]
