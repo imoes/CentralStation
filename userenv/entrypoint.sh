@@ -9,6 +9,13 @@ set -e
 SSH_DIR="$HOME/.ssh"
 HOST_SSH="$HOME/.ssh_host"
 
+# Sanity-check: container must not run as root (claude --dangerously-skip-permissions is
+# blocked for root since 2.1.195). The image sets USER yolo (1000); if someone overrides
+# this, warn loudly but continue so the rest of the stack still works.
+if [ "$(id -u)" = "0" ]; then
+    echo "cs-entrypoint: WARNING — running as root; claude --dangerously-skip-permissions will be unavailable" >&2
+fi
+
 mkdir -p "$SSH_DIR"
 chmod 700 "$SSH_DIR"
 
@@ -135,17 +142,22 @@ if ! grep -q '"disableRemoteControl"' "$_managed" 2>/dev/null; then
 fi
 unset _managed
 
-# ── VS Code user settings: disallow dangerouslySkipPermissions as root ─
-# claudeCode.allowDangerouslySkipPermissions=true causes claude ≥2.1.195
-# to exit with code 1 when run as root — the container user is root.
+# ── VS Code user settings: enable dangerouslySkipPermissions for yolo ─
+# Container runs as non-root user yolo (UID 1000), so claude ≥2.1.195 permits
+# --dangerously-skip-permissions. Ensure the setting is present and true.
 _vscode_settings="$HOME/.local/share/code-server/User/settings.json"
-if grep -q '"claudeCode.allowDangerouslySkipPermissions"' "$_vscode_settings" 2>/dev/null; then
+mkdir -p "$(dirname "$_vscode_settings")"
+if [ ! -f "$_vscode_settings" ]; then
+    printf '{\n    "keyboard.layout": "de",\n    "workbench.startupEditor": "none",\n    "claudeCode.allowDangerouslySkipPermissions": true\n}\n' \
+        > "$_vscode_settings"
+    echo "cs-entrypoint: wrote VS Code user settings with allowDangerouslySkipPermissions=true"
+elif ! grep -q '"claudeCode.allowDangerouslySkipPermissions"' "$_vscode_settings" 2>/dev/null; then
     /usr/lib/code-server/lib/node -e "
         const fs=require('fs'), p=process.argv[1];
         let s=JSON.parse(fs.readFileSync(p,'utf8'));
-        delete s['claudeCode.allowDangerouslySkipPermissions'];
+        s['claudeCode.allowDangerouslySkipPermissions']=true;
         fs.writeFileSync(p,JSON.stringify(s,null,4));
-    " "$_vscode_settings" && echo "cs-entrypoint: removed allowDangerouslySkipPermissions from VS Code settings"
+    " "$_vscode_settings" && echo "cs-entrypoint: added allowDangerouslySkipPermissions=true to VS Code settings"
 fi
 unset _vscode_settings
 
