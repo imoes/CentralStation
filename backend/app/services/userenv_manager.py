@@ -23,7 +23,8 @@ USERENV_ANSIBLE_PATH = os.getenv("IDE_ANSIBLE_PATH", "")
 USERENV_WORKSPACES_BASE = os.getenv("IDE_WORKSPACES_BASE", "/opt/centralstation/ide-workspaces")
 # Config file for Hermes (hermes_config.yaml path on host)
 USERENV_CONFIG_PATH = os.getenv("USERENV_CONFIG_PATH", "")
-WORKSPACES_DIR = "/root/workspaces"
+WORKSPACES_DIR = "/home/yolo/workspaces"
+_YOLO_HOME = "/home/yolo"
 
 _last_used: dict[str, float] = {}
 
@@ -156,9 +157,9 @@ def ensure_container(user_id: str) -> str:
 
     volumes: dict = {
         ws_path: {"bind": WORKSPACES_DIR, "mode": "rw"},
-        vs_path: {"bind": "/root/.local/share/code-server", "mode": "rw"},
-        config_volume_name(user_id): {"bind": "/root/.claude", "mode": "rw"},
-        f"hermes-state-{user_id}": {"bind": "/root/.hermes", "mode": "rw"},
+        vs_path: {"bind": f"{_YOLO_HOME}/.local/share/code-server", "mode": "rw"},
+        config_volume_name(user_id): {"bind": f"{_YOLO_HOME}/.claude", "mode": "rw"},
+        f"hermes-state-{user_id}": {"bind": f"{_YOLO_HOME}/.hermes", "mode": "rw"},
     }
     # Mount per-user hermes_config.yaml to /app/hermes_config.yaml (NOT into the
     # hermes-state volume at /root/.hermes — Docker volume mounts shadow file bind-mounts
@@ -171,7 +172,7 @@ def ensure_container(user_id: str) -> str:
     if _cfg_to_mount:
         volumes[_cfg_to_mount] = {"bind": "/app/hermes_config.yaml", "mode": "ro"}
     if USERENV_HOST_SSH_DIR:
-        volumes[USERENV_HOST_SSH_DIR] = {"bind": "/root/.ssh_host", "mode": "ro"}
+        volumes[USERENV_HOST_SSH_DIR] = {"bind": f"{_YOLO_HOME}/.ssh_host", "mode": "ro"}
     if USERENV_ANSIBLE_PATH:
         volumes[USERENV_ANSIBLE_PATH] = {"bind": f"{WORKSPACES_DIR}/ansible", "mode": "rw"}
 
@@ -185,7 +186,7 @@ def ensure_container(user_id: str) -> str:
     if _backend_host not in _no_proxy:
         _no_proxy = f"{_backend_host},{_no_proxy}"
     environment = {
-        "HOME": "/root",
+        "HOME": _YOLO_HOME,
         "CS_USER_ID": user_id,
         "CENTRALSTATION_BACKEND_URL": _backend_url,
         "HTTP_PROXY": os.getenv("HTTP_PROXY", ""),
@@ -200,7 +201,7 @@ def ensure_container(user_id: str) -> str:
         USERENV_IMAGE,
         name=name,
         detach=True,
-        user="0:0",
+        user="1000:1000",
         environment=environment,
         volumes=volumes,
         network=USERENV_NETWORK,
@@ -237,10 +238,10 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
         # The sed strips any existing trailing blank lines before we append the required \n.
         c.exec_run(
             ["sh", "-c",
-             "mkdir -p /root/.ssh && "
-             "printf '%s' \"$KEY\" | sed 's/[[:space:]]*$//' > /root/.ssh/user.key && "
-             "printf '\\n' >> /root/.ssh/user.key && "
-             "chmod 600 /root/.ssh/user.key"],
+             "mkdir -p $HOME/.ssh && "
+             "printf '%s' \"$KEY\" | sed 's/[[:space:]]*$//' > $HOME/.ssh/user.key && "
+             "printf '\\n' >> $HOME/.ssh/user.key && "
+             "chmod 600 $HOME/.ssh/user.key"],
             environment={"KEY": key_pem},
         )
 
@@ -253,7 +254,7 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
         f"    User {ssh_user}",
     ]
     if key_pem and key_pem.strip():
-        ssh_cfg_lines.append("    IdentityFile /root/.ssh/user.key")
+        ssh_cfg_lines.append(f"    IdentityFile {_YOLO_HOME}/.ssh/user.key")
     ssh_cfg_lines += [
         f"    ProxyJump {ssh_user}@host.docker.internal",
         "    StrictHostKeyChecking no",
@@ -263,7 +264,7 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
         f"    User {ssh_user}",
     ]
     if key_pem and key_pem.strip():
-        ssh_cfg_lines.append("    IdentityFile /root/.ssh/user.key")
+        ssh_cfg_lines.append(f"    IdentityFile {_YOLO_HOME}/.ssh/user.key")
     ssh_cfg_lines += [
         "    StrictHostKeyChecking no",
         "    ConnectTimeout 10",
@@ -271,7 +272,7 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
     ]
     ssh_cfg = "\n".join(ssh_cfg_lines)
     c.exec_run(
-        ["sh", "-c", "mkdir -p /root/.ssh && printf '%s' \"$CFG\" > /root/.ssh/config && chmod 600 /root/.ssh/config"],
+        ["sh", "-c", "mkdir -p $HOME/.ssh && printf '%s' \"$CFG\" > $HOME/.ssh/config && chmod 600 $HOME/.ssh/config"],
         environment={"CFG": ssh_cfg},
     )
     log.info("userenv_manager: SSH configured for %s (user=%s key=%s)",
@@ -311,7 +312,7 @@ ssh vpp0221.ippen.media 'free -h; uptime'
 ```
 
 ## WORKSPACE
-Alle Dateien, Skripte und Artefakte immer in `/root/workspaces/` ablegen — niemals in /tmp.
+Alle Dateien, Skripte und Artefakte immer in `/home/yolo/workspaces/` ablegen — niemals in /tmp.
 
 ## REGELN
 - SSH-Fehler sofort und vollständig melden (exit code + stderr), nicht ausweichen
@@ -320,7 +321,7 @@ Alle Dateien, Skripte und Artefakte immer in `/root/workspaces/` ablegen — nie
 """
 
     c.exec_run(
-        ["sh", "-c", "mkdir -p /root/.claude && printf '%s' \"$MD\" > /root/.claude/CLAUDE.md"],
+        ["sh", "-c", "mkdir -p $HOME/.claude && printf '%s' \"$MD\" > $HOME/.claude/CLAUDE.md"],
         environment={"MD": content},
     )
     log.info("userenv_manager: CLAUDE.md written for %s", name)
@@ -362,7 +363,7 @@ def configure_claude_credentials(
         # Read existing credentials file so we can preserve extra fields.
         existing: dict = {}
         read_result = c.exec_run(
-            ["sh", "-c", "cat /root/.claude/.credentials.json 2>/dev/null || echo '{}'"],
+            ["sh", "-c", "cat $HOME/.claude/.credentials.json 2>/dev/null || echo '{}'"],
         )
         try:
             existing = json.loads(read_result.output.decode(errors="replace"))
@@ -399,9 +400,9 @@ def configure_claude_credentials(
 
         c.exec_run(
             ["sh", "-c",
-             "mkdir -p /root/.claude && "
-             "printf '%s' \"$C\" > /root/.claude/.credentials.json && "
-             "chmod 600 /root/.claude/.credentials.json"],
+             "mkdir -p $HOME/.claude && "
+             "printf '%s' \"$C\" > $HOME/.claude/.credentials.json && "
+             "chmod 600 $HOME/.claude/.credentials.json"],
             environment={"C": creds},
         )
         log.info("userenv_manager: claude credentials written for %s", container_name(user_id))
