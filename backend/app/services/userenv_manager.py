@@ -154,12 +154,19 @@ def ensure_container(user_id: str) -> str:
     vs_path = vscode_dir(user_id)
     os.makedirs(ws_path, exist_ok=True)
     os.makedirs(vs_path, exist_ok=True)
+    # chown to yolo (UID 1000) so the non-root container user can write to these dirs.
+    for _p in (ws_path, vs_path):
+        try:
+            os.chown(_p, 1000, 1000)
+        except OSError:
+            pass
 
     volumes: dict = {
         ws_path: {"bind": WORKSPACES_DIR, "mode": "rw"},
         vs_path: {"bind": f"{_YOLO_HOME}/.local/share/code-server", "mode": "rw"},
         config_volume_name(user_id): {"bind": f"{_YOLO_HOME}/.claude", "mode": "rw"},
         f"hermes-state-{user_id}": {"bind": f"{_YOLO_HOME}/.hermes", "mode": "rw"},
+        f"cs-pip-{user_id}": {"bind": f"{_YOLO_HOME}/pip", "mode": "rw"},
     }
     # Mount per-user hermes_config.yaml to /app/hermes_config.yaml (NOT into the
     # hermes-state volume at /root/.hermes — Docker volume mounts shadow file bind-mounts

@@ -16,6 +16,18 @@ if [ "$(id -u)" = "0" ]; then
     echo "cs-entrypoint: WARNING — running as root; claude --dangerously-skip-permissions will be unavailable" >&2
 fi
 
+# ── Fix volume ownership ───────────────────────────────────────────────
+# Named Docker volumes are created as root. Use passwordless sudo to chown
+# them to yolo on first start so the rest of the entrypoint can write there.
+_me=$(id -u):$(id -g)
+for _vol in "$HOME/.claude" "$HOME/.hermes" "$HOME/pip"; do
+    if [ -d "$_vol" ] && [ "$(stat -c %u "$_vol")" != "$(id -u)" ]; then
+        sudo chown -R "$_me" "$_vol" && \
+            echo "cs-entrypoint: chowned $_vol → $_me"
+    fi
+done
+unset _me _vol
+
 mkdir -p "$SSH_DIR"
 chmod 700 "$SSH_DIR"
 
@@ -47,6 +59,19 @@ fi
 
 mkdir -p "$HOME/workspaces"
 mkdir -p "$HOME/.hermes"
+
+# ── Persistent user pip venv ───────────────────────────────────────────
+# Lives on the cs-pip-<uid> volume so installed packages survive restarts.
+# Activated via PATH prepend in Dockerfile; .bashrc sources it for terminals.
+if [ ! -f "$HOME/pip/venv/bin/python" ]; then
+    python3 -m venv "$HOME/pip/venv" --system-site-packages && \
+        echo "cs-entrypoint: created user pip venv at $HOME/pip/venv"
+fi
+# Write activation to .bashrc so interactive terminals in code-server use it.
+if ! grep -q 'pip/venv' "$HOME/.bashrc" 2>/dev/null; then
+    printf '\n# Persistent user pip venv (packages survive container restarts)\n[ -f "$HOME/pip/venv/bin/activate" ] && . "$HOME/pip/venv/bin/activate"\n' \
+        >> "$HOME/.bashrc"
+fi
 
 # ── Seed baked VS Code extensions into per-user extensions dir ────────
 _bundled_ext="/opt/cs-extensions"
@@ -123,14 +148,6 @@ for _ext in "$_ext_dir"/anthropic.claude-code-*/; do
 done
 unset _ext_dir _ext _js
 
-# ── navigator shim for extension host ─────────────────────────────────
-_ep_js="/usr/lib/code-server/lib/vscode/out/vs/workbench/api/node/extensionHostProcess.js"
-if [ -f "$_ep_js" ] && grep -qF 'vscode-extensions/navigator' "$_ep_js" && \
-   ! grep -qF 'userAgent:"node"' "$_ep_js"; then
-    sed -i 's|get:()=>{ea(new Zs("navigator is now a global in nodejs, please see https://aka.ms/vscode-extensions/navigator for additional info on this error."))}|get:()=>({userAgent:"node",platform:process.platform,language:"en-US",languages:["en-US"],onLine:!0,hardwareConcurrency:2,cookieEnabled:!1,appName:"Netscape",appVersion:"5.0",product:"Gecko"})|g' "$_ep_js" && \
-        echo "cs-entrypoint: patched navigator shim in extensionHostProcess.js"
-fi
-unset _ep_js
 
 # ── Claude Code managed-settings ──────────────────────────────────────
 _managed="$HOME/.claude/managed-settings.json"
@@ -142,23 +159,30 @@ if ! grep -q '"disableRemoteControl"' "$_managed" 2>/dev/null; then
 fi
 unset _managed
 
-# ── VS Code user settings: enable dangerouslySkipPermissions for yolo ─
-# Container runs as non-root user yolo (UID 1000), so claude ≥2.1.195 permits
-# --dangerously-skip-permissions. Ensure the setting is present and true.
+# ── VS Code user settings ─────────────────────────────────────────────
+# Merge required settings on every start so they survive user edits and updates.
+# - allowDangerouslySkipPermissions: yolo is non-root, so claude ≥2.1.195 permits it.
+# - security.workspace.trust.enabled=false: avoids "Select workspace" trust prompt.
 _vscode_settings="$HOME/.local/share/code-server/User/settings.json"
 mkdir -p "$(dirname "$_vscode_settings")"
-if [ ! -f "$_vscode_settings" ]; then
-    printf '{\n    "keyboard.layout": "de",\n    "workbench.startupEditor": "none",\n    "claudeCode.allowDangerouslySkipPermissions": true\n}\n' \
-        > "$_vscode_settings"
-    echo "cs-entrypoint: wrote VS Code user settings with allowDangerouslySkipPermissions=true"
-elif ! grep -q '"claudeCode.allowDangerouslySkipPermissions"' "$_vscode_settings" 2>/dev/null; then
-    /usr/lib/code-server/lib/node -e "
-        const fs=require('fs'), p=process.argv[1];
-        let s=JSON.parse(fs.readFileSync(p,'utf8'));
-        s['claudeCode.allowDangerouslySkipPermissions']=true;
-        fs.writeFileSync(p,JSON.stringify(s,null,4));
-    " "$_vscode_settings" && echo "cs-entrypoint: added allowDangerouslySkipPermissions=true to VS Code settings"
-fi
+[ -f "$_vscode_settings" ] || printf '{}\n' > "$_vscode_settings"
+/usr/lib/code-server/lib/node -e "
+    const fs=require('fs'), p=process.argv[1];
+    let s={};
+    try { s=JSON.parse(fs.readFileSync(p,'utf8')); } catch(_){}
+    const required={
+        'keyboard.layout':'de',
+        'workbench.startupEditor':'none',
+        'claudeCode.allowDangerouslySkipPermissions':true,
+        'security.workspace.trust.enabled':false
+    };
+    let changed=false;
+    for(const[k,v] of Object.entries(required)){
+        if(JSON.stringify(s[k])!==JSON.stringify(v)){s[k]=v;changed=true;}
+    }
+    if(changed){fs.writeFileSync(p,JSON.stringify(s,null,4)+'\n');}
+    process.exit(changed?0:2);
+" "$_vscode_settings" && echo "cs-entrypoint: updated VS Code user settings" || true
 unset _vscode_settings
 
 # ── Hermes on :8001 (background) ─────────────────────────────────────
