@@ -40,9 +40,11 @@ COOKIE_NAME = "cs_ide_token"
 
 def _set_ide_cookie(resp: Response, user_id: str) -> None:
     token = create_ide_token({"sub": user_id})
+    # secure=False: nginx listens HTTP-only (port 80) internally; browsers block
+    # Secure cookies over plain HTTP so the auth_request gate would always fail.
     resp.set_cookie(
         COOKIE_NAME, token,
-        max_age=12 * 3600, httponly=True, secure=True, samesite="strict", path="/ide",
+        max_age=12 * 3600, httponly=True, secure=False, samesite="lax", path="/ide",
     )
 
 
