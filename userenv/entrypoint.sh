@@ -135,6 +135,20 @@ if ! grep -q '"disableRemoteControl"' "$_managed" 2>/dev/null; then
 fi
 unset _managed
 
+# ── VS Code user settings: disallow dangerouslySkipPermissions as root ─
+# claudeCode.allowDangerouslySkipPermissions=true causes claude ≥2.1.195
+# to exit with code 1 when run as root — the container user is root.
+_vscode_settings="$HOME/.local/share/code-server/User/settings.json"
+if grep -q '"claudeCode.allowDangerouslySkipPermissions"' "$_vscode_settings" 2>/dev/null; then
+    /usr/lib/code-server/lib/node -e "
+        const fs=require('fs'), p=process.argv[1];
+        let s=JSON.parse(fs.readFileSync(p,'utf8'));
+        delete s['claudeCode.allowDangerouslySkipPermissions'];
+        fs.writeFileSync(p,JSON.stringify(s,null,4));
+    " "$_vscode_settings" && echo "cs-entrypoint: removed allowDangerouslySkipPermissions from VS Code settings"
+fi
+unset _vscode_settings
+
 # ── Hermes on :8001 (background) ─────────────────────────────────────
 # Per-user hermes_config.yaml is bind-mounted to /app/hermes_config.yaml by
 # userenv_manager.py (written from the user's DB connectors). We always copy it
