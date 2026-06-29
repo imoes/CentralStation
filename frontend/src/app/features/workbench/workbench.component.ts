@@ -174,7 +174,7 @@ export class WorkbenchComponent implements OnInit {
   private ensureOwn(): void {
     this.http.post<{ ide_base: string }>(`${environment.apiUrl}/ide/session/ensure`, {}, { withCredentials: true })
       .subscribe({
-        next: r => { this.setIde(`${r.ide_base}?folder=/root/workspaces`); this.loading.set(false); },
+        next: r => { this.setIde(`${r.ide_base}?folder=/home/yolo/workspaces`); this.loading.set(false); },
         error: e => { this.error.set(this.msg(e)); this.loading.set(false); },
       });
   }
