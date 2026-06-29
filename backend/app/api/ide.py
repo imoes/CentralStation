@@ -205,6 +205,57 @@ async def open_chat_in_ide(
     }
 
 
+async def _inject_cli_credentials(db: AsyncSession, uid: str) -> None:
+    """Inject Claude/Codex credentials into the running userenv container.
+
+    Mirrors the credential injection in computer_proxy.create_session so that
+    opening the Werkbank IDE also refreshes credentials — not only Console sessions.
+    """
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.userenv_manager import configure_claude_credentials, configure_codex_credentials
+    from sqlalchemy import select as _sel
+    import uuid as _uuid
+
+    user_uuid = _uuid.UUID(uid)
+
+    async def _load_creds(agent_type: str) -> dict | None:
+        res = await db.execute(
+            _sel(ConnectorConfig).where(
+                ConnectorConfig.type == agent_type,
+                ConnectorConfig.owner_user_id == user_uuid,
+            ).limit(1)
+        )
+        conn = res.scalar_one_or_none()
+        return decrypt_credentials(conn.encrypted_credentials) if conn else None
+
+    claude_creds = await _load_creds("claude_cli")
+    if claude_creds:
+        try:
+            await asyncio.to_thread(
+                configure_claude_credentials, uid,
+                claude_creds.get("access_token", ""),
+                claude_creds.get("refresh_token", ""),
+                claude_creds.get("expires_at") or None,
+                {},
+            )
+            log.info("ide ensure: injected claude_cli credentials for %s", uid)
+        except Exception as exc:
+            log.warning("ide ensure: configure_claude_credentials failed for %s: %s", uid, exc)
+
+    codex_creds = await _load_creds("codex_cli")
+    if codex_creds:
+        try:
+            await asyncio.to_thread(
+                configure_codex_credentials, uid,
+                codex_creds.get("access_token", ""),
+                {},
+            )
+            log.info("ide ensure: injected codex_cli credentials for %s", uid)
+        except Exception as exc:
+            log.warning("ide ensure: configure_codex_credentials failed for %s: %s", uid, exc)
+
+
 @router.post("/session/ensure")
 async def ensure_session(
     user: CurrentUser,
@@ -220,6 +271,10 @@ async def ensure_session(
     except Exception as e:
         log.warning("ide ensure failed for %s: %s", uid, e)
         raise HTTPException(503, f"IDE could not be started: {e}") from e
+    # Re-inject CLI agent credentials so Claude/Codex work in code-server after
+    # container restart (without needing a Console session to trigger the injection).
+    await _inject_cli_credentials(db, uid)
+
     _set_ide_cookie(response, uid)
     return {"ide_base": f"/ide/{uid}/"}
 
