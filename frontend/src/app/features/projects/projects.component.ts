@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal, Inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -6,9 +6,48 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatDialogModule, MatDialog, MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
 import { ProjectsService, ProjectResponse } from '../../core/services/projects.service';
 import { I18nService } from '../../core/services/i18n.service';
 import { ThemeService } from '../../core/services/theme.service';
+
+// ── Inline dialog: name + description for a new manual project ─────────────────
+@Component({
+  selector: 'cs-create-project-dialog',
+  standalone: true,
+  imports: [CommonModule, FormsModule, MatDialogModule, MatButtonModule, MatFormFieldModule, MatInputModule, MatIconModule],
+  template: `
+    <h2 mat-dialog-title><mat-icon style="vertical-align:middle;margin-right:6px">folder_open</mat-icon>{{ data.title }}</h2>
+    <mat-dialog-content style="display:flex;flex-direction:column;gap:14px;padding-top:8px;min-width:440px">
+      <mat-form-field appearance="outline" style="width:100%">
+        <mat-label>Projektname</mat-label>
+        <input matInput [(ngModel)]="name" placeholder="z.B. Migration Datenbankserver" autofocus />
+      </mat-form-field>
+      <mat-form-field appearance="outline" style="width:100%">
+        <mat-label>Beschreibung (optional)</mat-label>
+        <textarea matInput [(ngModel)]="description" rows="3"
+                  placeholder="Kurze Beschreibung des Projekts"></textarea>
+      </mat-form-field>
+    </mat-dialog-content>
+    <mat-dialog-actions align="end">
+      <button mat-button (click)="ref.close()">Abbrechen</button>
+      <button mat-flat-button color="primary" [disabled]="!name.trim()" (click)="save()">
+        <mat-icon>add</mat-icon> Erstellen
+      </button>
+    </mat-dialog-actions>
+  `,
+})
+export class CreateProjectDialogComponent {
+  name = '';
+  description = '';
+  constructor(
+    public ref: MatDialogRef<CreateProjectDialogComponent>,
+    @Inject(MAT_DIALOG_DATA) public data: { title: string },
+  ) {}
+  save() { if (this.name.trim()) this.ref.close({ name: this.name.trim(), description: this.description.trim() }); }
+}
 
 const STATUS_FILTERS = ['all', 'planning', 'active', 'done', 'archived'] as const;
 type StatusFilter = typeof STATUS_FILTERS[number];
@@ -18,7 +57,7 @@ type StatusFilter = typeof STATUS_FILTERS[number];
   standalone: true,
   imports: [
     CommonModule, FormsModule,
-    MatButtonModule, MatIconModule, MatSnackBarModule, MatTooltipModule,
+    MatButtonModule, MatIconModule, MatSnackBarModule, MatTooltipModule, MatDialogModule,
   ],
   template: `
     <div class="pv" [class.t-lcars]="theme()==='lcars'" [class.t-holo]="theme()==='holo'" [class.t-classic]="theme()==='classic'">
@@ -29,6 +68,9 @@ type StatusFilter = typeof STATUS_FILTERS[number];
         <div class="bar-seg seg-a">{{ i18n.t('app.nav.projects') }}</div>
         <div class="bar-seg seg-b">{{ projects().length }} {{ i18n.t('projects.count') }}</div>
         <div class="topbar-fill"></div>
+        <button class="sweep-action sweep-action-secondary" (click)="openCreateManual()">
+          <mat-icon>add</mat-icon> {{ i18n.t('projects.create_manual') }}
+        </button>
         <button class="sweep-action" (click)="openPlanner()">
           <mat-icon>auto_awesome</mat-icon> {{ i18n.t('projects.new_plan') }}
         </button>
@@ -63,7 +105,10 @@ type StatusFilter = typeof STATUS_FILTERS[number];
             <div class="empty-state">
               <mat-icon>folder_open</mat-icon>
               <p>{{ i18n.t('projects.empty') }}</p>
-              <button class="sweep-action solo" (click)="openPlanner()">{{ i18n.t('projects.start_planning') }}</button>
+              <div class="empty-actions">
+                <button class="sweep-action sweep-action-secondary" (click)="openCreateManual()">{{ i18n.t('projects.create_manual_cta') }}</button>
+                <button class="sweep-action solo" (click)="openPlanner()">{{ i18n.t('projects.start_planning') }}</button>
+              </div>
             </div>
           } @else {
             <div class="grid">
@@ -116,7 +161,10 @@ type StatusFilter = typeof STATUS_FILTERS[number];
     .sweep-action { border:none; cursor:pointer; font-family:'Antonio','Eurostile',sans-serif;
                     font-weight:800; letter-spacing:.1em; font-size:13px; text-transform:uppercase;
                     height:100%; padding:0 20px; display:flex; align-items:center; gap:8px; flex-shrink:0; }
+    .sweep-action.sweep-action-secondary { opacity:.75; }
     .sweep-action mat-icon { font-size:18px; width:18px; height:18px; }
+    .empty-actions { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+    .empty-actions .sweep-action { height:38px; border-radius:6px; }
 
     .cols { flex:1; display:grid; grid-template-columns:210px 1fr; gap:6px; min-height:0; padding:0 6px; }
     .rail { display:flex; flex-direction:column; gap:6px; min-height:0; overflow-y:auto; padding:4px 0; }
@@ -227,6 +275,7 @@ export class ProjectsComponent implements OnInit {
   private svc = inject(ProjectsService);
   private router = inject(Router);
   private snack = inject(MatSnackBar);
+  private dialog = inject(MatDialog);
   i18n = inject(I18nService);
   private themeSvc = inject(ThemeService);
   theme = this.themeSvc.theme;
@@ -270,6 +319,20 @@ export class ProjectsComponent implements OnInit {
 
   openDetail(id: string) { this.router.navigate(['/projects', id]); }
   openPlanner() { this.router.navigate(['/projects/planner']); }
+
+  openCreateManual() {
+    const ref = this.dialog.open(CreateProjectDialogComponent, {
+      width: '500px', maxWidth: '95vw',
+      data: { title: this.i18n.t('projects.create_dialog_title') },
+    });
+    ref.afterClosed().subscribe((result?: { name: string; description: string }) => {
+      if (!result) return;
+      this.svc.create(result.name, result.description || undefined).subscribe({
+        next: p => this.router.navigate(['/projects', p.id]),
+        error: () => this.snack.open('Projekt konnte nicht erstellt werden', 'OK', { duration: 3000 }),
+      });
+    });
+  }
 
   openWorkbench(id: string) {
     this.svc.openInWorkbench(id).subscribe({

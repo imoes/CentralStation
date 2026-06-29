@@ -28,9 +28,12 @@ const TRANSLATIONS: Record<AppLanguage, Record<string, string>> = {
 
     // ── Projects ──────────────────────────────────────────────────────────
     'projects.new_plan':              'New Plan',
+    'projects.create_manual':         'Create manually',
+    'projects.create_dialog_title':   'New Project',
     'projects.search_placeholder':    'Search projects…',
     'projects.empty':                 'No projects yet.',
     'projects.start_planning':        'Start planning',
+    'projects.create_manual_cta':     'Create manually',
     'projects.open_workbench':        'Open in Workbench',
     'projects.delete':                'Delete',
     'projects.status.planning':       'Planning',
@@ -552,9 +555,12 @@ const TRANSLATIONS: Record<AppLanguage, Record<string, string>> = {
 
     // ── Projects ──────────────────────────────────────────────────────────
     'projects.new_plan':              'Neuen Plan erstellen',
+    'projects.create_manual':         'Manuell erstellen',
+    'projects.create_dialog_title':   'Neues Projekt',
     'projects.search_placeholder':    'Projekte suchen…',
     'projects.empty':                 'Noch keine Projekte vorhanden.',
     'projects.start_planning':        'Planung starten',
+    'projects.create_manual_cta':     'Manuell erstellen',
     'projects.open_workbench':        'In Werkbank öffnen',
     'projects.delete':                'Löschen',
     'projects.status.planning':       'Planung',
