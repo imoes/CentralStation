@@ -43,9 +43,5 @@ centralcore/
 Thumbs.db
 
 # SSL certs (lokal generiert)
-nginx/ssl/*.pem
-nginx/ssl/*.key
-nginx/ssl/*.crt
-nginx/ssl/key.pem
-nginx/ssl/cert.pem
+nginx/ssl
 frontend/.npmrc
