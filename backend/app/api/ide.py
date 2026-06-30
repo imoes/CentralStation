@@ -13,14 +13,18 @@ token extracted from the X-Original-URI query string as a fallback.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
+import pathlib
 import re
 import uuid
+import zipfile
 from typing import Annotated
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -475,3 +479,115 @@ Vollständiger Plan: `cs_get_project_plan("{body.project_id}")`
         "ide_url": f"/ide/{uid}/?folder={ide_manager.WORKSPACES_DIR}",
         "project_id": body.project_id,
     }
+
+
+# ── Werkbank File-Manager endpoints ──────────────────────────────────────────
+# Called by the cs-filemanager VS Code extension from *inside* the container via
+# the Docker network (http://backend:8000). Auth: X-CS-UID header validated by
+# checking that a cs-userenv-{uid} container is actually running.
+
+def _fm_validate(request: Request) -> str:
+    """Return user_id from X-CS-UID header; 403 if container not running."""
+    uid = request.headers.get("X-CS-UID", "").strip()
+    if not uid:
+        raise HTTPException(403, "X-CS-UID header required")
+    try:
+        ide_manager._client().containers.get(ide_manager.container_name(uid))
+    except Exception:
+        raise HTTPException(403, "Container not running for uid")
+    return uid
+
+
+def _fm_safe_path(uid: str, relpath: str) -> pathlib.Path:
+    """Resolve relpath inside workspace_dir(uid); raise 400 on path traversal."""
+    base   = pathlib.Path(ide_manager.workspace_dir(uid)).resolve()
+    target = (base / relpath).resolve()
+    if not str(target).startswith(str(base)):
+        raise HTTPException(400, "Invalid path")
+    return target
+
+
+@router.get("/workspace/download")
+async def workspace_download(request: Request, path: str = "", uid: str = ""):
+    """Download a file or a folder (as ZIP). Called by cs-filemanager extension."""
+    if not uid:
+        uid = _fm_validate(request)
+    else:
+        # uid passed as query param — still validate container
+        try:
+            ide_manager._client().containers.get(ide_manager.container_name(uid))
+        except Exception:
+            raise HTTPException(403, "Container not running for uid")
+
+    target = _fm_safe_path(uid, path)
+    if not target.exists():
+        raise HTTPException(404, f"Not found: {path}")
+
+    if target.is_file():
+        filename = target.name
+
+        def _iter():
+            with open(target, "rb") as f:
+                while chunk := f.read(65536):
+                    yield chunk
+
+        return StreamingResponse(
+            _iter(),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    else:
+        # Folder → stream as ZIP
+        foldername = target.name
+
+        def _zip_stream():
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for fp in target.rglob("*"):
+                    if fp.is_file():
+                        zf.write(fp, fp.relative_to(target.parent))
+            buf.seek(0)
+            while chunk := buf.read(65536):
+                yield chunk
+
+        return StreamingResponse(
+            _zip_stream(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{foldername}.zip"'},
+        )
+
+
+@router.post("/workspace/extract")
+async def workspace_extract(request: Request, path: str = "", zipname: str = "", uid: str = ""):
+    """Extract a ZIP file (sent as body) into workspace path. Called by cs-filemanager."""
+    if not uid:
+        uid = _fm_validate(request)
+    else:
+        try:
+            ide_manager._client().containers.get(ide_manager.container_name(uid))
+        except Exception:
+            raise HTTPException(403, "Container not running for uid")
+
+    target_dir = _fm_safe_path(uid, path)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(400, "Empty body")
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(body)) as zf:
+            for member in zf.infolist():
+                # Skip path traversal members
+                dest = (target_dir / member.filename).resolve()
+                if not str(dest).startswith(str(target_dir.resolve())):
+                    continue
+                if member.is_dir():
+                    dest.mkdir(parents=True, exist_ok=True)
+                else:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(zf.read(member))
+    except zipfile.BadZipFile as e:
+        raise HTTPException(400, f"Invalid ZIP: {e}")
+
+    return {"extracted": True, "path": path}
