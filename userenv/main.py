@@ -551,10 +551,10 @@ async def _run_cli_agent(
             if claude_started:
                 session["claude_session_started"] = True
 
-        # Build --allowedTools dynamically: Bash + every MCP server registered in .claude.json.
+        # Build --allowedTools dynamically: built-ins + every MCP server in .claude.json.
         # configure_claude_credentials writes all personal MCP connectors (centralstation,
         # VibeMK, AWX-NG, …) into .claude.json at session-create time.
-        _allowed_tools = "Bash"
+        _allowed_tools = "Bash,WebFetch,WebSearch"
         try:
             import json as _jcfg
             _claude_cfg = os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude"))
@@ -563,7 +563,7 @@ async def _run_cli_agent(
             if _mcp_names:
                 _allowed_tools += "," + ",".join(f"mcp__{n}" for n in _mcp_names)
         except Exception:
-            _allowed_tools = "Bash,mcp__centralstation"
+            _allowed_tools = "Bash,WebFetch,WebSearch,mcp__centralstation"
 
         if claude_started:
             # Session file exists — resume it.
