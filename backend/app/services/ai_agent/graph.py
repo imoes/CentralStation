@@ -606,7 +606,8 @@ async def analyze(state: dict, llm_config: Any) -> dict:
         log.info("analyze: severity=%s, findings=%d, clusters=%d, duration=%.1fs",
                  result.severity_summary, len(result.findings), len(result.clusters), duration)
     except Exception as e:
-        log.error("analyze: failed: %s", e)
+        import traceback as _tb
+        log.error("analyze: failed [%s]: %s\n%s", type(e).__name__, e, _tb.format_exc())
         result = AnalysisResult(severity_summary="none", error=str(e))
 
     return {**state, "analysis": result.model_dump()}
