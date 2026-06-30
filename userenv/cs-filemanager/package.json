@@ -1,0 +1,38 @@
+{
+  "name": "cs-filemanager",
+  "displayName": "Werkbank File Manager",
+  "description": "Upload/Download files and folders in code-server",
+  "version": "0.0.1",
+  "publisher": "centralstation",
+  "engines": { "vscode": "^1.80.0" },
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cs.download",
+        "title": "Download / Als ZIP herunterladen",
+        "category": "Werkbank"
+      },
+      {
+        "command": "cs.upload",
+        "title": "Dateien hochladen…",
+        "category": "Werkbank"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "cs.download",
+          "group": "7_modification@100",
+          "when": "explorerViewletVisible"
+        },
+        {
+          "command": "cs.upload",
+          "group": "7_modification@101",
+          "when": "explorerResourceIsFolder && explorerViewletVisible"
+        }
+      ]
+    }
+  }
+}
