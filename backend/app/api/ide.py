@@ -13,14 +13,18 @@ token extracted from the X-Original-URI query string as a fallback.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
+import pathlib
 import re
 import uuid
+import zipfile
 from typing import Annotated
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -368,3 +372,221 @@ async def provision_workspace(
 
     _set_ide_cookie(response, uid)
     return {"ide_url": f"/ide/{uid}/?folder={folder}", "workspace_path": folder, "repo_dir": repo_dir}
+
+
+
+# ── Project → Werkbank handoff ─────────────────────────────────────────────
+
+class OpenProjectRequest(BaseModel):
+    project_id: str
+
+
+@router.post("/open-project")
+async def open_project_in_ide(
+    body: OpenProjectRequest,
+    user: CurrentUser,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Write a project plan into the IDE workspace and return the code-server URL.
+
+    Creates:
+      project-plan.puml   — PlantUML source (network diagram), readable by PlantUML extension
+      project-plan.md     — Human-readable plan
+      .centralstation/project.json — Machine-readable project context (id, steps, deps)
+      CLAUDE.md           — Instructions for Claude/Codex to use MCP tools for all writes
+    """
+    import json as _json
+    from app.services import project_plantuml
+    import app.services.project_service as svc
+
+    uid = str(user.id)
+    try:
+        await asyncio.to_thread(ide_manager.ensure_container, uid)
+    except Exception as e:
+        raise HTTPException(503, f"IDE could not be started: {e}") from e
+
+    graph = await svc.get_project_graph(db, body.project_id)
+    proj = graph.project
+
+    ws_dir = ide_manager.workspace_dir(uid)
+    os.makedirs(ws_dir, exist_ok=True)
+    cs_dir = os.path.join(ws_dir, ".centralstation")
+    os.makedirs(cs_dir, exist_ok=True)
+
+    step_dicts = [s.model_dump(mode="json") for s in graph.steps]
+    dep_dicts = [d.model_dump(mode="json") for d in graph.deps]
+
+    # project-plan.puml
+    puml_network = project_plantuml.render_network(proj.name, step_dicts, dep_dicts)
+    with open(os.path.join(ws_dir, "project-plan.puml"), "w", encoding="utf-8") as f:
+        f.write(puml_network)
+
+    # project-plan.md
+    md = project_plantuml.render_markdown(proj.name, proj.description, step_dicts, dep_dicts)
+    with open(os.path.join(ws_dir, "project-plan.md"), "w", encoding="utf-8") as f:
+        f.write(md)
+
+    # .centralstation/project.json
+    project_ctx = {
+        "project_id": body.project_id,
+        "name": proj.name,
+        "steps": step_dicts,
+        "deps": dep_dicts,
+    }
+    with open(os.path.join(cs_dir, "project.json"), "w", encoding="utf-8") as f:
+        _json.dump(project_ctx, f, indent=2, default=str)
+
+    # CLAUDE.md — instructs the AI to use MCP for all writes
+    step_ids_preview = "\n".join(
+        f"  - {s.get('title', '?')} → id: {s.get('id', '?')}"
+        for s in step_dicts[:10]
+    )
+    claude_md = f"""# CentralStation Projekt: {proj.name}
+
+Dieses Workspace ist mit CentralStation-Projekt `{body.project_id}` verknüpft.
+
+## WICHTIG: Nur MCP für Änderungen am Plan
+
+Lese und ändere den Live-Plan **ausschließlich** über die `centralstation`-MCP-Tools.
+Die `.puml`-Datei ist nur die generierte Anzeige, nicht die Wahrheit.
+
+## Verfügbare MCP-Tools (prefix: `centralstation`)
+
+- `cs_get_project_plan(project_id)` — aktuellen Plan abrufen
+- `cs_add_step(project_id, title, description, jira_issue_type, duration_days, depends_on, parent_step_id)` — Schritt hinzufügen
+- `cs_update_step(project_id, step_id, title?, description?, duration_days?)` — Schritt aktualisieren
+- `cs_set_step_status(project_id, step_id, status)` — Status setzen (pending|in_progress|done)
+- `cs_add_dependency(project_id, step_id, depends_on_step_id)` — Abhängigkeit hinzufügen
+- `cs_remove_dependency(project_id, dep_id)` — Abhängigkeit entfernen
+
+## Projekt-ID
+
+Immer `project_id="{body.project_id}"` übergeben.
+
+## Aktuelle Schritte (Kurzübersicht)
+
+{step_ids_preview}
+
+Vollständiger Plan: `cs_get_project_plan("{body.project_id}")`
+"""
+    with open(os.path.join(ws_dir, "CLAUDE.md"), "w", encoding="utf-8") as f:
+        f.write(claude_md)
+
+    _set_ide_cookie(response, uid)
+    return {
+        "ide_url": f"/ide/{uid}/?folder={ide_manager.WORKSPACES_DIR}",
+        "project_id": body.project_id,
+    }
+
+
+# ── Werkbank File-Manager endpoints ──────────────────────────────────────────
+# Called by the cs-filemanager VS Code extension from *inside* the container via
+# the Docker network (http://backend:8000). Auth: X-CS-UID header validated by
+# checking that a cs-userenv-{uid} container is actually running.
+
+def _fm_validate(request: Request) -> str:
+    """Return user_id from X-CS-UID header; 403 if container not running."""
+    uid = request.headers.get("X-CS-UID", "").strip()
+    if not uid:
+        raise HTTPException(403, "X-CS-UID header required")
+    try:
+        ide_manager._client().containers.get(ide_manager.container_name(uid))
+    except Exception:
+        raise HTTPException(403, "Container not running for uid")
+    return uid
+
+
+def _fm_safe_path(uid: str, relpath: str) -> pathlib.Path:
+    """Resolve relpath inside workspace_dir(uid); raise 400 on path traversal."""
+    base   = pathlib.Path(ide_manager.workspace_dir(uid)).resolve()
+    target = (base / relpath).resolve()
+    if not str(target).startswith(str(base)):
+        raise HTTPException(400, "Invalid path")
+    return target
+
+
+@router.get("/workspace/download")
+async def workspace_download(request: Request, path: str = "", uid: str = ""):
+    """Download a file or a folder (as ZIP). Called by cs-filemanager extension."""
+    if not uid:
+        uid = _fm_validate(request)
+    else:
+        # uid passed as query param — still validate container
+        try:
+            ide_manager._client().containers.get(ide_manager.container_name(uid))
+        except Exception:
+            raise HTTPException(403, "Container not running for uid")
+
+    target = _fm_safe_path(uid, path)
+    if not target.exists():
+        raise HTTPException(404, f"Not found: {path}")
+
+    if target.is_file():
+        filename = target.name
+
+        def _iter():
+            with open(target, "rb") as f:
+                while chunk := f.read(65536):
+                    yield chunk
+
+        return StreamingResponse(
+            _iter(),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    else:
+        # Folder → stream as ZIP
+        foldername = target.name
+
+        def _zip_stream():
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for fp in target.rglob("*"):
+                    if fp.is_file():
+                        zf.write(fp, fp.relative_to(target.parent))
+            buf.seek(0)
+            while chunk := buf.read(65536):
+                yield chunk
+
+        return StreamingResponse(
+            _zip_stream(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{foldername}.zip"'},
+        )
+
+
+@router.post("/workspace/extract")
+async def workspace_extract(request: Request, path: str = "", zipname: str = "", uid: str = ""):
+    """Extract a ZIP file (sent as body) into workspace path. Called by cs-filemanager."""
+    if not uid:
+        uid = _fm_validate(request)
+    else:
+        try:
+            ide_manager._client().containers.get(ide_manager.container_name(uid))
+        except Exception:
+            raise HTTPException(403, "Container not running for uid")
+
+    target_dir = _fm_safe_path(uid, path)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(400, "Empty body")
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(body)) as zf:
+            for member in zf.infolist():
+                # Skip path traversal members
+                dest = (target_dir / member.filename).resolve()
+                if not str(dest).startswith(str(target_dir.resolve())):
+                    continue
+                if member.is_dir():
+                    dest.mkdir(parents=True, exist_ok=True)
+                else:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(zf.read(member))
+    except zipfile.BadZipFile as e:
+        raise HTTPException(400, f"Invalid ZIP: {e}")
+
+    return {"extracted": True, "path": path}
