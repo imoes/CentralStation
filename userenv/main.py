@@ -497,7 +497,7 @@ async def _run_cli_agent(
         # Re-inject from backend if the file is missing or has empty tokens.
         try:
             import json as _json
-            _creds_path = "/root/.claude/.credentials.json"
+            _creds_path = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude")), ".credentials.json")
             _creds_ok = False
             try:
                 _c = _json.load(open(_creds_path))
@@ -545,7 +545,8 @@ async def _run_cli_agent(
         claude_started = session.get("claude_session_started", False)
         if not claude_started:
             import glob as _glob
-            jsonl_files = _glob.glob(f"/root/.claude/projects/*/{sid}.jsonl")
+            _claude_dir = os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude"))
+            jsonl_files = _glob.glob(f"{_claude_dir}/projects/*/{sid}.jsonl")
             claude_started = bool(jsonl_files)
             if claude_started:
                 session["claude_session_started"] = True
@@ -556,7 +557,8 @@ async def _run_cli_agent(
         _allowed_tools = "Bash"
         try:
             import json as _jcfg
-            _cj = _jcfg.load(open("/root/.claude/.claude.json"))
+            _claude_cfg = os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude"))
+            _cj = _jcfg.load(open(os.path.join(_claude_cfg, ".claude.json")))
             _mcp_names = list(_cj.get("mcpServers", {}).keys())
             if _mcp_names:
                 _allowed_tools += "," + ",".join(f"mcp__{n}" for n in _mcp_names)
@@ -583,8 +585,9 @@ async def _run_cli_agent(
         # Backup credentials before running — Claude sometimes clears .credentials.json
         # on a failed internal token refresh (race with VS Code Extension or revoked token).
         # We restore from backup so the user doesn't lose a valid token permanently.
-        _creds_path_run = "/root/.claude/.credentials.json"
-        _creds_bak_run  = "/root/.claude/.credentials.json.prerun"
+        _claude_dir_run = os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude"))
+        _creds_path_run = os.path.join(_claude_dir_run, ".credentials.json")
+        _creds_bak_run  = os.path.join(_claude_dir_run, ".credentials.json.prerun")
         try:
             import shutil as _sh
             _sh.copy2(_creds_path_run, _creds_bak_run)
