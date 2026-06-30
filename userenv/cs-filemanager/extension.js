@@ -83,13 +83,11 @@ async function cmdDownload(uri) {
     try {
         const stat = fs.statSync(fspath);
         if (!stat.isDirectory()) {
-            // Single file → native download path directly.
             await nativeDownload(uri);
             return;
         }
 
-        // Folder → backend zips it into .cs-tmp/<name>.zip, then native download
-        // on that single file (a file ≤32MB downloads via blob <a>, just like any file).
+        // Folder → backend zips it into .cs-tmp/<name>.zip, then native download.
         if (!UID) { vscode.window.showErrorMessage('Werkbank: CS_USER_ID not set.'); return; }
         const rel = encodeURIComponent(relPath(fspath));
         let zipPath;
@@ -105,7 +103,6 @@ async function cmdDownload(uri) {
         const zipUri = vscode.Uri.file(path.join(workspaceRoot(), zipPath));
         await nativeDownload(zipUri);
 
-        // Clean up .cs-tmp after the download blob has been created.
         await new Promise(r => setTimeout(r, 800));
         try {
             const tmpDir = vscode.Uri.file(path.join(workspaceRoot(), '.cs-tmp'));
@@ -113,6 +110,19 @@ async function cmdDownload(uri) {
         } catch (_) {}
     } catch (e) {
         vscode.window.showErrorMessage(`Werkbank Download: ${e.message}`);
+    }
+}
+
+async function cmdDownloadFolder(uri) {
+    if (!uri) {
+        vscode.window.showWarningMessage('Werkbank: Bitte einen Ordner auswählen.');
+        return;
+    }
+    try {
+        // Native folder download: showDirectoryPicker() in Chromium+HTTPS.
+        await nativeDownload(uri);
+    } catch (e) {
+        vscode.window.showErrorMessage(`Werkbank Ordner-Download: ${e.message}`);
     }
 }
 
@@ -181,8 +191,9 @@ async function cmdUpload(uri) {
 
 function activate(context) {
     context.subscriptions.push(
-        vscode.commands.registerCommand('cs.download', cmdDownload),
-        vscode.commands.registerCommand('cs.upload',   cmdUpload),
+        vscode.commands.registerCommand('cs.download',       cmdDownload),
+        vscode.commands.registerCommand('cs.downloadFolder', cmdDownloadFolder),
+        vscode.commands.registerCommand('cs.upload',         cmdUpload),
     );
 }
 
