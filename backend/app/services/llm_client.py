@@ -289,9 +289,19 @@ async def generate_text(
             payload["temperature"] = temperature
         if max_output_tokens is not None:
             payload["max_tokens"] = max_output_tokens
-        if getattr(llm_config, "thinking_mode", False):
-            payload["enable_thinking"] = True
-            payload["thinking_budget"] = getattr(llm_config, "thinking_budget", 1500)
+        # Qwen3 models always think by default (reasoning_content) and only
+        # write the answer to content AFTER finishing the thinking phase.
+        # Always send both flags so the model knows exactly what we want:
+        # - thinking_mode=True  → enable + full budget (slow, deep analysis)
+        # - thinking_mode=False → enable + hard cap of 1024 tokens so the model
+        #   stops thinking quickly and still has time to generate the JSON answer
+        #   within the configured timeout. Without a cap the model may exhaust
+        #   the timeout while thinking and leave content="".
+        thinking_on = getattr(llm_config, "thinking_mode", False)
+        payload["enable_thinking"] = thinking_on
+        payload["thinking_budget"] = (
+            getattr(llm_config, "thinking_budget", 1500) if thinking_on else 512
+        )
         extract = _extract_chat_output
 
     async with httpx.AsyncClient(timeout=llm_config.timeout_seconds, verify=False) as client:
