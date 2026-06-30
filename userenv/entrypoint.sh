@@ -78,6 +78,10 @@ _bundled_ext="/opt/cs-extensions"
 _user_ext="$HOME/.local/share/code-server/extensions"
 if [ -d "$_bundled_ext" ]; then
     mkdir -p "$_user_ext"
+    # Our own cs-filemanager is image-owned (not user-updatable) — always refresh
+    # it so code updates take effect. (Third-party extensions like claude-code may
+    # self-update in the user dir, so those are only seeded when absent below.)
+    rm -rf "$_user_ext"/cs-filemanager-* 2>/dev/null
     _seeded=0
     for _src in "$_bundled_ext"/*/; do
         [ -d "$_src" ] || continue
