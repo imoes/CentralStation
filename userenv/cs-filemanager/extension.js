@@ -34,25 +34,6 @@ function relPath(absPath) {
 }
 
 /** Make an HTTP GET request, return a Buffer of the response body. */
-function httpGet(url) {
-    return new Promise((resolve, reject) => {
-        const u = new URL(url);
-        const req = http.get({ host: u.hostname, port: u.port || 80, path: u.pathname + u.search,
-            headers: { 'X-CS-UID': UID } }, res => {
-            if (res.statusCode !== 200) {
-                reject(new Error(`HTTP ${res.statusCode}: ${url}`));
-                res.resume();
-                return;
-            }
-            const chunks = [];
-            res.on('data', c => chunks.push(c));
-            res.on('end', () => resolve(Buffer.concat(chunks)));
-        });
-        req.on('error', reject);
-    });
-}
-
-/** Make an HTTP POST request with a Buffer body, return Buffer response. */
 function httpPost(url, body) {
     return new Promise((resolve, reject) => {
         const u = new URL(url);
@@ -79,24 +60,18 @@ function httpPost(url, body) {
     });
 }
 
-/** Open a webview panel that auto-triggers a download via a data: URI. */
-function openDownloadWebview(filename, bytes) {
-    const b64  = bytes.toString('base64');
-    const mime = filename.endsWith('.zip') ? 'application/zip' : 'application/octet-stream';
-    const panel = vscode.window.createWebviewPanel(
-        'csFileManagerDownload', `Download: ${filename}`,
-        vscode.ViewColumn.One, { enableScripts: true },
-    );
-    panel.webview.html = `<!DOCTYPE html><html><body style="background:#1e1e1e;color:#ccc;font-family:sans-serif;padding:20px">
-<p>Downloading <b>${filename}</b>…</p>
-<a id="dl" href="data:${mime};base64,${b64}" download="${filename}"
-   style="color:#7ec8e3">Click here if the download doesn't start</a>
-<script>document.getElementById('dl').click();setTimeout(()=>{},2000);</script>
-</body></html>`;
-    setTimeout(() => { try { panel.dispose(); } catch (_) {} }, 8000);
-}
 
 // ── commands ─────────────────────────────────────────────────────────────────
+
+// Trigger code-server's NATIVE download (explorer.download) on a resource.
+// The native command reads the selected file into a blob and creates an
+// <a download> in the workbench document — works in every browser. It acts on
+// the current explorer SELECTION, so we revealInExplorer first to select it.
+async function nativeDownload(uri) {
+    await vscode.commands.executeCommand('revealInExplorer', uri);
+    await new Promise(r => setTimeout(r, 150));
+    await vscode.commands.executeCommand('explorer.download');
+}
 
 async function cmdDownload(uri) {
     if (!uri) {
@@ -107,22 +82,35 @@ async function cmdDownload(uri) {
     const filename = path.basename(fspath);
     try {
         const stat = fs.statSync(fspath);
-        if (stat.isDirectory()) {
-            // Folder → ZIP via backend
-            if (!UID) { vscode.window.showErrorMessage('Werkbank: CS_USER_ID not set.'); return; }
-            const rel = encodeURIComponent(relPath(fspath));
-            await vscode.window.withProgress(
-                { location: vscode.ProgressLocation.Notification, title: `Creating ZIP: ${filename}…` },
-                async () => {
-                    const bytes = await httpGet(`${BACKEND}/api/ide/workspace/download?uid=${UID}&path=${rel}`);
-                    openDownloadWebview(filename + '.zip', bytes);
-                },
-            );
-        } else {
-            // Single file — read locally, no backend needed
-            const bytes = fs.readFileSync(fspath);
-            openDownloadWebview(filename, bytes);
+        if (!stat.isDirectory()) {
+            // Single file → native download path directly.
+            await nativeDownload(uri);
+            return;
         }
+
+        // Folder → backend zips it into .cs-tmp/<name>.zip, then native download
+        // on that single file (a file ≤32MB downloads via blob <a>, just like any file).
+        if (!UID) { vscode.window.showErrorMessage('Werkbank: CS_USER_ID not set.'); return; }
+        const rel = encodeURIComponent(relPath(fspath));
+        let zipPath;
+        await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: `ZIP wird erstellt: ${filename}…` },
+            async () => {
+                const res = await httpPost(`${BACKEND}/api/ide/workspace/zip?uid=${UID}&path=${rel}`, Buffer.alloc(0));
+                zipPath = JSON.parse(res.toString()).zip_path;
+            },
+        );
+        if (!zipPath) throw new Error('Backend lieferte keinen ZIP-Pfad');
+
+        const zipUri = vscode.Uri.file(path.join(workspaceRoot(), zipPath));
+        await nativeDownload(zipUri);
+
+        // Clean up .cs-tmp after the download blob has been created.
+        await new Promise(r => setTimeout(r, 800));
+        try {
+            const tmpDir = vscode.Uri.file(path.join(workspaceRoot(), '.cs-tmp'));
+            await vscode.workspace.fs.delete(tmpDir, { recursive: true, useTrash: false });
+        } catch (_) {}
     } catch (e) {
         vscode.window.showErrorMessage(`Werkbank Download: ${e.message}`);
     }
