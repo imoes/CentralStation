@@ -129,9 +129,22 @@ def _build_codex_payload(
 def _extract_chat_output(data: dict[str, Any]) -> str:
     choices = data.get("choices") or []
     if not choices:
+        log.warning("_extract_chat_output: no choices in response — full data keys: %s", list(data.keys()))
         return ""
 
-    content = (choices[0].get("message") or {}).get("content", "")
+    msg = choices[0].get("message") or {}
+    content = msg.get("content", "")
+    reasoning = msg.get("reasoning_content", "")
+    if not content and reasoning:
+        # Qwen3 A3B on llama.cpp: enable_thinking=False is ignored (llama.cpp bug
+        # #20182). The model always writes the full reply (thinking + answer) into
+        # reasoning_content; content stays "". Transparently fall back so callers
+        # can extract the answer from the thinking block via _parse_json.
+        log.debug(
+            "_extract_chat_output: content empty — using reasoning_content (len=%d)",
+            len(reasoning),
+        )
+        return reasoning.strip()
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, list):
