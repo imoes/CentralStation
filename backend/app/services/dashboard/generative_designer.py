@@ -391,7 +391,7 @@ Die "rationale" ist ein präzises LAGE-BRIEFING:
 - Metrik-Werte mit ETA für Forecast-Kandidaten
 KEINE Widget-Namen. Maximal 4 Sätze.
 
-Antworte AUSSCHLIESSLICH mit JSON:
+FINALE AUSGABE: Gib genau dieses JSON aus:
 {"rationale":"<Lage-Briefing>",
  "widgets":[{"type":"...","title":"...","gs_x":0,"gs_y":0,"gs_w":4,"gs_h":3,"config":{...}}]}"""
 
@@ -402,6 +402,35 @@ _THINK_RE = _re.compile(r'<think>.*?</think>', _re.DOTALL | _re.IGNORECASE)
 def _strip_thinking(text: str) -> str:
     """Remove Qwen3 <think>...</think> blocks before JSON parsing."""
     return _THINK_RE.sub('', text).strip()
+
+
+def _find_code_block_contents(text: str, lang: str = "json") -> list[str]:
+    """Extract all content from ```<lang>...``` blocks using a manual scanner.
+
+    Robust against: multiple code blocks in thinking, indented fences, backticks
+    inside JSON string values. Returns all found content blocks in order."""
+    opener = f"```{lang}"
+    results: list[str] = []
+    i = 0
+    while i < len(text):
+        idx = text.find(opener, i)
+        if idx == -1:
+            break
+        line_end = text.find('\n', idx + len(opener))
+        if line_end == -1:
+            break
+        content_start = line_end + 1
+        rest = text[content_start:]
+        # Closing ``` must appear at the start of a line (optionally indented)
+        close_match = _re.search(r'(?m)^[ \t]*```[ \t]*$', rest)
+        if not close_match:
+            i = content_start
+            continue
+        content = rest[:close_match.start()].strip()
+        if content:
+            results.append(content)
+        i = content_start + close_match.end()
+    return results
 
 
 async def _ask_llm(db: Any, situation: dict, lang: str) -> dict | None:
@@ -421,15 +450,16 @@ async def _ask_llm(db: Any, situation: dict, lang: str) -> dict | None:
         log.info("generative_designer: no LLM configured → fallback")
         return None
 
-    # Enable thinking for deliberate widget selection.
-    # For Codex/Claude: maps to reasoning_effort="high" / extended thinking.
-    # For Qwen (chat_completions): the llama.cpp server IGNORES enable_thinking=False,
-    # so the model always thinks. The only lever is thinking_budget. Use a tiny
-    # budget (64 tok ≈ 8 s at 8 tok/s) so thinking finishes quickly and 450 output
-    # tokens fit within the 120 s connector timeout (64 + 56 = 120 s).
-    llm_cfg.thinking_mode = True
-    if getattr(llm_cfg, "api_mode", "chat_completions") == "chat_completions":
-        llm_cfg.thinking_budget = 64
+    if getattr(llm_cfg, "api_mode", "chat_completions") != "chat_completions":
+        # Codex/Claude: enable thinking → maps to reasoning_effort or extended thinking.
+        llm_cfg.thinking_mode = True
+
+    log.info(
+        "generative_designer: calling LLM api_mode=%s model=%s timeout=%s",
+        getattr(llm_cfg, "api_mode", "?"),
+        getattr(llm_cfg, "model", "?"),
+        getattr(llm_cfg, "timeout_seconds", "?"),
+    )
 
     user_msg = "Aktuelle Lage:\n" + json.dumps(situation, ensure_ascii=False, indent=0)
     try:
@@ -438,25 +468,25 @@ async def _ask_llm(db: Any, situation: dict, lang: str) -> dict | None:
             [
                 {"role": "system", "content": with_language(_SYSTEM_PROMPT, lang)},
                 {"role": "user", "content": user_msg},
+                # Assistant prefill: forces Qwen3 A3B to emit JSON immediately.
+                # No planning monologue → fits well within 3000 tokens.
+                {"role": "assistant", "content": "```json\n{"},
             ],
-            # Codex medium reasoning takes ~35 s. For Qwen (chat_completions) this
-            # param is ignored — thinking is disabled above to stay in 120 s timeout.
             reasoning_effort="medium",
             temperature=0.3,
-            # Widget JSON for 3-4 widgets is typically 250–400 tokens.
-            # 450 tok × 8 tok/s ≈ 56 s — fits within the 120 s connector timeout.
-            max_output_tokens=450,
+            max_output_tokens=3000,
         )
     except LLMInvocationError as e:
         log.warning("generative_designer: LLM call failed: %s", e)
         return None
     except Exception as e:
-        log.warning("generative_designer: LLM error: %s", e)
+        import traceback as _tb
+        log.warning("generative_designer: LLM error [%s]: %s\n%s", type(e).__name__, e, _tb.format_exc())
         return None
 
-    # Strip <think>…</think> blocks before parsing — they're internal reasoning only
+    # Strip <think>…</think> blocks (some models). Qwen3 A3B uses plain prose,
+    # so this is a no-op for that model, but keeps other providers clean.
     clean = _strip_thinking(raw)
-    log.debug("generative_designer: raw len=%d clean len=%d", len(raw), len(clean))
 
     parsed = _parse_json(clean)
     if not parsed or not isinstance(parsed.get("widgets"), list):
@@ -490,24 +520,70 @@ def _clean_rationale(text: str) -> str:
 
 
 def _parse_json(raw: str) -> dict | None:
-    """Tolerant JSON extraction — strips code fences and finds the object."""
+    """Tolerant JSON extraction — handles code fences and embedded JSON in thinking.
+
+    For Qwen3 A3B (llama.cpp bug): the full model response (thinking narrative +
+    JSON answer) lands in reasoning_content. The model writes the final JSON inside
+    a ```json code block. Use a manual scanner to find it robustly."""
     if not raw:
         return None
     text = raw.strip()
-    if text.startswith("```"):
-        # remove ```json ... ``` fences
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
-    # Find the outermost JSON object
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
+
+    # 1. Scan all ```json...``` blocks with _find_code_block_contents and prefer the
+    #    LAST one (models verify/rewrite JSON at the end of their thinking).
+    for content in reversed(_find_code_block_contents(text, "json")):
+        try:
+            obj = json.loads(content)
+            if isinstance(obj, dict) and "widgets" in obj:
+                return obj
+        except Exception:
+            continue
+
+    # 2. Also try unmarked ``` blocks (some models omit the language tag).
+    for content in reversed(_find_code_block_contents(text, "")):
+        try:
+            obj = json.loads(content)
+            if isinstance(obj, dict) and "widgets" in obj:
+                return obj
+        except Exception:
+            continue
+
+    # 3. Try the whole text directly (clean JSON output from Codex/Claude).
     try:
-        return json.loads(text[start:end + 1])
+        obj = json.loads(text)
+        if isinstance(obj, dict) and "widgets" in obj:
+            return obj
     except Exception:
-        return None
+        pass
+
+    # 4. Scan right-to-left: find the last complete {…} object with "widgets"
+    #    (handles cases where code block delimiters are missing).
+    pos = len(text)
+    while pos > 0:
+        end = text.rfind("}", 0, pos)
+        if end == -1:
+            break
+        depth = 0
+        start = -1
+        for i in range(end, -1, -1):
+            if text[i] == "}":
+                depth += 1
+            elif text[i] == "{":
+                depth -= 1
+                if depth == 0:
+                    start = i
+                    break
+        if start == -1:
+            pos = end
+            continue
+        try:
+            obj = json.loads(text[start:end + 1])
+            if isinstance(obj, dict) and "widgets" in obj:
+                return obj
+        except Exception:
+            pass
+        pos = end
+    return None
 
 
 # ── 3. Validation + grid packing ────────────────────────────────────────────

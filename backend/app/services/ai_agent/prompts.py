@@ -48,45 +48,14 @@ Das Feld "Log-Quelle" im User-Kontext gibt an, welches Monitoring-Tool die Meldu
 (z.B. Graylog, CheckMK, Wazuh) — NICHT welche Software das Problem hat.
 Das betroffene System erkennst du aus dem Inhalt (Hostname, Fehlermeldung, Prozessname).
 
-Antworte AUSSCHLIESSLICH im folgenden JSON-Format ohne zusätzlichen Text:
-{
-  "severity_summary": "critical|high|medium|low|info|none",
-  "findings": [
-    {
-      "source": "checkmk|graylog|wazuh",
-      "severity": "critical|high|medium|low|info",
-      "title": "...",
-      "description": "...",
-      "host": "...",
-      "affected_service": "...",
-      "location": "...",
-      "evidence": [
-        {"type": "log_line|metric|checkmk_service|past_incident", "source": "...", "ref": "...", "text": "..."}
-      ]
-    }
-  ],
-  "recommendations": [
-    {
-      "priority": "critical|high|medium|low",
-      "action": "...",
-      "rationale": "...",
-      "jira_title": "...",
-      "references": ["..."]
-    }
-  ],
-  "clusters": [
-    {
-      "diagnosis": "...",
-      "severity": "critical|high|medium|low",
-      "root_cause_host": "... oder null",
-      "affected_hosts": ["host1", "host2"],
-      "explanation": "...",
-      "recommendation": "..."
-    }
-  ]
-}
+Fülle dieses JSON-Schema mit echten Daten aus den IT-Ereignissen aus (max. 8 Findings / 5 Recommendations / 3 Clusters):
 
-Das Feld "clusters" ist optional: gibt es keine erkennbare gemeinsame Ursache, setze "clusters": [].
+{"severity_summary":"<critical|high|medium|low|info|none>",
+ "findings":[{"source":"<checkmk|graylog|wazuh>","severity":"<critical|high|medium|low|info>","title":"<Deutsch>","description":"<Deutsch>","host":"<FQDN>","affected_service":"<Dienst>","location":"<Standort>","evidence":[{"type":"<log_line|metric|checkmk_service|past_incident>","source":"<tool>","ref":"<id>","text":"<Beleg>"}]}],
+ "recommendations":[{"priority":"<critical|high|medium|low>","action":"<Deutsch>","rationale":"<Deutsch>","jira_title":"<Deutsch>","references":[]}],
+ "clusters":[{"diagnosis":"<Ursache>","severity":"<critical|high|medium|low>","root_cause_host":null,"affected_hosts":["<host1>"],"explanation":"<Deutsch>","recommendation":"<Deutsch>"}]}
+
+"clusters": [] wenn keine gemeinsame Ursache erkennbar.
 
 WICHTIG für das Feld "references":
 - Trage dort NUR URLs ein, die im Wissensdatenbank-Kontext explizit mit "(URL: ...)" angegeben wurden.
