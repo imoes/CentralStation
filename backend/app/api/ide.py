@@ -558,6 +558,43 @@ async def workspace_download(request: Request, path: str = "", uid: str = ""):
         )
 
 
+@router.post("/workspace/zip")
+async def workspace_zip(request: Request, path: str = "", uid: str = ""):
+    """Zip a folder into <workspace>/.cs-tmp/<name>.zip and return its relative path.
+
+    The cs-filemanager extension then triggers code-server's NATIVE explorer.download
+    on this single file — which works in every browser (blob <a download>), unlike a
+    folder download (showDirectoryPicker, Chromium+HTTPS only).
+    """
+    if not uid:
+        uid = _fm_validate(request)
+    else:
+        _fm_docker_check(uid)
+
+    target = _fm_safe_path(uid, path)
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(404, f"Folder not found: {path}")
+
+    ws_base = pathlib.Path(ide_manager.workspace_dir(uid)).resolve()
+    tmp_dir = ws_base / ".cs-tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    zip_file = tmp_dir / f"{target.name}.zip"
+
+    with zipfile.ZipFile(zip_file, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fp in target.rglob("*"):
+            if fp.is_file():
+                zf.write(fp, fp.relative_to(target.parent))
+
+    # chown to yolo (1000) so the container user can read + later delete .cs-tmp.
+    for _p in (tmp_dir, zip_file):
+        try:
+            os.chown(_p, 1000, 1000)
+        except OSError:
+            pass
+
+    return {"zip_path": f".cs-tmp/{target.name}.zip"}
+
+
 @router.post("/workspace/extract")
 async def workspace_extract(request: Request, path: str = "", zipname: str = "", uid: str = ""):
     """Extract a ZIP file (sent as body) into workspace path. Called by cs-filemanager."""
