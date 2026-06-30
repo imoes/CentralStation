@@ -486,15 +486,21 @@ Vollständiger Plan: `cs_get_project_plan("{body.project_id}")`
 # the Docker network (http://backend:8000). Auth: X-CS-UID header validated by
 # checking that a cs-userenv-{uid} container is actually running.
 
+def _fm_docker_check(uid: str) -> None:
+    """403 if no cs-userenv-{uid} container is running."""
+    import docker as _docker
+    try:
+        _docker.from_env().containers.get(ide_manager.container_name(uid))
+    except Exception:
+        raise HTTPException(403, "Container not running for uid")
+
+
 def _fm_validate(request: Request) -> str:
     """Return user_id from X-CS-UID header; 403 if container not running."""
     uid = request.headers.get("X-CS-UID", "").strip()
     if not uid:
         raise HTTPException(403, "X-CS-UID header required")
-    try:
-        ide_manager._client().containers.get(ide_manager.container_name(uid))
-    except Exception:
-        raise HTTPException(403, "Container not running for uid")
+    _fm_docker_check(uid)
     return uid
 
 
@@ -513,11 +519,7 @@ async def workspace_download(request: Request, path: str = "", uid: str = ""):
     if not uid:
         uid = _fm_validate(request)
     else:
-        # uid passed as query param — still validate container
-        try:
-            ide_manager._client().containers.get(ide_manager.container_name(uid))
-        except Exception:
-            raise HTTPException(403, "Container not running for uid")
+        _fm_docker_check(uid)
 
     target = _fm_safe_path(uid, path)
     if not target.exists():
@@ -563,10 +565,7 @@ async def workspace_extract(request: Request, path: str = "", zipname: str = "",
     if not uid:
         uid = _fm_validate(request)
     else:
-        try:
-            ide_manager._client().containers.get(ide_manager.container_name(uid))
-        except Exception:
-            raise HTTPException(403, "Container not running for uid")
+        _fm_docker_check(uid)
 
     target_dir = _fm_safe_path(uid, path)
     target_dir.mkdir(parents=True, exist_ok=True)
