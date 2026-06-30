@@ -129,6 +129,45 @@ def _wait_ready(container, timeout: float = 45.0) -> bool:
     return False
 
 
+_YOLO_MIGRATION_MARKER = ".yolo-migrated"
+
+
+def _migrate_to_yolo(ws_path: str, vs_path: str) -> None:
+    """One-time recursive chown of bind-mount dirs from root (0) to yolo (1000).
+
+    Triggered by the absence of a marker file. Runs inline (fast for vscode/,
+    potentially slower for workspaces/ with many files — still typically <1s for
+    normal repo sizes). Writes the marker when done so it never runs again.
+    """
+    for dirpath in (vs_path, ws_path):
+        marker = os.path.join(dirpath, _YOLO_MIGRATION_MARKER)
+        if os.path.exists(marker):
+            continue
+        # Check if top-level is still root-owned — if it's already 1000, skip.
+        try:
+            if os.stat(dirpath).st_uid == 1000:
+                open(marker, "w").close()
+                continue
+        except OSError:
+            continue
+        # Recursively chown everything to yolo (1000).
+        try:
+            for root, dirs, files in os.walk(dirpath):
+                try:
+                    os.chown(root, 1000, 1000)
+                except OSError:
+                    pass
+                for fname in dirs + files:
+                    try:
+                        os.chown(os.path.join(root, fname), 1000, 1000)
+                    except OSError:
+                        pass
+            open(marker, "w").close()
+            log.info("userenv_manager: migrated %s to yolo (1000)", dirpath)
+        except Exception as exc:
+            log.warning("userenv_manager: yolo migration failed for %s: %s", dirpath, exc)
+
+
 def ensure_container(user_id: str) -> str:
     """Ensure the user's unified container is running. Returns ide_upstream for nginx.
 
@@ -160,6 +199,11 @@ def ensure_container(user_id: str) -> str:
             os.chown(_p, 1000, 1000)
         except OSError:
             pass
+    # ── root→yolo migration (one-time per user) ───────────────────────────────
+    # Old containers ran as root (UID 0); new ones run as yolo (UID 1000).
+    # If existing workspace/vscode files are still owned by root, yolo cannot
+    # edit them. A marker file prevents this from running on every container start.
+    _migrate_to_yolo(ws_path, vs_path)
 
     volumes: dict = {
         ws_path: {"bind": WORKSPACES_DIR, "mode": "rw"},
