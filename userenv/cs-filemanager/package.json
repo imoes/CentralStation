@@ -15,6 +15,11 @@
         "category": "Werkbank"
       },
       {
+        "command": "cs.downloadFolder",
+        "title": "Ordner herunterladen (nativ)…",
+        "category": "Werkbank"
+      },
+      {
         "command": "cs.upload",
         "title": "Dateien hochladen…",
         "category": "Werkbank"
@@ -28,8 +33,13 @@
           "when": "explorerViewletVisible"
         },
         {
-          "command": "cs.upload",
+          "command": "cs.downloadFolder",
           "group": "7_modification@101",
+          "when": "explorerResourceIsFolder && explorerViewletVisible"
+        },
+        {
+          "command": "cs.upload",
+          "group": "7_modification@102",
           "when": "explorerResourceIsFolder && explorerViewletVisible"
         }
       ]
