@@ -104,6 +104,11 @@ RUN code-server \
     && chmod -R a+rX /opt/cs-extensions \
     && ls -1 /opt/cs-extensions
 
+# ── Werkbank File Manager extension (pure JS, no build step) ─────────────────
+# Pre-seeded alongside the other bundled extensions; entrypoint seeds on start.
+COPY userenv/cs-filemanager /opt/cs-extensions/cs-filemanager-0.0.1/
+RUN chmod -R a+rX /opt/cs-extensions/cs-filemanager-0.0.1/
+
 # ── Navigator shim (build-time, needs root write access to /usr/lib) ──
 # Patched at image build so the entrypoint (running as yolo) doesn't need
 # root to modify /usr/lib/code-server. Only applied if pattern is still present.
