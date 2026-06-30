@@ -421,9 +421,15 @@ async def _ask_llm(db: Any, situation: dict, lang: str) -> dict | None:
         log.info("generative_designer: no LLM configured → fallback")
         return None
 
-    # Generative UI: thinking ALWAYS on (deliberate widget selection).
-    # For Qwen this enables thinking mode; for Codex it maps to high reasoning effort.
+    # Enable thinking for deliberate widget selection.
+    # For Codex/Claude: maps to reasoning_effort="high" / extended thinking.
+    # For Qwen (chat_completions): the llama.cpp server IGNORES enable_thinking=False,
+    # so the model always thinks. The only lever is thinking_budget. Use a tiny
+    # budget (64 tok ≈ 8 s at 8 tok/s) so thinking finishes quickly and 450 output
+    # tokens fit within the 120 s connector timeout (64 + 56 = 120 s).
     llm_cfg.thinking_mode = True
+    if getattr(llm_cfg, "api_mode", "chat_completions") == "chat_completions":
+        llm_cfg.thinking_budget = 64
 
     user_msg = "Aktuelle Lage:\n" + json.dumps(situation, ensure_ascii=False, indent=0)
     try:
@@ -433,12 +439,13 @@ async def _ask_llm(db: Any, situation: dict, lang: str) -> dict | None:
                 {"role": "system", "content": with_language(_SYSTEM_PROMPT, lang)},
                 {"role": "user", "content": user_msg},
             ],
-            # Codex high reasoning takes ~70s (over the gateway timeout); medium
-            # gives a deliberate dashboard in ~35s. For Qwen, thinking_mode (set
-            # above) drives reasoning instead.
+            # Codex medium reasoning takes ~35 s. For Qwen (chat_completions) this
+            # param is ignored — thinking is disabled above to stay in 120 s timeout.
             reasoning_effort="medium",
             temperature=0.3,
-            max_output_tokens=3500,   # extra room for thinking tokens + JSON output
+            # Widget JSON for 3-4 widgets is typically 250–400 tokens.
+            # 450 tok × 8 tok/s ≈ 56 s — fits within the 120 s connector timeout.
+            max_output_tokens=450,
         )
     except LLMInvocationError as e:
         log.warning("generative_designer: LLM call failed: %s", e)
