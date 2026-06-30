@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re as _re
 import time
 from typing import Any
 
@@ -23,6 +24,82 @@ from app.services.ai_agent.prompts import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _extract_json_from_response(text: str, key: str) -> dict:
+    """Extract a JSON object containing `key` from an LLM response.
+
+    Handles Qwen3 A3B (llama.cpp bug): the full response (thinking narrative +
+    JSON answer) lands in reasoning_content as a single string. The model writes
+    the final JSON at the end of its thinking. Strategy:
+    1. ```json code blocks (when model uses fences)
+    2. Right-to-left bracket scan (plain JSON at end of thinking text)
+    3. Whole-text parse (clean output from Codex/Claude)"""
+    text = (text or "").strip()
+
+    # 1. Look for ```json...``` blocks (robust manual scanner).
+    opener = "```json"
+    candidates: list[str] = []
+    i = 0
+    while i < len(text):
+        idx = text.find(opener, i)
+        if idx == -1:
+            break
+        line_end = text.find('\n', idx + len(opener))
+        if line_end == -1:
+            break
+        content_start = line_end + 1
+        rest = text[content_start:]
+        close = _re.search(r'(?m)^[ \t]*```[ \t]*$', rest)
+        if not close:
+            # Truncated output (finish_reason=length): no closing fence — treat
+            # everything remaining as the JSON candidate.
+            candidates.append(rest.strip())
+            break
+        content = rest[:close.start()].strip()
+        if content:
+            candidates.append(content)
+        i = content_start + close.end()
+
+    for content in reversed(candidates):
+        try:
+            obj = json.loads(content)
+            if isinstance(obj, dict) and key in obj:
+                return obj
+        except Exception:
+            continue
+
+    # 2. Scan right-to-left for the last complete {…} object that contains key.
+    #    For Qwen3 A3B, the model writes the JSON answer at the end of reasoning_content
+    #    without a code fence (because SYSADMIN_SYSTEM says "AUSSCHLIESSLICH JSON").
+    pos = len(text)
+    while pos > 0:
+        end = text.rfind("}", 0, pos)
+        if end == -1:
+            break
+        depth = 0
+        start = -1
+        for k in range(end, -1, -1):
+            if text[k] == "}":
+                depth += 1
+            elif text[k] == "{":
+                depth -= 1
+                if depth == 0:
+                    start = k
+                    break
+        if start == -1:
+            pos = end
+            continue
+        try:
+            obj = json.loads(text[start:end + 1])
+            if isinstance(obj, dict) and key in obj:
+                return obj
+        except Exception:
+            pass
+        pos = end
+
+    # 3. Try the whole text directly (clean output from Codex/Claude).
+    return json.loads(text)
 
 
 # ─────────────────────────────────────────────────
@@ -488,7 +565,9 @@ async def analyze(state: dict, llm_config: Any) -> dict:
         meta = a.get("metadata") or {}
         return str(a.get("host") or a.get("agent") or meta.get("host") or meta.get("container_name") or "").strip()
 
-    all_hosts = sorted({h for h in (_alert_host(a) for a in alerts) if h}, key=str.lower)
+    # Only the first 40 alerts are sent to the LLM — derive host list from those only.
+    llm_alerts = alerts[:40]
+    all_hosts = sorted({h for h in (_alert_host(a) for a in llm_alerts) if h}, key=str.lower)
 
     alerts_text = "\n".join(
         f"[{a.get('severity','?').upper()}] [{a.get('source','?')}] "
@@ -496,7 +575,7 @@ async def analyze(state: dict, llm_config: Any) -> dict:
         f"{a.get('title') or a.get('message','')[:200]}"
         + (f" | Standort: {_alert_location(a)}" if _alert_location(a) else "")
         + (f" | Ordner: {(a.get('metadata') or {}).get('location','')}" if (a.get('metadata') or {}).get('location') else "")
-        for a in alerts[:40]
+        for a in llm_alerts
     )
 
     # Separate server KB context from other RAG context so the LLM knows what it's reading
@@ -555,8 +634,9 @@ async def analyze(state: dict, llm_config: Any) -> dict:
 
     user_content = f"IT-Ereignisse der letzten Stunde:\n{alerts_text}"
     if all_hosts:
-        user_content += "\n\nBetroffene Hosts vollständig:\n" + ", ".join(all_hosts)
-        user_content += "\n\nWichtig: Jeder Host aus dieser vollständigen Liste muss im Ergebnis namentlich auftauchen."
+        # Limit to 25 most significant hosts to avoid bloating the JSON output.
+        host_sample = all_hosts[:25]
+        user_content += "\n\nBetroffene Hosts (Top-25):\n" + ", ".join(host_sample)
     if past_text:
         user_content += past_text
     if blast_text:
@@ -573,19 +653,21 @@ async def analyze(state: dict, llm_config: Any) -> dict:
             [
                 {"role": "system", "content": SYSADMIN_SYSTEM},
                 {"role": "user", "content": user_content},
+                # Assistant prefill: forces Qwen3 A3B to emit JSON immediately without
+                # spending all tokens on a planning monologue (llama.cpp #20182 workaround).
+                # Works for Claude too (Anthropic supports prefill). Codex ignores the
+                # assistant turn and still produces correct output via its own reasoning.
+                {"role": "assistant", "content": "```json\n{"},
             ],
             temperature=0.1,
             reasoning_effort="medium",
+            # 5000 tokens for JSON output: 8 findings × ~400 chars + recs + clusters ≈ 4500 chars
+            # ≈ 1170 tokens. Extra headroom for detailed descriptions. At 33 tok/s ≈ 152 s.
+            max_output_tokens=5000,
         )
         duration = time.time() - t0
 
-        raw = raw.strip()
-        # Strip possible markdown code fences
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        parsed = json.loads(raw)
+        parsed = _extract_json_from_response(raw, key="severity_summary")
 
         # Parse clusters leniently — a single malformed cluster must not kill the analysis.
         clusters: list[Cluster] = []
