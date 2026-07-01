@@ -653,14 +653,13 @@ async def analyze(state: dict, llm_config: Any) -> dict:
             [
                 {"role": "system", "content": SYSADMIN_SYSTEM},
                 {"role": "user", "content": user_content},
-                # Assistant prefill: forces Qwen3 A3B to emit JSON immediately without
-                # spending all tokens on a planning monologue (llama.cpp #20182 workaround).
-                # Works for Claude too (Anthropic supports prefill). Codex ignores the
-                # assistant turn and still produces correct output via its own reasoning.
-                {"role": "assistant", "content": "```json\n{"},
             ],
             temperature=0.1,
             reasoning_effort="medium",
+            # Assistant prefill forces Qwen3 A3B to emit JSON immediately without
+            # spending all tokens on a planning monologue (llama.cpp #20182 workaround).
+            # generate_text applies it provider-aware (Claude prepend, Codex ignore).
+            json_prefill="```json\n{",
             # 5000 tokens for JSON output: 8 findings × ~400 chars + recs + clusters ≈ 4500 chars
             # ≈ 1170 tokens. Extra headroom for detailed descriptions. At 33 tok/s ≈ 152 s.
             max_output_tokens=5000,

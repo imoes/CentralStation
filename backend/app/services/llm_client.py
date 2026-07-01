@@ -214,7 +214,19 @@ async def generate_text(
     temperature: float | None = None,
     reasoning_effort: str | None = None,
     max_output_tokens: int | None = None,
+    json_prefill: str | None = None,
 ) -> str:
+    """Call the configured LLM and return the answer text.
+
+    json_prefill: when set (e.g. "```json\\n{"), the model is steered to emit JSON
+    immediately instead of a long planning monologue. This is provider-aware:
+      - chat_completions (llama.cpp/Qwen): sent as a trailing assistant turn; the
+        server echoes the prefill so the returned content already carries it.
+      - anthropic_messages (Claude): sent as an assistant prefill turn; Anthropic
+        continues WITHOUT echoing it, so we prepend it back to the result.
+      - codex_responses / responses: unsupported (the API generates a fresh turn),
+        so the prefill is ignored — those providers already return clean JSON.
+    """
     mode = (getattr(llm_config, "api_mode", None) or "chat_completions").lower()
     headers = {"Content-Type": "application/json"}
     if getattr(llm_config, "api_key", None):
@@ -223,6 +235,10 @@ async def generate_text(
     if mode == "anthropic_messages":
         # Claude via OAuth — Anthropic Messages API with Claude Code identity.
         system_prompt, convo = _split_anthropic_messages(messages)
+        if json_prefill:
+            # Assistant prefill turn — Anthropic continues from it (must not end in
+            # trailing whitespace, which "```json\n{" satisfies).
+            convo = convo + [{"role": "assistant", "content": json_prefill}]
         headers.update({
             "anthropic-version": _ANTHROPIC_VERSION,
             "anthropic-beta": _ANTHROPIC_OAUTH_BETAS,
@@ -243,7 +259,9 @@ async def generate_text(
             msg = f"HTTP {response.status_code}: {detail}"
             log.warning("LLM call failed [anthropic_messages %s]: %s", llm_config.model, msg)
             raise LLMInvocationError(msg)
-        return _extract_anthropic_output(response.json())
+        out = _extract_anthropic_output(response.json())
+        # Anthropic does not echo the prefill — prepend it so callers see full JSON.
+        return (json_prefill + out) if json_prefill else out
 
     if mode == "codex_responses":
         _codex_base = llm_config.base_url or "https://chatgpt.com/backend-api/codex"
@@ -294,9 +312,14 @@ async def generate_text(
         extract = _extract_responses_output
     else:
         url = _build_api_url(llm_config.base_url, "chat/completions")
+        chat_messages = _normalize_chat_messages(messages)
+        if json_prefill:
+            # Trailing assistant turn — llama.cpp continues and echoes the prefill,
+            # so the returned content already starts with it (no prepend needed).
+            chat_messages = chat_messages + [{"role": "assistant", "content": json_prefill}]
         payload = {
             "model": llm_config.model,
-            "messages": _normalize_chat_messages(messages),
+            "messages": chat_messages,
         }
         if temperature is not None:
             payload["temperature"] = temperature
@@ -327,4 +350,9 @@ async def generate_text(
         raise LLMInvocationError(msg)
 
     data = response.json()
-    return extract(data)
+    out = extract(data)
+    # Safety net: if a chat server did not echo the prefill, prepend it so the
+    # caller always receives complete JSON (llama.cpp normally echoes it already).
+    if json_prefill and mode not in ("responses",) and out and not out.lstrip().startswith(("```", "{")):
+        out = json_prefill + out
+    return out
