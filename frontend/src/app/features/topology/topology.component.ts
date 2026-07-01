@@ -47,10 +47,8 @@ const SEV_COLOR: Record<string, string> = {
 };
 
 // Symbol sizes (px). Tuned for the precomputed layout:'none' rendering — the
-// spring layout packs connected nodes tighter than the old live force sim, so
-// smaller symbols keep dense clusters readable instead of overlapping blobs.
 const NODE_SIZE: Record<string, number> = {
-  site: 20, cluster: 14, host: 8, vm: 5, service: 7,
+  site: 10, cluster: 7, host: 4, vm: 2, service: 3,
 };
 
 const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
@@ -368,7 +366,7 @@ export class TopologyComponent implements OnInit, OnDestroy {
           // Fixed position from the server layout (ignored when layout is 'force').
           x: n.x,
           y: n.y,
-          symbolSize: (NODE_SIZE[n.type] ?? 7) + Math.min(n.alert_count * 1.2, 8),
+          symbolSize: (NODE_SIZE[n.type] ?? 3) + Math.min(n.alert_count * 0.6, 4),
           itemStyle: {
             color: SEV_COLOR[n.status] ?? SEV_COLOR['ok'],
             opacity: term && !n.id.includes(term) ? 0.12 : (n.inactive ? 0.45 : 1),
