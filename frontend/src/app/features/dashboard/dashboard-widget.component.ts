@@ -344,7 +344,7 @@ import {
     .wr-quiet mat-icon { font-size: 36px; height: 36px; width: 36px; }
     .wr-header { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; font-size: 12px; }
     .wr-sev-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-    .wr-sev { font-weight: 800; font-size: 11px; letter-spacing: .05em; flex: 1; }
+    .wr-sev { font-weight: 400; font-size: 11px; letter-spacing: .05em; flex: 1; }
     .wr-time { font-size: 11px; color: var(--mat-sys-on-surface-variant); }
     .wr-insights-btn { width: 28px; height: 28px; line-height: 28px; }
     .wr-insights-btn mat-icon { font-size: 16px; }
