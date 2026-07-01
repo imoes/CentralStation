@@ -154,7 +154,96 @@ async def _build_skeleton(db: Any) -> dict:
     except Exception as e:
         log.debug("topology: AIKB edges not available: %s", e)
 
+    _compute_layout(nodes, edges_list)
     return {"nodes": nodes, "edges": edges_list}
+
+
+def _compute_layout(nodes: dict[str, dict], edges: list[dict]) -> None:
+    """Radial tree layout — each site gets its own angular sector, children fan out
+    into concentric rings by type. Pure-Python, no external deps. Runs once per
+    skeleton rebuild (scheduler pre-warms the cache), so the frontend can use
+    ECharts layout:'none' and avoid the browser-side force simulation freeze."""
+    if not nodes:
+        return
+    try:
+        import math
+
+        TYPE_ORDER = ["site", "cluster", "host", "vm", "service"]
+        TYPE_RANK = {t: i for i, t in enumerate(TYPE_ORDER)}
+        # Radial distance (px) for each depth level: site at centre, VMs outermost.
+        RADII = [0, 300, 650, 1050, 1400, 1700]
+
+        # Build parent→children map (edge goes from lower-rank type to higher-rank).
+        children_of: dict[str, list[str]] = {nid: [] for nid in nodes}
+        has_parent: set[str] = set()
+        for e in edges:
+            s, t = e.get("source"), e.get("target")
+            if s not in nodes or t not in nodes:
+                continue
+            sr = TYPE_RANK.get(nodes[s].get("type", ""), 99)
+            tr = TYPE_RANK.get(nodes[t].get("type", ""), 99)
+            if sr < tr:
+                children_of[s].append(t)
+                has_parent.add(t)
+            elif tr < sr:
+                children_of[t].append(s)
+                has_parent.add(s)
+
+        roots = [nid for nid in nodes if nid not in has_parent]
+
+        # Bottom-up leaf count for proportional sector allocation.
+        leaf_count: dict[str, int] = {}
+        def _leaves(nid: str) -> int:
+            ch = children_of[nid]
+            v = sum(_leaves(c) for c in ch) if ch else 1
+            leaf_count[nid] = v
+            return v
+        for r in roots:
+            _leaves(r)
+        # Any node not reachable from roots (orphan cycle): count as 1.
+        for nid in nodes:
+            leaf_count.setdefault(nid, 1)
+
+        pos: dict[str, tuple[float, float]] = {}
+
+        def _place(nid: str, cx: float, cy: float, angle: float, sector: float, depth: int) -> None:
+            r = RADII[min(depth, len(RADII) - 1)]
+            pos[nid] = (cx + r * math.cos(angle), cy + r * math.sin(angle))
+            ch = children_of[nid]
+            if not ch:
+                return
+            total = sum(leaf_count[c] for c in ch)
+            start = angle - sector * 0.45
+            for c in ch:
+                frac = leaf_count[c] / total
+                child_sector = sector * frac
+                _place(c, cx, cy, start + child_sector / 2, child_sector * 0.9, depth + 1)
+                start += child_sector
+
+        # Distribute roots around a virtual centre.
+        total_root_leaves = sum(leaf_count[r] for r in roots)
+        start_angle = 0.0
+        for r in roots:
+            frac = leaf_count[r] / max(total_root_leaves, 1)
+            sector = 2 * math.pi * frac
+            _place(r, 0.0, 0.0, start_angle + sector / 2, sector * 0.9, 0)
+            start_angle += sector
+
+        # Disconnected nodes (not reachable from any root).
+        orphans = [nid for nid in nodes if nid not in pos]
+        for j, nid in enumerate(orphans):
+            a = 2 * math.pi * j / max(len(orphans), 1)
+            pos[nid] = (1800 * math.cos(a), 1800 * math.sin(a))
+
+        for nid, (x, y) in pos.items():
+            node = nodes.get(nid)
+            if node is not None:
+                node["x"] = round(x, 1)
+                node["y"] = round(y, 1)
+
+        log.info("topology: precomputed radial layout for %d nodes", len(nodes))
+    except Exception as e:
+        log.warning("topology: layout precompute failed (frontend will fall back): %s", e)
 
 
 async def _get_skeleton(db: Any, force_refresh: bool) -> dict:
