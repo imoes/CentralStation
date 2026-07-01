@@ -468,12 +468,12 @@ async def _ask_llm(db: Any, situation: dict, lang: str) -> dict | None:
             [
                 {"role": "system", "content": with_language(_SYSTEM_PROMPT, lang)},
                 {"role": "user", "content": user_msg},
-                # Assistant prefill: forces Qwen3 A3B to emit JSON immediately.
-                # No planning monologue → fits well within 3000 tokens.
-                {"role": "assistant", "content": "```json\n{"},
             ],
             reasoning_effort="medium",
             temperature=0.3,
+            # Assistant prefill: forces Qwen3 A3B to emit JSON immediately (no planning
+            # monologue). Applied provider-aware inside generate_text.
+            json_prefill="```json\n{",
             max_output_tokens=3000,
         )
     except LLMInvocationError as e:
@@ -816,8 +816,41 @@ async def design_dashboard(db: Any, user_id: str) -> dict:
     # point of collecting the metrics in the first place.
     specs = _ensure_forecast_widgets(specs, situation, lang)
 
+    # Expand short host mentions (e.g. "nsa242") in the rationale to their FQDN
+    # ("nsa242.ippen.media"). Qwen3 tends to write short names in prose, which the
+    # FQDN-based host-link detection can't match → hosts become unclickable. Using
+    # the real situation hosts we restore the full names so the strip stays clickable.
+    rationale = _expand_host_mentions(rationale, _situation_hosts(situation))
+
     placed = _pack_grid(specs)
     return {"widgets": placed, "rationale": rationale}
+
+
+def _expand_host_mentions(rationale: str, hosts: list[str]) -> str:
+    """Replace standalone short-name mentions with the matching FQDN.
+
+    Only expands a short name that unambiguously maps to exactly one known FQDN,
+    and never touches a name that is already written as an FQDN."""
+    if not rationale or not hosts:
+        return rationale
+    # short label → FQDN, only when the short label is unique across known hosts.
+    short_to_fqdn: dict[str, str] = {}
+    seen_twice: set[str] = set()
+    for h in hosts:
+        short = h.split(".")[0]
+        if not short or short == h:
+            continue
+        if short in short_to_fqdn and short_to_fqdn[short] != h:
+            seen_twice.add(short)
+        short_to_fqdn.setdefault(short, h)
+    # Longest short names first so a prefix never shadows a longer match.
+    for short in sorted(short_to_fqdn, key=len, reverse=True):
+        if short in seen_twice:
+            continue
+        fqdn = short_to_fqdn[short]
+        # \b<short>\b but NOT already followed by a dot (i.e. not part of an FQDN).
+        rationale = _re.sub(rf'\b{_re.escape(short)}\b(?!\.)', fqdn, rationale)
+    return rationale
 
 
 def _ensure_forecast_widgets(specs: list[dict], situation: dict, lang: str) -> list[dict]:
