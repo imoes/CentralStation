@@ -20,7 +20,7 @@ interface TopologyNode {
   status: string;
   alert_count: number;
   inactive: boolean;
-  x?: number;
+  x?: number;   // precomputed layout coordinate (server-side)
   y?: number;
 }
 
@@ -46,8 +46,11 @@ const SEV_COLOR: Record<string, string> = {
   ok: '#2e7d32',
 };
 
+// Symbol sizes (px). Tuned for the precomputed layout:'none' rendering — the
+// spring layout packs connected nodes tighter than the old live force sim, so
+// smaller symbols keep dense clusters readable instead of overlapping blobs.
 const NODE_SIZE: Record<string, number> = {
-  site: 6, cluster: 4, host: 2, vm: 1, service: 2,
+  site: 12, cluster: 8, host: 4, vm: 2.5, service: 4,
 };
 
 const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
@@ -308,11 +311,18 @@ export class TopologyComponent implements OnInit, OnDestroy {
     const txt = this._chartText;
     const grid = this._chartGrid;
 
+    // Prefer the server-precomputed coordinates: when every node carries x/y we
+    // render with layout:'none' so ECharts just PAINTS the graph — no live force
+    // simulation in the browser (which froze on ~1900 nodes). Only if coordinates
+    // are missing (older backend / layout failure) do we fall back to force.
     const hasCoords = g.nodes.every(n => typeof n.x === 'number' && typeof n.y === 'number');
     const large = g.nodes.length >= 600;
 
     return {
       backgroundColor: 'transparent',
+      // With precomputed coordinates there is no simulation, so the enter
+      // animation is cheap and safe. Only disable it for the force fallback on
+      // large graphs, where it would otherwise freeze the browser.
       animation: hasCoords || !large,
       tooltip: {
         formatter: (p: any) =>
@@ -331,11 +341,12 @@ export class TopologyComponent implements OnInit, OnDestroy {
         roam: true,
         draggable: true,
         categories: CAT.map(c => ({ name: c })),
+        // Only used in the fallback path (no precomputed coordinates).
         force: {
-          repulsion: 200,
-          edgeLength: [30, 100],
-          gravity: 0.05,
-          layoutAnimation: false,
+          repulsion: 90,
+          edgeLength: [40, 130],
+          gravity: 0.08,
+          layoutAnimation: g.nodes.length < 600,
         },
         label: {
           show: true,
@@ -354,9 +365,10 @@ export class TopologyComponent implements OnInit, OnDestroy {
           nodeType: n.type,
           status: n.status,
           alertCount: n.alert_count,
+          // Fixed position from the server layout (ignored when layout is 'force').
           x: n.x,
           y: n.y,
-          symbolSize: (NODE_SIZE[n.type] ?? 2) + Math.min(n.alert_count * 0.5, 3),
+          symbolSize: (NODE_SIZE[n.type] ?? 4) + Math.min(n.alert_count * 0.8, 5),
           itemStyle: {
             color: SEV_COLOR[n.status] ?? SEV_COLOR['ok'],
             opacity: term && !n.id.includes(term) ? 0.12 : (n.inactive ? 0.45 : 1),

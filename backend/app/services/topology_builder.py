@@ -154,106 +154,50 @@ async def _build_skeleton(db: Any) -> dict:
     except Exception as e:
         log.debug("topology: AIKB edges not available: %s", e)
 
+    # Precompute a stable force-directed layout ONCE here (cached in the skeleton).
+    # The frontend then renders with ECharts layout:'none' — no live simulation in
+    # the browser, which used to freeze on ~1900 nodes.
     _compute_layout(nodes, edges_list)
+
     return {"nodes": nodes, "edges": edges_list}
 
 
 def _compute_layout(nodes: dict[str, dict], edges: list[dict]) -> None:
-    """Radial tree layout — each site gets its own angular sector, children fan out
-    into concentric rings by type. Pure-Python, no external deps. Runs once per
-    skeleton rebuild (scheduler pre-warms the cache), so the frontend can use
-    ECharts layout:'none' and avoid the browser-side force simulation freeze."""
+    """Assign each node an (x, y) coordinate via a Fruchterman-Reingold layout.
+
+    Runs once per skeleton rebuild (off the request path — the scheduler pre-warms
+    the cache). A fixed seed keeps positions stable across refreshes so nodes don't
+    jump around. Mutates the node dicts in place; on any failure the nodes simply
+    keep no coordinates and the frontend falls back to its own layout."""
     if not nodes:
         return
     try:
-        import math
+        import networkx as nx
 
-        TYPE_ORDER = ["site", "cluster", "host", "vm", "service"]
-        TYPE_RANK = {t: i for i, t in enumerate(TYPE_ORDER)}
-        # Radial distance from origin for each depth level.
-        # Depth 0 = sites → non-zero so multiple sites spread into a ring, not a pile.
-        RADII = [120, 320, 580, 860, 1120, 1350]
-
-        # Build parent→children map (edge goes from lower-rank type to higher-rank).
-        children_of: dict[str, list[str]] = {nid: [] for nid in nodes}
-        has_parent: set[str] = set()
+        g = nx.Graph()
+        g.add_nodes_from(nodes.keys())
         for e in edges:
             s, t = e.get("source"), e.get("target")
-            if s not in nodes or t not in nodes:
-                continue
-            sr = TYPE_RANK.get(nodes[s].get("type", ""), 99)
-            tr = TYPE_RANK.get(nodes[t].get("type", ""), 99)
-            if sr < tr:
-                children_of[s].append(t)
-                has_parent.add(t)
-            elif tr < sr:
-                children_of[t].append(s)
-                has_parent.add(s)
+            if s in nodes and t in nodes:
+                g.add_edge(s, t)
 
-        roots = [nid for nid in nodes if nid not in has_parent]
+        # k = optimal node distance; scale with graph size so big graphs spread out.
+        n = g.number_of_nodes()
+        k = 1.0 / (n ** 0.5) if n else None
+        # Seed positions from connected components so the layout converges faster
+        # and is deterministic. 60 iterations is plenty for a readable layout.
+        pos = nx.spring_layout(g, k=k, iterations=60, seed=42, dim=2)
 
-        # Bottom-up leaf count for proportional sector allocation.
-        leaf_count: dict[str, int] = {}
-        def _leaves(nid: str) -> int:
-            ch = children_of[nid]
-            v = sum(_leaves(c) for c in ch) if ch else 1
-            leaf_count[nid] = v
-            return v
-        for r in roots:
-            _leaves(r)
-        for nid in nodes:
-            leaf_count.setdefault(nid, 1)
-
-        pos: dict[str, tuple[float, float]] = {}
-
-        def _place(nid: str, angle: float, sector: float, depth: int) -> None:
-            r = RADII[min(depth, len(RADII) - 1)]
-            pos[nid] = (r * math.cos(angle), r * math.sin(angle))
-            ch = children_of[nid]
-            if not ch:
-                return
-            total = sum(leaf_count[c] for c in ch)
-            start = angle - sector * 0.45
-            for c in ch:
-                frac = leaf_count[c] / total
-                child_sector = sector * frac
-                _place(c, start + child_sector / 2, child_sector * 0.9, depth + 1)
-                start += child_sector
-
-        total_root_leaves = sum(leaf_count[r] for r in roots)
-        start_angle = 0.0
-        for r in roots:
-            frac = leaf_count[r] / max(total_root_leaves, 1)
-            sector = 2 * math.pi * frac
-            _place(r, start_angle + sector / 2, sector * 0.9, 0)
-            start_angle += sector
-
-        # Disconnected nodes: place in an outer ring.
-        orphans = [nid for nid in nodes if nid not in pos]
-        for j, nid in enumerate(orphans):
-            a = 2 * math.pi * j / max(len(orphans), 1)
-            pos[nid] = (1500 * math.cos(a), 1500 * math.sin(a))
-
-        # Normalise all coordinates to fit in ±600 x ±450 (typical canvas half-size).
-        if pos:
-            xs = [p[0] for p in pos.values()]
-            ys = [p[1] for p in pos.values()]
-            rx = max(max(xs) - min(xs), 1)
-            ry = max(max(ys) - min(ys), 1)
-            scale = min(1200 / rx, 900 / ry) * 0.88
-            mx = (min(xs) + max(xs)) / 2
-            my = (min(ys) + max(ys)) / 2
-            pos = {nid: ((x - mx) * scale, (y - my) * scale) for nid, (x, y) in pos.items()}
-
+        # Scale the [-1, 1] layout to a pixel-ish range ECharts is comfortable with.
+        SCALE = 1400.0
         for nid, (x, y) in pos.items():
             node = nodes.get(nid)
             if node is not None:
-                node["x"] = round(x, 1)
-                node["y"] = round(y, 1)
-
-        log.info("topology: precomputed radial layout for %d nodes", len(nodes))
+                node["x"] = round(float(x) * SCALE, 1)
+                node["y"] = round(float(y) * SCALE, 1)
+        log.info("topology: precomputed layout for %d nodes", n)
     except Exception as e:
-        log.warning("topology: layout precompute failed (frontend will fall back): %s", e)
+        log.warning("topology: layout precompute failed (frontend will lay out): %s", e)
 
 
 async def _get_skeleton(db: Any, force_refresh: bool) -> dict:
