@@ -28,6 +28,16 @@ _skeleton: dict | None = None   # {"nodes": {id: node}, "edges": [...]}
 _skeleton_ts: float = 0.0
 
 
+# NetBox device roles that are passive cabling infrastructure — excluded from the
+# topology map because they carry no service-criticality signal and only clutter it.
+_PASSIVE_ROLE_MARKERS = ("patchpanel", "patch panel", "datendose")
+
+
+def _is_passive_role(role_name: str) -> bool:
+    low = (role_name or "").lower()
+    return any(marker in low for marker in _PASSIVE_ROLE_MARKERS)
+
+
 def _max_severity(buckets: list[dict]) -> str:
     found = set(b["key"] for b in buckets)
     for sev in _SEVERITY_ORDER:
@@ -95,6 +105,13 @@ async def _build_skeleton(db: Any) -> dict:
     for dev in devices:
         name = (dev.get("name") or "").strip()
         if not name:
+            continue
+        # Skip passive cabling infrastructure (PatchPanel Copper/Fibre, Datendose).
+        # These are ~32% of NetBox devices (174/548) but carry no service-criticality
+        # signal — they only added a dense unreadable blob to the map.
+        role = (dev.get("role") or dev.get("device_role") or {})
+        role_name = (role.get("name", "") if isinstance(role, dict) else str(role)) or ""
+        if _is_passive_role(role_name):
             continue
         nid = _node_id(name)
         inactive = (dev.get("status") or {}).get("value", "active") != "active"
