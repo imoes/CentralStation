@@ -170,8 +170,9 @@ def _compute_layout(nodes: dict[str, dict], edges: list[dict]) -> None:
 
         TYPE_ORDER = ["site", "cluster", "host", "vm", "service"]
         TYPE_RANK = {t: i for i, t in enumerate(TYPE_ORDER)}
-        # Radial distance (px) for each depth level: site at centre, VMs outermost.
-        RADII = [0, 300, 650, 1050, 1400, 1700]
+        # Radial distance from origin for each depth level.
+        # Depth 0 = sites → non-zero so multiple sites spread into a ring, not a pile.
+        RADII = [120, 320, 580, 860, 1120, 1350]
 
         # Build parent→children map (edge goes from lower-rank type to higher-rank).
         children_of: dict[str, list[str]] = {nid: [] for nid in nodes}
@@ -200,15 +201,14 @@ def _compute_layout(nodes: dict[str, dict], edges: list[dict]) -> None:
             return v
         for r in roots:
             _leaves(r)
-        # Any node not reachable from roots (orphan cycle): count as 1.
         for nid in nodes:
             leaf_count.setdefault(nid, 1)
 
         pos: dict[str, tuple[float, float]] = {}
 
-        def _place(nid: str, cx: float, cy: float, angle: float, sector: float, depth: int) -> None:
+        def _place(nid: str, angle: float, sector: float, depth: int) -> None:
             r = RADII[min(depth, len(RADII) - 1)]
-            pos[nid] = (cx + r * math.cos(angle), cy + r * math.sin(angle))
+            pos[nid] = (r * math.cos(angle), r * math.sin(angle))
             ch = children_of[nid]
             if not ch:
                 return
@@ -217,23 +217,33 @@ def _compute_layout(nodes: dict[str, dict], edges: list[dict]) -> None:
             for c in ch:
                 frac = leaf_count[c] / total
                 child_sector = sector * frac
-                _place(c, cx, cy, start + child_sector / 2, child_sector * 0.9, depth + 1)
+                _place(c, start + child_sector / 2, child_sector * 0.9, depth + 1)
                 start += child_sector
 
-        # Distribute roots around a virtual centre.
         total_root_leaves = sum(leaf_count[r] for r in roots)
         start_angle = 0.0
         for r in roots:
             frac = leaf_count[r] / max(total_root_leaves, 1)
             sector = 2 * math.pi * frac
-            _place(r, 0.0, 0.0, start_angle + sector / 2, sector * 0.9, 0)
+            _place(r, start_angle + sector / 2, sector * 0.9, 0)
             start_angle += sector
 
-        # Disconnected nodes (not reachable from any root).
+        # Disconnected nodes: place in an outer ring.
         orphans = [nid for nid in nodes if nid not in pos]
         for j, nid in enumerate(orphans):
             a = 2 * math.pi * j / max(len(orphans), 1)
-            pos[nid] = (1800 * math.cos(a), 1800 * math.sin(a))
+            pos[nid] = (1500 * math.cos(a), 1500 * math.sin(a))
+
+        # Normalise all coordinates to fit in ±600 x ±450 (typical canvas half-size).
+        if pos:
+            xs = [p[0] for p in pos.values()]
+            ys = [p[1] for p in pos.values()]
+            rx = max(max(xs) - min(xs), 1)
+            ry = max(max(ys) - min(ys), 1)
+            scale = min(1200 / rx, 900 / ry) * 0.88
+            mx = (min(xs) + max(xs)) / 2
+            my = (min(ys) + max(ys)) / 2
+            pos = {nid: ((x - mx) * scale, (y - my) * scale) for nid, (x, y) in pos.items()}
 
         for nid, (x, y) in pos.items():
             node = nodes.get(nid)
