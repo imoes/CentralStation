@@ -61,14 +61,6 @@ docker==7.1.0
 python-dotenv>=1.1.0,<2
 python-dateutil>=2.9
 
-# Topology layout — precompute node coordinates once (server-side) so the
-# frontend renders the graph with ECharts layout:'none' instead of running a
-# live force simulation in the browser (which froze on ~1900 nodes). Computed in
-# the cached, scheduler-prewarmed skeleton. scipy powers networkx's sparse
-# Fruchterman-Reingold solver (required for graphs >500 nodes → our ~2000).
-networkx>=3.2,<4
-scipy>=1.11,<2
-
 # Testing
 pytest>=8.0
 pytest-asyncio>=0.24

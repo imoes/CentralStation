@@ -20,6 +20,8 @@ interface TopologyNode {
   status: string;
   alert_count: number;
   inactive: boolean;
+  x?: number;
+  y?: number;
 }
 
 interface TopologyEdge {
@@ -306,13 +308,12 @@ export class TopologyComponent implements OnInit, OnDestroy {
     const txt = this._chartText;
     const grid = this._chartGrid;
 
+    const hasCoords = g.nodes.every(n => typeof n.x === 'number' && typeof n.y === 'number');
     const large = g.nodes.length >= 600;
 
     return {
       backgroundColor: 'transparent',
-      // animation + continuous force simulation freezes the browser. Disable
-      // both above the threshold so the graph paints once and stays interactive.
-      animation: !large,
+      animation: hasCoords || !large,
       tooltip: {
         formatter: (p: any) =>
           p.dataType === 'node'
@@ -326,16 +327,15 @@ export class TopologyComponent implements OnInit, OnDestroy {
       },
       series: [{
         type: 'graph',
-        layout: 'force',
+        layout: hasCoords ? 'none' : 'force',
         roam: true,
         draggable: true,
         categories: CAT.map(c => ({ name: c })),
-        // Only used in the fallback path (no precomputed coordinates).
         force: {
           repulsion: 200,
           edgeLength: [30, 100],
           gravity: 0.05,
-          layoutAnimation: g.nodes.length < 600,
+          layoutAnimation: false,
         },
         label: {
           show: true,
@@ -354,6 +354,8 @@ export class TopologyComponent implements OnInit, OnDestroy {
           nodeType: n.type,
           status: n.status,
           alertCount: n.alert_count,
+          x: n.x,
+          y: n.y,
           symbolSize: (NODE_SIZE[n.type] ?? 2) + Math.min(n.alert_count * 0.5, 3),
           itemStyle: {
             color: SEV_COLOR[n.status] ?? SEV_COLOR['ok'],
