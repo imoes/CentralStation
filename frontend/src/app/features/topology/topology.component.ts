@@ -45,7 +45,7 @@ const SEV_COLOR: Record<string, string> = {
 };
 
 const NODE_SIZE: Record<string, number> = {
-  site: 12, cluster: 8, host: 4, vm: 2, service: 3,
+  site: 6, cluster: 4, host: 2, vm: 1, service: 2,
 };
 
 const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
@@ -354,7 +354,7 @@ export class TopologyComponent implements OnInit, OnDestroy {
           nodeType: n.type,
           status: n.status,
           alertCount: n.alert_count,
-          symbolSize: (NODE_SIZE[n.type] ?? 3) + Math.min(n.alert_count, 6),
+          symbolSize: (NODE_SIZE[n.type] ?? 2) + Math.min(n.alert_count * 0.5, 3),
           itemStyle: {
             color: SEV_COLOR[n.status] ?? SEV_COLOR['ok'],
             opacity: term && !n.id.includes(term) ? 0.12 : (n.inactive ? 0.45 : 1),
