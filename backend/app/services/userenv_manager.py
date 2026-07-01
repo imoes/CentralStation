@@ -233,7 +233,7 @@ def ensure_container(user_id: str) -> str:
     _backend_url = os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000")
     from urllib.parse import urlparse as _urlparse
     _backend_host = _urlparse(_backend_url).hostname or "backend"
-    _no_proxy = os.getenv("NO_PROXY", "localhost,127.0.0.1,.ippen.media")
+    _no_proxy = os.getenv("NO_PROXY", "localhost,127.0.0.1,.example.com")
     if _backend_host not in _no_proxy:
         _no_proxy = f"{_backend_host},{_no_proxy}"
     environment = {
@@ -297,11 +297,11 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
         )
 
     ssh_user = username.strip() or "marvin"
-    # *.ippen.media hosts resolve via sssd on the Docker host (127.0.1.1 alias).
+    # *.example.com hosts resolve via sssd on the Docker host (127.0.1.1 alias).
     # ProxyJump through host.docker.internal lets the container piggy-back on the
     # host's sssd infrastructure without needing domain-join inside the container.
     ssh_cfg_lines = [
-        "Host *.ippen.media",
+        "Host *.example.com",
         f"    User {ssh_user}",
     ]
     if key_pem and key_pem.strip():
@@ -335,7 +335,7 @@ def configure_claude_md(user_id: str, ssh_user: str = "marvin") -> None:
     """Write ~/.claude/CLAUDE.md into the container (on cs-ide-cfg volume → persistent).
 
     Provides Claude CLI with the same environment context that Hermes gets via system
-    prompt: SSH instructions, workspace location, ippen.media topology. Read automatically
+    prompt: SSH instructions, workspace location, example.com topology. Read automatically
     by every claude CLI invocation as the global user-level CLAUDE.md.
     """
     import docker as _docker
@@ -348,18 +348,18 @@ def configure_claude_md(user_id: str, ssh_user: str = "marvin") -> None:
     content = f"""# CentralStation — Linux-Admin-Umgebung
 
 Du bist ein Linux-Sysadmin-Assistent im CentralStation-Userenv-Container.
-SSH-Zugriff auf alle ippen.media-Server ist vorkonfiguriert.
+SSH-Zugriff auf alle example.com-Server ist vorkonfiguriert.
 
 ## SSH-ZUGRIFF
-Befehl: `ssh <hostname>.ippen.media '<befehl>'`
+Befehl: `ssh <hostname>.example.com '<befehl>'`
 User und Key sind per ~/.ssh/config voreingestellt — kein -i, -u oder -o IdentityFile nötig.
 SSH-User: `{ssh_user}`
 
 Beispiele:
 ```bash
-ssh hal.ippen.media 'hostname && df -h'
-ssh docker0218.ippen.media 'docker ps'
-ssh vpp0221.ippen.media 'free -h; uptime'
+ssh hal.example.com 'hostname && df -h'
+ssh docker0218.example.com 'docker ps'
+ssh vpp0221.example.com 'free -h; uptime'
 ```
 
 ## WORKSPACE

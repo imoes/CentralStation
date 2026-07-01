@@ -4,16 +4,16 @@
 #
 # Verwendung:
 #   sh nginx/generate-certs.sh
-#   oder: sh nginx/generate-certs.sh centralstation.ippen.media
+#   oder: sh nginx/generate-certs.sh centralstation.example.com
 
-DOMAIN="${1:-centralstation.ippen.media}"
+DOMAIN="${1:-centralstation.example.com}"
 
 docker run --rm \
   -v "$(pwd)/nginx/ssl:/ssl" \
   alpine/openssl req -x509 -nodes -newkey rsa:4096 -days 3650 \
   -keyout /ssl/key.pem \
   -out    /ssl/cert.pem \
-  -subj "/C=DE/ST=Bayern/L=Muenchen/O=ippen.media/CN=${DOMAIN}" \
+  -subj "/C=DE/ST=Bayern/L=Muenchen/O=example.com/CN=${DOMAIN}" \
   -addext "subjectAltName=DNS:${DOMAIN},DNS:localhost"
 
 echo ""

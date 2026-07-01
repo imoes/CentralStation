@@ -1,6 +1,6 @@
 """ID-Generator connector.
 
-Auth: Basic Auth — idgen_reader:ippenmedia (read-only)
+Auth: Basic Auth — idgen_reader:<password> (read-only)
 API base: {base_url}/api/v2/
 
 Simple GETs need no auth; sql-query and writes require Basic Auth.
@@ -17,7 +17,7 @@ class IDGeneratorConnector(BaseConnector):
     def _auth(self) -> tuple[str, str]:
         return (
             self.credentials.get("username", "idgen_reader"),
-            self.credentials.get("password", "ippenmedia"),
+            self.credentials.get("password", "changeme"),
         )
 
     def _api(self, path: str) -> str:

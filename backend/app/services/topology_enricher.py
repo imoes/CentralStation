@@ -52,9 +52,9 @@ def _extract_deps_from_text(text: str) -> list[str]:
     for svc in _KNOWN_SERVICES:
         if svc in text_lower:
             found.append(svc)
-    # Zusätzlich: Hostnamen-Pattern (z.B. opensearch01.ippen.media → opensearch)
+    # Zusätzlich: Hostnamen-Pattern (z.B. opensearch01.example.com → opensearch)
     host_pattern = re.compile(
-        r"\b([a-z][a-z0-9\-]{2,})\d*(?:\.ippen\.media|\.test\.ippen\.media)?\b"
+        r"\b([a-z][a-z0-9\-]{2,})\d*(?:\.example\.com|\.test\.example\.com)?\b"
     )
     for m in host_pattern.finditer(text_lower):
         base = m.group(1).rstrip("0123456789-")

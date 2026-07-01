@@ -297,7 +297,7 @@ async def get_checkmk_host(hostname: str) -> dict:
     """Ruft den CheckMK-Status eines Hosts ab: alle Services + aktuelle Performance-Metriken (CPU, RAM, Disk).
 
     Parameter:
-    - hostname: Hostname oder FQDN (z.B. 'docker086' oder 'docker086.ippen.media')
+    - hostname: Hostname oder FQDN (z.B. 'docker086' oder 'docker086.example.com')
 
     Nutze dieses Tool wenn der Nutzer den Status eines bestimmten Servers wissen will."""
     from app.services.connectors.checkmk import CheckMKConnector
@@ -342,7 +342,7 @@ async def get_checkmk_performance(hostname: str, hours: int = 2) -> dict:
     und Trend-Richtung (↑ steigend / → stabil / ↓ fallend).
 
     Parameter:
-    - hostname: Hostname (z.B. 'docker086' oder 'docker086.ippen.media')
+    - hostname: Hostname (z.B. 'docker086' oder 'docker086.example.com')
     - hours:    Zeitfenster in Stunden für Trend-Berechnung (Standard: 2)
 
     Nutze dieses Tool um Performance-Entwicklungen, Lastmuster und Kapazitäts-
@@ -742,7 +742,7 @@ async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
     """Durchsucht die interne IT-Wissensdatenbank (IT-AIKB / Confluence KB).
 
     Enthält Runbooks, Server-Dokumentation, Abhängigkeiten, Konfigurationsanleitungen
-    und KB-Artikel für alle ippen.media-Systeme.
+    und KB-Artikel für alle example.com-Systeme.
 
     Parameter:
     - query: Suchbegriff, z.B. 'HAProxy Konfiguration', '[KB] docker50 Abhängigkeiten',

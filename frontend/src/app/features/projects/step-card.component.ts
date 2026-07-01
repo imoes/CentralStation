@@ -500,7 +500,7 @@ export class StepCardComponent implements OnChanges {
 
   jiraUrl(): string {
     if (!this.step?.jira_key) return '#';
-    return `https://servicedesk.ippen.media/browse/${this.step.jira_key}`;
+    return `https://servicedesk.example.com/browse/${this.step.jira_key}`;
   }
 
   save() {

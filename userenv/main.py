@@ -107,9 +107,9 @@ SYSTEM_PROMPT = (
     "→ Frage NIE nach etwas, das bereits bekannt ist\n\n"
 
     "Beispiel:\n"
-    "Du: '...Wenn du willst, prüfe ich docker50.ippen.media im Detail.'\n"
+    "Du: '...Wenn du willst, prüfe ich docker50.example.com im Detail.'\n"
     "Nutzer: 'ja'\n"
-    "Du: [rufst get_checkmk_host('docker50.ippen.media') auf und zeigst das Ergebnis]\n\n"
+    "Du: [rufst get_checkmk_host('docker50.example.com') auf und zeigst das Ergebnis]\n\n"
 
     "## KRITISCHE REGEL: SCHREIBOPERATIONEN — ABSOLUTES VERBOT OHNE BESTÄTIGUNG\n"
     "**READ-ONLY bedeutet READ-ONLY.** Wenn der Nutzer 'nur lesen', 'read-only', 'keine Änderungen',\n"
@@ -174,7 +174,7 @@ SYSTEM_PROMPT = (
 
     "## SSH-ZUGRIFF (Serverdiagnose und Fehlerbehebung):\n"
     "Nutze SSH wenn du einen Server direkt untersuchen oder reparieren sollst.\n"
-    "Befehl: ssh <hostname>.ippen.media '<befehl>'\n"
+    "Befehl: ssh <hostname>.example.com '<befehl>'\n"
     "(User und Key sind per SSH-Config voreingestellt — KEIN -i, -l oder -o IdentityFile nötig)\n"
     "System-Diagnose:\n"
     "  ssh <host> 'df -h; du -sh /var/log/* | sort -rh | head -5'\n"
@@ -438,8 +438,8 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
     system_prompt = SYSTEM_PROMPT
     if ssh_user != "marvin":
         system_prompt = system_prompt.replace(
-            "ssh marvin@<hostname>.ippen.media",
-            f"ssh {ssh_user}@<hostname>.ippen.media",
+            "ssh marvin@<hostname>.example.com",
+            f"ssh {ssh_user}@<hostname>.example.com",
         )
 
     # Toolsets are derived from /root/.hermes/config.yaml — the per-user config

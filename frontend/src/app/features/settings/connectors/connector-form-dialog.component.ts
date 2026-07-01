@@ -62,7 +62,7 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
   wazuh:        [
     { key: 'username',           label: 'Manager Benutzername',             type: 'text' },
     { key: 'password',           label: 'Manager Passwort',                 type: 'password' },
-    { key: 'indexer_url',        label: 'Indexer URL (z.B. http://wazuh-indexer-1.ippen.media:9200)', type: 'text' },
+    { key: 'indexer_url',        label: 'Indexer URL (z.B. http://wazuh-indexer-1.example.com:9200)', type: 'text' },
     { key: 'indexer_username',   label: 'Indexer Benutzername (Standard: admin)', type: 'text' },
     { key: 'indexer_password',   label: 'Indexer Passwort',                 type: 'password' },
     { key: 'excluded_rule_ids',  label: 'Ausgeschlossene Rule-IDs (eine pro Zeile)', type: 'textarea',

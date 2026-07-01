@@ -247,7 +247,7 @@ Since OS/location/VE/criticality are CheckMK-native concepts, the filter accesse
 | **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung, KI-Ignorieren; Hostname anklickbar → Feed-Filter; Severity-Filter ignoriert aktive Saved-Searches korrekt |
 | **KI-Insights** | Befunde + zugehörige Empfehlungen direkt zusammen (kein getrenntes Panel); Datenquelle-Badge je Befund; Hostname/Feed-Links; Empfehlungen fließen in generatives Dashboard ein |
 | **Fehler-Cluster (Root-Cause)** | Die KI fasst im selben Analyse-Lauf mehrere Befunde mit gemeinsamer Ursache zu einer Diagnose zusammen (z.B. „Core-Switch in MUE-0 ausgefallen" erklärt 10 nicht erreichbare Hosts); nutzt Blast-Radius-Topologie; sichtbar in KI-Insights, Hermes-Konsole und Brücke |
-| **Werkbank (Web-IDE)** | Pro-User code-server (VS Code im Browser) unter `/workbench`; integriertes Terminal, Git/GitLab, SSH zu `*.ippen.media`; **vorinstallierte KI-Agenten-Extensions** (Claude Code + OpenAI Codex); Ansible editierbar (geteiltes `ansible/`-Verzeichnis im Standard-Layout: playbooks/roles/host_vars/group_vars/inventory, sofort in AWX sichtbar); Hermes-Analyse als Markdown übergeben |
+| **Werkbank (Web-IDE)** | Pro-User code-server (VS Code im Browser) unter `/workbench`; integriertes Terminal, Git/GitLab, SSH zu `*.example.com`; **vorinstallierte KI-Agenten-Extensions** (Claude Code + OpenAI Codex); Ansible editierbar (geteiltes `ansible/`-Verzeichnis im Standard-Layout: playbooks/roles/host_vars/group_vars/inventory, sofort in AWX sichtbar); Hermes-Analyse als Markdown übergeben |
 | **Maschinenraum (Remediation)** | Engineering-Cockpit unter `/engineering`; KI-gestützte Ansible-Remediation mit Human-in-the-Loop: `playbook_author` → AWX Job Template → `remediation_matcher` → Lern-Loop; cs-meta-Konvention im Playbook-Kopf (`matches`/`params`); Pending/Active/History/Catalog |
 | **AI War Room** | Blast-Radius-Analyse bei Critical/High; Ko-VMs, Ko-lokalisierte Hosts; Empfehlungen mit Ein-Klick-Jira |
 | **CheckMK Metriken** | Collector schreibt CPU/RAM/Disk/Agent-Zeit in `cs-metrics-checkmk`; Bridge zeigt Fleet-Vitals + Forecasts (lineare Regression); stabile Metriken (< 90 % ohne Trend) werden aus generativem Kontext gefiltert |
@@ -1048,7 +1048,7 @@ Browser  ──/ide/<uid>/──▶  nginx  ──auth_request──▶  backend
 - **Per-user bind mounts** under `IDE_WORKSPACES_BASE/<uid>/` (workspaces + VS Code
   state) so a single `tar`/`rsync` of that directory backs up everything. Claude Code
   credentials live on a separate named volume.
-- **SSH** to `*.ippen.media` is wired up from the host `~/.ssh` mount (marvin key)
+- **SSH** to `*.example.com` is wired up from the host `~/.ssh` mount (marvin key)
   by the entrypoint.
 
 ### Bundled AI coding-agent extensions

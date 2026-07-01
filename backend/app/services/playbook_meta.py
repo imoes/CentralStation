@@ -119,7 +119,7 @@ def meta_to_survey_spec(meta: dict) -> dict | None:
     """
     questions = [{
         "question_name": "Zielhost (FQDN)",
-        "question_description": "Host auf dem das Playbook läuft, z.B. web01.ippen.media",
+        "question_description": "Host auf dem das Playbook läuft, z.B. web01.example.com",
         "required": True,
         "type": "text",
         "variable": "target_host",

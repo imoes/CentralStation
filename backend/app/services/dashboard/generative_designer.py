@@ -817,7 +817,7 @@ async def design_dashboard(db: Any, user_id: str) -> dict:
     specs = _ensure_forecast_widgets(specs, situation, lang)
 
     # Expand short host mentions (e.g. "nsa242") in the rationale to their FQDN
-    # ("nsa242.ippen.media"). Qwen3 tends to write short names in prose, which the
+    # ("nsa242.example.com"). Qwen3 tends to write short names in prose, which the
     # FQDN-based host-link detection can't match → hosts become unclickable. Using
     # the real situation hosts we restore the full names so the strip stays clickable.
     rationale = _expand_host_mentions(rationale, _situation_hosts(situation))

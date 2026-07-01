@@ -235,7 +235,7 @@ def _build_summary(findings: list[dict], recommendations: list[dict], hours: int
     import re as _re
     for f in findings:
         for text in [f.get("title", ""), f.get("description", "")]:
-            for m in _re.finditer(r'\b([\w-]+\.(?:ippen\.media|internal|local))\b', text):
+            for m in _re.finditer(r'\b([\w-]+\.(?:example\.com|internal|local))\b', text):
                 h = m.group(1)
                 if h not in hosts:
                     hosts.append(h)

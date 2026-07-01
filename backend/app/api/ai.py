@@ -504,7 +504,7 @@ async def dashboard_assistant(
         '4. widget_type="top_hosts" (gs_w=4, gs_h=3) – Top problematische Hosts\n'
         '   config: {"index_pattern":"cs-feed-checkmk","query_string":"metadata.hostgroups:cue-prod AND NOT status:resolved","limit":5}\n\n'
         '5. widget_type="timeseries" (gs_w=12, gs_h=3) – Zeitreihe aus CheckMK:\n'
-        '   config: {"data_source":"checkmk","host":"cue0111.ippen.media","service":"WSM PreviewBitmapCache Elaptime","graph_index":0,"hours":4}\n'
+        '   config: {"data_source":"checkmk","host":"cue0111.example.com","service":"WSM PreviewBitmapCache Elaptime","graph_index":0,"hours":4}\n'
         '   ODER aus Prometheus:\n'
         '   config: {"data_source":"prometheus","promql":"rate(...)","step":"1m","hours":4,"unit":"%"}\n\n'
         "REGEL: Fuer Stat/List/Donut/Top_Hosts IMMER index_pattern+query_string verwenden (kein data_source!).\n"

@@ -3,7 +3,7 @@
 
 Verwendung:
   docker compose exec backend python3 create_admin.py
-  docker compose exec backend python3 create_admin.py --email admin@ippen.media --password 'Sicher123!'
+  docker compose exec backend python3 create_admin.py --email admin@example.com --password 'Sicher123!'
 """
 import argparse
 import asyncio
@@ -55,7 +55,7 @@ async def main(email: str, password: str, full_name: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CentralStation Admin erstellen")
-    parser.add_argument("--email",    default="admin@ippen.media", help="E-Mail-Adresse")
+    parser.add_argument("--email",    default="admin@example.com", help="E-Mail-Adresse")
     parser.add_argument("--password", default="Admin123!Change",   help="Initiales Passwort")
     parser.add_argument("--name",     default="Administrator",      help="Anzeigename")
     args = parser.parse_args()
