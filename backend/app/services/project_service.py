@@ -57,12 +57,13 @@ async def list_projects(db: AsyncSession, search: str = "") -> list[Project]:
     return list(result.scalars())
 
 
-async def create_project(db: AsyncSession, name: str, description: str | None, owner_id: str | None, status: str = "planning") -> Project:
+async def create_project(db: AsyncSession, name: str, description: str | None, owner_id: str | None, status: str = "planning", auto_jira: bool = False) -> Project:
     project = Project(
         name=name,
         description=description,
         owner_id=uuid.UUID(owner_id) if owner_id else None,
         status=status,
+        auto_jira=auto_jira,
     )
     db.add(project)
     await db.commit()
@@ -666,13 +667,19 @@ async def create_project_from_plan(
     description: str | None,
     proposed_steps: list[dict[str, Any]],
     owner_id: str | None,
+    auto_jira: bool = False,
 ) -> Project:
-    """Create a project + steps + deps from the KI planner's proposed graph."""
+    """Create a project + steps + deps from the KI planner's proposed graph.
+
+    When auto_jira is True, a Jira ticket is created for every step right after
+    the project is saved (best-effort — a connector/API failure never blocks the
+    project creation itself)."""
     project = Project(
         name=name,
         description=description,
         owner_id=uuid.UUID(owner_id) if owner_id else None,
         status="planning",
+        auto_jira=auto_jira,
     )
     db.add(project)
     await db.flush()
@@ -716,5 +723,59 @@ async def create_project_from_plan(
 
     await db.commit()
     await db.refresh(project)
+
+    # Auto-create Jira tickets for every step when the project opted in.
+    if auto_jira and owner_id:
+        await _auto_create_tickets_for_project(db, str(project.id), owner_id)
+
+    await db.refresh(project)
     await _broadcast(str(project.id))
     return project
+
+
+# Map the internal issue-type slug to the Jira issue-type name.
+_JIRA_TYPE_NAME = {
+    "epic": "Epic", "story": "Story", "task": "Task",
+    "subtask": "Sub-task", "bug": "Bug",
+}
+
+
+async def _auto_create_tickets_for_project(db: AsyncSession, project_id: str, user_id: str) -> None:
+    """Best-effort: create a Jira ticket for each ticket-less step of the project.
+
+    Epics are created first so Story/Task steps can be linked to their parent epic
+    via the Epic Link. Any failure is logged and skipped — never raised — so it
+    can't roll back the freshly created project."""
+    from app.services.settings import get_setting
+
+    connector_type = (await get_setting(db, "jira.ticket_connector")) or "jira_sd"
+
+    steps_result = await db.execute(
+        select(ProjectStep)
+        .where(ProjectStep.project_id == uuid.UUID(project_id))
+        .order_by(ProjectStep.sort_order)
+    )
+    steps = list(steps_result.scalars())
+    # Epics first so their jira_key is available as epic_key for child steps.
+    steps.sort(key=lambda s: 0 if s.jira_issue_type == "epic" else 1)
+
+    step_key_by_id: dict[uuid.UUID, str] = {}
+    for step in steps:
+        if step.jira_key:
+            continue
+        issue_type = _JIRA_TYPE_NAME.get(step.jira_issue_type, "Task")
+        epic_key = None
+        if step.parent_step_id and step.jira_issue_type not in ("epic",):
+            epic_key = step_key_by_id.get(step.parent_step_id)
+        try:
+            updated = await create_jira_ticket_for_step(
+                db, project_id, str(step.id),
+                connector_type=connector_type,
+                summary=None, description=None,
+                issue_type=issue_type, epic_key=epic_key,
+                user_id=user_id,
+            )
+            if updated.jira_key:
+                step_key_by_id[step.id] = updated.jira_key
+        except Exception as e:
+            log.warning("auto_jira: ticket creation failed for step %s: %s", step.id, e)

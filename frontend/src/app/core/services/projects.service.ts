@@ -7,6 +7,7 @@ export interface ProjectResponse {
   name: string;
   description: string | null;
   status: string;
+  auto_jira: boolean;
   owner_id: string | null;
   created_at: string;
   updated_at: string;
@@ -108,8 +109,8 @@ export class ProjectsService {
     return this.http.get<ProjectResponse[]>(this.base, { params: search ? { search } : {} });
   }
 
-  create(name: string, description?: string): Observable<ProjectResponse> {
-    return this.http.post<ProjectResponse>(this.base, { name, description });
+  create(name: string, description?: string, autoJira = false): Observable<ProjectResponse> {
+    return this.http.post<ProjectResponse>(this.base, { name, description, auto_jira: autoJira });
   }
 
   get(id: string): Observable<ProjectResponse> {
@@ -175,8 +176,8 @@ export class ProjectsService {
     return this.http.post<PlanResponse>(`${this.base}/plan`, { messages, existing_graph: existingGraph ?? null });
   }
 
-  savePlan(name: string, description: string | null, steps: ProposedStep[]): Observable<ProjectResponse> {
-    return this.http.post<ProjectResponse>(`${this.base}/from-plan`, { name, description, steps });
+  savePlan(name: string, description: string | null, steps: ProposedStep[], autoJira = false): Observable<ProjectResponse> {
+    return this.http.post<ProjectResponse>(`${this.base}/from-plan`, { name, description, steps, auto_jira: autoJira });
   }
 
   openInWorkbench(projectId: string): Observable<{ ide_url: string; project_id: string }> {
