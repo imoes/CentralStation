@@ -9,6 +9,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDialogModule, MatDialog, MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
+import { MatCheckboxModule } from '@angular/material/checkbox';
 import { ProjectsService, ProjectResponse } from '../../core/services/projects.service';
 import { I18nService } from '../../core/services/i18n.service';
 import { ThemeService } from '../../core/services/theme.service';
@@ -17,7 +18,7 @@ import { ThemeService } from '../../core/services/theme.service';
 @Component({
   selector: 'cs-create-project-dialog',
   standalone: true,
-  imports: [CommonModule, FormsModule, MatDialogModule, MatButtonModule, MatFormFieldModule, MatInputModule, MatIconModule],
+  imports: [CommonModule, FormsModule, MatDialogModule, MatButtonModule, MatFormFieldModule, MatInputModule, MatIconModule, MatCheckboxModule],
   template: `
     <h2 mat-dialog-title><mat-icon style="vertical-align:middle;margin-right:6px">folder_open</mat-icon>{{ data.title }}</h2>
     <mat-dialog-content style="display:flex;flex-direction:column;gap:14px;padding-top:8px;min-width:440px">
@@ -30,6 +31,7 @@ import { ThemeService } from '../../core/services/theme.service';
         <textarea matInput [(ngModel)]="description" rows="3"
                   placeholder="Kurze Beschreibung des Projekts"></textarea>
       </mat-form-field>
+      <mat-checkbox [(ngModel)]="autoJira">Jira-Tickets automatisch erstellen</mat-checkbox>
     </mat-dialog-content>
     <mat-dialog-actions align="end">
       <button mat-button (click)="ref.close()">Abbrechen</button>
@@ -42,11 +44,12 @@ import { ThemeService } from '../../core/services/theme.service';
 export class CreateProjectDialogComponent {
   name = '';
   description = '';
+  autoJira = false;
   constructor(
     public ref: MatDialogRef<CreateProjectDialogComponent>,
     @Inject(MAT_DIALOG_DATA) public data: { title: string },
   ) {}
-  save() { if (this.name.trim()) this.ref.close({ name: this.name.trim(), description: this.description.trim() }); }
+  save() { if (this.name.trim()) this.ref.close({ name: this.name.trim(), description: this.description.trim(), autoJira: this.autoJira }); }
 }
 
 const STATUS_FILTERS = ['all', 'planning', 'active', 'done', 'archived'] as const;
@@ -325,9 +328,9 @@ export class ProjectsComponent implements OnInit {
       width: '500px', maxWidth: '95vw',
       data: { title: this.i18n.t('projects.create_dialog_title') },
     });
-    ref.afterClosed().subscribe((result?: { name: string; description: string }) => {
+    ref.afterClosed().subscribe((result?: { name: string; description: string; autoJira: boolean }) => {
       if (!result) return;
-      this.svc.create(result.name, result.description || undefined).subscribe({
+      this.svc.create(result.name, result.description || undefined, result.autoJira).subscribe({
         next: p => this.router.navigate(['/projects', p.id]),
         error: () => this.snack.open('Projekt konnte nicht erstellt werden', 'OK', { duration: 3000 }),
       });

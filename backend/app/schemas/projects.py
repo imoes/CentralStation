@@ -16,12 +16,14 @@ class ProjectCreate(BaseModel):
     name: str
     description: str | None = None
     status: str = "planning"
+    auto_jira: bool = False
 
 
 class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     status: str | None = None
+    auto_jira: bool | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -31,6 +33,7 @@ class ProjectResponse(BaseModel):
     name: str
     description: str | None
     status: str
+    auto_jira: bool
     owner_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
@@ -250,6 +253,7 @@ class SavePlanRequest(BaseModel):
     name: str
     description: str | None = None
     steps: list[ProposedStep]
+    auto_jira: bool = False
 
 
 # ── KI-Projektassistent ───────────────────────────────────────────────────────

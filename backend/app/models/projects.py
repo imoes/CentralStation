@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -15,6 +15,8 @@ class Project(Base):
     description: Mapped[str | None] = mapped_column(Text)
     # planning | active | done | archived
     status: Mapped[str] = mapped_column(String(30), default="planning", nullable=False)
+    # When True, saving a KI-planned project auto-creates a Jira ticket per step.
+    auto_jira: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     owner_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
