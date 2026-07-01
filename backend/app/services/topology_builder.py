@@ -154,50 +154,7 @@ async def _build_skeleton(db: Any) -> dict:
     except Exception as e:
         log.debug("topology: AIKB edges not available: %s", e)
 
-    # Precompute a stable force-directed layout ONCE here (cached in the skeleton).
-    # The frontend then renders with ECharts layout:'none' — no live simulation in
-    # the browser, which used to freeze on ~1900 nodes.
-    _compute_layout(nodes, edges_list)
-
     return {"nodes": nodes, "edges": edges_list}
-
-
-def _compute_layout(nodes: dict[str, dict], edges: list[dict]) -> None:
-    """Assign each node an (x, y) coordinate via a Fruchterman-Reingold layout.
-
-    Runs once per skeleton rebuild (off the request path — the scheduler pre-warms
-    the cache). A fixed seed keeps positions stable across refreshes so nodes don't
-    jump around. Mutates the node dicts in place; on any failure the nodes simply
-    keep no coordinates and the frontend falls back to its own layout."""
-    if not nodes:
-        return
-    try:
-        import networkx as nx
-
-        g = nx.Graph()
-        g.add_nodes_from(nodes.keys())
-        for e in edges:
-            s, t = e.get("source"), e.get("target")
-            if s in nodes and t in nodes:
-                g.add_edge(s, t)
-
-        # k = optimal node distance; scale with graph size so big graphs spread out.
-        n = g.number_of_nodes()
-        k = 1.0 / (n ** 0.5) if n else None
-        # Seed positions from connected components so the layout converges faster
-        # and is deterministic. 60 iterations is plenty for a readable layout.
-        pos = nx.spring_layout(g, k=k, iterations=60, seed=42, dim=2)
-
-        # Scale the [-1, 1] layout to a pixel-ish range ECharts is comfortable with.
-        SCALE = 1400.0
-        for nid, (x, y) in pos.items():
-            node = nodes.get(nid)
-            if node is not None:
-                node["x"] = round(float(x) * SCALE, 1)
-                node["y"] = round(float(y) * SCALE, 1)
-        log.info("topology: precomputed layout for %d nodes", n)
-    except Exception as e:
-        log.warning("topology: layout precompute failed (frontend will lay out): %s", e)
 
 
 async def _get_skeleton(db: Any, force_refresh: bool) -> dict:
