@@ -261,6 +261,10 @@ const ISSUE_COLORS: Record<string, string> = {
           <h3>{{ i18n.t('projects.save_dialog_title') }}</h3>
           <input class="dialog-input" [(ngModel)]="saveName" [placeholder]="i18n.t('projects.name_placeholder')" />
           <textarea class="dialog-input" [(ngModel)]="saveDescription" [placeholder]="i18n.t('projects.desc_placeholder')" rows="3"></textarea>
+          <label class="check-row">
+            <input type="checkbox" [(ngModel)]="saveAutoJira" />
+            <span>{{ i18n.t('projects.auto_jira') }}</span>
+          </label>
           <div class="dialog-actions">
             <span class="spacer"></span>
             <button class="btn-text" (click)="showSaveDialog.set(false)">{{ i18n.t('dialog.cancel') }}</button>
@@ -342,6 +346,9 @@ const ISSUE_COLORS: Record<string, string> = {
     .dialog-input { border-radius:6px; padding:8px 11px; font-size:0.92rem; outline:none; resize:vertical; width:100%; box-sizing:border-box; font-family:Roboto,sans-serif; }
     .dialog-row { display:flex; gap:10px; }
     .dialog-col { flex:1; display:flex; flex-direction:column; gap:4px; }
+    .check-row { display:flex; flex-direction:row; align-items:center; gap:8px; cursor:pointer;
+                 font-size:.86rem; text-transform:none; letter-spacing:0; opacity:1; }
+    .check-row input { width:16px; height:16px; cursor:pointer; }
     .dep-list { display:flex; flex-direction:column; gap:4px; max-height:140px; overflow-y:auto; padding:4px 0; }
     .dep-item { display:flex; align-items:center; gap:8px; font-size:.85rem; text-transform:none; letter-spacing:0; opacity:1; cursor:pointer; }
     .dialog-actions { display:flex; align-items:center; gap:8px; margin-top:8px; }
@@ -513,6 +520,7 @@ export class ProjectPlannerComponent implements AfterViewInit {
   otherText = '';
   saveName = '';
   saveDescription = '';
+  saveAutoJira = false;
 
   // edit fields
   edTitle = ''; edDescription = ''; edType = 'task'; edDuration = 1; edDeps: string[] = [];
@@ -614,7 +622,7 @@ export class ProjectPlannerComponent implements AfterViewInit {
   saveProject() {
     if (!this.saveName.trim()) return;
     this.saving.set(true);
-    this.svc.savePlan(this.saveName.trim(), this.saveDescription.trim() || null, this.proposedSteps()).subscribe({
+    this.svc.savePlan(this.saveName.trim(), this.saveDescription.trim() || null, this.proposedSteps(), this.saveAutoJira).subscribe({
       next: project => {
         this.saving.set(false);
         this.showSaveDialog.set(false);

@@ -51,7 +51,7 @@ async def list_projects(db: DB, user: CurrentUser, search: str = ""):
 
 @router.post("", response_model=ProjectResponse, status_code=201, dependencies=[RequireAnyStaff])
 async def create_project(body: ProjectCreate, db: DB, user: CurrentUser):
-    return await svc.create_project(db, body.name, body.description, str(user.id), body.status)
+    return await svc.create_project(db, body.name, body.description, str(user.id), body.status, body.auto_jira)
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -208,7 +208,7 @@ async def run_planner(body: PlanRequest, db: DB, user: CurrentUser):
 async def save_plan(body: SavePlanRequest, db: DB, user: CurrentUser):
     steps_dicts = [s.model_dump() for s in body.steps]
     project = await svc.create_project_from_plan(
-        db, body.name, body.description, steps_dicts, str(user.id)
+        db, body.name, body.description, steps_dicts, str(user.id), body.auto_jira
     )
     return project
 
