@@ -351,11 +351,14 @@ export class TopologyComponent implements OnInit, OnDestroy {
         label: {
           show: true,
           position: 'right',
-          fontSize: 10,
+          fontSize: 9,
           color: txt,
-          formatter: (p: any) =>
-            p.data.nodeType === 'vm' ? '' : p.data.name.split('.')[0],
+          // Show the short name for every node (VMs included). ECharts hides
+          // labels that would overlap, so dense areas stay readable while every
+          // node is labelled without needing to hover.
+          formatter: (p: any) => p.data.name.split('.')[0],
         },
+        labelLayout: { hideOverlap: true },
         emphasis: { focus: 'adjacency', label: { show: true } },
         lineStyle: { color: grid, width: 1, curveness: 0.1 },
         data: g.nodes.map(n => ({
