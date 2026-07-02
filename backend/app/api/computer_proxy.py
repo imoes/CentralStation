@@ -173,28 +173,42 @@ async def configure_agent(
         raise HTTPException(400, "agent muss 'hermes', 'claude_cli' oder 'codex_cli' sein")
 
     if body.agent == "claude_cli":
-        if not body.access_token:
-            raise HTTPException(400, "access_token erforderlich für claude_cli")
-        await _upsert_agent_connector(db, user.id, "claude_cli", {
-            "access_token": body.access_token,
-            "refresh_token": body.refresh_token or "",
-            "expires_at": body.expires_at or "",
-        })
+        # Fresh token from an OAuth flow → store it; otherwise fall back to the
+        # credentials already saved for this user (explicit "activate" button —
+        # switching the active agent must not require re-authenticating).
+        if body.access_token:
+            await _upsert_agent_connector(db, user.id, "claude_cli", {
+                "access_token": body.access_token,
+                "refresh_token": body.refresh_token or "",
+                "expires_at": body.expires_at or "",
+            })
+            creds = {"access_token": body.access_token,
+                     "refresh_token": body.refresh_token or "",
+                     "expires_at": body.expires_at or ""}
+        else:
+            creds = await _load_agent_creds(db, user.id, "claude_cli")
+            if not creds or not creds.get("access_token"):
+                raise HTTPException(400, "Kein Claude-Token gespeichert — bitte zuerst authentifizieren")
         await asyncio.to_thread(ensure_container, str(user.id))
         await asyncio.to_thread(
             configure_claude_credentials,
-            str(user.id), body.access_token, body.refresh_token or "", body.expires_at,
+            str(user.id), creds["access_token"], creds.get("refresh_token") or "",
+            creds.get("expires_at") or None,
         )
 
     elif body.agent == "codex_cli":
-        if not body.access_token:
-            raise HTTPException(400, "access_token erforderlich für codex_cli")
-        await _upsert_agent_connector(db, user.id, "codex_cli", {
-            "access_token": body.access_token,
-            "refresh_token": body.refresh_token or "",
-        })
+        if body.access_token:
+            await _upsert_agent_connector(db, user.id, "codex_cli", {
+                "access_token": body.access_token,
+                "refresh_token": body.refresh_token or "",
+            })
+            creds = {"access_token": body.access_token}
+        else:
+            creds = await _load_agent_creds(db, user.id, "codex_cli")
+            if not creds or not creds.get("access_token"):
+                raise HTTPException(400, "Kein Codex-Token gespeichert — bitte zuerst authentifizieren")
         await asyncio.to_thread(ensure_container, str(user.id))
-        await asyncio.to_thread(configure_codex_credentials, str(user.id), body.access_token)
+        await asyncio.to_thread(configure_codex_credentials, str(user.id), creds["access_token"])
 
     result = await db.execute(select(UserPreference).where(UserPreference.user_id == user.id))
     pref = result.scalar_one_or_none()

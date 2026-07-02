@@ -169,6 +169,10 @@ interface HermesLLM {
             </div>
             @if (currentAgent() === 'claude_cli') {
               <div class="agent-badge connected"><mat-icon>check_circle</mat-icon> {{ i18n.t('console.connected') }}</div>
+            } @else if (claudeConnected() && claudeStep() === 'idle') {
+              <button mat-flat-button color="primary" class="activate-btn" (click)="activateAgent('claude_cli')">
+                <mat-icon>power_settings_new</mat-icon> Als Console-Agent verwenden
+              </button>
             }
           </div>
           <div class="agent-oauth" (click)="$event.stopPropagation()">
@@ -236,6 +240,10 @@ interface HermesLLM {
             </div>
             @if (currentAgent() === 'codex_cli') {
               <div class="agent-badge connected"><mat-icon>check_circle</mat-icon> {{ i18n.t('console.connected') }}</div>
+            } @else if (codexConnected() && codexStep() === 'idle') {
+              <button mat-flat-button color="primary" class="activate-btn" (click)="activateAgent('codex_cli')">
+                <mat-icon>power_settings_new</mat-icon> Als Console-Agent verwenden
+              </button>
             }
           </div>
           <div class="agent-oauth" (click)="$event.stopPropagation()">
@@ -310,6 +318,7 @@ interface HermesLLM {
       font-size: 0.8rem; color: var(--mat-sys-on-surface-variant); white-space: nowrap;
     }
     .agent-badge.connected { color: #4caf50; }
+    .activate-btn { flex-shrink: 0; font-size: 0.8rem; white-space: nowrap; }
     .agent-oauth { margin-top: 12px; }
 
     /* Hermes LLM section */
@@ -535,6 +544,20 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
         this.currentAgent.set('hermes');
         this.loadHermesLLM();
         this.snack.open('Hermes als Console-Agent gesetzt', '', { duration: 3000 });
+      },
+      error: (e) => this.snack.open(`Fehler: ${e.error?.detail || e.message}`, '', { duration: 4000 }),
+    });
+  }
+
+  /** Explicitly activate an already-authenticated CLI agent as the Console provider.
+   *  No token is passed — the backend re-uses the stored credentials. This is the
+   *  explicit "save/use this provider" action (switching must not require re-OAuth). */
+  activateAgent(agent: 'claude_cli' | 'codex_cli'): void {
+    this.http.post('/api/computer/configure-agent', { agent }).subscribe({
+      next: () => {
+        this.currentAgent.set(agent);
+        const label = agent === 'claude_cli' ? 'Claude' : 'Codex (ChatGPT)';
+        this.snack.open(`${label} als Console-Agent aktiviert`, '', { duration: 3000 });
       },
       error: (e) => this.snack.open(`Fehler: ${e.error?.detail || e.message}`, '', { duration: 4000 }),
     });
