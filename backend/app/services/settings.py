@@ -175,12 +175,18 @@ async def get_llm_config(db: AsyncSession) -> LLMConfig:
 
 def _llm_config_from_connector(conn, creds: dict) -> LLMConfig:
     """Convert a user's personal llm ConnectorConfig row to LLMConfig."""
+    api_mode = creds.get("api_mode") or "chat_completions"
+    model = creds.get("model") or ""
+    if not model and api_mode == "codex_responses":
+        model = "gpt-5.5"
+    elif not model and api_mode == "anthropic_messages":
+        model = "claude-opus-4-8"
     return LLMConfig(
         base_url=conn.base_url or "",
-        model=creds.get("model") or "",
+        model=model,
         api_key=creds.get("api_key"),
         timeout_seconds=int(creds.get("timeout_seconds") or 120),
-        api_mode=creds.get("api_mode") or "chat_completions",
+        api_mode=api_mode,
         thinking_mode=str(creds.get("thinking_mode", "false")).lower() == "true",
     )
 
@@ -189,7 +195,9 @@ async def get_active_llm_config(db: AsyncSession, user_id=None) -> LLMConfig:
     """Return the LLMConfig for the currently selected provider.
 
     If user_id is given, check for a personal llm connector first (user override).
-    Falls back to admin GlobalSetting if no personal connector is configured.
+    Falls back to the globally selected provider if no personal connector is
+    configured. For provider="custom", an enabled admin LLM connector acts as
+    the global custom endpoint.
 
     llm.provider = "custom"  → local llamacpp03 endpoint (default)
     llm.provider = "openai-codex" → OpenAI Codex via stored OAuth token
@@ -209,21 +217,6 @@ async def get_active_llm_config(db: AsyncSession, user_id=None) -> LLMConfig:
             creds = decrypt_credentials(user_conn.encrypted_credentials)
             return _llm_config_from_connector(user_conn, creds)
 
-    # Check global admin llm connector (owner_user_id IS NULL)
-    from sqlalchemy import select as _select
-    from app.models.connector import ConnectorConfig
-    result = await db.execute(
-        _select(ConnectorConfig).where(
-            ConnectorConfig.type == "llm",
-            ConnectorConfig.owner_user_id.is_(None),
-            ConnectorConfig.enabled.is_(True),
-        ).limit(1)
-    )
-    admin_conn = result.scalar_one_or_none()
-    if admin_conn:
-        creds = decrypt_credentials(admin_conn.encrypted_credentials)
-        return _llm_config_from_connector(admin_conn, creds)
-
     s = await get_all_settings(db)
     provider = s.get("llm.provider") or "custom"
 
@@ -232,7 +225,7 @@ async def get_active_llm_config(db: AsyncSession, user_id=None) -> LLMConfig:
         token = await get_codex_access_token(db)
         if token:
             from app.api.oauth_providers import CODEX_BASE_URL
-            model = s.get("llm.codex_model") or "gpt-4o"
+            model = s.get("llm.codex_model") or "gpt-5.5"
             return LLMConfig(
                 base_url=CODEX_BASE_URL,
                 model=model,
@@ -256,6 +249,24 @@ async def get_active_llm_config(db: AsyncSession, user_id=None) -> LLMConfig:
                 api_mode="anthropic_messages",
                 thinking_mode=s.get("llm.thinking_mode", "false") == "true",
             )
+
+    if provider == "custom":
+        # Check global admin llm connector (owner_user_id IS NULL). This must not
+        # run before OAuth providers, otherwise a stale custom connector masks an
+        # explicit global provider switch to OpenAI Codex or Claude OAuth.
+        from sqlalchemy import select as _select
+        from app.models.connector import ConnectorConfig
+        result = await db.execute(
+            _select(ConnectorConfig).where(
+                ConnectorConfig.type == "llm",
+                ConnectorConfig.owner_user_id.is_(None),
+                ConnectorConfig.enabled.is_(True),
+            ).limit(1)
+        )
+        admin_conn = result.scalar_one_or_none()
+        if admin_conn:
+            creds = decrypt_credentials(admin_conn.encrypted_credentials)
+            return _llm_config_from_connector(admin_conn, creds)
 
     return await get_llm_config(db)
 
