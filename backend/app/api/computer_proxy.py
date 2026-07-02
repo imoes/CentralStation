@@ -82,7 +82,7 @@ async def _upsert_agent_connector(
     """Upsert a ConnectorConfig row for the given CLI agent type."""
     from sqlalchemy import select as _sel
     from app.models.connector import ConnectorConfig
-    from app.core.security import encrypt_credentials as _enc
+    from app.core.security import encrypt_credentials as _enc, decrypt_credentials as _dec
     res = await db.execute(
         _sel(ConnectorConfig).where(
             ConnectorConfig.type == agent_type,
