@@ -56,6 +56,10 @@ def _configure_logging() -> None:
 _configure_logging()
 log = logging.getLogger("userenv")
 
+# This process runs unprivileged as yolo (uid 1000); /root is 0700 root:root and
+# unwritable here. All state that used to assume HOME=/root lives under yolo's home.
+_YOLO_HOME = "/home/yolo"
+
 app = FastAPI(title="UserEnv Agent Service", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -365,7 +369,7 @@ class CreateSessionBody(BaseModel):
 
 
 def _read_mcp_toolsets_from_config() -> list:
-    """Read /root/.hermes/config.yaml and return mcp-{name} toolset names.
+    """Read ~/.hermes/config.yaml and return mcp-{name} toolset names.
 
     Falls back to centralstation-only if the file is missing or unreadable.
     The per-user config is written by userenv_manager.write_hermes_config()
@@ -374,7 +378,7 @@ def _read_mcp_toolsets_from_config() -> list:
     """
     import yaml as _yaml
     for path in [
-        "/root/.hermes/config.yaml",
+        f"{_YOLO_HOME}/.hermes/config.yaml",
         os.path.join(os.path.dirname(__file__), "hermes_config.yaml"),
     ]:
         try:
@@ -442,7 +446,7 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
             f"ssh {ssh_user}@<hostname>.example.com",
         )
 
-    # Toolsets are derived from /root/.hermes/config.yaml — the per-user config
+    # Toolsets are derived from ~/.hermes/config.yaml — the per-user config
     # written by userenv_manager.write_hermes_config() at container start.
     # This includes centralstation (always) + any user-configured servers (vibemk, awx-ng…).
     _mcp_toolsets = _read_mcp_toolsets_from_config()
@@ -474,7 +478,7 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
     )
     # Give MCP discovery a generous window to complete before the first turn.
     # All MCP servers (centralstation + user-specific) are defined in
-    # /root/.hermes/config.yaml and discovered at container startup — no
+    # ~/.hermes/config.yaml and discovered at container startup — no
     # per-session dynamic registration needed.
     from hermes_cli.mcp_startup import wait_for_mcp_discovery
     wait_for_mcp_discovery(timeout=8.0)
@@ -490,16 +494,21 @@ async def _run_cli_agent(
 ):
     """Async generator: stream output from claude/codex CLI subprocess as SSE events.
 
-    Both CLIs run unprivileged inside the per-user container with credentials injected
-    by the backend (claude → ~/.claude/.credentials.json, codex → ~/.codex/config.toml +
-    OPENAI_API_KEY). The console never exposes the CLI itself — only the streamed answer.
+    Both CLIs run unprivileged as yolo (uid 1000) inside the per-user container with
+    credentials injected by the backend (claude → ~/.claude/.credentials.json, codex →
+    $CODEX_HOME/config.toml + OPENAI_API_KEY). The console never exposes the CLI itself
+    — only the streamed answer.
 
     sid is the CentralStation session UUID. Claude uses it as --session-id so the
     conversation is persisted in ~/.claude/sessions/<sid>.json on the cs-ide-cfg volume
     and survives container restarts. Codex captures its own internal session ID from the
     JSONL stream for resume on subsequent turns.
     """
-    env = {**os.environ, "HOME": "/root"}
+    # yolo (uid 1000) owns /home/yolo; /root is 0700 root:root and unwritable by this
+    # process. HOME="/root" here made Claude fail internal writes outside
+    # CLAUDE_CONFIG_DIR (npm/node cache dirs etc.), which corrupted .credentials.json
+    # mid-run (emptied accessToken) rather than just erroring cleanly.
+    env = {**os.environ, "HOME": "/home/yolo"}
 
     if agent_type == "claude_cli":
         # --session-id: sets the UUID for a NEW session (first message).
@@ -869,36 +878,22 @@ def _find_lineage_tip(db, sid: str) -> str:
     return current
 
 
-_CLI_HISTORY_DIR = "/root/.hermes/cli_sessions"
-
-
-def _save_cli_history(sid: str, history: list) -> None:
-    try:
-        os.makedirs(_CLI_HISTORY_DIR, exist_ok=True)
-        with open(f"{_CLI_HISTORY_DIR}/{sid}.json", "w") as f:
-            json.dump(history, f)
-    except Exception as exc:
-        log.warning("[%s] cli history save failed: %s", sid[:8], exc)
-
-
-def _load_cli_history(sid: str) -> list:
-    try:
-        with open(f"{_CLI_HISTORY_DIR}/{sid}.json") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return []
-    except Exception as exc:
-        log.warning("[%s] cli history load failed: %s", sid[:8], exc)
-        return []
+# CLI agents (claude_cli, codex_cli) keep their message history in memory only
+# (_sessions[sid]["history"]) — NEVER on disk under .hermes. That directory is
+# Hermes-agent state exclusively. Claude already has its own durable persistence via
+# ~/.claude/projects/.../<sid>.jsonl (separate volume); Codex has none — its Console
+# history simply does not survive a container restart, same as before this was ever
+# attempted (the old /root/.hermes/cli_sessions path was never actually writable by
+# yolo, so this was always a no-op in practice).
 
 
 @app.get("/sessions/{sid}/history")
 def get_history(sid: str):
     # CLI sessions (codex_cli / claude_cli): history lives in _sessions[sid]["history"]
-    # (in-memory) and is persisted to /root/.hermes/cli_sessions/<sid>.json on each turn.
-    if sid in _sessions and _sessions[sid].get("agent_type") in ("claude_cli", "codex_cli"):
-        mem = _sessions[sid].get("history") or []
-        return mem or _load_cli_history(sid)
+    # (in-memory only — see the note above _run_cli_agent).
+    _agent_type = _sessions.get(sid, {}).get("agent_type")
+    if _agent_type in ("claude_cli", "codex_cli"):
+        return _sessions[sid].get("history") or []
 
     # Hermes: always read from SessionDB — it is the authoritative source.
     # Branches child sessions when run_conversation() is called with
@@ -918,11 +913,6 @@ def get_history(sid: str):
     if sid in _sessions:
         agent = _sessions[sid]["agent"]
         return getattr(agent, "conversation_history", None) or []
-
-    # Last resort: try the CLI history file (session may have been evicted from memory)
-    cli_hist = _load_cli_history(sid)
-    if cli_hist:
-        return cli_hist
 
     raise HTTPException(404, "Session nicht gefunden")
 
@@ -990,21 +980,23 @@ async def send_message(sid: str, body: MessageBody):
             extra_mcp_servers=body.extra_mcp_servers,
         )
         if not _restore_session(sid, llm_cfg):
-            # CLI agents never write to SessionDB — on container restart their in-memory
-            # entry is gone. Instead of 404, create a fresh entry so the session can
-            # continue. Claude CLI recovers conversation history from its own session file
-            # (~/.claude/sessions/<sid>.json on the cs-ide-cfg volume); Codex history is lost.
+            # CLI agents never write to SessionDB and keep no on-disk history cache
+            # (never under .hermes — that's Hermes-agent state only). On container
+            # restart their in-memory entry is gone; instead of 404, create a fresh
+            # empty entry so the session can continue. Claude's own conversation is
+            # NOT lost — it resumes via --resume from ~/.claude/sessions/<sid>.json on
+            # the cs-ide-cfg volume; only the Console UI's pre-restart message replay
+            # is empty. Codex has no equivalent — its Console history is genuinely gone.
             if body.agent_type in ("claude_cli", "codex_cli"):
-                restored_history = _load_cli_history(sid)
-                log.info("CLI session %s: creating fresh entry after container restart (agent_type=%s, history=%d turns)",
-                         sid[:8], body.agent_type, len(restored_history))
+                log.info("CLI session %s: creating fresh entry after container restart (agent_type=%s)",
+                         sid[:8], body.agent_type)
                 _sessions[sid] = {
                     "agent": None,
                     "agent_type": body.agent_type,
                     "label": "Session (restored)",
-                    "msg_count": len([m for m in restored_history if m.get("role") == "user"]),
+                    "msg_count": 0,
                     "created_at": datetime.now(timezone.utc).isoformat(),
-                    "history": restored_history,
+                    "history": [],
                 }
             else:
                 log.warning("Restore failed for session %s — not found in SessionDB", sid[:8])
@@ -1077,7 +1069,6 @@ async def send_message(sid: str, body: MessageBody):
             full = "".join(output_parts)
             if full:
                 history.append({"role": "assistant", "content": full})
-                _save_cli_history(sid, history)
 
         return StreamingResponse(
             cli_event_stream(),

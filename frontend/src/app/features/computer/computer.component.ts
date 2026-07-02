@@ -462,16 +462,42 @@ export class ComputerComponent implements OnInit, OnDestroy {
         });
       });
 
-      // Restore active tab — keep current selection if still valid, otherwise pick first.
+      // Restore active tab — keep current selection if still valid. Otherwise, pick a
+      // tab whose agent_type matches the currently configured Console agent (most
+      // recent first — the list is oldest→newest) so switching provider in Settings
+      // doesn't silently keep talking to a stale session pinned to the old agent.
+      // If no session matches, start a fresh one for the current agent.
       const ids = list.map(s => s.session_id);
       if (!this.activeTabId() || !ids.includes(this.activeTabId()!)) {
-        this.activeTabId.set(ids[0]);
+        const currentAgent = await this.fetchCurrentAgent();
+        const matching = [...list].reverse().find(s => (s.agent_type ?? 'hermes') === currentAgent);
+        if (matching) {
+          this.activeTabId.set(matching.session_id);
+        } else {
+          await this.newSession();
+          return;
+        }
       }
 
       // Load message history for all sessions so they're available after a reload.
       await Promise.all(ids.map(sid => this.loadSessionHistory(sid)));
     } catch (err) {
       console.debug('loadSessions failed:', err);
+    }
+  }
+
+  /** Current Console agent from user preferences ('hermes' if unset/unreachable). */
+  private async fetchCurrentAgent(): Promise<string> {
+    const token = this.auth.getAccessToken();
+    try {
+      const r = await fetch(`${environment.apiUrl}/preferences`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) return 'hermes';
+      const prefs = await r.json();
+      return prefs?.computer_agent ?? 'hermes';
+    } catch {
+      return 'hermes';
     }
   }
 
