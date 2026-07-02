@@ -98,7 +98,7 @@ interface HermesLLM {
                 <div class="llm-form">
                   <mat-form-field appearance="outline" class="llm-field">
                     <mat-label>API-Modus</mat-label>
-                    <mat-select [(ngModel)]="llmForm.api_mode">
+                    <mat-select [(ngModel)]="llmForm.api_mode" (selectionChange)="onApiModeChange($event.value)">
                       @for (mode of apiModes; track mode) {
                         <mat-option [value]="mode">{{ apiModeLabel(mode) }}</mat-option>
                       }
@@ -423,6 +423,17 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
     }
   }
 
+  onApiModeChange(mode: ApiMode): void {
+    const current = (this.llmForm.model || '').trim();
+    const placeholders = new Set(this.apiModes.map(m => this.modelPlaceholder(m)));
+    if (!current || placeholders.has(current)) {
+      this.llmForm.model = this.modelPlaceholder(mode);
+    }
+    if (mode === 'codex_responses' || mode === 'anthropic_messages') {
+      this.llmForm.base_url = '';
+    }
+  }
+
   // ── Hermes LLM ─────────────────────────────────────────────────────
 
   private loadHermesLLM(): void {
@@ -431,7 +442,7 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
         this.hermesLLM.set(cfg);
         if (cfg.configured) {
           this.llmForm.api_mode = (cfg.api_mode ?? 'chat_completions') as ApiMode;
-          this.llmForm.model = cfg.model ?? '';
+          this.llmForm.model = cfg.model || this.modelPlaceholder(this.llmForm.api_mode);
           this.llmForm.base_url = cfg.base_url ?? '';
           this.llmForm.api_key = '';  // always blank on load (masked)
           this.llmForm.timeout_seconds = cfg.timeout_seconds ?? 120;
@@ -459,10 +470,11 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
   }
 
   saveLLM(): void {
+    const model = (this.llmForm.model || '').trim() || this.modelPlaceholder(this.llmForm.api_mode);
     this.savingLLM.set(true);
     this.http.put('/api/computer/hermes-llm', {
       api_mode: this.llmForm.api_mode,
-      model: this.llmForm.model,
+      model,
       base_url: this.llmForm.base_url,
       api_key: this.llmForm.api_key || null,
       timeout_seconds: this.llmForm.timeout_seconds,
@@ -489,7 +501,7 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
       next: (res) => {
         const models: string[] = res.models ?? [];
         const current: string = res.current_model ?? '';
-        const connected = res.source === 'api' || !!current;
+        const connected = !!res.authenticated || res.source === 'api' || !!current;
         if (provider === 'claude') {
           this.claudeModels.set(models);
           this.claudeModelsSource.set(res.source ?? 'static');

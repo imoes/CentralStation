@@ -25,6 +25,7 @@ from sqlalchemy import delete, func, update
 
 from app.api.deps import CurrentUser, get_db
 from app.models.workflow import ComputerSession, UserPreference
+from app.services.codex_models import extract_codex_model_ids
 
 router = APIRouter(prefix="/computer", tags=["computer"])
 log = logging.getLogger(__name__)
@@ -89,6 +90,10 @@ async def _upsert_agent_connector(
         ).limit(1)
     )
     conn = res.scalar_one_or_none()
+    if conn and "model" not in creds:
+        existing = _dec(conn.encrypted_credentials)
+        if existing.get("model"):
+            creds["model"] = existing["model"]
     enc = _enc(creds)
     if conn:
         conn.encrypted_credentials = enc
@@ -243,10 +248,26 @@ _CLAUDE_FALLBACK = [
     "claude-3-opus-20240229",
 ]
 _CODEX_FALLBACK = [
-    "o3", "o4-mini", "gpt-4.1", "gpt-4.1-mini",
-    "gpt-4o", "gpt-4o-mini", "gpt-4-turbo",
+    "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark",
+    "codex-auto-review",
 ]
-_CODEX_EXCLUDE = ("embedding", "tts", "whisper", "dall-e", "babbage", "davinci", "ada", "curie")
+async def _fetch_codex_models(access_token: str) -> list[str]:
+    """Fetch Codex models with the ChatGPT OAuth token.
+
+    The per-user Device Code token is accepted by the ChatGPT Codex backend,
+    not by the public OpenAI API model-list endpoint.
+    """
+    from app.api.oauth_providers import CODEX_BASE_URL
+
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        r = await client.get(
+            f"{CODEX_BASE_URL.rstrip('/')}/models?client_version=1.0.0",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    if r.status_code != 200:
+        log.debug("Codex model fetch failed: HTTP %s %s", r.status_code, r.text[:200])
+        return []
+    return extract_codex_model_ids(r.json())
 
 
 @router.get("/models/{provider}")
@@ -270,7 +291,12 @@ async def list_cli_models(
     fallback = _CLAUDE_FALLBACK if provider == "claude" else _CODEX_FALLBACK
 
     if not creds or not creds.get("access_token"):
-        return {"models": fallback, "source": "static", "current_model": current_model}
+        return {
+            "models": fallback,
+            "source": "static",
+            "current_model": current_model,
+            "authenticated": False,
+        }
 
     access_token = creds["access_token"]
     try:
@@ -286,26 +312,30 @@ async def list_cli_models(
             if r.status_code == 200:
                 models = [m["id"] for m in r.json().get("data", [])]
                 if models:
-                    return {"models": sorted(models), "source": "api", "current_model": current_model}
+                    return {
+                        "models": sorted(models),
+                        "source": "api",
+                        "current_model": current_model,
+                        "authenticated": True,
+                    }
         else:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                r = await client.get(
-                    "https://api.openai.com/v1/models",
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
-            if r.status_code == 200:
-                models = sorted([
-                    m["id"] for m in r.json().get("data", [])
-                    if not any(x in m["id"] for x in _CODEX_EXCLUDE)
-                    and (m["id"].startswith("gpt-") or m["id"].startswith("o")
-                         or m["id"].startswith("codex"))
-                ])
-                if models:
-                    return {"models": models, "source": "api", "current_model": current_model}
+            models = await _fetch_codex_models(access_token)
+            if models:
+                return {
+                    "models": models,
+                    "source": "api",
+                    "current_model": current_model,
+                    "authenticated": True,
+                }
     except Exception as exc:
         log.debug("Model fetch for %s failed: %s", provider, exc)
 
-    return {"models": fallback, "source": "static", "current_model": current_model}
+    return {
+        "models": fallback,
+        "source": "static",
+        "current_model": current_model,
+        "authenticated": True,
+    }
 
 
 class _CliModelBody(BaseModel):
@@ -323,6 +353,9 @@ async def set_cli_model(
     """Store model preference inside the CLI agent's ConnectorConfig credentials."""
     if body.provider not in ("claude", "codex"):
         raise HTTPException(400, "provider muss 'claude' oder 'codex' sein")
+    model = body.model.strip()
+    if not model:
+        raise HTTPException(400, "model darf nicht leer sein")
 
     agent_type = f"{body.provider}_cli"
     from sqlalchemy import select as _sel
@@ -340,12 +373,12 @@ async def set_cli_model(
         raise HTTPException(404, f"Kein {agent_type}-Connector für diesen Benutzer")
 
     creds = _dec(conn.encrypted_credentials)
-    creds["model"] = body.model
+    creds["model"] = model
     conn.encrypted_credentials = _enc(creds)
     await db.commit()
 
-    log.info("CLI model set to '%s' for %s / user %s", body.model, agent_type, user.id)
-    return {"status": "saved", "model": body.model}
+    log.info("CLI model set to '%s' for %s / user %s", model, agent_type, user.id)
+    return {"status": "saved", "model": model}
 
 
 # ── Hermes Console LLM Config ──────────────────────────────────────
@@ -380,10 +413,16 @@ async def get_hermes_llm(
     if not conn:
         return {"configured": False}
     creds = _dec(conn.encrypted_credentials)
+    api_mode = creds.get("api_mode") or "chat_completions"
+    model = creds.get("model") or ""
+    if not model and api_mode == "codex_responses":
+        model = "gpt-5.5"
+    elif not model and api_mode == "anthropic_messages":
+        model = "claude-opus-4-8"
     return {
         "configured": True,
-        "api_mode": creds.get("api_mode") or "chat_completions",
-        "model": creds.get("model") or "",
+        "api_mode": api_mode,
+        "model": model,
         "base_url": conn.base_url or "",
         "timeout_seconds": int(creds.get("timeout_seconds") or 120),
         "thinking_mode": str(creds.get("thinking_mode", "false")).lower() == "true",
@@ -422,9 +461,15 @@ async def put_hermes_llm(
     if conn and body.api_key is None:
         existing_key = _dec(conn.encrypted_credentials).get("api_key") or ""
 
+    model = (body.model or "").strip()
+    if not model and body.api_mode == "codex_responses":
+        model = "gpt-5.5"
+    elif not model and body.api_mode == "anthropic_messages":
+        model = "claude-opus-4-8"
+
     creds = {
         "api_mode": body.api_mode,
-        "model": body.model,
+        "model": model,
         "api_key": body.api_key if body.api_key is not None else existing_key,
         "timeout_seconds": body.timeout_seconds,
         "thinking_mode": "true" if body.thinking_mode else "false",
@@ -475,14 +520,16 @@ async def create_session(
     extra_servers: dict = {}  # personal MCP connectors; defined here so it survives
                               # an early exception in the LLM-config block below.
     try:
-        # For Hermes sessions: prefer console-specific LLM config; fall back to global.
+        # For Hermes sessions: prefer console-specific LLM config; fall back to
+        # the global admin LLM config. Do not pass user_id here: user-scoped
+        # personal LLM connectors would override the explicit "global" mode.
         # CLI sessions (claude_cli/codex_cli) use their own OAuth tokens — LLM config irrelevant.
         _agent_pref = (await db.execute(
             select(UserPreference).where(UserPreference.user_id == user.id)
         )).scalar_one_or_none()
         _agent_type = getattr(_agent_pref, "computer_agent", None) or "hermes"
         if _agent_type == "hermes":
-            llm = (await _get_console_llm_config(db, user.id)) or (await get_active_llm_config(db, user_id=user.id))
+            llm = (await _get_console_llm_config(db, user.id)) or (await get_active_llm_config(db))
         else:
             llm = await get_active_llm_config(db, user_id=user.id)
         searxng = await get_searxng_config(db)
@@ -845,9 +892,11 @@ async def send_message(
             select(UserPreference).where(UserPreference.user_id == user.id)
         )).scalar_one_or_none()
         _agent_type = getattr(_msg_pref, "computer_agent", None) or "hermes"
-        # For Hermes sessions: prefer console-specific LLM config; fall back to global.
+        # For Hermes sessions: prefer console-specific LLM config; fall back to
+        # the global admin LLM config. Do not pass user_id here: user-scoped
+        # personal LLM connectors would override the explicit "global" mode.
         if _agent_type == "hermes":
-            llm = (await _get_console_llm_config(db, user.id)) or (await get_active_llm_config(db, user_id=user.id))
+            llm = (await _get_console_llm_config(db, user.id)) or (await get_active_llm_config(db))
         else:
             llm = await get_active_llm_config(db, user_id=user.id)
         # For CLI agents, override llm_model with the user's stored CLI model preference.
@@ -859,9 +908,11 @@ async def send_message(
 
         body_data.update({
             "llm_base_url": llm.base_url or None,
-            # CLI agents: use stored CLI model preference; do NOT fall back to Hermes model
-            # (claude-sonnet-4-6 would break codex, o3 would break claude).
-            "llm_model": cli_model or None,
+            # CLI agents: use stored CLI model preference; do NOT fall back to
+            # Hermes model (claude-sonnet-4-6 would break codex, o3 would break
+            # claude). Hermes must receive its own LLM model so an existing
+            # session is not re-initialized with an empty model on first message.
+            "llm_model": (cli_model if _agent_type in ("claude_cli", "codex_cli") else llm.model) or None,
             "llm_api_key": llm.api_key or None,
             "llm_api_mode": llm.api_mode or "chat_completions",
             "searxng_url": searxng.base_url if searxng.is_configured else None,
