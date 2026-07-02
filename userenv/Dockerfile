@@ -94,6 +94,26 @@ ENV PATH=/home/yolo/.local/bin:$PATH \
 # ── Codex CLI (@openai/codex) — global so yolo can use it ────────────
 RUN npm install -g @openai/codex
 
+# ── Playwright MCP (browser automation for the Computer Console) ─────
+# Shared stdio MCP server usable by all three Console agents (Hermes,
+# Claude CLI, Codex CLI). Installed globally → the `playwright-mcp` binary
+# lands on PATH. The Chromium browser lives in a world-readable path
+# (PLAYWRIGHT_BROWSERS_PATH) so the non-root yolo user can drive it. The
+# server is spawned with --browser chromium --headless --no-sandbox
+# (container has no user-namespace sandbox), see userenv_manager.py.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN npm install -g @playwright/mcp@latest \
+    && PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+       https_proxy=${HTTPS_PROXY} http_proxy=${HTTP_PROXY} \
+       npx playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/ms-playwright \
+    # @playwright/mcp's `--browser chromium` maps to the "chrome-for-testing"
+    # channel (not installed). Pin a stable symlink to the Chromium we did
+    # download and pass it via --executable-path (see userenv_manager.py); this
+    # survives Playwright browser-revision bumps that change the chromium-NNNN dir.
+    && ln -sf "$(find /opt/ms-playwright -type f -path '*chrome-linux64/chrome' | head -1)" \
+              /opt/ms-playwright/chrome-stable
+
 # ── VS Code extensions baked into image ──────────────────────────────
 # Installed to /opt/cs-extensions (not into $HOME which is per-user bind mount).
 # The entrypoint seeds them into each user's extensions dir on first start.

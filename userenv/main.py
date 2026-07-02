@@ -702,24 +702,28 @@ async def _run_cli_agent(
     # approval_policy = "never" is set in config.toml; no CLI flag needed.
     # On subsequent turns, use `codex exec resume <codex_session_id>` if we captured
     # the internal session ID from a previous turn's JSONL stream.
+    # Codex config lives under a yolo-writable CODEX_HOME (the process runs as yolo,
+    # so /root/.codex is unreadable). userenv_manager writes config.toml + env there.
+    codex_home = "/home/yolo/.codex"
     codex_session_id = session.get("codex_session_id", "")
     if codex_session_id:
         codex_cmd = f"exec resume {codex_session_id} --json"
         if model:
             codex_cmd += f' --model "$CODEX_MODEL"'
-        sh_cmd = f'. /root/.profile; exec codex {codex_cmd} "$MSG"'
+        sh_cmd = f'. "$CODEX_HOME/env"; exec codex {codex_cmd} "$MSG"'
     else:
         codex_cmd = "exec --json --skip-git-repo-check"
         if model:
             codex_cmd += f' --model "$CODEX_MODEL"'
-        sh_cmd = f'. /root/.profile; exec codex {codex_cmd} "$MSG"'
+        sh_cmd = f'. "$CODEX_HOME/env"; exec codex {codex_cmd} "$MSG"'
 
     proc = await asyncio.create_subprocess_exec(
         "sh", "-c", sh_cmd,
         stdin=asyncio.subprocess.DEVNULL,   # codex exec else tries to read piped stdin → "Reading additional input from stdin..."
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={**env, "MSG": message, "CODEX_MODEL": model or ""},
+        env={**env, "HOME": "/home/yolo", "CODEX_HOME": codex_home,
+             "MSG": message, "CODEX_MODEL": model or ""},
     )
     emitted = False
     log.info("[cli:codex] subprocess started pid=%s", proc.pid)

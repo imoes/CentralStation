@@ -926,8 +926,24 @@ cs-userenv-{uid}  (FastAPI on port 8001)
 MCP servers:
   /api/mcp/sse          (SSE, legacy — Hermes)
   /api/mcp-http/        (streamable-http — Claude CLI, Codex CLI)
+  playwright            (stdio — browser automation, all three agents)
   + personal connectors (VibeMK, AWX-NG, …)
 ```
+
+### Browser automation (Playwright MCP)
+
+All three agents share a **Playwright MCP** server (`playwright-mcp`, stdio) baked into the
+`cs-userenv` image together with a headless Chromium browser. It gives the Console agents the
+23 `browser_*` tools (navigate, click, type, snapshot, evaluate, screenshot, …) so they can
+drive a real browser — open a dashboard, read a web UI, fill a form — from inside the container.
+
+- Image: `@playwright/mcp` (global) + `npx playwright install chromium` into
+  `PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright`; a stable `chrome-stable` symlink is passed via
+  `--executable-path` (the `--browser chromium` default maps to the missing "chrome-for-testing"
+  channel). Spawned with `--headless --no-sandbox --isolated`.
+- Wiring per agent (`userenv_manager.py`): Hermes → `mcp_servers.playwright` (command+args) in
+  `hermes_config.yaml`; Claude CLI → `claude mcp add --scope user playwright -- playwright-mcp …`;
+  Codex CLI → `[mcp_servers.playwright]` in `$CODEX_HOME/config.toml`.
 
 ### Agent selection
 
