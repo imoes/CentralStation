@@ -26,6 +26,19 @@ USERENV_CONFIG_PATH = os.getenv("USERENV_CONFIG_PATH", "")
 WORKSPACES_DIR = "/home/yolo/workspaces"
 _YOLO_HOME = "/home/yolo"
 
+# ── Playwright MCP (shared stdio server for all Console agents) ────────────
+# The `playwright-mcp` binary and the Chromium browser are baked into the image
+# (see userenv/Dockerfile). --no-sandbox is required because the container has no
+# user-namespace sandbox; --headless because there is no display.
+_PLAYWRIGHT_MCP_CMD = "playwright-mcp"
+_PLAYWRIGHT_MCP_ARGS = [
+    "--browser", "chromium",
+    # --browser chromium alone maps to the missing "chrome-for-testing" channel;
+    # point at the Chromium binary we baked in (stable symlink from the Dockerfile).
+    "--executable-path", "/opt/ms-playwright/chrome-stable",
+    "--headless", "--no-sandbox", "--isolated",
+]
+
 _last_used: dict[str, float] = {}
 
 
@@ -65,7 +78,12 @@ def write_hermes_config(user_id: str, extra_servers: dict) -> str:
         "centralstation": {
             "transport": "sse",
             "url": f"{backend_url}/api/mcp/sse",
-        }
+        },
+        # Browser automation — stdio command server (no transport/url).
+        "playwright": {
+            "command": _PLAYWRIGHT_MCP_CMD,
+            "args": list(_PLAYWRIGHT_MCP_ARGS),
+        },
     }
     servers.update(extra_servers)
 
@@ -480,6 +498,13 @@ def configure_claude_credentials(
                 cmd += ["--header", f"Authorization: {token_header}"]
             c.exec_run(cmd)
             log.info("userenv_manager: MCP server '%s' registered for %s", srv_name, container_name(user_id))
+
+        # Playwright — stdio command server (browser automation). The `--` separates
+        # claude's flags from the server command + its args.
+        pw_cmd = ["claude", "mcp", "add", "--scope", "user", "playwright", "--",
+                  _PLAYWRIGHT_MCP_CMD, *_PLAYWRIGHT_MCP_ARGS]
+        c.exec_run(pw_cmd)
+        log.info("userenv_manager: MCP server 'playwright' registered for %s", container_name(user_id))
     except _docker.errors.NotFound:
         log.warning("configure_claude_credentials: container %s not found", container_name(user_id))
 
@@ -516,6 +541,13 @@ def _codex_config_toml(mcp_servers: dict | None) -> str:
         f'url = "{backend_url}/api/mcp-http/"',
         'default_tools_approval_mode = "approve"',
         'tool_timeout_sec = 60',
+        '',
+        # Playwright — stdio command server (browser automation).
+        '[mcp_servers.playwright]',
+        f'command = "{_PLAYWRIGHT_MCP_CMD}"',
+        'args = [' + ", ".join(f'"{a}"' for a in _PLAYWRIGHT_MCP_ARGS) + ']',
+        'default_tools_approval_mode = "approve"',
+        'tool_timeout_sec = 120',
     ]
     # Personal MCP connectors (e.g. VibeMK) — only streamable-http servers; codex
     # connects to their URL directly. Bearer tokens (if any) are passed via env var.
@@ -558,18 +590,24 @@ def configure_codex_credentials(
     config_toml = _codex_config_toml(mcp_servers)
     try:
         c = _client().containers.get(container_name(user_id))
-        c.exec_run(
+        # CODEX_HOME lives under yolo's home: the codex subprocess runs as yolo
+        # (uid 1000) and cannot read /root. main.py sources $CODEX_HOME/env for the
+        # OPENAI_API_KEY and sets CODEX_HOME so config.toml is picked up.
+        code, out = c.exec_run(
             ["sh", "-c",
-             # token into /root/.profile (replace any prior value)
-             "grep -qF 'OPENAI_API_KEY' /root/.profile 2>/dev/null && "
-             "sed -i '/OPENAI_API_KEY/d;/OPENAI_BASE_URL/d' /root/.profile; "
-             "printf 'export OPENAI_API_KEY=\"%s\"\\n' \"$K\" >> /root/.profile; "
+             "mkdir -p /home/yolo/.codex && "
+             # OPENAI_API_KEY into $CODEX_HOME/env (sourced by main.py before `codex exec`)
+             "printf 'export OPENAI_API_KEY=\"%s\"\\n' \"$K\" > /home/yolo/.codex/env && "
              # provider + MCP config so codex talks to the ChatGPT backend and tools
-             "mkdir -p /root/.codex && printf '%s' \"$CFG\" > /root/.codex/config.toml"],
+             "printf '%s' \"$CFG\" > /home/yolo/.codex/config.toml"],
             environment={"K": access_token, "CFG": config_toml},
         )
-        log.info("userenv_manager: codex credentials + config.toml written for %s",
-                 container_name(user_id))
+        if code != 0:
+            log.warning("configure_codex_credentials: write failed (%s): %s",
+                        code, (out or b"").decode(errors="replace")[:200])
+        else:
+            log.info("userenv_manager: codex credentials + config.toml written for %s",
+                     container_name(user_id))
     except _docker.errors.NotFound:
         log.warning("configure_codex_credentials: container %s not found", container_name(user_id))
 
