@@ -26,6 +26,15 @@ _SEVERITY_MAP = {
 }
 
 
+def _app_short(app_id: str) -> str:
+    """Coroot application_id is 'project:namespace:kind:name' → return the name.
+
+    For non-k8s services the name is the FQDN (e.g. cue-solr-01.cue.example.com),
+    which lets the topology/blast-radius layer match it against NetBox hosts.
+    """
+    return app_id.split(":")[-1] if app_id else "unknown"
+
+
 class CorootConnector(BaseConnector):
     """Credentials keys: email, password, project_ids (JSON array of project IDs).
 
@@ -186,6 +195,122 @@ class CorootConnector(BaseConnector):
                 except Exception as exc:
                     log.warning("Coroot: failed to fetch incidents for project %s: %s", pid, exc)
 
+        return results
+
+    async def _overview(self, client: httpx.AsyncClient, cookie: str, pid: str, view: str) -> dict:
+        """GET /api/project/{pid}/overview/{view} → the inner `data` object.
+
+        Coroot wraps every response in {context, data}; callers only want `data`.
+        """
+        r = await client.get(
+            f"{self.base_url}/api/project/{pid}/overview/{view}",
+            cookies={"coroot_session": cookie},
+        )
+        r.raise_for_status()
+        return (r.json() or {}).get("data") or {}
+
+    async def get_service_map(self) -> list[dict]:
+        """eBPF-observed service dependency graph across configured projects.
+
+        Returns normalised app nodes with upstream/downstream edges — the
+        application-layer topology CheckMK cannot see. Node-level CPU/RAM/disk
+        metrics are deliberately NOT included here (CheckMK/RRD owns those).
+
+        Each entry: {project, app, category, status, upstreams:[{to,status,requests}],
+        downstreams:[{to}]}. `app` is the short application name (FQDN/service).
+        """
+        results: list[dict] = []
+        async with self._client() as client:
+            cookie = await self._login(client)
+            all_projects = await self._get_all_projects(client, cookie)
+            id_to_name = {p["id"]: p["name"] for p in all_projects}
+            for pid in self._configured_project_ids(all_projects):
+                try:
+                    data = await self._overview(client, cookie, pid, "map")
+                except Exception as exc:
+                    log.warning("Coroot: service map fetch failed for %s: %s", pid, exc)
+                    continue
+                pname = id_to_name.get(pid, pid)
+                for a in data.get("map") or []:
+                    ups = []
+                    for u in a.get("upstreams") or []:
+                        ups.append({
+                            "to": _app_short(u.get("id", "")),
+                            "status": u.get("status", ""),
+                            "requests": u.get("weight", 0),
+                        })
+                    downs = [{"to": _app_short(d.get("id", ""))} for d in (a.get("downstreams") or [])]
+                    results.append({
+                        "project": pname,
+                        "app": _app_short(a.get("id", "")),
+                        "cluster": a.get("cluster", ""),
+                        "category": a.get("category", ""),
+                        "status": a.get("status", ""),
+                        "upstreams": ups,
+                        "downstreams": downs,
+                    })
+        return results
+
+    async def get_application_health(self) -> list[dict]:
+        """Application-layer (APM) health signals Coroot sees but CheckMK does not.
+
+        Keeps ONLY the APM-unique indicators — latency, errors, restarts,
+        instance availability, application log-error volume, DNS, upstream health.
+        Deliberately DROPS cpu/memory/disk/network (host-level, owned by CheckMK).
+        Only returns apps whose status is not ok, to keep the LLM context small.
+        """
+        results: list[dict] = []
+        _keep = ("latency", "errors", "restarts", "instances", "logs", "dns", "upstreams")
+        async with self._client() as client:
+            cookie = await self._login(client)
+            all_projects = await self._get_all_projects(client, cookie)
+            id_to_name = {p["id"]: p["name"] for p in all_projects}
+            for pid in self._configured_project_ids(all_projects):
+                try:
+                    data = await self._overview(client, cookie, pid, "applications")
+                except Exception as exc:
+                    log.warning("Coroot: applications fetch failed for %s: %s", pid, exc)
+                    continue
+                pname = id_to_name.get(pid, pid)
+                for a in data.get("applications") or []:
+                    status = a.get("status", "ok")
+                    if status in ("ok", "unknown", ""):
+                        continue  # only surface degraded apps
+                    signals = {}
+                    for key in _keep:
+                        ind = a.get(key) or {}
+                        val, st = ind.get("value", ""), ind.get("status", "")
+                        # keep only signals that are non-empty AND not ok (real problems)
+                        if val and st not in ("ok", "unknown", ""):
+                            signals[key] = f"{val} ({st})"
+                    results.append({
+                        "project": pname,
+                        "app": _app_short(a.get("id", "")),
+                        "type": (a.get("type") or {}).get("name", ""),
+                        "status": status,
+                        "signals": signals,
+                    })
+        return results
+
+    async def get_risks(self) -> list[dict]:
+        """Coroot-detected risks (single-instance, OOM risk, deployment issues …).
+
+        Predefined inspections — a proactive signal class CheckMK does not provide.
+        """
+        results: list[dict] = []
+        async with self._client() as client:
+            cookie = await self._login(client)
+            all_projects = await self._get_all_projects(client, cookie)
+            id_to_name = {p["id"]: p["name"] for p in all_projects}
+            for pid in self._configured_project_ids(all_projects):
+                try:
+                    data = await self._overview(client, cookie, pid, "risks")
+                except Exception as exc:
+                    log.warning("Coroot: risks fetch failed for %s: %s", pid, exc)
+                    continue
+                pname = id_to_name.get(pid, pid)
+                for r in data.get("risks") or []:
+                    results.append({"project": pname, **r})
         return results
 
     async def get_application_overview(self, project_id: str) -> list[dict]:

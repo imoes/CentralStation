@@ -546,7 +546,7 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
 # ─────────────────────────────────────────────────
 # Node 4: analyze
 # ─────────────────────────────────────────────────
-async def analyze(state: dict, llm_config: Any) -> dict:
+async def analyze(state: dict, llm_config: Any, db: Any = None) -> dict:
     log.info("agent node: analyze (model=%s)", getattr(llm_config, "model", "?"))
     alerts = state.get("enriched_alerts", [])
     if not alerts:
@@ -632,6 +632,15 @@ async def analyze(state: dict, llm_config: Any) -> dict:
     except Exception as e:
         log.debug("analyze: past_incidents format failed: %s", e)
 
+    # ── Coroot service-layer context (APM + deps + risks; no CheckMK overlap) ───
+    coroot_text = ""
+    try:
+        from app.services.ai_agent.coroot_context import build_coroot_context
+        _alert_host_set = {h.lower() for h in all_hosts}
+        coroot_text = await build_coroot_context(db, _alert_host_set)
+    except Exception as e:
+        log.debug("analyze: coroot_context failed: %s", e)
+
     user_content = f"IT-Ereignisse der letzten Stunde:\n{alerts_text}"
     if all_hosts:
         # Limit to 25 most significant hosts to avoid bloating the JSON output.
@@ -641,6 +650,8 @@ async def analyze(state: dict, llm_config: Any) -> dict:
         user_content += past_text
     if blast_text:
         user_content += blast_text
+    if coroot_text:
+        user_content += coroot_text
     if kb_text:
         user_content += f"\n\nServer-Inventar aus Confluence (CheckMK-Checks, Runbooks):{kb_text}"
     if rag_text:
@@ -928,6 +939,6 @@ async def run_sysadmin_workflow(
     state = await enrich(state, db)
     if agent_config.rag_enabled:
         state = await rag_lookup(state, db, llm_config, searxng_config)
-    state = await analyze(state, llm_config)
+    state = await analyze(state, llm_config, db)
     state = await act(state, db)
     return state
