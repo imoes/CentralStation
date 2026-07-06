@@ -76,6 +76,7 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showO
       'agent.topology_refresh_interval_minutes',
       'agent.jira_severity_threshold',
       'agent.checkmk_locations',
+      'coroot.enrichment_enabled',
     ],
   },
 ];
@@ -83,10 +84,10 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showO
 const BOOLEAN_KEYS = new Set([
   'searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled',
   'llm.thinking_mode', 'workflow.web_search', 'agent.score_learning_enabled', 'agent.scoring_enabled',
-  'computer.show_reasoning',
+  'computer.show_reasoning', 'coroot.enrichment_enabled',
 ]);
 // Boolean settings that default to ON when no DB row exists yet.
-const DEFAULT_ON_KEYS = new Set(['computer.show_reasoning']);
+const DEFAULT_ON_KEYS = new Set(['computer.show_reasoning', 'coroot.enrichment_enabled']);
 const SELECT_KEYS: Record<string, string[]> = {
   'llm.api_mode': ['chat_completions', 'anthropic_messages', 'codex_responses', 'bedrock_converse'],
   'llm.provider': ['custom', 'openai-codex', 'claude-oauth'],
@@ -788,6 +789,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       'agent.checkmk_locations':             'CheckMK location filter (comma-separated)',
       'jira.ticket_project':                 'Ticket project (target for created tickets)',
       'computer.show_reasoning':             'Reasoning in Hermes-Sitzung anzeigen',
+      'coroot.enrichment_enabled':           'Coroot-Anreicherung (APM/Service-Map) für KI + Infrastruktur-Karte',
     };
     return labels[key] ?? key;
   }
