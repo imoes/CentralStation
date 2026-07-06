@@ -672,17 +672,23 @@ async def create_feed_exclusion(
 
 
 @mcp.tool()
-async def get_coroot_status(project: str = "") -> dict:
-    """Gibt Coroot-Übersicht zurück: aktive Incidents und betroffene Anwendungen.
+async def get_coroot_status(project: str = "", service: str = "") -> dict:
+    """Gibt Coroot-Observability zurück: Incidents, degradierte Anwendungen (APM),
+    proaktive Risiken und — für einen konkreten Dienst — seine eBPF-Abhängigkeiten.
+
+    Coroot liefert die APPLIKATIONSEBENE (Request-Latenz, Fehlerraten, Restarts,
+    Service-zu-Service-Abhängigkeiten), die CheckMK NICHT sieht. Host-Metriken
+    (CPU/RAM/Disk) bewusst NICHT enthalten — dafür get_checkmk_host/-performance nutzen.
 
     Parameter:
-    - project: optionaler Projektname-Filter (z.B. 'cue-prod', 'cue-stage').
-               Leer lassen für alle konfigurierten Projekte.
+    - project: optionaler Projektname-Filter (z.B. 'cue-prod'). Leer = alle Projekte.
+    - service: optionaler Dienst-/Hostname (z.B. 'cue-router.cue.example.com').
+               Wenn gesetzt, werden dessen Up-/Downstream-Abhängigkeiten zurückgegeben.
 
     Nützlich wenn der Nutzer fragt:
-    - 'Was sagt Coroot?' / 'Gibt es APM-Alerts?'
-    - 'Welche Anwendungen haben gerade Probleme?'
-    - 'Gibt es Latenz- oder Verfügbarkeitsprobleme?'"""
+    - 'Was sagt Coroot?' / 'Welche Anwendungen haben Latenz-/Fehlerprobleme?'
+    - 'Wer hängt von Dienst X ab?' / 'Welche Dienste nutzt X?' (→ service-Parameter)
+    - 'Welche Risiken erkennt Coroot?' (Single-Instance, unreplizierte DB, …)"""
     from sqlalchemy import select
     from app.models.connector import ConnectorConfig
     from app.core.security import decrypt_credentials
@@ -701,6 +707,9 @@ async def get_coroot_status(project: str = "") -> dict:
         return {"error": "Kein aktiver Coroot-Connector konfiguriert"}
 
     all_incidents: list[dict] = []
+    degraded_apps: list[dict] = []
+    all_risks: list[dict] = []
+    service_deps: dict | None = None
     errors: list[str] = []
 
     for cfg in connectors:
@@ -712,6 +721,18 @@ async def get_coroot_status(project: str = "") -> dict:
                 incidents = [i for i in incidents
                              if i["metadata"].get("project_name", "").lower() == project.lower()]
             all_incidents.extend(incidents)
+            degraded_apps.extend(await svc.get_application_health())
+            all_risks.extend(await svc.get_risks())
+            if service and service_deps is None:
+                for a in await svc.get_service_map():
+                    if a["app"].lower() == service.lower():
+                        service_deps = {
+                            "service": a["app"],
+                            "status": a["status"],
+                            "used_by": [d["to"] for d in a.get("downstreams", [])],
+                            "depends_on": [u["to"] for u in a.get("upstreams", [])],
+                        }
+                        break
         except Exception as exc:
             errors.append(f"{cfg.name}: {exc}")
             log.warning("get_coroot_status connector %s: %s", cfg.name, exc)
@@ -728,9 +749,26 @@ async def get_coroot_status(project: str = "") -> dict:
             "external_id": inc["external_id"],
         })
 
+    # Risks grouped by type (proactive inspections, no CheckMK equivalent).
+    from collections import Counter as _Counter
+    risk_groups = _Counter(
+        f"{(r.get('key') or {}).get('type','?')} ({(r.get('key') or {}).get('category','')})"
+        for r in all_risks
+    )
+
     return {
         "total_incidents": len(all_incidents),
         "by_project": by_project,
+        # APM degraded applications (latency/errors/restarts/logs) — top 20.
+        "degraded_apps": [
+            {"app": a["app"], "type": a.get("type", ""), "status": a["status"],
+             "signals": a.get("signals", {})}
+            for a in sorted(degraded_apps,
+                            key=lambda x: 0 if x.get("status") == "critical" else 1)[:20]
+        ],
+        "degraded_apps_total": len(degraded_apps),
+        "risks_summary": [{"type": k, "count": v} for k, v in risk_groups.most_common(10)],
+        "service_dependencies": service_deps,
         "errors": errors if errors else None,
     }
 
