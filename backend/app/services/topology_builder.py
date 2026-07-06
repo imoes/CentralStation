@@ -38,6 +38,88 @@ def _is_passive_role(role_name: str) -> bool:
     return any(marker in low for marker in _PASSIVE_ROLE_MARKERS)
 
 
+async def _coroot_enrichment_enabled(db: Any) -> bool:
+    """Feature toggle for all Coroot enrichment (topology layer + AI context).
+
+    Global setting 'coroot.enrichment_enabled' — defaults to True when unset.
+    Set it to 'false' to disable the entire Coroot integration.
+    """
+    try:
+        from app.services.settings import get_all_settings
+        s = await get_all_settings(db)
+        return (s.get("coroot.enrichment_enabled") or "true").lower() != "false"
+    except Exception:
+        return True
+
+
+async def _merge_coroot_layer(db: Any, nodes: dict, _node_id, _add_node, _add_edge) -> None:
+    """Add Coroot containers + eBPF deps + runs_on(container→NetBox host)."""
+    from sqlalchemy import select
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.coroot import CorootConnector
+
+    res = await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.type == "coroot", ConnectorConfig.enabled.is_(True),
+        )
+    )
+    connectors = res.scalars().all()
+    if not connectors:
+        return
+
+    n_svc = n_dep = n_run = 0
+    for cfg in connectors:
+        try:
+            svc = CorootConnector(base_url=cfg.base_url, credentials=decrypt_credentials(cfg.encrypted_credentials))
+            service_map = await svc.get_service_map()
+            placements = await svc.get_all_placements()
+        except Exception as exc:
+            log.warning("topology: Coroot fetch failed for %s: %s", cfg.name, exc)
+            continue
+
+        # Container nodes + service→service depends_on edges (skip external services
+        # and bare port-number "services" Coroot emits for unresolved connections).
+        def _is_real(name: str) -> bool:
+            return bool(name) and not name.isdigit()
+
+        for a in service_map:
+            if a.get("cluster") == "external":
+                continue
+            app = a.get("app", "")
+            cid = _node_id(app)
+            if not _is_real(app) or not cid:
+                continue
+            _add_node(cid, app, "service")
+            n_svc += 1
+            # In Coroot, A.upstreams = services A calls → A depends_on upstream.
+            for u in a.get("upstreams", []):
+                to = u.get("to", "")
+                tgt = _node_id(to)
+                if tgt and _is_real(to):
+                    _add_node(tgt, to, "service")
+                    _add_edge(cid, tgt, "depends_on")
+                    n_dep += 1
+
+        # runs_on: container → NetBox host (only when the host is a known topology node).
+        for app_short, hosts in placements.items():
+            cid = _node_id(app_short)
+            if cid not in nodes:
+                continue
+            for host in hosts:
+                hid = _node_id(host)
+                # match against existing NetBox node (exact or short-name)
+                if hid not in nodes:
+                    short = hid.split(".")[0]
+                    hid = next((nid for nid in nodes if nid.split(".")[0] == short), "")
+                if hid and hid in nodes:
+                    _add_edge(cid, hid, "runs_on")
+                    n_run += 1
+
+    log.info("topology: Coroot layer added %d service nodes, %d depends_on, %d runs_on edges",
+             n_svc, n_dep, n_run)
+
+
 def _max_severity(buckets: list[dict]) -> str:
     found = set(b["key"] for b in buckets)
     for sev in _SEVERITY_ORDER:
@@ -170,6 +252,17 @@ async def _build_skeleton(db: Any) -> dict:
                 _add_edge(source, target, "depends_on")
     except Exception as e:
         log.debug("topology: AIKB edges not available: %s", e)
+
+    # ── Merge Coroot container/service layer (eBPF) ─────────────────────────────
+    # Adds a layer CheckMK/NetBox don't have: Docker containers as `service` nodes,
+    # their eBPF service→service `depends_on` edges, and `runs_on` edges linking each
+    # container to the NetBox host it runs on (bridge: Coroot instance {app}@{node}).
+    # Gated by the coroot.enrichment_enabled toggle. Additive to the AIKB edges.
+    if await _coroot_enrichment_enabled(db):
+        try:
+            await _merge_coroot_layer(db, nodes, _node_id, _add_node, _add_edge)
+        except Exception as e:
+            log.warning("topology: Coroot layer merge failed: %s", e)
 
     # Precompute a stable force-directed layout ONCE here (cached in the skeleton).
     # The frontend then renders with ECharts layout:'none' — no live simulation in

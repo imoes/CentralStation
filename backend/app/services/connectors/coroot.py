@@ -292,6 +292,101 @@ class CorootConnector(BaseConnector):
                     })
         return results
 
+    async def get_app_placements(self, app_names: list[str]) -> dict[str, list[str]]:
+        """Map application (container) name → host(s) it runs on.
+
+        This is the container→host bridge: Coroot app names are container/service
+        names (cue-solr-01), which do NOT match NetBox, but each instance is named
+        '{app}@{node}' and the node IS a NetBox host. We read the app detail's
+        'Instances' report and extract the '@host' suffix. Bounded by the caller
+        (only relevant apps) since it is one HTTP call per app.
+
+        Returns {app_short_name: [host_fqdn, ...]}.
+        """
+        import re
+        import urllib.parse
+
+        wanted = {n.lower() for n in app_names}
+        placements: dict[str, list[str]] = {}
+        _inst = re.compile(r'"name"\s*:\s*"([^"@]+)@([^"]+)"')
+        async with self._client() as client:
+            cookie = await self._login(client)
+            all_projects = await self._get_all_projects(client, cookie)
+            for pid in self._configured_project_ids(all_projects):
+                # Resolve wanted short names → full application_ids via the map view.
+                try:
+                    data = await self._overview(client, cookie, pid, "map")
+                except Exception:
+                    continue
+                id_by_short: dict[str, str] = {}
+                for a in data.get("map") or []:
+                    aid = a.get("id", "")
+                    id_by_short.setdefault(_app_short(aid).lower(), aid)
+                for short in wanted:
+                    aid = id_by_short.get(short)
+                    if not aid:
+                        continue
+                    try:
+                        r = await client.get(
+                            f"{self.base_url}/api/project/{pid}/app/{urllib.parse.quote(aid, safe='')}",
+                            cookies={"coroot_session": cookie},
+                        )
+                        if r.status_code != 200:
+                            continue
+                        hosts = set()
+                        for app_part, node_part in _inst.findall(r.text):
+                            if _app_short(app_part).lower() == short or app_part.lower().startswith(short):
+                                hosts.add(node_part.strip())
+                        if hosts:
+                            placements[short] = sorted(hosts)
+                    except Exception as exc:
+                        log.debug("Coroot: placement fetch failed for %s: %s", short, exc)
+        return placements
+
+    async def get_all_placements(self) -> dict[str, list[str]]:
+        """Full container→host mapping for the topology map (all services).
+
+        One app-detail call per service (the node page can't be used — it links to
+        ALL apps, not just those running on it). Accurate: parses the instance
+        '{app}@{node}' series. Heavier (≈N calls) but only runs on the cached,
+        scheduler-prewarmed skeleton rebuild, off the request path.
+
+        Returns {app_short_name: [host_fqdn, ...]}.
+        """
+        import re
+        import urllib.parse
+
+        _inst = re.compile(r'"name"\s*:\s*"([^"@]+)@([^"]+)"')
+        placements: dict[str, set] = {}
+        async with self._client() as client:
+            cookie = await self._login(client)
+            all_projects = await self._get_all_projects(client, cookie)
+            for pid in self._configured_project_ids(all_projects):
+                try:
+                    smap = await self._overview(client, cookie, pid, "map")
+                except Exception as exc:
+                    log.warning("Coroot: placement map fetch failed for %s: %s", pid, exc)
+                    continue
+                for a in smap.get("map") or []:
+                    aid = a.get("id", "")
+                    short = _app_short(aid).lower()
+                    if not aid or a.get("cluster") == "external":
+                        continue  # skip external services (no host)
+                    try:
+                        r = await client.get(
+                            f"{self.base_url}/api/project/{pid}/app/"
+                            f"{urllib.parse.quote(aid, safe='')}",
+                            cookies={"coroot_session": cookie},
+                        )
+                        if r.status_code != 200:
+                            continue
+                        for app_part, node_part in _inst.findall(r.text):
+                            if _app_short(app_part).lower() == short:
+                                placements.setdefault(short, set()).add(node_part.strip())
+                    except Exception as exc:
+                        log.debug("Coroot: placement fetch failed for %s: %s", short, exc)
+        return {k: sorted(v) for k, v in placements.items()}
+
     async def get_risks(self) -> list[dict]:
         """Coroot-detected risks (single-instance, OOM risk, deployment issues …).
 
