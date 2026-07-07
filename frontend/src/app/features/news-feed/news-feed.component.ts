@@ -1568,6 +1568,12 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   };
 
   visibleItems = computed(() => {
+    // A cross-source search ("Suche über alle Quellen") deliberately spans every
+    // source — show all results and ignore the source-chip filter, so the list
+    // matches the "N Treffer" count (which counts the unfiltered items). Without
+    // this, an active chip filter that excludes the result sources hid everything
+    // while the counter still showed N hits.
+    if (this.searchActive()) return this.items();
     const f = this.activeFilter();
     if (f.length === 0) return this.items();
     return this.items().filter(i => f.includes(i.source));
