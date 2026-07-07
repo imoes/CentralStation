@@ -60,7 +60,13 @@ async def _load_ssh_creds(db: AsyncSession, user_id) -> dict | None:
 
 
 async def _load_agent_creds(db: AsyncSession, user_id, agent_type: str) -> dict | None:
-    """Load stored CLI agent credentials (claude_cli or codex_cli connector)."""
+    """Load stored CLI agent credentials (claude_cli or codex_cli connector).
+
+    For claude_cli: if the stored access token is expired (or within 10 min of
+    expiry), transparently refresh it via the stored refresh token and persist the
+    new pair. Without this the token silently dies after ~8h and the Console fails
+    with "Not logged in" until the user re-authenticates manually.
+    """
     from sqlalchemy import select as _sel
     from app.models.connector import ConnectorConfig
     from app.core.security import decrypt_credentials as _dec
@@ -73,7 +79,50 @@ async def _load_agent_creds(db: AsyncSession, user_id, agent_type: str) -> dict 
     conn = res.scalar_one_or_none()
     if not conn:
         return None
-    return _dec(conn.encrypted_credentials)
+    creds = _dec(conn.encrypted_credentials)
+
+    if agent_type == "claude_cli":
+        creds = await _refresh_claude_cli_if_expired(db, conn, creds)
+    return creds
+
+
+async def _refresh_claude_cli_if_expired(db: AsyncSession, conn, creds: dict) -> dict:
+    """Refresh an expired claude_cli access token via its refresh token (in place)."""
+    import datetime as _dt
+    from app.core.security import encrypt_credentials as _enc
+
+    exp_raw = creds.get("expires_at") or ""
+    refresh = creds.get("refresh_token") or ""
+    if not refresh:
+        return creds
+    # Parse ISO expiry; treat unparseable/empty as "expired".
+    expired = True
+    try:
+        exp_dt = _dt.datetime.fromisoformat(exp_raw)
+        if exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=_dt.timezone.utc)
+        now = _dt.datetime.now(_dt.timezone.utc)
+        expired = exp_dt <= now + _dt.timedelta(minutes=10)
+    except (ValueError, TypeError):
+        expired = True
+    if not expired:
+        return creds
+
+    try:
+        from app.api.oauth_providers import _refresh_claude_token, _claude_expires_at_iso
+        new_access, new_refresh, expires_in = await _refresh_claude_token(refresh)
+        creds = {
+            **creds,
+            "access_token": new_access,
+            "refresh_token": new_refresh,
+            "expires_at": _claude_expires_at_iso(expires_in) or "",
+        }
+        conn.encrypted_credentials = _enc(creds)
+        await db.commit()
+        log.info("claude_cli token refreshed for connector %s", conn.id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("claude_cli token refresh failed (user must re-auth): %s", exc)
+    return creds
 
 
 async def _upsert_agent_connector(

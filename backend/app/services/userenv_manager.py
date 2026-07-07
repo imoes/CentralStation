@@ -445,19 +445,17 @@ def configure_claude_credentials(
         # first configure call). The claude CLI requires all these fields.
         oauth = existing.get("claudeAiOauth") or {}
 
-        # If the volume already has a VALID access token (e.g. refreshed by the VS Code
-        # extension), keep it — don't overwrite with the (possibly stale) DB token.
-        # Only inject from DB when the existing token is missing or expired.
-        existing_expires = oauth.get("expiresAt", 0)
-        if existing_expires and existing_expires > _now_ms and oauth.get("accessToken"):
-            # Fresh token on volume — only patch expiresAt to ensure CLI doesn't skip it.
-            oauth["expiresAt"] = max(existing_expires, _now_ms + 3_600_000)
-        else:
-            oauth.update({
-                "accessToken": access_token,
-                "refreshToken": refresh_token,
-                "expiresAt": expires_int,
-            })
+        # The backend DB token is authoritative: _load_agent_creds auto-refreshes it
+        # before this call, so it is always valid. Always write it to the volume.
+        # (The old "keep the volume token if its expiresAt is in the future" logic
+        # backfired: an earlier run had written a fake now+1h expiry, so a stale/dead
+        # volume token was kept forever and the CLI returned "Not logged in" even
+        # though the DB held a freshly refreshed token.)
+        oauth.update({
+            "accessToken": access_token,
+            "refreshToken": refresh_token,
+            "expiresAt": expires_int,
+        })
         oauth.setdefault("scopes", [
             "user:file_upload", "user:inference", "user:mcp_servers",
             "user:profile", "user:sessions:claude_code",
