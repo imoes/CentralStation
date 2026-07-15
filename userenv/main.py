@@ -878,22 +878,72 @@ def _find_lineage_tip(db, sid: str) -> str:
     return current
 
 
-# CLI agents (claude_cli, codex_cli) keep their message history in memory only
-# (_sessions[sid]["history"]) — NEVER on disk under .hermes. That directory is
-# Hermes-agent state exclusively. Claude already has its own durable persistence via
-# ~/.claude/projects/.../<sid>.jsonl (separate volume); Codex has none — its Console
-# history simply does not survive a container restart, same as before this was ever
-# attempted (the old /root/.hermes/cli_sessions path was never actually writable by
-# yolo, so this was always a no-op in practice).
+# CLI agents keep in-memory history in _sessions[sid]["history"]. That is lost on a
+# container restart / idle-reap. Claude persists the full conversation in its own
+# ~/.claude/projects/<cwd-slug>/<sid>.jsonl (on the cs-ide-cfg volume), so we can
+# reconstruct the Console display from it even when the in-memory copy is gone.
+# Codex has no such file — its Console history does not survive a restart.
+
+def _load_claude_history(sid: str) -> list[dict]:
+    """Reconstruct [{role, content}] from Claude's own session .jsonl (durable).
+
+    Claude writes one JSON object per line; user/assistant turns carry a `message`
+    dict with role + content (content is a string or a list of blocks). We keep the
+    text of user/assistant turns so the Console can replay the conversation after the
+    container was restarted or idle-reaped (the in-memory copy is then empty).
+    """
+    import glob as _glob
+    cfg_dir = os.environ.get("CLAUDE_CONFIG_DIR", f"{_YOLO_HOME}/.claude")
+    matches = _glob.glob(f"{cfg_dir}/projects/*/{sid}.jsonl")
+    if not matches:
+        return []
+    out: list[dict] = []
+    try:
+        with open(matches[0]) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if ev.get("type") not in ("user", "assistant"):
+                    continue
+                msg = ev.get("message") or {}
+                role = msg.get("role")
+                if role not in ("user", "assistant"):
+                    continue
+                content = msg.get("content")
+                if isinstance(content, list):
+                    text = "".join(
+                        b.get("text", "") for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                else:
+                    text = content or ""
+                if text.strip():
+                    out.append({"role": role, "content": text})
+    except Exception as exc:
+        log.warning("[%s] claude history parse failed: %s", sid[:8], exc)
+    return out
 
 
 @app.get("/sessions/{sid}/history")
 def get_history(sid: str):
-    # CLI sessions (codex_cli / claude_cli): history lives in _sessions[sid]["history"]
-    # (in-memory only — see the note above _run_cli_agent).
+    # CLI sessions (codex_cli / claude_cli): prefer in-memory history; for claude,
+    # fall back to its durable .jsonl so the display survives restarts/idle-reaps.
     _agent_type = _sessions.get(sid, {}).get("agent_type")
     if _agent_type in ("claude_cli", "codex_cli"):
-        return _sessions[sid].get("history") or []
+        mem = _sessions[sid].get("history") or []
+        if mem:
+            return mem
+        return _load_claude_history(sid) if _agent_type == "claude_cli" else []
+    # Not in memory (fresh container): try Claude's .jsonl before the Hermes path.
+    if sid not in _sessions:
+        claude_hist = _load_claude_history(sid)
+        if claude_hist:
+            return claude_hist
 
     # Hermes: always read from SessionDB — it is the authoritative source.
     # Branches child sessions when run_conversation() is called with

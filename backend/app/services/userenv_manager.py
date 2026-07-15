@@ -275,7 +275,11 @@ def ensure_container(user_id: str) -> str:
         volumes=volumes,
         network=USERENV_NETWORK,
         labels={"cs-userenv": "1", "cs-userenv-uid": user_id},
-        restart_policy={"Name": "no"},
+        # unless-stopped: survive Docker-daemon restarts and host reboots so the
+        # Console/Werkbank container comes back automatically instead of only on the
+        # next on-demand access. The idle reaper's explicit stop() is still honored
+        # (unless-stopped does not auto-restart an explicitly stopped container).
+        restart_policy={"Name": "unless-stopped"},
         cap_add=["NET_RAW"],
         extra_hosts={"host.docker.internal": "host-gateway"},
     )
