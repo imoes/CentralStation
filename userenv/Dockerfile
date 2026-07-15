@@ -79,6 +79,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY userenv/main.py ./main.py
 COPY userenv/hermes_config.yaml ./hermes_config.yaml
+# Read-only guard for Claude CLI (PreToolUse hook — blocks system-modifying Bash).
+COPY userenv/cs-readonly-guard.py /opt/cs-readonly-guard.py
+RUN chmod a+rx /opt/cs-readonly-guard.py
 ENV PYTHONPATH=/opt/hermes
 
 # ── Claude Code CLI (installed as yolo so it lands in /home/yolo/.local/bin) ──

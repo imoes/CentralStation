@@ -154,12 +154,31 @@ unset _ext_dir _ext _js
 
 
 # ── Claude Code managed-settings ──────────────────────────────────────
+# Admin-scoped (highest precedence, cannot be overridden by the model/user).
+# Includes a PreToolUse hook that enforces read-only: system-modifying Bash
+# commands are denied so the headless Claude CLI (--permission-mode dontAsk,
+# which cannot ask interactively) never performs writes without the user first
+# approving them. Rewritten on every start so the hook survives updates.
 _managed="$HOME/.claude/managed-settings.json"
-if ! grep -q '"disableRemoteControl"' "$_managed" 2>/dev/null; then
+if ! grep -q 'cs-readonly-guard' "$_managed" 2>/dev/null; then
     mkdir -p "$HOME/.claude"
-    printf '{\n  "disableRemoteControl": true,\n  "autoUploadSessions": false\n}\n' \
-        > "$_managed"
-    echo "cs-entrypoint: wrote Claude Code managed-settings.json"
+    cat > "$_managed" <<'JSON'
+{
+  "disableRemoteControl": true,
+  "autoUploadSessions": false,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 /opt/cs-readonly-guard.py" }
+        ]
+      }
+    ]
+  }
+}
+JSON
+    echo "cs-entrypoint: wrote Claude Code managed-settings.json (read-only guard)"
 fi
 unset _managed
 
