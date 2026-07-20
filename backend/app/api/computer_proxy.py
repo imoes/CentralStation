@@ -41,6 +41,32 @@ def _target_url(user_id: str) -> str:
     return hermes_url(str(user_id))
 
 
+async def _reapply_ssh_if_recreated(db: AsyncSession, user_id) -> None:
+    """Re-inject SSH config/key if ensure_container just recreated the container.
+
+    The per-container ~/.ssh is ephemeral (no volume), so an on-demand recreation
+    (crash, docker rm, prune) drops the marvin key and reverts to the entrypoint
+    fallback config. configure_ssh otherwise only runs on explicit session-create,
+    so SSH would silently break until then. This closes that gap for the message
+    and history proxy paths, which recreate the container but never reconfigured it.
+    """
+    from app.services.userenv_manager import consume_just_created, configure_ssh
+    if not await asyncio.to_thread(consume_just_created, str(user_id)):
+        return
+    creds = await _load_ssh_creds(db, user_id)
+    if not creds:
+        return
+    try:
+        await asyncio.to_thread(
+            configure_ssh, str(user_id),
+            creds.get("username", ""), creds.get("private_key", ""),
+            creds.get("password", ""),
+        )
+        log.info("re-applied SSH creds after container recreation for %s", user_id)
+    except Exception as exc:
+        log.warning("_reapply_ssh_if_recreated failed for %s: %s", user_id, exc)
+
+
 async def _load_ssh_creds(db: AsyncSession, user_id) -> dict | None:
     """Load the user's SSH connector credentials, or None if not configured."""
     from sqlalchemy import select as _sel
@@ -900,11 +926,13 @@ def _append_agents_md(user_id: str, session_id: str, label: str) -> None:
 async def get_history(
     sid: str,
     user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
     _: None = _ConsoleEnabled,
 ):
     from app.services.userenv_manager import ensure_container
     try:
         await asyncio.to_thread(ensure_container, str(user.id))
+        await _reapply_ssh_if_recreated(db, user.id)
     except Exception as exc:
         log.warning("get_history: ensure_container failed for %s: %s", user.id, exc)
 
@@ -939,6 +967,7 @@ async def send_message(
     from app.services.userenv_manager import ensure_container as _ensure
     try:
         await asyncio.to_thread(_ensure, str(user.id))
+        await _reapply_ssh_if_recreated(db, user.id)
     except Exception as exc:
         log.warning("send_message: ensure_container failed for %s: %s", user.id, exc)
 
