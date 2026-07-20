@@ -231,8 +231,17 @@ YAML
 fi
 unset _hermes_cfg
 
-cd /app && uvicorn main:app --host 0.0.0.0 --port 8001 &
-echo "cs-entrypoint: hermes started on :8001 (pid $!)"
+# Launch Hermes with the SYSTEM venv's uvicorn explicitly (absolute path). The
+# user pip venv (/home/yolo/pip/venv, on the cs-pip volume) is first on PATH, so a
+# user `pip install` that pulls in uvicorn would otherwise shadow the system one
+# and start Hermes in an env without fastapi → ModuleNotFoundError, :8001 dead,
+# "Konsole reagiert nicht". Pinning /opt/venv makes Hermes startup independent of
+# whatever the user installed into their venv.
+_uvicorn="/opt/venv/bin/uvicorn"
+[ -x "$_uvicorn" ] || _uvicorn="uvicorn"   # fallback if the system venv moved
+cd /app && "$_uvicorn" main:app --host 0.0.0.0 --port 8001 &
+echo "cs-entrypoint: hermes started on :8001 (pid $!) via $_uvicorn"
+unset _uvicorn
 
 # ── code-server in foreground on :8080 ────────────────────────────────
 exec code-server \
