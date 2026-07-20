@@ -40,6 +40,12 @@ _PLAYWRIGHT_MCP_ARGS = [
 ]
 
 _last_used: dict[str, float] = {}
+# Names of containers that ensure_container freshly `run`-created (as opposed to
+# started an existing one). The per-container ~/.ssh (config + user.key) is NOT on a
+# persistent volume, so a freshly created container has only the entrypoint fallback
+# SSH config until configure_ssh runs again. DB-aware callers (send_message,
+# get_history) consume this flag to re-apply SSH creds after an on-demand recreation.
+_just_created: set[str] = set()
 
 
 def _client():
@@ -289,8 +295,21 @@ def ensure_container(user_id: str) -> str:
     )
     _wait_ready(c)
     touch(user_id)
+    _just_created.add(name)  # signal callers to re-apply SSH/agent creds
     log.info("userenv_manager: started %s", name)
     return ide_upstream(user_id)
+
+
+def consume_just_created(user_id: str) -> bool:
+    """Return True (once) if ensure_container freshly created this user's container.
+
+    Clears the flag so the caller reconfigures exactly once per recreation.
+    """
+    name = container_name(user_id)
+    if name in _just_created:
+        _just_created.discard(name)
+        return True
+    return False
 
 
 def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "") -> None:
