@@ -113,8 +113,11 @@ class AIKBConnector(BaseConnector):
         }
         if deepsearch:
             payload["deepsearch_mode"] = True
+        # Deepsearch is LLM-driven and can legitimately run up to ~300s; the plain
+        # OpenSearch-backed RAG answer stays fast. Size the HTTP timeout accordingly.
+        _timeout = 300.0 if deepsearch else 90.0
         try:
-            async with self._client(timeout=90.0) as client:
+            async with self._client(timeout=_timeout) as client:
                 token = await self._bearer(client)
                 r = await client.post(
                     f"{self.base_url}/search",

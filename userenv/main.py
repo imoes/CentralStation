@@ -509,6 +509,10 @@ async def _run_cli_agent(
     # CLAUDE_CONFIG_DIR (npm/node cache dirs etc.), which corrupted .credentials.json
     # mid-run (emptied accessToken) rather than just erroring cleanly.
     env = {**os.environ, "HOME": "/home/yolo"}
+    # MCP tool-call timeout (ms). search_knowledge_base(deepsearch=True) can run up to
+    # ~300s; the Claude CLI default (60s) would abort it. Give headroom above 300s.
+    env.setdefault("MCP_TOOL_TIMEOUT", "330000")
+    env.setdefault("MCP_TIMEOUT", "60000")
 
     if agent_type == "claude_cli":
         # --session-id: sets the UUID for a NEW session (first message).

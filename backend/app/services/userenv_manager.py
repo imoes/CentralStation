@@ -78,6 +78,10 @@ def write_hermes_config(user_id: str, extra_servers: dict) -> str:
         "centralstation": {
             "transport": "sse",
             "url": f"{backend_url}/api/mcp/sse",
+            # Deepsearch (search_knowledge_base deepsearch=True) can run up to ~300s.
+            # Give the per-tool-call timeout headroom above that so Hermes doesn't
+            # abort a legitimate long-running deepsearch.
+            "timeout": 330,
         },
         # Browser automation — stdio command server (no transport/url).
         "playwright": {
@@ -562,7 +566,8 @@ def _codex_config_toml(mcp_servers: dict | None) -> str:
         '[mcp_servers.centralstation]',
         f'url = "{backend_url}/api/mcp-http/"',
         'default_tools_approval_mode = "approve"',
-        'tool_timeout_sec = 60',
+        # search_knowledge_base(deepsearch=True) can run up to ~300s — give headroom.
+        'tool_timeout_sec = 330',
         '',
         # Playwright — stdio command server (browser automation).
         '[mcp_servers.playwright]',

@@ -225,6 +225,7 @@ mcp_servers:
   centralstation:
     transport: sse
     url: ${_backend_url}/api/mcp/sse
+    timeout: 330
 YAML
     echo "cs-entrypoint: wrote fallback hermes_config.yaml (backend=${_backend_url})"
     unset _backend_url
