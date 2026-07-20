@@ -198,16 +198,8 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                 </div>
                 <div class="msg-text"
                      [innerHTML]="renderMarkdown(msg)"></div>
-                @if (msg.toolCalls?.length) {
-                  <div class="tool-log">
-                    @for (tc of msg.toolCalls!; track $index) {
-                      <div class="tool-log-entry" [class.running]="!tc.done">
-                        <span class="tool-icon">{{ tc.done ? '✓' : '⟳' }}</span>
-                        <span class="tool-name">{{ tc.tool }}</span>
-                      </div>
-                    }
-                  </div>
-                }
+                <!-- Tool calls of PAST turns are intentionally not rendered; only the
+                     live streaming turn below shows tool activity. -->
               </div>
             }
             @if (streamingMsg(); as sm) {
