@@ -112,6 +112,51 @@ async def _load_agent_creds(db: AsyncSession, user_id, agent_type: str) -> dict 
     return creds
 
 
+async def _sync_claude_token_from_volume(db: AsyncSession, user_id) -> None:
+    """Capture a CLI-rotated claude token from the container volume back into the DB.
+
+    The native `claude` CLI refreshes and rotates the token in ~/.claude/.credentials.json.
+    Persisting the newer token into the DB keeps the backup current, so a volume wipe can
+    re-seed a still-valid token instead of forcing a re-auth. Only updates when the volume
+    token is strictly newer than the DB copy.
+    """
+    import datetime as _dt
+    from sqlalchemy import select as _sel
+    from app.models.connector import ConnectorConfig
+    from app.core.security import decrypt_credentials as _dec, encrypt_credentials as _enc
+    from app.services.userenv_manager import read_claude_oauth, _expires_to_ms
+    try:
+        oauth = await asyncio.to_thread(read_claude_oauth, str(user_id))
+        if not oauth or not oauth.get("refreshToken"):
+            return
+        res = await db.execute(
+            _sel(ConnectorConfig).where(
+                ConnectorConfig.type == "claude_cli",
+                ConnectorConfig.owner_user_id == user_id,
+            ).limit(1)
+        )
+        conn = res.scalar_one_or_none()
+        if not conn:
+            return
+        creds = _dec(conn.encrypted_credentials)
+        try:
+            vol_ms = int(oauth.get("expiresAt") or 0)
+        except (ValueError, TypeError):
+            vol_ms = 0
+        if vol_ms <= _expires_to_ms(creds.get("expires_at")):
+            return  # DB already holds the newest token
+        creds.update({
+            "access_token": oauth.get("accessToken", ""),
+            "refresh_token": oauth.get("refreshToken", ""),
+            "expires_at": _dt.datetime.fromtimestamp(vol_ms / 1000, tz=_dt.timezone.utc).isoformat(),
+        })
+        conn.encrypted_credentials = _enc(creds)
+        await db.commit()
+        log.info("claude_cli token synced from volume (CLI rotation) for user %s", user_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("_sync_claude_token_from_volume failed for %s: %s", user_id, exc)
+
+
 async def _refresh_claude_cli_if_expired(db: AsyncSession, conn, creds: dict) -> dict:
     """Refresh an expired claude_cli access token via its refresh token (in place)."""
     import datetime as _dt
@@ -265,10 +310,14 @@ async def configure_agent(
             if not creds or not creds.get("access_token"):
                 raise HTTPException(400, "Kein Claude-Token gespeichert — bitte zuerst authentifizieren")
         await asyncio.to_thread(ensure_container, str(user.id))
+        # Capture any CLI-rotated token before (maybe) seeding, so we never clobber a
+        # newer volume token. A fresh OAuth (body.access_token) force-overwrites to
+        # allow switching accounts; the "activate" path (no token) respects the volume.
+        await _sync_claude_token_from_volume(db, user.id)
         await asyncio.to_thread(
             configure_claude_credentials,
             str(user.id), creds["access_token"], creds.get("refresh_token") or "",
-            creds.get("expires_at") or None,
+            creds.get("expires_at") or None, None, bool(body.access_token),
         )
 
     elif body.agent == "codex_cli":
@@ -714,10 +763,14 @@ async def create_session(
             )
         # Re-inject CLI agent credentials at session create (codex: not on volume).
         if agent_type == "claude_cli":
+            # Capture a CLI-rotated token into the DB before loading/seeding so we keep
+            # the native refresh chain intact (no clobbering with a stale DB copy).
+            await _sync_claude_token_from_volume(db, user.id)
             _claude_creds = await _load_agent_creds(db, user.id, "claude_cli")
             if _claude_creds:
                 # Pass extra_servers so configure_claude_credentials registers all personal
                 # MCP connectors (VibeMK, AWX-NG, etc.) in .claude.json alongside centralstation.
+                # force_overwrite=False: keep the CLI-managed volume token if it is newer.
                 await asyncio.to_thread(
                     configure_claude_credentials, str(user.id),
                     _claude_creds.get("access_token", ""),
