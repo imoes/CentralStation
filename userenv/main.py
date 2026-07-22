@@ -552,7 +552,27 @@ async def _run_cli_agent(
                             _exp = _tok.get("expires_at", 0)
                             if _at:
                                 import time as _t
-                                _exp_i = max(int(_exp) if _exp else 0, int(_t.time() * 1000) + 3_600_000)
+                                # expires_at from the backend is an ISO-8601 string (or ms int).
+                                # Parse to ms; NEVER fabricate a now+1h expiry (that made the CLI
+                                # refresh hourly and rotate/break the token). int() on an ISO
+                                # string used to throw here and abort the whole re-inject.
+                                def _to_ms(v):
+                                    if not v:
+                                        return 0
+                                    try:
+                                        return int(v)
+                                    except (ValueError, TypeError):
+                                        pass
+                                    try:
+                                        import datetime as _dt
+                                        _s = str(v).replace("Z", "+00:00")
+                                        _d = _dt.datetime.fromisoformat(_s)
+                                        if _d.tzinfo is None:
+                                            _d = _d.replace(tzinfo=_dt.timezone.utc)
+                                        return int(_d.timestamp() * 1000)
+                                    except (ValueError, TypeError):
+                                        return 0
+                                _exp_i = _to_ms(_exp) or (int(_t.time() * 1000) + 8 * 3_600_000)
                                 _existing: dict = {}
                                 try:
                                     _existing = _json.load(open(_creds_path))

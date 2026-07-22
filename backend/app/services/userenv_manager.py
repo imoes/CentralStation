@@ -443,9 +443,53 @@ ist jederzeit erlaubt.)
     log.info("userenv_manager: CLAUDE.md written for %s", name)
 
 
+def _expires_to_ms(expires_at) -> int:
+    """Convert an expiry (ISO-8601 string or ms-since-epoch int/str) to ms, or 0.
+
+    The DB stores expiry as an ISO-8601 string (_claude_expires_at_iso); the CLI's
+    .credentials.json stores it as ms since epoch. int() on an ISO string throws —
+    the old bug that always fell back to a fake now+1h expiry.
+    """
+    if not expires_at:
+        return 0
+    try:
+        return int(expires_at)  # already ms since epoch
+    except (ValueError, TypeError):
+        pass
+    try:
+        import datetime as _dt
+        s = str(expires_at).replace("Z", "+00:00")
+        dt = _dt.datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_dt.timezone.utc)
+        return int(dt.timestamp() * 1000)
+    except (ValueError, TypeError):
+        return 0
+
+
+def read_claude_oauth(user_id: str) -> dict | None:
+    """Read the claudeAiOauth block from the container's ~/.claude/.credentials.json.
+
+    Returns the dict (accessToken/refreshToken/expiresAt/…) or None. The native
+    `claude` CLI refreshes and rotates this token in place, so this is the source of
+    truth for the live token — the backend syncs it back into the DB.
+    """
+    import json
+    try:
+        c = _client().containers.get(container_name(user_id))
+        rr = c.exec_run(["sh", "-c", "cat $HOME/.claude/.credentials.json 2>/dev/null || echo '{}'"])
+        data = json.loads(rr.output.decode(errors="replace"))
+        oauth = data.get("claudeAiOauth")
+        if isinstance(oauth, dict) and oauth.get("accessToken"):
+            return oauth
+    except Exception:
+        pass
+    return None
+
+
 def configure_claude_credentials(
     user_id: str, access_token: str, refresh_token: str, expires_at: str | None,
-    extra_servers: dict | None = None,
+    extra_servers: dict | None = None, force_overwrite: bool = False,
 ) -> None:
     """Write ~/.claude/.credentials.json into the container (on cs-ide-cfg volume → persistent).
 
@@ -462,16 +506,15 @@ def configure_claude_credentials(
     import time
     import docker as _docker
 
-    # expiresAt must be an integer (ms since epoch); cast defensively.
-    # claude --print mode skips OAuth refresh when expiresAt is in the past, immediately
-    # returning "Not logged in". Set the local expiry to NOW + 1h so the CLI trusts the
-    # token without attempting a refresh (the token itself is validated server-side).
-    try:
-        expires_raw = int(expires_at) if expires_at else 0
-    except (ValueError, TypeError):
-        expires_raw = 0
+    # Real expiry in ms (parse ISO or int). NEVER fabricate a now+1h expiry: the old
+    # code did int(<ISO string>) which always threw and fell back to now+1h, so the CLI
+    # believed the 8h token expired after 1h and refreshed hourly — every native refresh
+    # rotated the refresh token, which our subsequent volume overwrite then clobbered,
+    # breaking the rotation chain (=> daily "must re-authenticate").
+    incoming_ms = _expires_to_ms(expires_at)
     _now_ms = int(time.time() * 1000)
-    expires_int = max(expires_raw, _now_ms + 3_600_000)  # at least 1h from now
+    if incoming_ms <= 0:
+        incoming_ms = _now_ms + 8 * 3_600_000  # sane default: assume a full 8h token
 
     try:
         c = _client().containers.get(container_name(user_id))
@@ -487,22 +530,36 @@ def configure_claude_credentials(
             existing = {}
 
         # Merge: start from existing claudeAiOauth dict, update only token fields.
-        # Preserve scopes/subscriptionType/rateLimitTier if already present;
-        # add defaults when the file was written without them (e.g. after a failed
-        # first configure call). The claude CLI requires all these fields.
         oauth = existing.get("claudeAiOauth") or {}
 
-        # The backend DB token is authoritative: _load_agent_creds auto-refreshes it
-        # before this call, so it is always valid. Always write it to the volume.
-        # (The old "keep the volume token if its expiresAt is in the future" logic
-        # backfired: an earlier run had written a fake now+1h expiry, so a stale/dead
-        # volume token was kept forever and the CLI returned "Not logged in" even
-        # though the DB held a freshly refreshed token.)
-        oauth.update({
-            "accessToken": access_token,
-            "refreshToken": refresh_token,
-            "expiresAt": expires_int,
-        })
+        # Let the native CLI own the token lifecycle. The `claude` CLI refreshes and
+        # ROTATES the refresh token in .credentials.json (8h access token, ~28-day
+        # rotating refresh chain). If we blindly overwrite that with the DB copy, we
+        # replace a freshly-rotated token with a stale one whose refresh token was
+        # already consumed → next refresh 401 → daily re-auth. So only seed/overwrite
+        # the volume when: it has no token yet, its token is already expired, OR the
+        # incoming token is strictly newer (fresh OAuth / force_overwrite for account
+        # switch). Otherwise keep the CLI-managed volume token untouched.
+        try:
+            vol_ms = int(oauth.get("expiresAt") or 0)
+        except (ValueError, TypeError):
+            vol_ms = 0
+        vol_has_token = bool(oauth.get("accessToken"))
+        keep_volume = (
+            not force_overwrite
+            and vol_has_token
+            and vol_ms > _now_ms          # volume token still valid
+            and vol_ms >= incoming_ms     # and not older than the DB copy
+        )
+        if keep_volume:
+            log.info("userenv_manager: keeping CLI-managed volume claude token for %s "
+                     "(vol expiry %d >= db %d, not expired)", container_name(user_id), vol_ms, incoming_ms)
+        else:
+            oauth.update({
+                "accessToken": access_token,
+                "refreshToken": refresh_token,
+                "expiresAt": incoming_ms,
+            })
         oauth.setdefault("scopes", [
             "user:file_upload", "user:inference", "user:mcp_servers",
             "user:profile", "user:sessions:claude_code",
