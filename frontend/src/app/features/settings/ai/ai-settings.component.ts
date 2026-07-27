@@ -37,11 +37,6 @@ interface OAuthSession {
 
 const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showOnlyFor?: string[] }[] = [
   {
-    title: 'Vision Model',
-    keys: ['llm.vision_base_url', 'llm.vision_model', 'llm.vision_api_key'],
-    testGroup: 'vision',
-  },
-  {
     title: 'SearXNG Web Search',
     keys: ['searxng.base_url', 'searxng.enabled', 'searxng.results_count'],
     testGroup: 'searxng',
@@ -63,13 +58,9 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showO
       'agent.auto_enrich',
       'agent.rag_enabled',
       'workflow.web_search',
-      'agent.scoring_enabled',
-      'agent.enrich_score_threshold',
       'agent.max_alerts_for_llm',
       'agent.flap_window_minutes',
       'agent.flap_threshold',
-      'agent.score_learning_enabled',
-      'agent.score_delta_decay_days',
       'agent.worklist_interval_minutes',
       'agent.worklist_size',
       'agent.generative_interval_minutes',
@@ -83,7 +74,7 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showO
 
 const BOOLEAN_KEYS = new Set([
   'searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled',
-  'llm.thinking_mode', 'workflow.web_search', 'agent.score_learning_enabled', 'agent.scoring_enabled',
+  'llm.thinking_mode', 'workflow.web_search',
   'computer.show_reasoning', 'coroot.enrichment_enabled',
 ]);
 // Boolean settings that default to ON when no DB row exists yet.
@@ -761,9 +752,6 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       'llm.codex_model':                     'OpenAI Codex Model (e.g. gpt-4o)',
       'llm.codex_timeout_seconds':           'OpenAI Codex Timeout (seconds)',
       'llm.claude_model':                    'Claude Model (e.g. claude-opus-4-8)',
-      'llm.vision_base_url':                 'Vision LLM URL',
-      'llm.vision_model':                    'Vision Model',
-      'llm.vision_api_key':                  'Vision API Key',
       'searxng.base_url':                    'SearXNG URL',
       'searxng.enabled':                     'SearXNG enabled',
       'searxng.results_count':               'Number of search results',
@@ -774,13 +762,9 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       'agent.auto_enrich':                   'AI enrichment automatic (off = on demand)',
       'agent.rag_enabled':                   'Knowledge base search (RAG) in AI agent',
       'workflow.web_search':                 'Web search during AI analysis',
-      'agent.scoring_enabled':               'Alert scoring enabled',
-      'agent.enrich_score_threshold':        'Score threshold for AI enrichment',
       'agent.max_alerts_for_llm':            'Max alerts per AI agent run sent to LLM',
       'agent.flap_window_minutes':           'Flap detection window (minutes)',
       'agent.flap_threshold':                'Repetitions until flapping detected',
-      'agent.score_learning_enabled':        'Adaptive scoring enabled',
-      'agent.score_delta_decay_days':        'Score delta decay time (days)',
       'agent.worklist_interval_minutes':     'Priority list refresh interval (minutes)',
       'agent.worklist_size':                 'Number of entries in the priority list',
       'agent.generative_interval_minutes':   'Generative dashboard interval (minutes)',
