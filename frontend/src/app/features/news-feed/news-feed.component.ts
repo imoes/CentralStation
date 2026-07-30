@@ -554,14 +554,15 @@ const SEVERITY_COLOR: Record<string, string> = {
               </div>
             }
 
-            <!-- Body -->
-            @if (item.body) {
+            <!-- Body — hidden when the title already shows the whole text (bodies are
+                 stored in full for the AI/MCP consumers, which would duplicate here). -->
+            @if (showBody(item)) {
               <div class="card-body-text" [class.collapsed]="!expanded.has(item.id)"
                    [class.body-clickable]="item.external_url && (item.type === 'email' || item.type === 'teams_message')"
                    (click)="item.external_url && (item.type === 'email' || item.type === 'teams_message') ? openUrl(item.external_url!) : null">
                 {{ item.body }}
               </div>
-              @if (item.body.length > 200) {
+              @if ((item.body?.length ?? 0) > 200) {
                 <button mat-button class="expand-btn" (click)="toggleExpand(item.id)">
                   {{ expanded.has(item.id) ? 'Weniger anzeigen' : 'Mehr anzeigen' }}
                 </button>
@@ -2090,6 +2091,17 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     } else {
       this.expanded.add(id);
     }
+  }
+
+  /** Show the body only when it adds something the title does not already display.
+   *  Bodies are stored in FULL for the AI/MCP consumers, so for short log lines the
+   *  title ("[app] <message>", cut at 200 chars) already contains the whole body —
+   *  rendering it again would just duplicate the text. */
+  showBody(item: { title?: string | null; body?: string | null }): boolean {
+    const body = (item.body || '').trim();
+    if (!body) return false;
+    const title = (item.title || '').trim();
+    return !title.includes(body);
   }
 
   acknowledge(item: FeedItem) {
