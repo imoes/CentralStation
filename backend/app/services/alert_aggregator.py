@@ -224,8 +224,13 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
                 # names WHICH service produced the log, not just the host.
                 prefix = f"[{application}] " if application else ""
                 title = (prefix + msg_text)[:200]
-                # Only set body if message was truncated (there's more content beyond the title)
-                body = msg_text if len(prefix + msg_text) > 200 else None
+                # Always keep the FULL raw message in body. It used to be None whenever the
+                # message fit into the 200-char title ("no extra content"), but body is the
+                # field every consumer reads (MCP search_feed, AI enrichment) — an empty body
+                # looked like the log line was never stored, and the title carries the
+                # "[app] " prefix and a 200-char cut. The feed UI suppresses the body when the
+                # title already shows it, so this costs a little storage, not readability.
+                body = msg_text
 
             # Syslog severity from the mapping (Docker GELF always sends level=3 for all container
             # output, regardless of actual application log level).
