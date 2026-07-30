@@ -165,7 +165,9 @@ async def search_feed(query: str, index: str = "cs-feed-*", limit: int = 10) -> 
                 "source": h["_source"].get("source", ""),
                 "severity": h["_source"].get("severity", ""),
                 "title": h["_source"].get("title", ""),
-                "body": (h["_source"].get("body", "") or "")[:300],
+                # Full body — no cap. A truncated body hides the very detail the agent
+                # needs (e.g. the exact line/column of a YAML parser error).
+                "body": h["_source"].get("body", "") or "",
                 "host": h["_source"].get("host", ""),
                 "ai_insight": h["_source"].get("ai_insight", ""),
                 "created_at": h["_source"].get("created_at", ""),
@@ -1027,7 +1029,9 @@ async def gitlab_get_file(project: str, path: str, ref: str = "main") -> dict:
     import base64
     data = await gl.get_file(project, path, ref)
     content = base64.b64decode(data.get("content", "")).decode("utf-8", errors="replace") if data.get("encoding") == "base64" else data.get("content", "")
-    return {"file_name": data.get("file_name"), "ref": ref, "content": content[:4000]}
+    # Full file content — no cap. Truncating hides exactly what the agent is asked to
+    # find (e.g. the broken line in a long YAML).
+    return {"file_name": data.get("file_name"), "ref": ref, "content": content}
 
 
 @mcp.tool()
