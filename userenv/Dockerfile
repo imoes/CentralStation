@@ -69,8 +69,15 @@ ENV PATH=/opt/venv/bin:$PATH \
 RUN pip install --no-cache-dir ansible ansible-lint
 
 # ── Hermes AI agent ───────────────────────────────────────────────────
+# Editable install (-e) is REQUIRED: upstream's build backend deliberately refuses to
+# build wheels/sdists ("Building wheels or sdists for hermes-agent is not supported",
+# it targets uv/uv2nix) and names `uv pip install -e .` as the supported path. A plain
+# `pip install /opt/hermes` fails the build. This only surfaced once the moving
+# code-server:latest base got a new digest and invalidated this layer's cache.
+# -e keeps the source at /opt/hermes on sys.path, which the image retains anyway
+# (Hermes modules are also imported via PYTHONPATH=/opt/hermes).
 RUN git clone --depth=1 https://github.com/NousResearch/hermes-agent /opt/hermes \
-    && pip install --no-cache-dir /opt/hermes \
+    && pip install --no-cache-dir -e /opt/hermes \
     && chmod -R a+rX /opt/hermes
 
 WORKDIR /app
