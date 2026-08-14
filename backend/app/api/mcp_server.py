@@ -94,7 +94,14 @@ async def list_alerts(
     - source: Filter nach Quelle (checkmk/graylog/wazuh, leer = alle)
     - limit: Maximale Anzahl Ergebnisse (max 50)
 
-    Nutze dieses Tool wenn der Nutzer nach aktuellen Problemen oder Alerts fragt."""
+    Nutze dieses Tool wenn der Nutzer nach aktuellen Problemen oder Alerts fragt.
+
+    ABGRENZUNG zu vibemk (CheckMK-MCP): Nimm IMMER dieses Tool für Alerts. Es sieht
+    alle Quellen (CheckMK + Graylog + Wazuh) und trägt den CentralStation-Zustand,
+    den CheckMK gar nicht kennt: Quittierung, KI-Analyse, Ausschlüsse, Jira-Bezug,
+    Dedup. `vibemk_get_current_problems` kennt nur CheckMK und nur den AUGENBLICK —
+    es gibt dort keine Alert-Historie ('was war letzten Dienstag'). Für die Historie
+    ist `search_feed` zuständig."""
     from sqlalchemy import select
     from app.models.alert import Alert
 
@@ -301,7 +308,12 @@ async def get_checkmk_host(hostname: str) -> dict:
     Parameter:
     - hostname: Hostname oder FQDN (z.B. 'docker086' oder 'docker086.example.com')
 
-    Nutze dieses Tool wenn der Nutzer den Status eines bestimmten Servers wissen will."""
+    Nutze dieses Tool wenn der Nutzer den Status eines bestimmten Servers wissen will.
+
+    ABGRENZUNG zu vibemk (CheckMK-MCP): Dieses Tool liefert den Überblick über EINEN
+    Host — alle Services plus die Standardmetriken CPU/RAM/Disk der letzten 2 Stunden.
+    Für eine ANDERE Metrik, ein längeres Zeitfenster oder eine feinere Zeitreihe nimm
+    `vibemk_get_service_metrics` (jede Metrik, bis 30 Tage, 1-Minuten-Auflösung bis 4h)."""
     from app.services.connectors.checkmk import CheckMKConnector
 
     configs = await _checkmk_configs()
@@ -347,9 +359,18 @@ async def get_checkmk_performance(hostname: str, hours: int = 2) -> dict:
     - hostname: Hostname (z.B. 'docker086' oder 'docker086.example.com')
     - hours:    Zeitfenster in Stunden für Trend-Berechnung (Standard: 2)
 
-    Nutze dieses Tool um Performance-Entwicklungen, Lastmuster und Kapazitäts-
-    engpässe zu erkennen — z.B. beim Analysieren von Alerts oder bei der Suche
-    nach Anomalien."""
+    Nutze dieses Tool für den SCHNELLEN Blick auf die Standardmetriken eines Hosts
+    beim Analysieren eines Alerts — ein Aufruf, fertig zusammengefasster Trend.
+
+    ABGRENZUNG zu vibemk (CheckMK-MCP): Dieses Tool ist bewusst eng — feste Metriken
+    (CPU/RAM/Disk), Trend statt Zeitreihe. Sobald du eine ANDERE Metrik brauchst, die
+    Rohwerte sehen willst oder über 24h hinausgehst, nimm `vibemk_get_service_metrics`:
+    jede Metrik, bis 30 Tage, mit `reduce` (max/min/average).
+
+    ACHTUNG Auflösung (gemessen an load1): CheckMK konsolidiert und liefert für JEDEN
+    Zeitraum ~300–360 Punkte — 1 Min bei 1–4h, 5 Min bei 24h, 30 Min bei 7d, 120 Min
+    bei 30d. Für kurze Fenster ist die Live-Abfrage also am feinsten; für lange
+    Fenster sind die Werte Mittelwerte, keine Spitzen."""
     return await _fetch_host_performance(hostname, hours=hours)
 
 
@@ -402,7 +423,14 @@ async def get_hostgroup_performance_summary(group_name: str, top_n: int = 15) ->
     - top_n: Anzahl der auffälligsten Host/Metrik-Einträge (Standard 15)
 
     Nutze dieses Tool um selbst über die Daten zu argumentieren. Für bereits
-    benannte Muster siehe analyze_hostgroup_patterns."""
+    benannte Muster siehe analyze_hostgroup_patterns.
+
+    ABGRENZUNG zu vibemk (CheckMK-MCP): Hier liegt der Unterschied nicht in den
+    Rohdaten (beides kommt live aus CheckMKs RRD), sondern im Zuschnitt: dieses Tool
+    aggregiert eine GANZE Hostgruppe über mehrere Zeitfenster und rechnet Fleet-
+    Aggregate, Cross-Metrik-Korrelationen und Peak-Cluster aus. `vibemk_get_service_metrics`
+    liefert dagegen EINEN Host/Service — nimm es zum Nachbohren, wenn dieses Tool
+    einen auffälligen Host benannt hat."""
     from app.services import hostgroup_analysis as hga
     conn = await _first_checkmk_connector()
     if not conn:
@@ -429,7 +457,12 @@ async def analyze_hostgroup_patterns(group_name: str, correlate_logs: bool = Tru
     - correlate_logs: Graylog-Logs der auffälligen Hosts einbeziehen (Standard True)
 
     Nutze dieses Tool für 'erkenne Muster in Hostgruppe X' / 'vergleiche die letzten
-    Tage'. Das Ergebnis enthält benannte Muster + die zugrundeliegende Evidenz."""
+    Tage'. Das Ergebnis enthält benannte Muster + die zugrundeliegende Evidenz.
+
+    ABGRENZUNG zu vibemk (CheckMK-MCP): Das kann vibemk NICHT — dort gibt es keine
+    gruppenweite Musterkennung und keine Verknüpfung mit Graylog-Logs. Umgekehrt:
+    sobald ein Muster einen konkreten Host/Service benennt, hol die Detail-Zeitreihe
+    mit `vibemk_get_service_metrics`."""
     from app.services import hostgroup_analysis as hga
     from app.services.settings import get_active_llm_config
 
