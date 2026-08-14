@@ -18,14 +18,9 @@ log = logging.getLogger(__name__)
 
 # Standard services + metric IDs to collect per host.
 # Extend this list to add more metrics.
-_DEFAULT_METRICS: list[dict] = [
-    {"service": "CPU load",         "metric_id": "load1",          "unit": ""},
-    {"service": "CPU load",         "metric_id": "load5",          "unit": ""},
-    {"service": "Memory",           "metric_id": "mem_used_percent","unit": "%"},
-    {"service": "Memory",           "metric_id": "mem_used",       "unit": "bytes"},
-    {"service": "Filesystem /",     "metric_id": "fs_used_percent", "unit": "%"},
-    {"service": "Check_MK",         "metric_id": "cmk_time_agent", "unit": "s"},
-]
+# Single definition of the standard vitals — shared with the live path so the
+# collector and checkmk_metrics.fetch_host_metrics can never drift apart.
+from app.services.checkmk_metrics import STANDARD_METRICS as _DEFAULT_METRICS  # noqa: E402
 
 # How many hours of RRD history to fetch for the latest data point
 _FETCH_HOURS = 1
