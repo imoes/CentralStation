@@ -43,7 +43,8 @@ interface HealthResponse {
   host: string;
   vitals: Vital[];
   messages: Message[];
-  live: boolean;
+  live: boolean;      // what was requested
+  live_ok: boolean;   // whether every vital really came from CheckMK
 }
 
 interface Service {
@@ -708,23 +709,17 @@ export class CockpitComponent implements OnInit, OnDestroy {
     const host = this.route.snapshot.paramMap.get('hostname') ?? '';
     this.hostname.set(host);
 
-    // Load cached first
+    // One request: the endpoint reads CheckMK live by default and falls back to the
+    // cache per vital. The old two-step (cache first, then live) would now fire two
+    // live queries and double the load on CheckMK. `live_ok` says whether the values
+    // really are current, so the badge reflects the data instead of the intent.
     this.http.get<HealthResponse>(`${environment.apiUrl}/hosts/${encodeURIComponent(host)}/health`)
       .subscribe({
         next: data => {
           this.vitals.set(data.vitals);
           this.allMessages.set(data.messages);
+          this.liveRefreshed.set(data.live_ok);
           this.loading.set(false);
-          // Then load live
-          this.http.get<HealthResponse>(`${environment.apiUrl}/hosts/${encodeURIComponent(host)}/health?live=true`)
-            .subscribe({
-              next: liveData => {
-                this.vitals.set(liveData.vitals);
-                this.allMessages.set(liveData.messages);
-                this.liveRefreshed.set(true);
-              },
-              error: () => { /* keep cached data */ },
-            });
         },
         error: () => this.loading.set(false),
       });
