@@ -249,7 +249,9 @@ async def run_score_housekeeping() -> None:
 async def run_feed_housekeeping() -> None:
     """Delete feed items older than per-source retention (from global_settings)."""
     from app.core.database import AsyncSessionLocal
-    from app.services.feed_index import delete_old_items, delete_old_alerts_pg, ALL_SOURCES
+    from app.services.feed_index import (
+        delete_old_items, delete_old_alerts_pg, delete_old_metrics, ALL_SOURCES,
+    )
     from app.services.settings import get_all_settings
 
     async with AsyncSessionLocal() as db:
@@ -263,8 +265,18 @@ async def run_feed_housekeeping() -> None:
             total_os += deleted_os
             total_pg += deleted_pg
 
-    if total_os or total_pg:
-        logger.info("Feed housekeeping: removed %d OpenSearch + %d PostgreSQL old items", total_os, total_pg)
+        # Metric samples are not a feed source and were previously never cleaned.
+        # 30 days is deliberate: VibeMK serves live RRD history up to 30 days, so
+        # the cache only has to cover the same window — at finer resolution
+        # (5 min vs CheckMK's 30–120 min consolidation for 7–30 day ranges).
+        metric_days = int(s.get("feed.retention.metrics_days") or 30)
+        total_metrics = await delete_old_metrics(metric_days)
+
+    if total_os or total_pg or total_metrics:
+        logger.info(
+            "Feed housekeeping: removed %d OpenSearch + %d PostgreSQL old items, "
+            "%d metric samples", total_os, total_pg, total_metrics,
+        )
 
 
 async def run_incident_housekeeping() -> None:
