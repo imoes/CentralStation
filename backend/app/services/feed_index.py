@@ -658,6 +658,36 @@ async def get_filter_values(source: str = "checkmk") -> dict:
         return {"os": [], "location": [], "criticality": [], "ve": [], "hostgroups": []}
 
 
+async def delete_old_metrics(retention_days: int) -> int:
+    """Delete metric samples older than retention_days. Returns deleted count.
+
+    Separate from delete_old_items because the metrics index is not a feed source:
+    it lives in METRICS_INDEX (not cs-feed-<source>) and timestamps its samples with
+    `timestamp` rather than `created_at`. Without this the index was never cleaned
+    and grew without bound — it held 76 days of samples while every feed source was
+    subject to housekeeping.
+    """
+    if retention_days <= 0:
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    os_client = get_opensearch()
+    try:
+        resp = await os_client.delete_by_query(
+            index=METRICS_INDEX,
+            body={"query": {"range": {"timestamp": {"lt": cutoff.isoformat()}}}},
+            ignore_unavailable=True,
+            refresh=True,
+        )
+        deleted = resp.get("deleted", 0)
+        if deleted:
+            log.info("Feed housekeeping: deleted %d metric samples (>%d days)",
+                     deleted, retention_days)
+        return deleted
+    except Exception as e:
+        log.warning("OpenSearch delete_old_metrics failed: %s", e)
+        return 0
+
+
 async def delete_old_items(source: str, retention_days: int) -> int:
     """Delete items older than retention_days for the given source. Returns deleted count."""
     if retention_days <= 0:
