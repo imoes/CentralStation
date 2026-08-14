@@ -119,6 +119,17 @@ services:
     profiles: ["userenv"]
     command: ["--version"]
 
+  # Build-only, like userenv above: the runtime containers (cs-vibemk,
+  # cs-vibemk-admin) are created by app/services/vibemk_manager.py so their CheckMK
+  # credentials come from the connector in the DB instead of a second static copy.
+  # Requires the vibemk repo checked out next to this one.
+  vibemk:
+    build:
+      context: ../vibemk
+    image: centralstation-vibemk:latest
+    profiles: ["vibemk"]
+    command: ["--version"]
+
   nginx:
     image: nginx:alpine
     restart: unless-stopped

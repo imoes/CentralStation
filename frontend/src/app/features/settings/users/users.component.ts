@@ -73,6 +73,13 @@ const ROLES = [
                   color="accent">
                   <mat-icon style="font-size:14px;width:14px;height:14px;vertical-align:middle">smart_toy</mat-icon>
                 </mat-slide-toggle>
+                <mat-slide-toggle
+                  [checked]="u.checkmk_admin"
+                  (change)="toggleCheckmkAdmin(u, $event.checked)"
+                  matTooltip="CheckMK-Admin: erlaubt der KI zusätzlich die CheckMK-Konfiguration zu ändern (Hosts anlegen/löschen, Änderungen aktivieren). Ohne diese Berechtigung stehen nur Lese- und Quittier-/Downtime-Werkzeuge zur Verfügung."
+                  color="warn">
+                  <mat-icon style="font-size:14px;width:14px;height:14px;vertical-align:middle">monitor_heart</mat-icon>
+                </mat-slide-toggle>
                 <button mat-icon-button (click)="openEdit(u)" matTooltip="Bearbeiten">
                   <mat-icon>edit</mat-icon>
                 </button>
@@ -245,6 +252,30 @@ export class UsersComponent implements OnInit {
         this.snackBar.open(
           computer_console_enabled ? 'Computer Console aktiviert' : 'Computer Console deaktiviert',
           '', { duration: 2500 }
+        );
+      },
+      error: (err) => this.snackBar.open(err?.error?.detail ?? 'Fehler', '', { duration: 3000 }),
+    });
+  }
+
+  toggleCheckmkAdmin(u: any, checkmk_admin: boolean) {
+    // Granting write access to production monitoring config — confirm explicitly,
+    // and state what it enables rather than just flipping a switch.
+    if (checkmk_admin && !confirm(
+      `"${u.email}" die CheckMK-Konfiguration überlassen?\n\n` +
+      `Die KI dieses Nutzers darf dann u. a. Hosts anlegen/löschen, Regeln ändern ` +
+      `und Änderungen aktivieren (activate_changes) — direkt im Produktiv-Monitoring.`
+    )) {
+      // Revert the optimistic switch position: the state must follow the fact.
+      this.users.update(list => list.map(x => x.id === u.id ? { ...x } : x));
+      return;
+    }
+    this.http.patch(`${environment.apiUrl}/users/${u.id}`, { checkmk_admin }).subscribe({
+      next: () => {
+        this.users.update(list => list.map(x => x.id === u.id ? { ...x, checkmk_admin } : x));
+        this.snackBar.open(
+          checkmk_admin ? 'CheckMK-Admin erteilt (volle Werkzeuge)' : 'CheckMK-Admin entzogen (nur Lesen + Quittieren)',
+          '', { duration: 3000 }
         );
       },
       error: (err) => this.snackBar.open(err?.error?.detail ?? 'Fehler', '', { duration: 3000 }),
