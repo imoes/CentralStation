@@ -708,6 +708,24 @@ async def create_session(
             srv_name = conn.name.lower().replace(" ", "-") or "mcp-user"
             extra_servers[srv_name] = srv
 
+        # VibeMK (CheckMK MCP) — system-managed, credentials from the CheckMK
+        # connector. The tier follows the user's checkmk_admin permission: without it
+        # the agent gets the URL of the read+operational instance, so CheckMK
+        # configuration tools are unreachable rather than merely discouraged.
+        try:
+            from app.services.vibemk_manager import ensure_vibemk, TIER_ADMIN, TIER_DEFAULT
+            _tier = TIER_ADMIN if getattr(user, "checkmk_admin", False) else TIER_DEFAULT
+            _vurl, _vreason = await ensure_vibemk(db, _tier)
+            if _vurl:
+                if "vibemk" in extra_servers:
+                    log.info("vibemk: personal MCP connector superseded by the "
+                             "system-managed instance for user %s", user.id)
+                extra_servers["vibemk"] = {"transport": "streamable-http", "url": _vurl}
+            else:
+                log.warning("vibemk not registered for %s: %s", user.id, _vreason)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("vibemk registration failed for %s: %s", user.id, exc)
+
         awx_res = await db.execute(
             _sel(ConnectorConfig).where(
                 ConnectorConfig.type == "awx_ng",

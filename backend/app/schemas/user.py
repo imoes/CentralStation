@@ -16,6 +16,8 @@ class UserUpdate(BaseModel):
     role: str | None = None
     is_active: bool | None = None
     computer_console_enabled: bool | None = None
+    # Grants the full VibeMK tool set incl. CheckMK configuration (see User model).
+    checkmk_admin: bool | None = None
 
 
 class UserResponse(BaseModel):
@@ -24,6 +26,7 @@ class UserResponse(BaseModel):
     full_name: str | None
     role: str
     is_active: bool
+    checkmk_admin: bool = False
     created_at: datetime
     computer_console_enabled: bool = False
     has_awx_ng: bool = False

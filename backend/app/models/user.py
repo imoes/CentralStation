@@ -18,6 +18,10 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     # admin | sysadmin | network_technician | viewer
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="viewer")
+    # Orthogonal permission, deliberately NOT a `role` value: role is single-valued
+    # (job function), so a "checkmk_admin" role would exclude being a sysadmin at the
+    # same time. Grants the full VibeMK tool set incl. CheckMK configuration.
+    checkmk_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

@@ -75,17 +75,23 @@ async def update_user(
     if data.role and data.role not in VALID_ROLES:
         raise HTTPException(400, f"Invalid role. Valid: {VALID_ROLES}")
 
-    old = {"role": user.role, "is_active": user.is_active}
+    old = {"role": user.role, "is_active": user.is_active,
+           "checkmk_admin": user.checkmk_admin}
     if data.full_name is not None:
         user.full_name = data.full_name
     if data.role is not None:
         user.role = data.role
     if data.is_active is not None:
         user.is_active = data.is_active
+    # Granting CheckMK configuration rights is security-relevant → audited like role.
+    if data.checkmk_admin is not None:
+        user.checkmk_admin = data.checkmk_admin
 
     db.add(AuditLog(action="user_updated", resource_type="user",
                     resource_id=str(user_id), user_id=current_user.id,
-                    old_value=old, new_value={"role": user.role, "is_active": user.is_active}))
+                    old_value=old,
+                    new_value={"role": user.role, "is_active": user.is_active,
+                               "checkmk_admin": user.checkmk_admin}))
 
     if data.computer_console_enabled is not None:
         prefs_result = await db.execute(
