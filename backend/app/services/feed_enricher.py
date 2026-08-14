@@ -60,7 +60,7 @@ async def _fetch_checkmk_metrics_text(host: str) -> str:
         from app.models.connector import ConnectorConfig
         from app.core.security import decrypt_credentials
         from app.services.connectors.checkmk import CheckMKConnector
-        from app.services.metrics_collector import _DEFAULT_METRICS
+        from app.services.checkmk_metrics import STANDARD_METRICS as _DEFAULT_METRICS
 
         async with AsyncSessionLocal() as db:
             cfgs = (await db.execute(

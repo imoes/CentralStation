@@ -1,4 +1,4 @@
-"""Host health endpoint — serves cached metrics + live CheckMK refresh for the Server Cockpit."""
+"""Host health endpoint — live CheckMK vitals + recent alerts for the Server Cockpit."""
 from __future__ import annotations
 
 import logging
@@ -9,15 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_db
 from app.services import feed_index
-from app.services.metrics_collector import query_metrics_for_host
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/hosts", tags=["hosts"])
 
-# Reuse bridge.py label/unit/level mapping + CheckMK service per metric
-# (service names mirror metrics_collector._STANDARD_METRICS so the live path
-#  can query CheckMK even when the metrics cache is empty/stale).
+# Reuse bridge.py label/unit/level mapping + the CheckMK service each metric lives in
+# (mirrors checkmk_metrics.STANDARD_METRICS).
 _VITAL_METRICS = {
     "fs_used_percent":  {"label": "Disk", "unit": "%", "service": "Filesystem /"},
     "mem_used_percent": {"label": "RAM",  "unit": "%", "service": "Memory"},
@@ -67,73 +65,31 @@ async def host_health(
 ):
     """Return health vitals + recent alerts for a host.
 
-    Default (live=true): reads current values straight from CheckMK's RRD. The
-    OpenSearch cache is only a fallback, because it is neither complete nor finer:
-    the collector only samples hosts that currently have critical/high alerts, so an
-    unremarkable host has no cached vitals at all, and its 5-minute samples are
-    coarser than the 1-minute resolution CheckMK returns for short ranges.
+    Values come straight from CheckMK's RRD — there is no metric cache any more. The
+    old one only sampled hosts that currently had a critical/high alert, so an
+    unremarkable host had no vitals at all, and its 5-minute samples were coarser
+    than the 1-minute resolution CheckMK returns for short ranges.
 
-    Every vital carries `source` ("live" or "cache") and the response carries
-    `live_ok`, so a fallback is visible instead of silently passing cached numbers
-    off as current.
+    `live_ok` reports whether CheckMK actually answered. When it did not, `vitals` is
+    empty and `live_ok` is false — an explicitly empty result rather than stale
+    numbers presented as current.
     """
-    # ── 1. Vitals (cached) ──────────────────────────────────────────────────
-    raw_docs = await query_metrics_for_host(hostname, hours=2)
-
-    # Group by metric — keep series for sparklines, latest value for gauge
-    series_by_metric: dict[str, list[dict]] = {}
-    service_by_metric: dict[str, str] = {}
-    unit_by_metric: dict[str, str] = {}
-    for doc in reversed(raw_docs):  # oldest first → build series
-        m = doc.get("metric", "")
-        if m not in _VITAL_METRICS:
-            continue
-        if m not in series_by_metric:
-            series_by_metric[m] = []
-            service_by_metric[m] = doc.get("service", "")
-            unit_by_metric[m] = doc.get("unit", "") or _VITAL_METRICS[m]["unit"]
-        series_by_metric[m].append({"time": doc["timestamp"], "value": float(doc["value"])})
-
-    vitals = []
-    for metric in _VITAL_ORDER:
-        if metric not in series_by_metric:
-            continue
-        series = series_by_metric[metric]
-        current_val = round(series[-1]["value"], 1) if series else 0.0
-        vitals.append({
-            "metric": metric,
-            "label": _VITAL_METRICS[metric]["label"],
-            "value": current_val,
-            "unit": unit_by_metric.get(metric, _VITAL_METRICS[metric]["unit"]),
-            "level": _level(metric, current_val),
-            "service": service_by_metric.get(metric, ""),
-            "series": series[-30:],  # max 30 points for sparkline
-            "source": "cache",
-        })
-
-    # ── 2. Live values from CheckMK (default) ───────────────────────────────
+    # ── 1. Vitals — live from CheckMK ───────────────────────────────────────
+    # There is no metric cache any more: it only held hosts with an active
+    # critical/high alert (so an unremarkable host showed an empty panel) and its
+    # 5-minute samples were coarser than CheckMK's 1-minute resolution here.
+    vitals: list[dict] = []
     live_ok = False
-    # When live=true we always query CheckMK — even if the cache is empty/stale.
-    # Cached vitals are refreshed in place; if the cache is empty we build stubs
-    # from the known metric→service map so the cockpit fills from CheckMK directly.
     if live:
-        # Determine which vitals to query: cached ones, or fallback stubs.
-        if vitals:
-            targets = vitals
-        else:
-            targets = [
-                {
-                    "metric": metric,
-                    "label": _VITAL_METRICS[metric]["label"],
-                    "value": 0.0,
-                    "unit": _VITAL_METRICS[metric]["unit"],
-                    "level": "ok",
-                    "service": _VITAL_METRICS[metric]["service"],
-                    "series": [],
-                    "source": "cache",
-                }
-                for metric in _VITAL_ORDER
-            ]
+        targets = [
+            {
+                "metric": metric,
+                "label": _VITAL_METRICS[metric]["label"],
+                "unit": _VITAL_METRICS[metric]["unit"],
+                "service": _VITAL_METRICS[metric]["service"],
+            }
+            for metric in _VITAL_ORDER
+        ]
 
         try:
             connector = await _get_checkmk_connector(db)
@@ -159,8 +115,9 @@ async def host_health(
                             }
                     except Exception as e:
                         log.debug("host_health live refresh %s/%s: %s", hostname, v["metric"], e)
-                    # No live data: keep cached vital if it had data, else drop the stub
-                    return v if v.get("series") else None
+                    # No live data for this metric → omit it rather than showing a
+                    # placeholder value that looks like a reading.
+                    return None
 
                 refreshed = await asyncio.gather(*[_refresh_vital(v) for v in targets])
                 live_vitals = [v for v in refreshed if v is not None]

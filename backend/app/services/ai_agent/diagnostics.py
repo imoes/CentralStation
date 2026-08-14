@@ -119,28 +119,30 @@ class MetricsProvider:
         return True
 
     async def run(self, host: str, db: Any) -> DiagnosticResult:
-        from app.services.metrics_collector import query_metrics_for_host
+        from app.services.checkmk_metrics import fetch_host_metrics
         from app.services.ai_agent.models import Evidence
         try:
-            metrics = await query_metrics_for_host(host, hours=2)
+            # Live from CheckMK. The old cache only held hosts with an ACTIVE
+            # critical/high problem, so a healthy host had no metrics at all and this
+            # branch had to explain that absence to the LLM. Reading live means every
+            # host has values, and an empty result now means a real problem
+            # (host unknown to CheckMK / connector down) — which is worth reporting.
+            result = await fetch_host_metrics(host, hours=2, db=db)
+            metrics = result.get("metrics") or []
             if not metrics:
-                # IMPORTANT: the metrics collector only gathers data for hosts that
-                # have an ACTIVE CheckMK CRIT/HIGH problem (to spare CheckMK). A
-                # healthy host therefore has NO collected metrics — that is the
-                # normal, expected case and NOT a sign of a problem. Make this
-                # explicit so the LLM does not flag it as a finding.
                 return DiagnosticResult(
                     self.name, host,
-                    f"No performance metrics stored for {host} — expected, as "
-                    f"metrics are only collected for hosts with an active CheckMK problem. "
-                    f"No active problem = no metrics = NO finding.",
+                    f"No performance metrics available for {host}: "
+                    f"{result.get('error') or 'CheckMK returned no series for the standard services'}.",
                 )
             latest: dict[str, float] = {}
             latest_ts: dict[str, str] = {}
             for m in metrics:
                 mid = m.get("metric") or ""
-                latest[mid] = float(m.get("value") or 0)
-                latest_ts[mid] = m.get("timestamp") or ""
+                if m.get("current") is None:
+                    continue
+                latest[mid] = float(m.get("current") or 0)
+                latest_ts[mid] = ""
             parts = []
             if "mem_used_percent" in latest:
                 parts.append(f"RAM {latest['mem_used_percent']:.0f}%")

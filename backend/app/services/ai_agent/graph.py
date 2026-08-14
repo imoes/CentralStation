@@ -379,15 +379,18 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
         if a.get("severity") in ("critical", "high") and (a.get("host") or a.get("agent"))
     }
     if critical_hosts:
-        from app.services.metrics_collector import query_metrics_for_host
+        from app.services.checkmk_metrics import fetch_host_metrics
         for host in list(critical_hosts)[:5]:
             try:
-                metrics = await query_metrics_for_host(host, hours=2)
+                # Live from CheckMK (the metric cache is gone — it only covered hosts
+                # that already had an active alert, and only at 5-minute resolution).
+                metrics = (await fetch_host_metrics(host, hours=2, db=db)).get("metrics") or []
                 if metrics:
                     # Format as compact text for LLM context
                     snippets = [
-                        f"{m['service']}/{m['metric']}: {m['value']:.2f}{m.get('unit','')} @ {m['timestamp'][:16]}"
-                        for m in metrics[:20]
+                        f"{m['service']}/{m['metric']}: {m['current']:.2f}{m.get('unit','')} "
+                        f"(min {m.get('min')} / max {m.get('max')} {m.get('trend','')})"
+                        for m in metrics[:20] if m.get("current") is not None
                     ]
                     rag_context.append({
                         "source": "checkmk-metrics",

@@ -217,99 +217,18 @@ async def acknowledge_alert(alert_id: str) -> dict:
 
 # ── Tool 5: Get CheckMK Host ───────────────────────────────────────
 
-def _checkmk_trend(series: list[dict]) -> tuple[float | None, float | None, float | None, str]:
-    """Return (current, min, max, trend_arrow) from an RRD time series."""
-    vals = [p["value"] for p in series if p.get("value") is not None]
-    if not vals:
-        return None, None, None, "?"
-    current = vals[-1]
-    mn, mx = min(vals), max(vals)
-    mid = len(vals) // 2 or 1
-    avg_first = sum(vals[:mid]) / mid
-    avg_last = sum(vals[mid:]) / max(len(vals[mid:]), 1)
-    if avg_last > avg_first * 1.07:
-        arrow = "↑"
-    elif avg_last < avg_first * 0.93:
-        arrow = "↓"
-    else:
-        arrow = "→"
-    return current, mn, mx, arrow
+# CheckMK live vitals live in app.services.checkmk_metrics — one place for both the
+# MCP tools and the AI agent, so there is no second implementation to drift.
+from app.services.checkmk_metrics import (  # noqa: E402
+    fetch_host_metrics as _fetch_host_performance,
+    checkmk_configs as _checkmk_configs_svc,
+)
 
 
 async def _checkmk_configs():
-    """Return all enabled CheckMK connector configs + credentials."""
-    from sqlalchemy import select
-    from app.models.connector import ConnectorConfig
-    from app.core.security import decrypt_credentials
+    """All enabled CheckMK connector configs + credentials."""
     async with (await _get_db_session()) as db:
-        cfgs = (await db.execute(
-            select(ConnectorConfig).where(
-                ConnectorConfig.type == "checkmk",
-                ConnectorConfig.enabled.is_(True),
-            )
-        )).scalars().all()
-    return [(cfg, decrypt_credentials(cfg.encrypted_credentials)) for cfg in cfgs]
-
-
-async def _fetch_host_performance(hostname: str, hours: int = 2) -> dict:
-    """Fetch fresh RRD metrics for a host from all enabled CheckMK sites.
-
-    Tries every site until the host is found. Returns {site, metrics:[]} or {error}.
-    Each metric entry: {service, metric, current, min, max, trend, unit}.
-    """
-    from app.services.connectors.checkmk import CheckMKConnector
-    from app.services.metrics_collector import _DEFAULT_METRICS
-
-    configs = await _checkmk_configs()
-    if not configs:
-        return {"error": "Kein CheckMK-Connector konfiguriert"}
-
-    for cfg, creds in configs:
-        connector = CheckMKConnector(base_url=cfg.base_url, credentials=creds)
-        # Verify host exists on this site
-        try:
-            services = await connector.list_services(hostname)
-        except Exception:
-            services = []
-        if not services:
-            continue
-
-        # Fetch all metrics concurrently: these are independent RRD round-trips, and
-        # doing them one after another made a host's vitals take ~2.5s — enough that
-        # the cockpit needed a cache to feel instant. In parallel it costs roughly one
-        # round-trip, which makes reading live from CheckMK viable.
-        async def _one(m: dict) -> tuple[dict, dict]:
-            try:
-                return m, await connector.get_graph_data(
-                    hostname, m["service"], metric_id=m["metric_id"], hours=hours
-                )
-            except Exception as exc:  # one bad metric must not sink the whole host
-                log.debug("get_graph_data %s/%s: %s", hostname, m["metric_id"], exc)
-                return m, {}
-
-        metrics_out: list[dict] = []
-        for m, data in await asyncio.gather(*(_one(m) for m in _DEFAULT_METRICS)):
-            series = data.get("series", [])
-            if not series:
-                continue
-            cur, mn, mx, arrow = _checkmk_trend(series)
-            unit = m.get("unit", "")
-            # Convert raw bytes to GB for readability
-            if unit == "bytes" and cur is not None:
-                cur, mn, mx = cur / 1e9, mn / 1e9, mx / 1e9
-                unit = "GB"
-            metrics_out.append({
-                "service": m["service"],
-                "metric":  m["metric_id"],
-                "current": round(cur, 2) if cur is not None else None,
-                "min":     round(mn,  2) if mn  is not None else None,
-                "max":     round(mx,  2) if mx  is not None else None,
-                "trend":   arrow,
-                "unit":    unit,
-            })
-        return {"hostname": hostname, "site": cfg.name, "hours": hours, "metrics": metrics_out}
-
-    return {"hostname": hostname, "error": "Host auf keinem CheckMK-Standort gefunden"}
+        return await _checkmk_configs_svc(db)
 
 
 @mcp.tool()
