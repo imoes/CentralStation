@@ -63,12 +63,19 @@ async def host_health(
     hostname: str,
     current_user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-    live: bool = False,
+    live: bool = True,
 ):
     """Return health vitals + recent alerts for a host.
 
-    Default (live=false): returns cached metrics from cs-metrics-checkmk (instant).
-    With live=true: additionally fetches current values from CheckMK RRD.
+    Default (live=true): reads current values straight from CheckMK's RRD. The
+    OpenSearch cache is only a fallback, because it is neither complete nor finer:
+    the collector only samples hosts that currently have critical/high alerts, so an
+    unremarkable host has no cached vitals at all, and its 5-minute samples are
+    coarser than the 1-minute resolution CheckMK returns for short ranges.
+
+    Every vital carries `source` ("live" or "cache") and the response carries
+    `live_ok`, so a fallback is visible instead of silently passing cached numbers
+    off as current.
     """
     # ── 1. Vitals (cached) ──────────────────────────────────────────────────
     raw_docs = await query_metrics_for_host(hostname, hours=2)
@@ -101,9 +108,11 @@ async def host_health(
             "level": _level(metric, current_val),
             "service": service_by_metric.get(metric, ""),
             "series": series[-30:],  # max 30 points for sparkline
+            "source": "cache",
         })
 
-    # ── 2. Live refresh (optional) ──────────────────────────────────────────
+    # ── 2. Live values from CheckMK (default) ───────────────────────────────
+    live_ok = False
     # When live=true we always query CheckMK — even if the cache is empty/stale.
     # Cached vitals are refreshed in place; if the cache is empty we build stubs
     # from the known metric→service map so the cockpit fills from CheckMK directly.
@@ -121,6 +130,7 @@ async def host_health(
                     "level": "ok",
                     "service": _VITAL_METRICS[metric]["service"],
                     "series": [],
+                    "source": "cache",
                 }
                 for metric in _VITAL_ORDER
             ]
@@ -145,6 +155,7 @@ async def host_health(
                                 "value": current_val,
                                 "level": _level(v["metric"], current_val),
                                 "series": [{"time": p["time"], "value": p["value"]} for p in series[-30:]],
+                                "source": "live",
                             }
                     except Exception as e:
                         log.debug("host_health live refresh %s/%s: %s", hostname, v["metric"], e)
@@ -158,6 +169,11 @@ async def host_health(
                 live_vitals.sort(key=lambda v: order.get(v["metric"], 99))
                 if live_vitals:
                     vitals = live_vitals
+                # live_ok only when EVERY returned vital actually came from CheckMK —
+                # a partial refresh must not be reported as a live reading.
+                live_ok = bool(live_vitals) and all(
+                    v.get("source") == "live" for v in live_vitals
+                )
         except Exception as e:
             log.warning("host_health live refresh failed for %s: %s", hostname, e)
 
@@ -190,7 +206,8 @@ async def host_health(
         "host": hostname,
         "vitals": vitals,
         "messages": messages,
-        "live": live,
+        "live": live,          # what was requested
+        "live_ok": live_ok,    # what was actually delivered
     }
 
 

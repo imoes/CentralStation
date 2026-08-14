@@ -7,6 +7,7 @@ Mounted at /api/mcp in main.py.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
@@ -273,11 +274,21 @@ async def _fetch_host_performance(hostname: str, hours: int = 2) -> dict:
         if not services:
             continue
 
+        # Fetch all metrics concurrently: these are independent RRD round-trips, and
+        # doing them one after another made a host's vitals take ~2.5s — enough that
+        # the cockpit needed a cache to feel instant. In parallel it costs roughly one
+        # round-trip, which makes reading live from CheckMK viable.
+        async def _one(m: dict) -> tuple[dict, dict]:
+            try:
+                return m, await connector.get_graph_data(
+                    hostname, m["service"], metric_id=m["metric_id"], hours=hours
+                )
+            except Exception as exc:  # one bad metric must not sink the whole host
+                log.debug("get_graph_data %s/%s: %s", hostname, m["metric_id"], exc)
+                return m, {}
+
         metrics_out: list[dict] = []
-        for m in _DEFAULT_METRICS:
-            data = await connector.get_graph_data(
-                hostname, m["service"], metric_id=m["metric_id"], hours=hours
-            )
+        for m, data in await asyncio.gather(*(_one(m) for m in _DEFAULT_METRICS)):
             series = data.get("series", [])
             if not series:
                 continue
