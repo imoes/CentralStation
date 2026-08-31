@@ -1,6 +1,6 @@
 """ID-Generator connector.
 
-Auth: Basic Auth — idgen_reader:REDACTED-CREDENTIAL (read-only)
+Auth: Basic Auth — credentials come from the connector config, never from code.
 API base: {base_url}/api/v2/
 
 Simple GETs need no auth; sql-query and writes require Basic Auth.
@@ -15,9 +15,15 @@ from app.services.connectors.base import BaseConnector
 
 class IDGeneratorConnector(BaseConnector):
     def _auth(self) -> tuple[str, str]:
+        """Credentials from the connector config only.
+
+        There used to be a hardcoded fallback password here. A default credential in
+        tracked source is a credential in every clone and every fork — configure the
+        connector instead.
+        """
         return (
-            self.credentials.get("username", "idgen_reader"),
-            self.credentials.get("password", "REDACTED-CREDENTIAL"),
+            self.credentials.get("username", ""),
+            self.credentials.get("password", ""),
         )
 
     def _api(self, path: str) -> str:
