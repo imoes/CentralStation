@@ -13,7 +13,7 @@ docker run --rm \
   alpine/openssl req -x509 -nodes -newkey rsa:4096 -days 3650 \
   -keyout /ssl/key.pem \
   -out    /ssl/cert.pem \
-  -subj "/C=DE/ST=Bayern/L=Muenchen/O=example.com/CN=${DOMAIN}" \
+  -subj "/C=DE/ST=Bayern/L=Muenchen/O=Example Org/CN=${DOMAIN}" \
   -addext "subjectAltName=DNS:${DOMAIN},DNS:localhost"
 
 echo ""

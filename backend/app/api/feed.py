@@ -1082,9 +1082,8 @@ async def alert_hermes_context(
                     or raw_item.get("host") or "")
             # Extract hostname from title if it contains an FQDN-like pattern
             if not host:
-                import re as _re
-                m = _re.search(r'\b([\w.-]+\.(?:media|internal|local|example\.media))\b',
-                               raw_item.get("title", ""))
+                from app.core.domains import host_pattern as _host_pattern
+                m = _host_pattern().search(raw_item.get("title", ""))
                 if m:
                     host = m.group(1)
             title = raw_item.get("title", "")

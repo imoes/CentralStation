@@ -233,9 +233,10 @@ def _build_summary(findings: list[dict], recommendations: list[dict], hours: int
     # Collect unique affected hosts from finding descriptions
     hosts: list[str] = []
     import re as _re
+    from app.core.domains import host_pattern as _host_pattern
     for f in findings:
         for text in [f.get("title", ""), f.get("description", "")]:
-            for m in _re.finditer(r'\b([\w-]+\.(?:example\.media|internal|local))\b', text):
+            for m in _host_pattern().finditer(text):
                 h = m.group(1)
                 if h not in hosts:
                     hosts.append(h)

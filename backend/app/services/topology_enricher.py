@@ -53,8 +53,9 @@ def _extract_deps_from_text(text: str) -> list[str]:
         if svc in text_lower:
             found.append(svc)
     # Zusätzlich: Hostnamen-Pattern (z.B. opensearch01.example.com → opensearch)
+    from app.core.domains import domain_alternation
     host_pattern = re.compile(
-        r"\b([a-z][a-z0-9\-]{2,})\d*(?:\.example\.media|\.test\.example\.media)?\b"
+        rf"\b([a-z][a-z0-9\-]{{2,}})\d*(?:\.(?:{domain_alternation()}))?\b"
     )
     for m in host_pattern.finditer(text_lower):
         base = m.group(1).rstrip("0123456789-")

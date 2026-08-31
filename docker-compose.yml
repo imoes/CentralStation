@@ -56,6 +56,8 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       SECRET_KEY: ${SECRET_KEY}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      # Internal DNS suffixes for hostname detection — deployment data, kept in .env
+      CS_INTERNAL_DOMAINS: ${CS_INTERNAL_DOMAINS:-internal,local}
       OPENSEARCH_URL: https://opensearch:9200
       OPENSEARCH_USER: admin
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}

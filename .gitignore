@@ -45,3 +45,6 @@ Thumbs.db
 # SSL certs (lokal generiert)
 nginx/ssl
 frontend/.npmrc
+
+# Real nginx config (cert filenames, hostnames) — copy from nginx.conf.example
+nginx/nginx.conf
