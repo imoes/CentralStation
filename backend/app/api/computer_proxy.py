@@ -1191,6 +1191,72 @@ async def text_to_speech(body: _TTSBody) -> PlainResponse:
 
 # ── Container management ───────────────────────────────────────────
 
+class _WriteApprovalBody(BaseModel):
+    minutes: int = 15
+
+
+@router.get("/write-approval")
+async def get_write_approval_state(user: CurrentUser, _: None = _ConsoleEnabled):
+    """Current state of the console's write window."""
+    from app.services.userenv_manager import get_write_approval
+    granted = await asyncio.to_thread(get_write_approval, str(user.id))
+    return {"active": bool(granted), "approval": granted}
+
+
+@router.post("/write-approval", status_code=201)
+async def grant_write_approval(
+    body: _WriteApprovalBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: None = _ConsoleEnabled,
+):
+    """Open a time-limited write window for this user's console agent.
+
+    The in-container PreToolUse guard blocks system-modifying commands and cannot see
+    the conversation — deliberately, since the agent controls that conversation and
+    could otherwise talk itself into permission. This endpoint is the only consent
+    channel: it writes a root-owned marker the agent (running as yolo) cannot forge.
+    """
+    from app.models.audit import AuditLog
+    from app.services.userenv_manager import ensure_container, set_write_approval
+
+    await asyncio.to_thread(ensure_container, str(user.id))
+    try:
+        approval = await asyncio.to_thread(
+            set_write_approval, str(user.id), body.minutes, user.email
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"Schreibfreigabe fehlgeschlagen: {exc}")
+
+    # Security-relevant: record who opened write access to production systems.
+    db.add(AuditLog(action="console_write_approval_granted", resource_type="userenv",
+                    resource_id=str(user.id), user_id=user.id,
+                    old_value=None, new_value={"minutes": body.minutes,
+                                               "expires_at": approval["expires_at_iso"]}))
+    await db.commit()
+    log.info("console write approval granted for %s (%d min)", user.email, body.minutes)
+    return {"active": True, "approval": approval}
+
+
+@router.delete("/write-approval", status_code=204)
+async def revoke_write_approval(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: None = _ConsoleEnabled,
+):
+    """Close the write window immediately."""
+    from app.models.audit import AuditLog
+    from app.services.userenv_manager import clear_write_approval
+
+    try:
+        await asyncio.to_thread(clear_write_approval, str(user.id))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("revoke write approval failed for %s: %s", user.id, exc)
+    db.add(AuditLog(action="console_write_approval_revoked", resource_type="userenv",
+                    resource_id=str(user.id), user_id=user.id))
+    await db.commit()
+
+
 @router.post("/userenv/restart", status_code=202)
 async def restart_userenv(
     user: CurrentUser,

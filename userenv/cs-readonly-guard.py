@@ -21,6 +21,7 @@ Wired via managed-settings.json → hooks.PreToolUse (matcher "Bash"), admin-sco
 import json
 import re
 import sys
+import time
 
 # System-level, always destructive — block regardless of path/target.
 _SYSTEM_OP = re.compile(
@@ -69,6 +70,26 @@ def _is_write(cmd: str) -> bool:
     return False
 
 
+#: Where the backend records a user-granted, time-limited write approval. It lives in
+#: /opt because that directory is root-owned and the agent runs as yolo — the agent
+#: therefore cannot forge its own approval, which is the whole point: consent has to
+#: come from the human through the CentralStation UI, not from the conversation the
+#: agent itself controls.
+APPROVAL_FILE = "/opt/cs-write-approval.json"
+
+
+def _approval() -> dict | None:
+    """Return the active write approval, or None when absent/expired/unreadable."""
+    try:
+        with open(APPROVAL_FILE) as fh:
+            data = json.load(fh)
+        if float(data.get("expires_at", 0)) > time.time():
+            return data
+    except Exception:
+        pass
+    return None
+
+
 def main() -> None:
     try:
         data = json.load(sys.stdin)
@@ -78,14 +99,26 @@ def main() -> None:
         sys.exit(0)
     cmd = (data.get("tool_input") or {}).get("command", "") or ""
     if _is_write(cmd):
+        granted = _approval()
+        if granted:
+            # The user opened a write window in the CentralStation console. Let the
+            # command through and leave a trace of whose approval was used.
+            sys.stderr.write(
+                "cs-readonly-guard: Schreibfreigabe aktiv (erteilt von "
+                f"{granted.get('granted_by', '?')}, gültig bis "
+                f"{granted.get('expires_at_iso', '?')}) — Befehl zugelassen.\n"
+            )
+            sys.exit(0)
         reason = (
             "READ-ONLY-MODUS: Dieser Befehl verändert ein System "
-            "(Schreiboperation, evtl. auf einem Produktionssystem via SSH). "
-            "Führe ihn NICHT aus. Beschreibe dem Nutzer die geplante Änderung "
-            "(genauer Befehl + Zielsystem + Wirkung) und frage EXPLIZIT um "
-            "Erlaubnis. Erst nach ausdrücklicher Zustimmung des Nutzers in einer "
-            "Folgenachricht darf die Operation ausgeführt werden. Reine "
-            "Lese-Diagnose und lokale Workspace-Dateien sind erlaubt."
+            "(Schreiboperation, evtl. auf einem Produktionssystem via SSH) und wurde "
+            "BLOCKIERT. Wichtig: eine Zustimmung im Chat hebt diese Sperre NICHT auf "
+            "— der Hook sieht die Konversation nicht, und du kannst ihn nicht "
+            "umgehen. Beschreibe dem Nutzer die geplante Änderung (genauer Befehl + "
+            "Zielsystem + Wirkung) und bitte ihn, in der CentralStation-Konsole "
+            "\"Schreibzugriff freigeben\" zu klicken; danach ist der Befehl für die "
+            "Dauer des Zeitfensters erlaubt und du kannst ihn erneut ausführen. "
+            "Reine Lese-Diagnose und lokale Workspace-Dateien sind immer erlaubt."
         )
         # Block via BOTH mechanisms for cross-version compatibility:
         #  - JSON permissionDecision "deny" (newer Claude Code), and
