@@ -48,3 +48,7 @@ frontend/.npmrc
 
 # Real nginx config (cert filenames, hostnames) — copy from nginx.conf.example
 nginx/nginx.conf
+
+# Local notes (not part of the project)
+ansible-webui-prompt.md
+foreman.md
