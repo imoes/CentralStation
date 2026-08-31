@@ -1,0 +1,5 @@
+example.com==>example.com
+example_com==>example_com
+REDACTED-CREDENTIAL==>REDACTED-CREDENTIAL
+deployment-specific==>deployment-specific
+example==>example
