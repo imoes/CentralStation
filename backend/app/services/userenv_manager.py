@@ -741,3 +741,60 @@ def reap_idle(max_idle_seconds: float) -> int:
             except Exception as e:
                 log.warning("userenv_manager: reap %s failed: %s", c.name, e)
     return stopped
+
+
+# ── Write approval (read-only guard) ──────────────────────────────────────────
+#: The PreToolUse guard inside the container blocks system-modifying commands. It
+#: cannot see the conversation, so consent given in chat never reaches it — and it
+#: must not, because the agent controls that conversation. This file is the only
+#: consent channel: written as ROOT into /opt (which the agent user yolo cannot
+#: write), it can only be created by the backend on an explicit user action.
+WRITE_APPROVAL_FILE = "/opt/cs-write-approval.json"
+
+
+def set_write_approval(user_id: str, minutes: int, granted_by: str) -> dict:
+    """Open a time-limited write window in the user's container. Returns its state."""
+    import json
+    import time as _t
+    from datetime import datetime, timezone, timedelta
+
+    minutes = max(1, min(120, int(minutes)))
+    expires = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    payload = {
+        "expires_at": _t.time() + minutes * 60,
+        "expires_at_iso": expires.isoformat(timespec="seconds"),
+        "granted_by": granted_by,
+        "granted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    c = _client().containers.get(container_name(user_id))
+    # user="0": root-owned so the agent (yolo) cannot forge or extend it.
+    c.exec_run(
+        ["sh", "-c", f"printf '%s' \"$A\" > {WRITE_APPROVAL_FILE} && "
+                     f"chmod 644 {WRITE_APPROVAL_FILE}"],
+        environment={"A": json.dumps(payload)},
+        user="0",
+    )
+    log.info("write approval granted for %s by %s (%d min)", user_id, granted_by, minutes)
+    return payload
+
+
+def clear_write_approval(user_id: str) -> None:
+    """Close the write window immediately."""
+    c = _client().containers.get(container_name(user_id))
+    c.exec_run(["sh", "-c", f"rm -f {WRITE_APPROVAL_FILE}"], user="0")
+    log.info("write approval revoked for %s", user_id)
+
+
+def get_write_approval(user_id: str) -> dict | None:
+    """Return the active approval, or None when absent/expired."""
+    import json
+    import time as _t
+    try:
+        c = _client().containers.get(container_name(user_id))
+        rr = c.exec_run(["sh", "-c", f"cat {WRITE_APPROVAL_FILE} 2>/dev/null || echo '{{}}'"])
+        data = json.loads(rr.output.decode(errors="replace") or "{}")
+        if float(data.get("expires_at", 0)) > _t.time():
+            return data
+    except Exception:
+        pass
+    return None

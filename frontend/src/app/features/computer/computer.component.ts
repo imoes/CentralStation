@@ -3,6 +3,8 @@ import {
   ViewChild, ElementRef, HostListener, inject, NgZone,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
+import { MatSnackBar } from '@angular/material/snack-bar';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
@@ -159,6 +161,19 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                 🎫 TICKET
               </button>
             }
+            <!-- Write approval: the in-container guard blocks system-modifying
+                 commands and cannot see the chat, so consent must be granted here. -->
+            @if (writeApprovalUntil()) {
+              <button class="rail-pill write-active-pill" (click)="revokeWrite()"
+                      title="Schreibzugriff ist freigegeben — klicken zum sofortigen Sperren">
+                🔓 SCHREIBEN {{ writeRemaining() }}
+              </button>
+            } @else {
+              <button class="rail-pill write-pill" (click)="grantWrite()"
+                      title="Erlaubt dem Agenten für 15 Minuten Schreib-/Systembefehle (auch via SSH). Eine Zustimmung im Chat allein genügt nicht.">
+                🔒 SCHREIBEN FREIGEBEN
+              </button>
+            }
             @if (activeTabId()) {
               <button class="rail-pill workbench-pill" (click)="sendToWorkbench()"
                       title="Transfer session to workbench">
@@ -292,6 +307,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private sanitizer = inject(DomSanitizer);
   private computerService = inject(ComputerService);
+  private http = inject(HttpClient);
+  private snackBar = inject(MatSnackBar);
   private dialog = inject(MatDialog);
   private ngZone = inject(NgZone);
   readonly i18n = inject(I18nService);
@@ -408,6 +425,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    this.loadWriteApproval();
     this._handoffSub = this.computerService.handoff$.subscribe(({ prompt, label, hostKey, externalId }) => {
       this._handleHandoff(prompt, label, hostKey, externalId);
     });
@@ -570,6 +588,56 @@ export class ComputerComponent implements OnInit, OnDestroy {
   }
 
   /** Open the shared ticket dialog, formulating a ticket from this conversation. */
+  // ── Write approval ────────────────────────────────────────────────────────
+  // The PreToolUse guard in the container denies system-modifying commands and has
+  // no view of this conversation — deliberately, since the agent drives the chat and
+  // could otherwise argue itself into permission. This is the only consent channel.
+  writeApprovalUntil = signal<number | null>(null);
+  writeRemaining = signal('');
+  private writeTimer: any = null;
+
+  private trackWrite(expiresAtSec: number | null): void {
+    this.writeApprovalUntil.set(expiresAtSec);
+    if (this.writeTimer) { clearInterval(this.writeTimer); this.writeTimer = null; }
+    if (!expiresAtSec) { this.writeRemaining.set(''); return; }
+    const tick = () => {
+      const left = Math.round(expiresAtSec - Date.now() / 1000);
+      if (left <= 0) { this.trackWrite(null); return; }
+      const m = Math.floor(left / 60), s = left % 60;
+      this.writeRemaining.set(`${m}:${String(s).padStart(2, '0')}`);
+    };
+    tick();
+    this.writeTimer = setInterval(tick, 1000);
+  }
+
+  loadWriteApproval(): void {
+    this.http.get<any>(`${environment.apiUrl}/computer/write-approval`).subscribe({
+      next: r => this.trackWrite(r?.approval?.expires_at ?? null),
+      error: () => this.trackWrite(null),
+    });
+  }
+
+  grantWrite(): void {
+    if (!confirm(
+      'Schreibzugriff für 15 Minuten freigeben?\n\n' +
+      'Der Agent darf dann System- und Schreibbefehle ausführen — auch per SSH auf ' +
+      'entfernten Produktionssystemen. Die Freigabe endet automatisch und kann ' +
+      'jederzeit sofort widerrufen werden.'
+    )) return;
+    this.http.post<any>(`${environment.apiUrl}/computer/write-approval`, { minutes: 15 })
+      .subscribe({
+        next: r => this.trackWrite(r?.approval?.expires_at ?? null),
+        error: e => this.snackBar.open(e?.error?.detail ?? 'Freigabe fehlgeschlagen', '', { duration: 3000 }),
+      });
+  }
+
+  revokeWrite(): void {
+    this.http.delete(`${environment.apiUrl}/computer/write-approval`).subscribe({
+      next: () => this.trackWrite(null),
+      error: () => this.trackWrite(null),
+    });
+  }
+
   createTicket(): void {
     const msgs = this.activeMessages();
     if (!msgs.length) return;

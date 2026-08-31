@@ -869,3 +869,24 @@
   }
 }
 
+
+// Write approval pills — amber for "locked" (action available), red-orange while a
+// write window is open, so an active window is impossible to overlook.
+.rail-pill {
+  &.write-pill {
+    background: #664422;
+    color: #ffcc99;
+    margin-top: 2px;
+
+    &:hover { background: #886633; }
+  }
+
+  &.write-active-pill {
+    background: #cc6600;
+    color: #000;
+    font-weight: 600;
+    margin-top: 2px;
+
+    &:hover { background: #ff8800; }
+  }
+}
