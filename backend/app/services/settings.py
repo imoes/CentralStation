@@ -6,6 +6,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import decrypt_credentials, encrypt_credentials
 from app.models.settings import GlobalSetting
 
+# ── Perplexity ────────────────────────────────────────────────────────────────
+# Agent API. Its POST /v1/responses alias speaks the OpenAI Responses format, which
+# is our existing "responses" api_mode — hence base_url without the /responses path,
+# _build_api_url() appends it.
+PERPLEXITY_AGENT_BASE_URL = "https://api.perplexity.ai/v1"
+# Router API — Perplexity's own open-weight models, and the only catalogue with a
+# machine-readable model list.
+PERPLEXITY_ROUTER_BASE_URL = "https://api.perplexity.ai/router/v1"
+PERPLEXITY_DEFAULT_MODEL = "anthropic/claude-sonnet-5"
+# Third-party models are not exposed through a list endpoint, so they are maintained
+# here (same approach as _CLAUDE_FALLBACK/_CODEX_FALLBACK in computer_proxy).
+PERPLEXITY_FALLBACK_MODELS = [
+    "anthropic/claude-sonnet-5",
+    "anthropic/claude-opus-5",
+    "anthropic/claude-haiku-4-5",
+    "openai/gpt-5.6-sol",
+    "openai/gpt-5.4",
+    "google/gemini-3-flash-preview",
+    "perplexity/kimi-k3",
+    "perplexity/glm-5.2",
+    "perplexity/deepseek-v4-flash-0731",
+]
+
 
 @dataclass
 class LLMConfig:
@@ -201,6 +224,8 @@ async def get_active_llm_config(db: AsyncSession, user_id=None) -> LLMConfig:
 
     llm.provider = "custom"  → local llamacpp03 endpoint (default)
     llm.provider = "openai-codex" → OpenAI Codex via stored OAuth token
+    llm.provider = "claude-oauth" → Anthropic via stored OAuth token
+    llm.provider = "perplexity"   → Perplexity Agent API (third-party models)
     """
     if user_id is not None:
         from sqlalchemy import select as _select
@@ -247,6 +272,25 @@ async def get_active_llm_config(db: AsyncSession, user_id=None) -> LLMConfig:
                 model=s.get("llm.claude_model") or "claude-opus-4-8",
                 api_key=token,
                 api_mode="anthropic_messages",
+                thinking_mode=s.get("llm.thinking_mode", "false") == "true",
+            )
+
+    if provider == "perplexity":
+        # Perplexity's Agent API exposes third-party models — anthropic/claude-sonnet-5,
+        # openai/gpt-*, Google, xAI — behind one key. It accepts POST /v1/responses as an
+        # OpenAI-compatible alias, which is exactly our existing "responses" api_mode, so
+        # no client changes are needed. Deliberately NOT the Router API (Perplexity's own
+        # open-weight models only) and NOT the legacy Sonar /chat/completions endpoint,
+        # which Perplexity sunsets on 2026-09-27.
+        # A plain bearer key, so no OAuth flow — stored as a secret setting.
+        key = s.get("llm.perplexity_api_key")
+        if key:
+            return LLMConfig(
+                base_url=PERPLEXITY_AGENT_BASE_URL,
+                model=s.get("llm.perplexity_model") or PERPLEXITY_DEFAULT_MODEL,
+                api_key=key,
+                api_mode="responses",
+                timeout_seconds=int(s.get("llm.perplexity_timeout_seconds") or 120),
                 thinking_mode=s.get("llm.thinking_mode", "false") == "true",
             )
 

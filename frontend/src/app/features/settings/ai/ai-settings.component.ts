@@ -37,6 +37,19 @@ interface OAuthSession {
 
 const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showOnlyFor?: string[] }[] = [
   {
+    // The provider select had no home since the LLM configuration moved into the
+    // connector (402ccc6) — it was only changeable via API/DB, which made every
+    // provider added since then unreachable in the UI.
+    title: 'KI-Provider',
+    keys: ['llm.provider'],
+  },
+  {
+    title: 'Perplexity',
+    keys: ['llm.perplexity_api_key', 'llm.perplexity_model', 'llm.perplexity_timeout_seconds'],
+    showOnlyFor: ['perplexity'],
+    testGroup: 'llm',
+  },
+  {
     title: 'SearXNG Web Search',
     keys: ['searxng.base_url', 'searxng.enabled', 'searxng.results_count'],
     testGroup: 'searxng',
@@ -81,7 +94,9 @@ const BOOLEAN_KEYS = new Set([
 const DEFAULT_ON_KEYS = new Set(['computer.show_reasoning', 'coroot.enrichment_enabled']);
 const SELECT_KEYS: Record<string, string[]> = {
   'llm.api_mode': ['chat_completions', 'anthropic_messages', 'codex_responses', 'bedrock_converse'],
-  'llm.provider': ['custom', 'openai-codex', 'claude-oauth'],
+  'llm.provider': ['custom', 'openai-codex', 'claude-oauth', 'perplexity'],
+  // Filled at runtime from /settings/llm/perplexity-models (see loadPerplexityModels).
+  'llm.perplexity_model': [],
   'agent.jira_severity_threshold': ['critical', 'high', 'medium'],
 };
 
@@ -457,6 +472,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
   startingOAuth = signal(false);
   currentProvider = signal<string>('custom');
   isOAuthProvider = computed(() => OAUTH_PROVIDERS.has(this.currentProvider()));
+  perplexityModels = signal<string[]>([]);
   form: FormGroup | null = null;
   private settingsMap = new Map<string, SettingItem>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -480,6 +496,19 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
     this.loadCodexStatus();
     this.loadClaudeStatus();
     this.loadJiraProjects();
+    this.loadPerplexityModels();
+  }
+
+  /** Model catalogue for the Perplexity provider.
+   *  The backend merges a curated list of third-party models (anthropic/*, openai/*)
+   *  with Perplexity's Router catalogue — the third-party ones have no list endpoint.
+   *  Loaded unconditionally so the select is populated the moment the provider is picked. */
+  loadPerplexityModels() {
+    this.http.get<{ models: string[] }>(`${environment.apiUrl}/settings/llm/perplexity-models`)
+      .subscribe({
+        next: r => this.perplexityModels.set(r.models ?? []),
+        error: () => this.perplexityModels.set([]),
+      });
   }
 
   private providerSub: ReturnType<typeof setTimeout> | null = null;
@@ -729,7 +758,12 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
   isBooleanKey(key: string): boolean { return BOOLEAN_KEYS.has(key); }
   isSelectKey(key: string): boolean { return key in SELECT_KEYS; }
   isSecret(key: string): boolean { return !!this.settingsMap.get(key)?.is_secret; }
-  selectOptions(key: string): string[] { return SELECT_KEYS[key] ?? []; }
+  selectOptions(key: string): string[] {
+    // Perplexity's third-party models have no list endpoint, so the backend merges a
+    // curated set with the Router catalogue — fetched once the provider is selected.
+    if (key === 'llm.perplexity_model') return this.perplexityModels();
+    return SELECT_KEYS[key] ?? [];
+  }
 
   selectLabel(key: string, opt: string): string {
     if (SELECT_LABELS[key]?.[opt]) return SELECT_LABELS[key][opt];
@@ -744,6 +778,9 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
   keyLabel(key: string): string {
     const labels: Record<string, string> = {
       'llm.provider':                       'LLM Provider',
+      'llm.perplexity_api_key':              'Perplexity API Key',
+      'llm.perplexity_model':                'Perplexity Modell',
+      'llm.perplexity_timeout_seconds':      'Perplexity Timeout (Sekunden)',
       'llm.base_url':                        'LLM Base URL (custom endpoint only)',
       'llm.model':                           'LLM Model',
       'llm.api_mode':                        'LLM API Mode',

@@ -65,6 +65,54 @@ async def get_llm_status(
     )
 
 
+@router.get("/llm/perplexity-models", dependencies=[RequireAdmin])
+async def list_perplexity_models(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Model catalogue for the Perplexity provider.
+
+    Two sources, because Perplexity splits them: the Router API has a real /models
+    endpoint (its own open-weight models, with pricing), while the third-party models
+    the Agent API serves — anthropic/*, openai/*, google/* — have no list endpoint at
+    all and are therefore curated in PERPLEXITY_FALLBACK_MODELS.
+
+    The curated entries come first: they are the reason to use Perplexity here.
+    """
+    from app.services.settings import (
+        PERPLEXITY_FALLBACK_MODELS, PERPLEXITY_ROUTER_BASE_URL,
+    )
+
+    s = await get_all_settings(db)
+    api_key = s.get("llm.perplexity_api_key")
+    models = list(PERPLEXITY_FALLBACK_MODELS)
+    source = "static"
+
+    if api_key:
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                r = await client.get(
+                    f"{PERPLEXITY_ROUTER_BASE_URL}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+            if r.status_code < 400:
+                live = [m.get("id", "") for m in (r.json().get("data") or [])]
+                added = [m for m in live if m and m not in models]
+                if added:
+                    models += added
+                    source = "router+static"
+                elif live:
+                    source = "router+static"
+        except Exception as exc:  # noqa: BLE001 — catalogue is a convenience, not a gate
+            log.debug("perplexity router model list unavailable: %s", exc)
+
+    return {
+        "models": models,
+        "source": source,
+        "current_model": s.get("llm.perplexity_model") or "",
+        "authenticated": bool(api_key),
+    }
+
+
 @router.patch("/{key}", response_model=SettingItem, dependencies=[RequireAdmin])
 async def update_setting(
     key: str,
@@ -117,6 +165,7 @@ async def test_setting_group(
         provider_label = {
             "openai-codex": "OpenAI Codex",
             "claude-oauth": "Claude (OAuth)",
+            "perplexity": "Perplexity",
         }.get(provider, "Lokal")
         try:
             text = await generate_text(
