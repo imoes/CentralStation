@@ -1459,8 +1459,8 @@ async def _get_db_session():
 
 # ── Jira Ticket Management ──────────────────────────────────────────────────
 
-async def _get_jira_connector():
-    """Load the first enabled Jira connector. Returns (connector, None) or (None, error_str)."""
+async def _all_jira_connectors():
+    """Every enabled Jira/ServiceDesk connector, as JiraConnector instances."""
     from sqlalchemy import select
     from app.models.connector import ConnectorConfig
     from app.services.connectors.jira import JiraConnector
@@ -1471,19 +1471,47 @@ async def _get_jira_connector():
             select(ConnectorConfig).where(
                 ConnectorConfig.type.in_(["jira", "jira_sd"]),
                 ConnectorConfig.enabled.is_(True),
-            ).limit(1)
+            ).order_by(ConnectorConfig.type)
         )
-        cfg = result.scalar_one_or_none()
-        if not cfg:
-            return None, "Kein Jira-Connector konfiguriert"
-        creds = decrypt_credentials(cfg.encrypted_credentials)
-        from app.services.connectors.jira import JiraConnector
-        return JiraConnector(base_url=cfg.base_url, credentials=creds), None
+        cfgs = result.scalars().all()
+    return [
+        JiraConnector(base_url=c.base_url, credentials=decrypt_credentials(c.encrypted_credentials))
+        for c in cfgs
+    ]
+
+
+async def _get_jira_connector():
+    """First enabled Jira connector — only for calls that are not about one issue."""
+    conns = await _all_jira_connectors()
+    if not conns:
+        return None, "Kein Jira-Connector konfiguriert"
+    return conns[0], None
+
+
+async def _jira_for_issue(issue_key: str):
+    """Resolve the connector that actually holds this issue.
+
+    Jira and ServiceDesk are separate instances with separate project keys. Picking
+    "the first connector" made every issue on the other instance unreachable: a
+    ServiceDesk key was queried against Jira and came back 404, so the tools reported
+    the ticket as missing rather than looking next door.
+    """
+    conns = await _all_jira_connectors()
+    if not conns:
+        return None, "Kein Jira-Connector konfiguriert"
+    errors: list[str] = []
+    for c in conns:
+        try:
+            await c.get_issue_detail(issue_key)
+            return c, None
+        except Exception as exc:  # wrong instance for this key — try the next
+            errors.append(f"{c.base_url}: {str(exc)[:80]}")
+    return None, f"Ticket '{issue_key}' auf keiner Jira-Instanz gefunden ({'; '.join(errors)})"
 
 
 @mcp.tool()
 async def jira_search_issues(jql: str, max_results: int = 20) -> dict:
-    """Sucht Jira-Tickets via JQL-Abfrage.
+    """Sucht Jira-Tickets via JQL-Abfrage — über ALLE konfigurierten Instanzen.
 
     Parameter:
     - jql: JQL-Abfrage, z.B. 'project=IMIT AND assignee=currentUser() AND statusCategory != Done'
@@ -1493,34 +1521,46 @@ async def jira_search_issues(jql: str, max_results: int = 20) -> dict:
     - 'project=IMIT AND status="In Progress" ORDER BY updated DESC'
     - 'issueKey in (IMIT-123, IMIT-124)'
     - 'assignee=currentUser() AND statusCategory != Done ORDER BY priority DESC'
-    """
-    connector, err = await _get_jira_connector()
-    if err:
-        return {"ok": False, "error": err}
-    try:
-        issues = await connector.search_issues(
-            jql,
-            fields=["summary", "status", "priority", "assignee", "issuetype", "updated", "description"],
-        )
-        return {
-            "ok": True,
-            "count": len(issues),
-            "issues": [
-                {
-                    "key": i.get("key"),
-                    "summary": (i.get("fields") or {}).get("summary"),
-                    "status": ((i.get("fields") or {}).get("status") or {}).get("name"),
-                    "priority": ((i.get("fields") or {}).get("priority") or {}).get("name"),
-                    "assignee": ((i.get("fields") or {}).get("assignee") or {}).get("displayName"),
-                    "type": ((i.get("fields") or {}).get("issuetype") or {}).get("name"),
-                    "updated": (i.get("fields") or {}).get("updated"),
-                }
-                for i in issues[:max_results]
-            ],
-        }
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
 
+    Jira und ServiceDesk sind getrennte Instanzen mit eigenen Projekten; jedes
+    Ergebnis nennt in 'instance', woher es stammt. Eine Instanz, deren JQL scheitert
+    (z.B. unbekanntes Projekt), wird unter 'errors' gemeldet statt still zu fehlen.
+    """
+    conns = await _all_jira_connectors()
+    if not conns:
+        return {"ok": False, "error": "Kein Jira-Connector konfiguriert"}
+
+    out: list[dict] = []
+    errors: list[str] = []
+    for connector in conns:
+        try:
+            issues = await connector.search_issues(
+                jql,
+                fields=["summary", "status", "priority", "assignee", "issuetype", "updated", "description"],
+            )
+        except Exception as exc:
+            errors.append(f"{connector.base_url}: {str(exc)[:100]}")
+            continue
+        for i in issues:
+            f = i.get("fields") or {}
+            out.append({
+                "key": i.get("key"),
+                "summary": f.get("summary"),
+                "status": (f.get("status") or {}).get("name"),
+                "priority": (f.get("priority") or {}).get("name"),
+                "assignee": (f.get("assignee") or {}).get("displayName"),
+                "type": (f.get("issuetype") or {}).get("name"),
+                "updated": f.get("updated"),
+                "instance": connector.base_url,
+            })
+
+    if not out and errors:
+        return {"ok": False, "error": "; ".join(errors)}
+    out.sort(key=lambda x: x.get("updated") or "", reverse=True)
+    result = {"ok": True, "count": len(out[:max_results]), "issues": out[:max_results]}
+    if errors:
+        result["errors"] = errors
+    return result
 
 @mcp.tool()
 async def jira_get_issue(issue_key: str) -> dict:
@@ -1529,7 +1569,7 @@ async def jira_get_issue(issue_key: str) -> dict:
     Parameter:
     - issue_key: Ticket-Schlüssel, z.B. 'IMIT-1234'
     """
-    connector, err = await _get_jira_connector()
+    connector, err = await _jira_for_issue(issue_key)
     if err:
         return {"ok": False, "error": err}
     try:
@@ -1554,7 +1594,7 @@ async def jira_update_issue(
     - description: Neue Beschreibung (optional)
     - priority: Neue Priorität, z.B. 'High', 'Medium', 'Low', 'Highest' (optional)
     """
-    connector, err = await _get_jira_connector()
+    connector, err = await _jira_for_issue(issue_key)
     if err:
         return {"ok": False, "error": err}
     if not any([summary, description, priority]):
@@ -1575,7 +1615,7 @@ async def jira_add_comment(issue_key: str, body: str) -> dict:
     - issue_key: Ticket-Schlüssel, z.B. 'IMIT-1234'
     - body: Kommentartext (Plain Text)
     """
-    connector, err = await _get_jira_connector()
+    connector, err = await _jira_for_issue(issue_key)
     if err:
         return {"ok": False, "error": err}
     try:
@@ -1595,7 +1635,7 @@ async def jira_transition_issue(issue_key: str, status: str) -> dict:
 
     Bei Unsicherheit welche Status verfügbar sind: jira_get_transitions vorher aufrufen.
     """
-    connector, err = await _get_jira_connector()
+    connector, err = await _jira_for_issue(issue_key)
     if err:
         return {"ok": False, "error": err}
     try:
@@ -1614,6 +1654,66 @@ async def jira_transition_issue(issue_key: str, status: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+#: Transition names that mean "this work is finished". Deliberately excludes
+#: discard/cancel/reject wordings — those close a ticket too, but they are a different
+#: outcome and must not be chosen on the agent's own initiative.
+_JIRA_CLOSE_WORDS = (
+    "schließen", "schliessen", "abschließen", "abschliessen", "geschlossen",
+    "erledigt", "fertig", "close", "closed", "done", "resolve", "resolved", "complete",
+)
+_JIRA_NOT_CLOSE_WORDS = (
+    "verwerfen", "discard", "cancel", "abbrechen", "reject", "ablehnen", "duplicate",
+)
+
+
+@mcp.tool()
+async def jira_close_issue(issue_key: str, comment: str = "") -> dict:
+    """Schließt ein Ticket — findet den passenden Übergang selbst.
+
+    Parameter:
+    - issue_key: Ticket-Schlüssel, z.B. 'IMIT-1234' oder 'PMLOG-1318'
+    - comment: optionaler Abschlusskommentar, wird VOR dem Schließen geschrieben
+
+    Die Instanzen benennen den Übergang verschieden (Jira: 'Done', ServiceDesk:
+    'Ticket schließen'), deshalb sucht dieses Tool ihn anhand des Namens statt einen
+    festen Wert zu erwarten. Verwerfen/Abbrechen zählt NICHT als Schließen und wird
+    nie automatisch gewählt.
+
+    Sind mehrere schließende Übergänge möglich, bricht das Tool ab und nennt sie —
+    dann entscheidet der Nutzer, und du rufst jira_transition_issue mit dem
+    gewünschten Namen auf.
+    """
+    connector, err = await _jira_for_issue(issue_key)
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        transitions = await connector.get_transitions(issue_key)
+        names = [t["name"] for t in transitions]
+        candidates = [
+            n for n in names
+            if any(w in n.lower() for w in _JIRA_CLOSE_WORDS)
+            and not any(w in n.lower() for w in _JIRA_NOT_CLOSE_WORDS)
+        ]
+        if not candidates:
+            return {"ok": False, "issue_key": issue_key,
+                    "error": "Kein schließender Übergang verfügbar",
+                    "available": names}
+        if len(candidates) > 1:
+            return {"ok": False, "issue_key": issue_key,
+                    "error": "Mehrere schließende Übergänge — bitte einen auswählen",
+                    "candidates": candidates, "available": names}
+
+        if comment.strip():
+            # Comment first: if the transition fails the note is still on the ticket,
+            # whereas a comment after a failed close would never be written.
+            await connector.add_comment(issue_key, comment.strip())
+        await connector.transition_issue(issue_key, candidates[0])
+        return {"ok": True, "issue_key": issue_key, "new_status": candidates[0],
+                "instance": connector.base_url, "comment_added": bool(comment.strip())}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @mcp.tool()
 async def jira_get_transitions(issue_key: str) -> dict:
     """Listet alle verfügbaren Status-Übergänge für ein Jira-Ticket auf.
@@ -1623,7 +1723,7 @@ async def jira_get_transitions(issue_key: str) -> dict:
 
     Nützlich um zu prüfen welche Status-Übergänge möglich sind, bevor jira_transition_issue aufgerufen wird.
     """
-    connector, err = await _get_jira_connector()
+    connector, err = await _jira_for_issue(issue_key)
     if err:
         return {"ok": False, "error": err}
     try:
