@@ -1613,7 +1613,14 @@ async def jira_add_comment(issue_key: str, body: str) -> dict:
 
     Parameter:
     - issue_key: Ticket-Schlüssel, z.B. 'IMIT-1234'
-    - body: Kommentartext (Plain Text)
+    - body: Kommentartext. Jira-Wiki-Markup ist erlaubt (h2., {{code}}, *fett*).
+
+    JEMANDEN ERWÄHNEN: Jira benachrichtigt nur bei `[~benutzername]` — ein '@' davor
+    tut nichts, und der Anzeigename funktioniert nicht. Den Benutzernamen vorher mit
+    jira_search_users nachschlagen; er unterscheidet sich je Instanz (dieselbe Person
+    heißt in Jira und im ServiceDesk oft anders).
+
+    Beispiel: "[~mmustermann] kannst du das prüfen?"
     """
     connector, err = await _jira_for_issue(issue_key)
     if err:
@@ -1623,6 +1630,47 @@ async def jira_add_comment(issue_key: str, body: str) -> dict:
         return {"ok": True, **comment}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+@mcp.tool()
+async def jira_search_users(query: str, issue_key: str = "") -> dict:
+    """Sucht Jira-Benutzer — für Erwähnungen in Kommentaren.
+
+    Parameter:
+    - query: Namensfragment, z.B. 'kluge' oder 'mueller'
+    - issue_key: optional. Angegeben, wird nur die Instanz durchsucht, auf der das
+      Ticket liegt — sonst alle.
+
+    Warum das nötig ist: eine Erwähnung braucht `[~benutzername]`, nicht den
+    Anzeigenamen und kein '@'. Die Benutzernamen unterscheiden sich zwischen Jira und
+    ServiceDesk, deshalb nennt jedes Ergebnis seine 'instance' — nimm nur einen
+    Treffer von der Instanz, auf der das Ticket liegt.
+    """
+    if issue_key:
+        connector, err = await _jira_for_issue(issue_key)
+        if err:
+            return {"ok": False, "error": err}
+        conns = [connector]
+    else:
+        conns = await _all_jira_connectors()
+        if not conns:
+            return {"ok": False, "error": "Kein Jira-Connector konfiguriert"}
+
+    users: list[dict] = []
+    errors: list[str] = []
+    for c in conns:
+        try:
+            for u in await c.search_users(query):
+                users.append({**u, "instance": c.base_url,
+                              "mention": f"[~{u['username']}]"})
+        except Exception as exc:
+            errors.append(f"{c.base_url}: {str(exc)[:80]}")
+    if not users and errors:
+        return {"ok": False, "error": "; ".join(errors)}
+    result = {"ok": True, "count": len(users), "users": users}
+    if errors:
+        result["errors"] = errors
+    return result
 
 
 @mcp.tool()
