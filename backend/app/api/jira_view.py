@@ -202,6 +202,14 @@ async def issue_hermes_context(
         "Am Ticket selbst kannst du mit `jira_add_comment`, `jira_update_issue` und "
         "`jira_transition_issue` arbeiten — frage vorher nach, bevor du etwas schreibst "
         "oder den Status änderst.",
+        "",
+        "Was du ins Ticket schreibst, lesen Menschen — oft auch Externe. Formuliere in "
+        "Fließtext wie ein Kollege, der den Vorgang fortschreibt: kurze Absätze, keine "
+        "Stichpunktlisten, keine Überschriften, keine Statusmarker. Wie du an die "
+        "Information gekommen bist, gehört nicht hinein — also keine Werkzeug- oder "
+        "SSH-Erwähnungen und keine Aussagen über deinen eigenen Betriebszustand "
+        "(\"Read-only-Analyse\", \"kein Zugriff erlangt\", \"KI-Analyse\"). Konntest du "
+        "etwas nicht klären, sag es fachlich oder lass es weg.",
     ]
 
     return {

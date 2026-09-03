@@ -1621,6 +1621,20 @@ async def jira_add_comment(issue_key: str, body: str) -> dict:
     heißt in Jira und im ServiceDesk oft anders).
 
     Beispiel: "[~mmustermann] kannst du das prüfen?"
+
+    STIL — das Ticket lesen Menschen, oft auch Externe:
+    Schreibe in Fließtext, wie ein Kollege es in den Vorgang schreiben würde. Kurze
+    Absätze statt Stichpunktlisten, Überschriften und Statusmarker. Sag, was du
+    herausgefunden hast und was als Nächstes sinnvoll ist.
+
+    NICHT hineinschreiben:
+    - wie du an die Information gekommen bist (SSH, Werkzeuge, Konnektoren, Kommandos)
+    - Betriebszustände deiner selbst: "Read-only-Analyse", "kein Schreibzugriff",
+      "marvin konnte keinen Zugriff erlangen", "Tool lieferte keine Daten"
+    - Kennzeichnungen wie "KI-Analyse", "automatisch erstellt", Konfidenzwerte
+    Konntest du etwas nicht prüfen, formuliere es fachlich ("auf dem Host liegen dazu
+    keine Logeinträge vor") oder lass es weg — die Grenzen deiner Werkzeuge sind für
+    den Leser des Tickets ohne Belang.
     """
     connector, err = await _jira_for_issue(issue_key)
     if err:
