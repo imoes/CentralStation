@@ -65,6 +65,9 @@ def wiki_to_markdown(text: str, heading_offset: int = 0) -> str:
         out.append(line)
     text = "\n".join(out)
 
+    # Mentions before links: [~mmustermann] is not a link and would otherwise survive
+    # as literal brackets. Display only — writing one still needs the [~name] form.
+    text = re.sub(r"\[~([\w.\-]+)\]", r"@\1", text)
     text = re.sub(r"\[([^\]|]+)\|([^\]]+)\]", r"[\1](\2)", text)   # [label|url]
     text = re.sub(r"\[(https?://[^\]]+)\]", r"<\1>", text)          # [url]
     # Jira *bold* -> **bold**. List bullets were consumed above, so a leading * here
@@ -429,6 +432,32 @@ class JiraConnector(BaseConnector):
             "updated": fields.get("updated"),
             "comments": comments,
         }
+
+    async def search_users(self, query: str, limit: int = 10) -> list[dict]:
+        """Find users by name fragment. Returns [{username, display_name, email}].
+
+        `username` is what a mention needs: Jira Server/DC notifies on [~username],
+        not on a display name or an "@" prefix.
+        """
+        async with self._client(timeout=15.0) as client:
+            r = await client.get(
+                self._api("/user/search"),
+                headers=self._headers(),
+                params={"username": query, "maxResults": limit},
+            )
+            r.raise_for_status()
+            data = r.json()
+        if not isinstance(data, list):
+            return []
+        return [
+            {
+                "username": u.get("name") or u.get("accountId") or "",
+                "display_name": u.get("displayName") or "",
+                "email": u.get("emailAddress") or "",
+                "active": u.get("active", True),
+            }
+            for u in data[:limit]
+        ]
 
     async def add_comment(self, issue_key: str, body: str) -> dict:
         async with self._client(timeout=15.0) as client:
