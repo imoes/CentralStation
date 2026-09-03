@@ -799,6 +799,16 @@ async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
         }
     else:
         hits = await aikb.search_opensearch(query, size=5)
+        if not hits and aikb.last_error:
+            # A failed search must not look like an empty knowledge base — the agent
+            # would report "nothing documented" as a finding.
+            return {
+                "mode": "opensearch",
+                "query": query,
+                "error": f"Wissensdatenbank nicht erreichbar: {aikb.last_error}",
+                "results": [],
+                "count": 0,
+            }
         return {
             "mode": "opensearch",
             "query": query,
