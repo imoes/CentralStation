@@ -18,6 +18,7 @@ import {
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
+import { ComputerService } from '../../core/services/computer.service';
 import { WorkSessionDialogComponent } from '../workflow/work-session-dialog.component';
 import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-create-dialog.component';
 import { environment } from '../../../environments/environment';
@@ -199,6 +200,16 @@ export class JqlQueryDialogComponent {
                         {{ issue.fields.status?.name }}
                       </span>
                       <span class="updated-label">{{ issue.fields.updated | date:'dd.MM. HH:mm' }}</span>
+                      <button mat-icon-button class="console-btn"
+                              [disabled]="openingInConsole().has(issue.key)"
+                              (click)="openInConsole(issue, $event)"
+                              matTooltip="In der KI-Konsole bearbeiten — öffnet das Ticket mit Beschreibung und Verlauf als Kontext">
+                        @if (openingInConsole().has(issue.key)) {
+                          <mat-spinner diameter="16"></mat-spinner>
+                        } @else {
+                          <mat-icon>smart_toy</mat-icon>
+                        }
+                      </button>
                     </div>
                   </div>
                 }
@@ -323,7 +334,10 @@ export class JqlQueryDialogComponent {
 })
 export class MyTicketsComponent implements OnInit, OnDestroy {
   readonly i18n = inject(I18nService);
+  private computerService = inject(ComputerService);
   ticketGroups = signal<TicketGroup[]>([]);
+  /** Keys currently being handed over to the console (spinner on the row button). */
+  openingInConsole = signal<Set<string>>(new Set());
   queries = signal<JqlQuery[]>([]);
   loadingTickets = signal(true);
   showQueryManager = signal(false);
@@ -522,6 +536,34 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
       data: { mode: 'feed' },
     });
     ref.afterClosed().subscribe(result => { if (result?.ok) this.loadTickets(); });
+  }
+
+  /** Hand a ticket to the AI console with its description and comment history.
+   *  The backend assembles the prompt (see /jira-view/hermes-context), same as the
+   *  feed does for alerts. issue.key doubles as the session key, so re-opening the
+   *  same ticket continues its conversation instead of starting a new one. */
+  openInConsole(issue: JiraIssue, ev: Event) {
+    ev.stopPropagation();   // the row itself opens the work-session dialog
+    const key = issue.key;
+    if (this.openingInConsole().has(key)) return;
+    this.openingInConsole.update(s => new Set(s).add(key));
+
+    this.http.get<{ prompt: string; label: string }>(
+      `${environment.apiUrl}/jira-view/hermes-context?issue_key=${encodeURIComponent(key)}`
+    ).subscribe({
+      next: data => {
+        this.openingInConsole.update(s => { const n = new Set(s); n.delete(key); return n; });
+        this.markSeen(issue);
+        this.computerService.openWithContext(data.prompt, data.label || key, key);
+      },
+      error: err => {
+        this.openingInConsole.update(s => { const n = new Set(s); n.delete(key); return n; });
+        this.snackBar.open(
+          err?.error?.detail ?? 'Ticket-Kontext konnte nicht geladen werden', '',
+          { duration: 4000 },
+        );
+      },
+    });
   }
 
   openSession(issue: JiraIssue) {
