@@ -150,34 +150,92 @@ class JiraConnector(BaseConnector):
             r.raise_for_status()
         return [t["name"] for t in r.json() if not t.get("subtask", False)]
 
-    async def transition_issue(self, issue_key: str, status_name: str) -> None:
-        """Transition an issue to a new status by name."""
+    async def transition_issue(
+        self, issue_key: str, status_name: str, fields: dict | None = None
+    ) -> None:
+        """Transition an issue by name, optionally setting the transition's fields.
+
+        Raises on an unknown status instead of returning quietly — a silent no-op left
+        callers believing the issue had moved.
+        """
+        transitions = await self.get_transitions(issue_key)
+        target = next(
+            (t for t in transitions if t["name"].lower() == status_name.lower()), None
+        )
+        if not target:
+            raise ValueError(
+                f"Übergang '{status_name}' nicht verfügbar. "
+                f"Möglich: {[t['name'] for t in transitions]}"
+            )
+        payload: dict = {"transition": {"id": target["id"]}}
+        if fields:
+            payload["fields"] = fields
         async with self._client(timeout=15.0) as client:
-            r = await client.get(
+            r = await client.post(
                 self._api(f"/issue/{issue_key}/transitions"),
                 headers=self._headers(),
+                json=payload,
             )
             r.raise_for_status()
-            transitions = r.json().get("transitions", [])
-            target = next(
-                (t for t in transitions if t["name"].lower() == status_name.lower()), None
-            )
-            if not target:
-                return
-            await client.post(
-                self._api(f"/issue/{issue_key}/transitions"),
-                headers=self._headers(),
-                json={"transition": {"id": target["id"]}},
-            )
 
-    async def get_transitions(self, issue_key: str) -> list[dict]:
+    async def get_transitions(self, issue_key: str, with_fields: bool = False) -> list[dict]:
+        """Available transitions. with_fields also returns each transition's screen
+        fields, which is the only way to see that one is mandatory."""
+        params = {"expand": "transitions.fields"} if with_fields else None
         async with self._client(timeout=15.0) as client:
             r = await client.get(
                 self._api(f"/issue/{issue_key}/transitions"),
                 headers=self._headers(),
+                params=params,
             )
             r.raise_for_status()
         return r.json().get("transitions", [])
+
+    @staticmethod
+    def required_fields(transition: dict) -> dict:
+        """Mandatory screen fields of a transition: {field_id: {name, allowed}}.
+
+        Closing an issue is the case that matters — both instances make `resolution`
+        mandatory on their done-transition, and a POST without it fails with 400.
+        """
+        out: dict = {}
+        for fid, meta in (transition.get("fields") or {}).items():
+            if not meta.get("required"):
+                continue
+            out[fid] = {
+                "name": meta.get("name") or fid,
+                "allowed": [v.get("name") for v in (meta.get("allowedValues") or []) if v.get("name")],
+            }
+        return out
+
+    async def _post_transition(self, issue_key: str, target: dict) -> None:
+        """POST a transition, auto-filling mandatory fields where the choice is safe.
+
+        Only `resolution` is filled automatically, and only from the values the
+        transition itself offers — preferring a "done" wording over rejection ones, so
+        an automated status sync never resolves a ticket as Duplicate or Rejected.
+        Any other mandatory field is left to the caller and surfaces as a 400.
+        """
+        fields: dict = {}
+        req = self.required_fields(target)
+        if "resolution" in req:
+            allowed = req["resolution"]["allowed"]
+            preferred = next(
+                (a for a in allowed if a.lower() in ("fertig", "done", "erledigt", "gelöst", "geloest")),
+                None,
+            )
+            if preferred or allowed:
+                fields["resolution"] = {"name": preferred or allowed[0]}
+        payload: dict = {"transition": {"id": target["id"]}}
+        if fields:
+            payload["fields"] = fields
+        async with self._client(timeout=15.0) as client:
+            r = await client.post(
+                self._api(f"/issue/{issue_key}/transitions"),
+                headers=self._headers(),
+                json=payload,
+            )
+            r.raise_for_status()
 
     async def transition_issue_by_candidates(
         self,
@@ -189,7 +247,10 @@ class JiraConnector(BaseConnector):
 
         target_category: Jira statusCategory key — "new", "indeterminate", "done"
         """
-        transitions = await self.get_transitions(issue_key)
+        # with_fields: a done-transition usually requires `resolution`; posting without
+        # it fails with 400, which is how project/kanban sync silently stopped moving
+        # issues to Done.
+        transitions = await self.get_transitions(issue_key, with_fields=True)
 
         # Pass 1: match by transition name
         for candidate in status_names:
@@ -199,13 +260,7 @@ class JiraConnector(BaseConnector):
             )
             if not target:
                 continue
-            async with self._client(timeout=15.0) as client:
-                r = await client.post(
-                    self._api(f"/issue/{issue_key}/transitions"),
-                    headers=self._headers(),
-                    json={"transition": {"id": target["id"]}},
-                )
-                r.raise_for_status()
+            await self._post_transition(issue_key, target)
             return target["name"]
 
         # Pass 2: fall back to destination statusCategory key
@@ -218,13 +273,7 @@ class JiraConnector(BaseConnector):
                 None,
             )
             if target:
-                async with self._client(timeout=15.0) as client:
-                    r = await client.post(
-                        self._api(f"/issue/{issue_key}/transitions"),
-                        headers=self._headers(),
-                        json={"transition": {"id": target["id"]}},
-                    )
-                    r.raise_for_status()
+                await self._post_transition(issue_key, target)
                 return target["name"]
 
         return None

@@ -1667,52 +1667,71 @@ _JIRA_NOT_CLOSE_WORDS = (
 
 
 @mcp.tool()
-async def jira_close_issue(issue_key: str, comment: str = "") -> dict:
-    """Schließt ein Ticket — findet den passenden Übergang selbst.
+async def jira_close_issue(issue_key: str, resolution: str = "Fertig", comment: str = "") -> dict:
+    """Schließt ein Ticket — inklusive der verpflichtenden Lösung.
 
     Parameter:
     - issue_key: Ticket-Schlüssel, z.B. 'IMIT-1234' oder 'PMLOG-1318'
+    - resolution: Lösung, Standard 'Fertig'. Wird gegen die erlaubten Werte des
+      Übergangs geprüft; passt sie nicht, nennt die Antwort die zulässigen Werte.
     - comment: optionaler Abschlusskommentar, wird VOR dem Schließen geschrieben
 
-    Die Instanzen benennen den Übergang verschieden (Jira: 'Done', ServiceDesk:
-    'Ticket schließen'), deshalb sucht dieses Tool ihn anhand des Namens statt einen
-    festen Wert zu erwarten. Verwerfen/Abbrechen zählt NICHT als Schließen und wird
+    Wichtig: Beide Instanzen verlangen beim Schließen das Feld 'Lösung' — ein reiner
+    Statuswechsel ohne sie wird mit HTTP 400 abgelehnt. Die Übergänge heißen zudem
+    unterschiedlich (Jira 'Done', ServiceDesk 'Ticket schließen'), deshalb sucht dieses
+    Tool ihn anhand des Namens. Verwerfen/Ablehnen zählt NICHT als Schließen und wird
     nie automatisch gewählt.
-
-    Sind mehrere schließende Übergänge möglich, bricht das Tool ab und nennt sie —
-    dann entscheidet der Nutzer, und du rufst jira_transition_issue mit dem
-    gewünschten Namen auf.
     """
     connector, err = await _jira_for_issue(issue_key)
     if err:
         return {"ok": False, "error": err}
     try:
-        transitions = await connector.get_transitions(issue_key)
+        transitions = await connector.get_transitions(issue_key, with_fields=True)
         names = [t["name"] for t in transitions]
         candidates = [
-            n for n in names
-            if any(w in n.lower() for w in _JIRA_CLOSE_WORDS)
-            and not any(w in n.lower() for w in _JIRA_NOT_CLOSE_WORDS)
+            t for t in transitions
+            if any(w in t["name"].lower() for w in _JIRA_CLOSE_WORDS)
+            and not any(w in t["name"].lower() for w in _JIRA_NOT_CLOSE_WORDS)
         ]
         if not candidates:
             return {"ok": False, "issue_key": issue_key,
-                    "error": "Kein schließender Übergang verfügbar",
-                    "available": names}
+                    "error": "Kein schließender Übergang verfügbar", "available": names}
         if len(candidates) > 1:
             return {"ok": False, "issue_key": issue_key,
                     "error": "Mehrere schließende Übergänge — bitte einen auswählen",
-                    "candidates": candidates, "available": names}
+                    "candidates": [t["name"] for t in candidates], "available": names}
+
+        target = candidates[0]
+        required = connector.required_fields(target)
+        fields: dict = {}
+        if "resolution" in required:
+            allowed = required["resolution"]["allowed"]
+            match = next((a for a in allowed if a.lower() == resolution.strip().lower()), None)
+            if not match:
+                return {"ok": False, "issue_key": issue_key,
+                        "error": f"Lösung '{resolution}' ist für diesen Übergang nicht zulässig",
+                        "allowed_resolutions": allowed, "transition": target["name"]}
+            fields["resolution"] = {"name": match}
+
+        # Any other mandatory field we cannot fill — say so instead of failing with a
+        # bare 400 from Jira.
+        unfilled = [v["name"] for k, v in required.items() if k not in fields]
+        if unfilled:
+            return {"ok": False, "issue_key": issue_key,
+                    "error": f"Übergang '{target['name']}' verlangt Felder, die dieses Tool "
+                             f"nicht setzen kann: {unfilled}. Nutze jira_update_issue vorab.",
+                    "transition": target["name"]}
 
         if comment.strip():
             # Comment first: if the transition fails the note is still on the ticket,
             # whereas a comment after a failed close would never be written.
             await connector.add_comment(issue_key, comment.strip())
-        await connector.transition_issue(issue_key, candidates[0])
-        return {"ok": True, "issue_key": issue_key, "new_status": candidates[0],
+        await connector.transition_issue(issue_key, target["name"], fields=fields or None)
+        return {"ok": True, "issue_key": issue_key, "new_status": target["name"],
+                "resolution": fields.get("resolution", {}).get("name"),
                 "instance": connector.base_url, "comment_added": bool(comment.strip())}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
-
 
 @mcp.tool()
 async def jira_get_transitions(issue_key: str) -> dict:
