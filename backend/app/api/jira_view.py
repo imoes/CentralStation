@@ -144,7 +144,7 @@ async def issue_hermes_context(
     — so the prompt names those instead of leaving it to guess.
     """
     from app.core.security import decrypt_credentials
-    from app.services.connectors.jira import JiraConnector
+    from app.services.connectors.jira import JiraConnector, wiki_to_markdown
 
     connectors = await _get_all_jira_connectors(db, user.id)
     if not connectors:
@@ -165,7 +165,10 @@ async def issue_hermes_context(
 
     key = detail.get("key") or issue_key
     summary = (detail.get("summary") or "").strip()
-    description = (detail.get("description") or "").strip()
+    # Jira Server/DC stores wiki markup ("h2. Aufgabe", "{{php.conf}}"). The console
+    # renders the prompt as Markdown, so without this the ticket arrives as literal
+    # markup instead of headings and inline code.
+    description = wiki_to_markdown((detail.get("description") or "").strip(), heading_offset=1)
 
     lines = [
         f"Bearbeite das Ticket **{key}**: {summary or '(kein Titel)'}",
@@ -188,7 +191,7 @@ async def issue_hermes_context(
         lines += ["", f"## Verlauf ({len(comments)} Kommentare"
                       + (f", die {omitted} ältesten ausgelassen" if omitted else "") + ")"]
         for c in shown:
-            body = (c.get("body") or "").strip()
+            body = wiki_to_markdown((c.get("body") or "").strip(), heading_offset=2)
             lines.append(f"\n**{c.get('author') or '?'}** ({(c.get('created') or '')[:16]}):\n{body}")
 
     lines += [
