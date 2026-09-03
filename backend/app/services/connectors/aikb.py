@@ -24,6 +24,12 @@ log = logging.getLogger(__name__)
 class AIKBConnector(BaseConnector):
     """Credentials keys: api_token  (preferred)  OR  username + password."""
 
+    #: Reason the last search failed, or None. The search methods return [] on error
+    #: because six callers expect a plain list — without this, a timeout is
+    #: indistinguishable from "the knowledge base has nothing on this", which is the
+    #: more damaging of the two answers because it reads as a fact.
+    last_error: str | None = None
+
     async def _bearer(self, client: httpx.AsyncClient) -> str:
         """Return a valid Bearer token — static api_token or fresh JWT."""
         token = self.credentials.get("api_token", "").strip()
@@ -80,8 +86,12 @@ class AIKBConnector(BaseConnector):
             "query": query,
             "space_keys": space_keys or [],
         }
+        self.last_error = None
         try:
-            async with self._client(timeout=20.0) as client:
+            # 60s, not 20: the endpoint routinely needs ~18s for a plain query, and
+            # topology_builder asks for size=200. At 20s a normal search sat right on
+            # the limit and intermittently returned nothing at all.
+            async with self._client(timeout=60.0) as client:
                 token = await self._bearer(client)
                 r = await client.post(
                     f"{self.base_url}/search/opensearch",
@@ -93,7 +103,9 @@ class AIKBConnector(BaseConnector):
                 hits = data.get("results") or []
                 return [self._normalise_hit(h) for h in hits[:size]]
         except Exception as exc:
-            log.warning("AIKBConnector.search_opensearch failed: %s", exc)
+            # str() on httpx timeouts is empty — name the type, or the log says nothing.
+            self.last_error = f"{type(exc).__name__}: {exc}".rstrip(": ")
+            log.warning("AIKBConnector.search_opensearch failed: %s", self.last_error)
             return []
 
     async def search_rag(
