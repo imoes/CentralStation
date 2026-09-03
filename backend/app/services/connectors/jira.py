@@ -3,7 +3,81 @@
 Auth: Bearer Token (Personal Access Token)
 Ref: llm-cmk-analyzer JQL dedup pattern
 """
+import re
+
 import httpx
+
+
+def wiki_to_markdown(text: str, heading_offset: int = 0) -> str:
+    """Convert Jira (Server/DC) wiki markup to Markdown.
+
+    Jira Cloud returns ADF, which _adf_to_text flattens. Server/DC returns wiki markup
+    as a plain string, and it used to be passed through untouched — so a description
+    reached the console as literal "h2. Aufgabe" and "{{php.conf}}" instead of a
+    heading and inline code.
+
+    heading_offset demotes the ticket's own headings so they nest below the headings
+    of whatever embeds them — without it a ticket's "h2." lands on the same level as
+    the surrounding "## Beschreibung" and the structure reads flat.
+    """
+    if not text:
+        return ""
+
+    # Jira Server returns CRLF; without normalising, a stray \r rides along inside
+    # every captured heading and list item.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Fenced blocks first, so the inline rules cannot mangle their contents.
+    blocks: list[str] = []
+
+    def _stash(lang: str, body: str) -> str:
+        blocks.append("```" + lang.strip(": ") + "\n" + body.strip("\n") + "\n```")
+        return "\x00BLOCK%d\x00" % (len(blocks) - 1)
+
+    text = re.sub(r"\{code(:[^}]*)?\}(.*?)\{code\}",
+                  lambda m: _stash(m.group(1) or "", m.group(2)), text, flags=re.S)
+    text = re.sub(r"\{noformat\}(.*?)\{noformat\}",
+                  lambda m: _stash("", m.group(1)), text, flags=re.S)
+
+    # {{monospace}} — and Jira's escaped form {{{}text{}}} for awkward contents.
+    text = re.sub(r"\{\{\{\}(.*?)\{\}\}\}", r"`\1`", text, flags=re.S)
+    text = re.sub(r"\{\{(.*?)\}\}", r"`\1`", text, flags=re.S)
+
+    out: list[str] = []
+    for line in text.split("\n"):
+        m = re.match(r"^h([1-6])\.\s*(.*)$", line)          # h2. Heading
+        if m:
+            level = min(6, int(m.group(1)) + heading_offset)
+            out.append("#" * level + " " + m.group(2))
+            continue
+        if line.startswith("bq. "):
+            out.append("> " + line[4:])
+            continue
+        m = re.match(r"^\s*([*#]+)\s+(.*)$", line)          # nested lists (may be indented)
+        if m:
+            depth = len(m.group(1)) - 1
+            bullet = "-" if m.group(1)[-1] == "*" else "1."
+            out.append("  " * depth + bullet + " " + m.group(2))
+            continue
+        if re.match(r"^-{4,}$", line.strip()):
+            out.append("---")
+            continue
+        out.append(line)
+    text = "\n".join(out)
+
+    text = re.sub(r"\[([^\]|]+)\|([^\]]+)\]", r"[\1](\2)", text)   # [label|url]
+    text = re.sub(r"\[(https?://[^\]]+)\]", r"<\1>", text)          # [url]
+    # Jira *bold* -> **bold**. List bullets were consumed above, so a leading * here
+    # really is emphasis.
+    text = re.sub(r"(?<![\w*])\*([^*\n]+)\*(?![\w*])", r"**\1**", text)
+    text = re.sub(r"\{quote\}(.*?)\{quote\}",
+                  lambda m: "\n".join("> " + ln for ln in m.group(1).strip().split("\n")),
+                  text, flags=re.S)
+    text = re.sub(r"\{color:[^}]*\}(.*?)\{color\}", r"\1", text, flags=re.S)
+
+    for i, b in enumerate(blocks):
+        text = text.replace("\x00BLOCK%d\x00" % i, b)
+    return text.strip()
 
 
 def _adf_to_text(node) -> str:
