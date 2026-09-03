@@ -261,7 +261,9 @@ def ensure_container(user_id: str) -> str:
     _backend_url = os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000")
     from urllib.parse import urlparse as _urlparse
     _backend_host = _urlparse(_backend_url).hostname or "backend"
-    _no_proxy = os.getenv("NO_PROXY", "localhost,127.0.0.1,.example.com")
+    from app.core.domains import internal_domains as _int_domains
+    _default_no_proxy = ",".join(["localhost", "127.0.0.1"] + [f".{d}" for d in _int_domains()])
+    _no_proxy = os.getenv("NO_PROXY", _default_no_proxy)
     if _backend_host not in _no_proxy:
         _no_proxy = f"{_backend_host},{_no_proxy}"
     environment = {
@@ -342,13 +344,35 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
         )
 
     ssh_user = username.strip() or "marvin"
-    # *.example.com hosts resolve via sssd on the Docker host (127.0.1.1 alias).
-    # ProxyJump through host.docker.internal lets the container piggy-back on the
-    # host's sssd infrastructure without needing domain-join inside the container.
+    # Internal hosts resolve via sssd on the Docker host (127.0.1.1 alias). ProxyJump
+    # through host.docker.internal lets the container piggy-back on the host's sssd
+    # infrastructure without needing domain-join inside the container.
+    #
+    # WHICH hosts those are is deployment data, not source: it comes from
+    # CS_INTERNAL_DOMAINS in the gitignored .env. Hardcoding a domain here once broke
+    # SSH outright — the pattern stopped matching the real hosts, they fell through to
+    # the "Host *" block, and every connection lost its ProxyJump.
+    from app.core.domains import internal_domains
+    # Only real estate domains get the ProxyJump. The generic suffixes "internal" and
+    # "local" are for recognising hostnames in text — routing SSH through them is
+    # actively harmful: the jump host itself is host.docker.internal, which matches
+    # *.internal, so it would proxy through itself ("jumphost loop").
+    ssh_domains = [d for d in internal_domains() if d not in ("internal", "local")]
+    host_patterns = " ".join(f"*.{d}" for d in ssh_domains)
     ssh_cfg_lines = [
-        "Host *.example.com",
+        # Belt and braces: never proxy the jump host through itself, whatever the
+        # configured domains happen to match.
+        "Host host.docker.internal",
         f"    User {ssh_user}",
+        "    ProxyJump none",
+        "    StrictHostKeyChecking no",
+        "",
     ]
+    if host_patterns:
+        ssh_cfg_lines += [
+            f"Host {host_patterns}",
+            f"    User {ssh_user}",
+        ]
     if key_pem and key_pem.strip():
         ssh_cfg_lines.append(f"    IdentityFile {_YOLO_HOME}/.ssh/user.key")
     ssh_cfg_lines += [
@@ -380,31 +404,40 @@ def configure_claude_md(user_id: str, ssh_user: str = "marvin") -> None:
     """Write ~/.claude/CLAUDE.md into the container (on cs-ide-cfg volume → persistent).
 
     Provides Claude CLI with the same environment context that Hermes gets via system
-    prompt: SSH instructions, workspace location, example.com topology. Read automatically
+    prompt: SSH instructions, workspace location, site topology. Read automatically
     by every claude CLI invocation as the global user-level CLAUDE.md.
+
+    The example hostnames are built from CS_INTERNAL_DOMAINS (gitignored .env) — an
+    agent told to `ssh host.example.com` when the estate is somewhere else wastes its
+    first turns on hosts that do not exist.
     """
     import docker as _docker
+    from app.core.domains import internal_domains
     name = container_name(user_id)
     try:
         c = _client().containers.get(name)
     except _docker.errors.NotFound:
         return
 
+    _domains = [d for d in internal_domains() if d not in ("internal", "local")] or list(internal_domains())
+    _dom = _domains[-1]          # broadest suffix (sorted longest-first)
+    _dom_list = ", ".join(_domains)
+
     content = f"""# CentralStation — Linux-Admin-Umgebung
 
 Du bist ein Linux-Sysadmin-Assistent im CentralStation-Userenv-Container.
-SSH-Zugriff auf alle example.com-Server ist vorkonfiguriert.
+SSH-Zugriff auf alle Server dieser Domains ist vorkonfiguriert: {_dom_list}
 
 ## SSH-ZUGRIFF
-Befehl: `ssh <hostname>.example.com '<befehl>'`
+Befehl: `ssh <hostname>.{_dom} '<befehl>'`
 User und Key sind per ~/.ssh/config voreingestellt — kein -i, -u oder -o IdentityFile nötig.
 SSH-User: `{ssh_user}`
 
 Beispiele:
 ```bash
-ssh hal.example.com 'hostname && df -h'
-ssh docker0218.example.com 'docker ps'
-ssh vpp0221.example.com 'free -h; uptime'
+ssh hal.{_dom} 'hostname && df -h'
+ssh docker0218.{_dom} 'docker ps'
+ssh vpp0221.{_dom} 'free -h; uptime'
 ```
 
 ## WORKSPACE
