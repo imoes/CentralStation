@@ -125,3 +125,84 @@ async def get_issue_detail(
             last_err = e
 
     raise HTTPException(status_code=404, detail=f"Ticket nicht gefunden: {last_err}")
+
+
+@router.get("/hermes-context")
+async def issue_hermes_context(
+    issue_key: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Build a console starting prompt from a Jira/ServiceDesk ticket.
+
+    Mirrors /feed/hermes-context for alerts: the backend assembles the context so the
+    console receives one ready-to-send prompt instead of the frontend stitching text
+    together. Covers both connector types (jira and jira_sd) via the shared lookup.
+
+    The agent can actually work the ticket from there — the MCP server exposes
+    jira_add_comment, jira_update_issue, jira_transition_issue and jira_get_transitions
+    — so the prompt names those instead of leaving it to guess.
+    """
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
+    connectors = await _get_all_jira_connectors(db, user.id)
+    if not connectors:
+        raise HTTPException(status_code=503, detail="Jira nicht konfiguriert")
+
+    detail: dict | None = None
+    last_err: Exception | None = None
+    for conn in connectors:
+        try:
+            creds = decrypt_credentials(conn.encrypted_credentials)
+            jira = JiraConnector(base_url=conn.base_url, credentials=creds)
+            detail = await jira.get_issue_detail(issue_key)
+            break
+        except Exception as e:  # try the next connector — the key may live elsewhere
+            last_err = e
+    if not detail:
+        raise HTTPException(status_code=404, detail=f"Ticket nicht gefunden: {last_err}")
+
+    key = detail.get("key") or issue_key
+    summary = (detail.get("summary") or "").strip()
+    description = (detail.get("description") or "").strip()
+
+    lines = [
+        f"Bearbeite das Ticket **{key}**: {summary or '(kein Titel)'}",
+        "",
+        f"- **Status:** {detail.get('status') or '?'}",
+        f"- **Priorität:** {detail.get('priority') or '?'}",
+        f"- **Zugewiesen an:** {detail.get('assignee') or '(niemand)'}",
+        f"- **Aktualisiert:** {(detail.get('updated') or '')[:16]}",
+        "",
+        "## Beschreibung",
+        description or "(keine Beschreibung hinterlegt)",
+    ]
+
+    comments = detail.get("comments") or []
+    if comments:
+        # Newest last so the conversation reads chronologically; cap the volume but say
+        # so, rather than silently truncating the history.
+        shown = comments[-15:]
+        omitted = len(comments) - len(shown)
+        lines += ["", f"## Verlauf ({len(comments)} Kommentare"
+                      + (f", die {omitted} ältesten ausgelassen" if omitted else "") + ")"]
+        for c in shown:
+            body = (c.get("body") or "").strip()
+            lines.append(f"\n**{c.get('author') or '?'}** ({(c.get('created') or '')[:16]}):\n{body}")
+
+    lines += [
+        "",
+        "---",
+        "Analysiere das Ticket und schlage konkrete nächste Schritte vor. Für Recherche "
+        "im Bestand nutze die CentralStation-Werkzeuge (Feed, CheckMK, Wissensdatenbank). "
+        "Am Ticket selbst kannst du mit `jira_add_comment`, `jira_update_issue` und "
+        "`jira_transition_issue` arbeiten — frage vorher nach, bevor du etwas schreibst "
+        "oder den Status änderst.",
+    ]
+
+    return {
+        "prompt": "\n".join(lines),
+        "label": key,
+        "issue_key": key,
+    }
