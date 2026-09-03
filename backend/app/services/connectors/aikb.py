@@ -88,10 +88,14 @@ class AIKBConnector(BaseConnector):
         }
         self.last_error = None
         try:
-            # 60s, not 20: the endpoint routinely needs ~18s for a plain query, and
-            # topology_builder asks for size=200. At 20s a normal search sat right on
-            # the limit and intermittently returned nothing at all.
-            async with self._client(timeout=60.0) as client:
+            # 900s. The endpoint needs ~5-18s when healthy, but it stalls for minutes
+            # at a time while the rest of the service stays responsive (/health and
+            # /auth/me answer in 0.0s throughout), so a short cap turned a slow search
+            # into no search. Note the ceiling this cannot exceed: agents reach this
+            # through MCP, whose per-tool timeout is 330s (hermes config, codex
+            # tool_timeout_sec, MCP_TOOL_TIMEOUT) — only direct backend callers such as
+            # topology_builder can actually use the full 900.
+            async with self._client(timeout=900.0) as client:
                 token = await self._bearer(client)
                 r = await client.post(
                     f"{self.base_url}/search/opensearch",
