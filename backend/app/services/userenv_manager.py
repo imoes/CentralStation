@@ -439,12 +439,15 @@ def configure_claude_md(user_id: str, ssh_user: str = "marvin") -> None:
     content = f"""# CentralStation — Linux-Admin-Umgebung
 
 Du bist ein Linux-Sysadmin-Assistent im CentralStation-Userenv-Container.
-SSH-Zugriff auf alle Server dieser Domains ist vorkonfiguriert: {_dom_list}
 
 ## SSH-ZUGRIFF
-Befehl: `ssh <hostname>.{_dom} '<befehl>'`
-User und Key sind per ~/.ssh/config voreingestellt — kein -i, -u oder -o IdentityFile nötig.
-SSH-User: `{ssh_user}`
+Befehl: `ssh <hostname> '<befehl>'` — SSH-User `{ssh_user}` und Key sind per
+~/.ssh/config für **jeden** Host voreingestellt; kein -i, -u oder -o IdentityFile nötig.
+Es gibt KEINE Liste erlaubter Domains: du darfst jeden Host versuchen.
+
+Die Domains {_dom_list} laufen zusätzlich über einen Jump-Host, weil ihre
+Namensauflösung auf dem Docker-Host liegt. Andere Hosts werden direkt kontaktiert —
+beides funktioniert mit demselben User und Key.
 
 Beispiele:
 ```bash
@@ -452,6 +455,12 @@ ssh hal.{_dom} 'hostname && df -h'
 ssh docker0218.{_dom} 'docker ps'
 ssh vpp0221.{_dom} 'free -h; uptime'
 ```
+
+Schlägt eine Verbindung mit `Permission denied (publickey…)` fehl, heißt das: der
+Host ist erreichbar, akzeptiert den Schlüssel aber nicht — der öffentliche Schlüssel
+von `{ssh_user}` ist dort nicht hinterlegt. Das ist ein Befund über DIESEN Host.
+Behaupte in so einem Fall NICHT, die Domain sei „nicht vorkonfiguriert" — gib die
+Serverantwort wieder und nenne, was auf dem Zielsystem fehlt.
 
 ## WORKSPACE
 Alle Dateien, Skripte und Artefakte immer in `/home/yolo/workspaces/` ablegen — niemals in /tmp.
