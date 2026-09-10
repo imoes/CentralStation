@@ -368,18 +368,31 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
         "    StrictHostKeyChecking no",
         "",
     ]
+    # The whole internal-host stanza is conditional. Appending its body unconditionally
+    # let those lines fall into the preceding host.docker.internal block whenever no
+    # estate domain was configured — the default, since internal/local are filtered out
+    # above. ssh_config keeps the FIRST value per keyword, so "ProxyJump none" still
+    # won and nothing looped, but the config was malformed and the internal-host block
+    # vanished without a word.
     if host_patterns:
         ssh_cfg_lines += [
             f"Host {host_patterns}",
             f"    User {ssh_user}",
         ]
-    if key_pem and key_pem.strip():
-        ssh_cfg_lines.append(f"    IdentityFile {_YOLO_HOME}/.ssh/user.key")
+        if key_pem and key_pem.strip():
+            ssh_cfg_lines.append(f"    IdentityFile {_YOLO_HOME}/.ssh/user.key")
+        ssh_cfg_lines += [
+            f"    ProxyJump {ssh_user}@host.docker.internal",
+            "    StrictHostKeyChecking no",
+            "    ConnectTimeout 15",
+            "",
+        ]
+    else:
+        log.warning(
+            "configure_ssh: no estate domain in CS_INTERNAL_DOMAINS — internal hosts "
+            "get no ProxyJump and will only work if reachable directly"
+        )
     ssh_cfg_lines += [
-        f"    ProxyJump {ssh_user}@host.docker.internal",
-        "    StrictHostKeyChecking no",
-        "    ConnectTimeout 15",
-        "",
         "Host *",
         f"    User {ssh_user}",
     ]
