@@ -36,9 +36,12 @@ RUN if [ -n "$HTTP_PROXY" ]; then \
 
 # ── System tools ──────────────────────────────────────────────────────
 # Includes network diagnostics (Hermes SSH/ping), python3 (Ansible+pip), git.
+# sshpass: password auth for hosts where the marvin key is not deployed. The
+# read-only guard already counts sshpass as a remote command, so a write wrapped in
+# it still needs an explicit approval window.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        git openssh-client ca-certificates curl jq wget sudo \
+        git openssh-client sshpass ca-certificates curl jq wget sudo \
         python3 python3-pip python3-venv \
         iputils-ping traceroute nmap dnsutils netcat-openbsd mtr-tiny iproute2 \
     && rm -rf /var/lib/apt/lists/*
