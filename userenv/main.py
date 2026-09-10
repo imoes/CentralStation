@@ -111,9 +111,9 @@ SYSTEM_PROMPT = (
     "→ Frage NIE nach etwas, das bereits bekannt ist\n\n"
 
     "Beispiel:\n"
-    "Du: '...Wenn du willst, prüfe ich docker50.example.com im Detail.'\n"
+    "Du: '...Wenn du willst, prüfe ich docker50 im Detail.'\n"
     "Nutzer: 'ja'\n"
-    "Du: [rufst get_checkmk_host('docker50.example.com') auf und zeigst das Ergebnis]\n\n"
+    "Du: [rufst get_checkmk_host('docker50') auf und zeigst das Ergebnis]\n\n"
 
     "## KRITISCHE REGEL: SCHREIBOPERATIONEN — ABSOLUTES VERBOT OHNE BESTÄTIGUNG\n"
     "**READ-ONLY bedeutet READ-ONLY.** Wenn der Nutzer 'nur lesen', 'read-only', 'keine Änderungen',\n"
@@ -178,8 +178,14 @@ SYSTEM_PROMPT = (
 
     "## SSH-ZUGRIFF (Serverdiagnose und Fehlerbehebung):\n"
     "Nutze SSH wenn du einen Server direkt untersuchen oder reparieren sollst.\n"
-    "Befehl: ssh <hostname>.example.com '<befehl>'\n"
-    "(User und Key sind per SSH-Config voreingestellt — KEIN -i, -l oder -o IdentityFile nötig)\n"
+    "Befehl: ssh <hostname> '<befehl>' — nutze den Hostnamen so, wie er dir genannt\n"
+    "wurde oder wie er aus CheckMK/NetBox/dem Feed kommt. Hänge KEINE Domain an und\n"
+    "ersetze sie nicht; es gibt keine Liste erlaubter Domains.\n"
+    "(User und Key sind per SSH-Config für JEDEN Host voreingestellt — KEIN -i, -l\n"
+    " oder -o IdentityFile nötig)\n"
+    "Scheitert es mit 'Permission denied (publickey)', ist der Host erreichbar und\n"
+    "lehnt den Schlüssel ab — ein Befund über DIESEN Host. Behaupte dann NICHT, die\n"
+    "Domain sei nicht eingerichtet.\n"
     "System-Diagnose:\n"
     "  ssh <host> 'df -h; du -sh /var/log/* | sort -rh | head -5'\n"
     "  ssh <host> 'free -h; top -bn1 | head -20'\n"
@@ -362,7 +368,8 @@ class CreateSessionBody(BaseModel):
     # Per-session extra MCP servers (user-personal connectors).
     # Each entry: {name, url, transport?, token?}
     extra_mcp_servers: list[dict] | None = None
-    # SSH username from user's SSH connector (overwrites "marvin" in system prompt).
+    # SSH username from the user's SSH connector. Informational only — the effective
+    # user comes from ~/.ssh/config, which configure_ssh writes from the same source.
     ssh_username: str | None = None
     # Console agent backend: "hermes" (default) | "claude_cli" | "codex_cli"
     agent_type: str | None = None
@@ -437,14 +444,11 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
              sid[:8], model or "(default)", base_url or "(default)", api_mode,
              searxng_url or "(none)", f"{timeout_seconds}s" if timeout_seconds else "(default)")
 
-    # Build final system prompt — replace default SSH user if user configured their own.
-    ssh_user = (cfg.ssh_username or "").strip() or "marvin"
+    # The system prompt names no SSH user and no domain: ~/.ssh/config sets both, for
+    # every host. (There used to be a replace() here meant to substitute the username,
+    # but its search string never occurred in the prompt — it was a no-op that read
+    # like configuration.)
     system_prompt = SYSTEM_PROMPT
-    if ssh_user != "marvin":
-        system_prompt = system_prompt.replace(
-            "ssh marvin@<hostname>.example.com",
-            f"ssh {ssh_user}@<hostname>.example.com",
-        )
 
     # Toolsets are derived from ~/.hermes/config.yaml — the per-user config
     # written by userenv_manager.write_hermes_config() at container start.
