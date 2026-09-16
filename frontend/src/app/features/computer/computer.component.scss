@@ -335,6 +335,8 @@
   flex-direction: column;
   overflow: hidden;
   background: #050403;
+  // Anchor for the floating jump-to-latest button.
+  position: relative;
 }
 
 .empty-state {
@@ -888,5 +890,37 @@
     margin-top: 2px;
 
     &:hover { background: #ff8800; }
+  }
+}
+
+// Jump-to-latest button. Anchored to .conversation (which is position: relative
+// below) rather than .messages — a child of the scrolling element would scroll out
+// of view along with the content.
+.scroll-down-btn {
+  position: absolute;
+  right: 18px;
+  bottom: 84px;
+  z-index: 5;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #ff9933;
+  border-radius: 50%;
+  background: #1a1108;
+  color: #ffcc99;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+
+  mat-icon {
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
+  }
+
+  &:hover {
+    background: #2a1c0c;
+    color: #ffdd99;
   }
 }
