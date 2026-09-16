@@ -195,7 +195,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
             </div>
           }
 
-          <div class="messages" #msgContainer>
+          <div class="messages" #msgContainer (scroll)="onMessagesScroll()">
             @for (msg of completedMessages(); track msg) {
               <div class="msg" [class.user]="msg.role === 'user'"
                                [class.agent]="msg.role === 'assistant'">
@@ -243,6 +243,15 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
           </div>
 
           <!-- Voice error banner -->
+          <!-- Jump back to the newest message. Sits outside the scrolling container,
+               otherwise it would scroll away with the content it is meant to reach. -->
+          @if (showScrollDown()) {
+            <button class="scroll-down-btn" (click)="scrollDown()"
+                    title="Zur neuesten Nachricht springen">
+              <mat-icon>keyboard_double_arrow_down</mat-icon>
+            </button>
+          }
+
           @if (voiceError()) {
             <div class="voice-error" (click)="voiceError.set(null)">
               ⚠ {{ voiceError() }}
@@ -1022,7 +1031,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
         }
         this._finalizeTools(sid);
         this.loading.set(false);
-        this.scrollToBottom();
+        this.scrollToBottomIfFollowing();
       });
     }
   }
@@ -1242,10 +1251,46 @@ export class ComputerComponent implements OnInit, OnDestroy {
     ));
   }
 
+  /** True while the view is scrolled away from the newest message. */
+  showScrollDown = signal(false);
+  /** Within this many px of the bottom still counts as "at the bottom": a couple of
+   *  pixels of rounding should not make the button flicker in and out. */
+  private static readonly BOTTOM_EPS = 48;
+
+  private atBottom(): boolean {
+    const el = this.msgContainer?.nativeElement;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= ComputerComponent.BOTTOM_EPS;
+  }
+
+  onMessagesScroll(): void {
+    this.showScrollDown.set(!this.atBottom());
+  }
+
+  /** Jump to the newest message (the floating button). */
+  scrollDown(): void {
+    const el = this.msgContainer?.nativeElement;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    this.showScrollDown.set(false);
+  }
+
   private scrollToBottom(): void {
     setTimeout(() => {
       const el = this.msgContainer?.nativeElement;
       if (el) el.scrollTop = el.scrollHeight;
+      this.showScrollDown.set(false);
     }, 10);
+  }
+
+  /** Follow new output only when the reader is already at the bottom.
+   *  Scrolling up is a deliberate act — yanking the view back down at the end of a
+   *  stream is what made reading earlier output impossible. */
+  private scrollToBottomIfFollowing(): void {
+    if (this.atBottom()) {
+      this.scrollToBottom();
+    } else {
+      this.showScrollDown.set(true);
+    }
   }
 }
