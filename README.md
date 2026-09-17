@@ -7,6 +7,8 @@ assists with the entire ITIL-compliant work documentation using AI.
 > **Language:** the UI defaults to **English** and can be switched to German at runtime.
 > The AI answers in the operator's selected language (user preference `ui_language`).
 
+**[CHANGELOG.md](CHANGELOG.md)** — what changed in the product, with the evidence for each entry.
+
 ---
 
 ## Table of Contents
@@ -930,6 +932,43 @@ MCP servers:
   + personal connectors (VibeMK, AWX-NG, …)
 ```
 
+### Write operations need consent (read-only by default)
+
+The Console agent is read-only until a human opens a **write window**. This is enforced in
+two places that share **one** approval, stored in **one** location:
+
+| Layer | What it guards | Where |
+|---|---|---|
+| `userenv/cs-readonly-guard.py` | shell commands that modify a system (service control, package management, remote writes over SSH, …) | `PreToolUse` hook on `Bash` |
+| `_require_write()` in `backend/app/api/mcp_server.py` | MCP tools that act outward (see list below) | every guarded tool's first statement |
+
+Guarded MCP tools: `jira_add_comment`, `jira_update_issue`, `jira_transition_issue`,
+`jira_close_issue`, `create_jira_ticket`, `acknowledge_alert`, `run_remediation`,
+`gitlab_create_branch`, `gitlab_create_merge_request`. Read tools are never affected.
+
+**How consent is given:** the operator clicks **"Schreibzugriff freigeben"** in the Console
+(`POST /api/computer/write-approval`, 1–120 minutes). The backend writes
+`/opt/cs-write-approval.json` into the user's container as root; the agent runs as `yolo`
+and cannot create or extend it. **Agreement typed into the chat does not count** — the agent
+controls the chat, so consent has to arrive through a channel it does not own. A refused tool
+returns the reason plus the exact next step, so the agent asks instead of retrying.
+
+**How the user is identified:** Hermes, Claude CLI and Codex send `X-CS-User-ID` with every
+MCP call (`userenv_manager.write_hermes_config`, `configure_claude_credentials`,
+`_codex_config_toml`). Without it, no approval can be looked up and the tool refuses.
+
+**Limit, stated plainly:** the MCP endpoint is not authenticated on the internal Docker
+network and the user ID is self-declared. This stops an over-eager agent, not a malicious one —
+the latter could call the Jira API directly. The goal is that *accidental* action is impossible.
+
+### Ticket context does not start the agent
+
+Handing a ticket to the Console — the first handoff from the Jira view, and
+**"IN EINGABE ÜBERNEHMEN"** on the activity banner — places the text in the **input field**.
+The agent works when the operator sends the message, not before. The Jira baseline
+(`POST …/ticket-activity/acknowledge`) is recorded only on that send, so a change that never
+reached the agent stays visible as unread instead of silently disappearing.
+
 ### Browser automation (Playwright MCP)
 
 All three agents share a **Playwright MCP** server (`playwright-mcp`, stdio) baked into the
@@ -1750,7 +1789,17 @@ docker compose build frontend && docker compose up -d --no-deps frontend
 
 # Rebuild and restart centralcore (includes Hermes re-install)
 docker compose build centralcore && docker compose up -d --no-deps centralcore
+
+# Pull NEW versions of the agent CLIs into the Console image.
+# Hermes, Claude Code, Codex and Playwright MCP are deliberately unpinned
+# (@latest / git --depth=1), so only a cache bust actually fetches them —
+# a plain `build userenv` reuses the cached layers and changes nothing.
+docker compose build --build-arg AGENT_REFRESH=$(date +%s) userenv
 ```
+
+Running `cs-userenv-*` and `cs-vibemk*` containers are **not** rebuilt by Compose — the
+backend owns their lifecycle. Both now compare their running image against the current tag
+and recreate themselves on the next use, so a rebuild takes effect without manual `docker rm`.
 
 ### Rollback
 
