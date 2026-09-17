@@ -311,7 +311,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                             [disabled]="loading() || acceptingTicketActivity() || activity.source_unavailable"
                             [title]="activity.source_unavailable ? 'Erst nach erfolgreicher Jira-Prüfung verfügbar' : ''">
                       <mat-icon>add_comment</mat-icon>
-                      {{ acceptingTicketActivity() ? 'WIRD ÜBERNOMMEN …' : 'IN KONTEXT ÜBERNEHMEN' }}
+                      {{ acceptingTicketActivity() ? 'WIRD ÜBERNOMMEN …' : 'IN EINGABE ÜBERNEHMEN' }}
                     </button>
                   </section>
                 }
@@ -449,6 +449,15 @@ export class ComputerComponent implements OnInit, OnDestroy {
   activeTabId = signal<string | null>(null);
   editingSid = signal<string | null>(null);
   inputText = '';
+
+  /** Ticket-Kontext, der im Eingabefeld liegt und noch nicht abgeschickt wurde.
+   *  Erst das Absenden markiert die Jira-Änderungen als übernommen — solange der
+   *  Text nur im Feld steht, gilt er als ungelesen und die Aktivitätsmeldung
+   *  bleibt stehen. Sonst verschwände eine Änderung, die nie bei der KI ankam. */
+  private pendingTicketAck = new Map<
+    string,
+    { snapshot?: TicketActivitySnapshot; contextHash: string | null }
+  >();
   loading = signal(false);
   listening = signal(false);
   muted = signal(localStorage.getItem('cs_computer_muted') === '1');
@@ -956,14 +965,14 @@ export class ComputerComponent implements OnInit, OnDestroy {
         return;
       }
 
-      // First handoff: send the full ticket exactly once, then establish the Jira
-      // baseline only after the agent stream completed successfully.
-      const sent = await this.sendContent(prompt, existing.session_id);
-      if (sent && ticketRef.snapshot) {
-        await this.acknowledgeTicketActivity(existing.session_id, ticketRef.snapshot, contextHash);
-      } else if (sent) {
-        await this.persistContextHash(existing.session_id, contextHash);
-      }
+      // Erstübergabe: das Ticket landet im Eingabefeld, nicht beim Agenten. Die
+      // Jira-Grundlinie wird erst gesetzt, wenn der Nutzer die Nachricht abschickt
+      // (resolvePendingTicketAck) — vorher hat die KI den Stand nicht gesehen.
+      this.pendingTicketAck.set(existing.session_id, {
+        snapshot: ticketRef.snapshot,
+        contextHash,
+      });
+      this.stageInInput(prompt);
       return;
     }
 
@@ -1102,27 +1111,20 @@ export class ComputerComponent implements OnInit, OnDestroy {
         return;
       }
 
-      const sent = await this.sendContent(data.prompt, activity.session_id);
-      if (!sent) {
-        this.snackBar.open(
-          'Die Änderungen bleiben ungelesen, weil die KI-Antwort nicht abgeschlossen wurde',
-          '',
-          { duration: 4500 },
-        );
-        return;
-      }
-      const acknowledged = await this.acknowledgeTicketActivity(
-        activity.session_id,
-        data.snapshot,
-        data.context_hash,
+      // Der Text geht ins Eingabefeld, nicht an die KI. Sie arbeitet erst, wenn der
+      // Nutzer abschickt; bis dahin bleibt die Änderung als ungelesen vermerkt.
+      this.activeTabId.set(activity.session_id);
+      this.selectTab(activity.session_id);
+      this.pendingTicketAck.set(activity.session_id, {
+        snapshot: data.snapshot,
+        contextHash: data.context_hash,
+      });
+      this.stageInInput(data.prompt);
+      this.snackBar.open(
+        'In das Eingabefeld übernommen — zum Bearbeiten absenden',
+        '',
+        { duration: 3500 },
       );
-      if (!acknowledged) {
-        this.snackBar.open('Die Änderungen konnten nicht als übernommen gespeichert werden', '', {
-          duration: 4500,
-        });
-        return;
-      }
-      await this.computerService.refreshTicketActivities(activity.session_id);
     } catch (err) {
       this.snackBar.open(
         err instanceof Error ? err.message : 'Jira-Quelle nicht erreichbar',
@@ -1301,13 +1303,43 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Send message → SSE stream ─────────────────────────────────────
 
+  /** Legt Text ins Eingabefeld, statt ihn abzuschicken.
+   *
+   *  Ticket-Kontext startet die KI bewusst NICHT von selbst: der Mensch sieht
+   *  zuerst, was übernommen wurde, kann es ergänzen oder streichen, und erst
+   *  sein Absenden lässt die KI arbeiten. */
+  private stageInInput(text: string): void {
+    const current = this.inputText.trim();
+    this.inputText = current ? `${current}\n\n${text}` : text;
+    setTimeout(() => {
+      this.resizeInput();
+      this.inputEl?.nativeElement.focus();
+    }, 0);
+  }
+
+  /** Nach erfolgreichem Absenden: den vorgemerkten Jira-Stand als übernommen buchen. */
+  private async resolvePendingTicketAck(sid: string): Promise<void> {
+    const pending = this.pendingTicketAck.get(sid);
+    if (!pending) return;
+    this.pendingTicketAck.delete(sid);
+    if (pending.snapshot) {
+      await this.acknowledgeTicketActivity(sid, pending.snapshot, pending.contextHash);
+    } else if (pending.contextHash) {
+      await this.persistContextHash(sid, pending.contextHash);
+    }
+    await this.computerService.refreshTicketActivities(sid);
+  }
+
   async send(): Promise<boolean> {
     const text = this.inputText.trim();
     if (!text || this.loading()) return false;
 
+    const sid = this.activeTabId();
     this.inputText = '';
     setTimeout(() => this.resizeInput(), 0);
-    return this.sendContent(text);
+    const sent = await this.sendContent(text);
+    if (sent && sid) await this.resolvePendingTicketAck(sid);
+    return sent;
   }
 
   private async sendContent(text: string, targetSid?: string): Promise<boolean> {
