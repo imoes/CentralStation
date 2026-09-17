@@ -1011,7 +1011,22 @@ async def _fetch_ticket_detail(connector: ConnectorConfig, issue_id: str) -> dic
     return detail
 
 
-def _ticket_activity_payload(session: ComputerSession, detail: dict) -> dict:
+async def _fetch_ticket_current_user_ids(connector: ConnectorConfig) -> list[str]:
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
+    jira = JiraConnector(
+        base_url=connector.base_url,
+        credentials=decrypt_credentials(connector.encrypted_credentials),
+    )
+    return await jira.current_user_identifiers()
+
+
+def _ticket_activity_payload(
+    session: ComputerSession,
+    detail: dict,
+    current_user_ids: list[str] | set[str] | None = None,
+) -> dict:
     from app.services.ticket_activity import build_ticket_snapshot, diff_ticket_activity
 
     snapshot = build_ticket_snapshot(detail)
@@ -1020,6 +1035,7 @@ def _ticket_activity_payload(session: ComputerSession, detail: dict) -> dict:
         snapshot,
         detail,
         synced_at=session.context_synced_at or session.created_at,
+        current_user_ids=current_user_ids,
     )
     return {
         "session_id": session.id,
@@ -1069,9 +1085,20 @@ async def list_ticket_activity(
 
     semaphore = asyncio.Semaphore(4)
 
+    async def load_current_user(connector: ConnectorConfig) -> tuple[uuid.UUID, list[str] | None]:
+        try:
+            async with semaphore:
+                return connector.id, await _fetch_ticket_current_user_ids(connector)
+        except Exception as exc:
+            log.warning("Jira current user lookup failed for connector %s: %s", connector.id, exc)
+            return connector.id, None
+
+    current_users = dict(await asyncio.gather(*(load_current_user(c) for c in connectors)))
+
     async def check(session: ComputerSession) -> dict:
         connector = connector_map.get(session.ticket_connector_id)
-        if not connector:
+        current_user_ids = current_users.get(session.ticket_connector_id)
+        if not connector or current_user_ids is None:
             return {
                 "session_id": session.id,
                 "ticket_ref": _ticket_ref_payload(session),
@@ -1088,7 +1115,7 @@ async def list_ticket_activity(
         try:
             async with semaphore:
                 detail = await _fetch_ticket_detail(connector, session.ticket_issue_id)
-            return _ticket_activity_payload(session, detail)
+            return _ticket_activity_payload(session, detail, current_user_ids)
         except Exception as exc:  # one unavailable Jira must not hide other sessions
             log.warning("Ticket activity check failed for session %s: %s", session.id[:8], exc)
             return {
@@ -1124,12 +1151,15 @@ async def ticket_activity_context(
     session = await _load_ticket_session(db, user.id, sid)
     connector = await _load_ticket_connector(db, user.id, session.ticket_connector_id)
     try:
-        detail = await _fetch_ticket_detail(connector, session.ticket_issue_id)
+        detail, current_user_ids = await asyncio.gather(
+            _fetch_ticket_detail(connector, session.ticket_issue_id),
+            _fetch_ticket_current_user_ids(connector),
+        )
     except Exception as exc:
         log.warning("Ticket activity context failed for session %s: %s", sid[:8], exc)
         raise HTTPException(status_code=503, detail="Jira-Quelle nicht erreichbar") from exc
 
-    payload = _ticket_activity_payload(session, detail)
+    payload = _ticket_activity_payload(session, detail, current_user_ids)
     if payload["state"] != "changed":
         return {**payload, "prompt": "", "context_hash": session.context_hash}
 
