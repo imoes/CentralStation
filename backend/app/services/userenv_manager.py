@@ -311,8 +311,17 @@ def ensure_container(user_id: str) -> str:
     from app.core.domains import internal_domains as _int_domains
     _default_no_proxy = ",".join(["localhost", "127.0.0.1"] + [f".{d}" for d in _int_domains()])
     _no_proxy = os.getenv("NO_PROXY", _default_no_proxy)
-    if _backend_host not in _no_proxy:
-        _no_proxy = f"{_backend_host},{_no_proxy}"
+    # Every container the agent talks to over the Docker network must bypass the
+    # proxy. Missing names do not fail loudly — Squid answers 503 and the MCP client
+    # reports the server as unreachable, which reads like the server being broken.
+    # The VibeMK names come from vibemk_manager so there is one source for them.
+    from app.services.vibemk_manager import container_name as _vibemk_name, TIERS as _vibemk_tiers
+    _bypass = [_backend_host] + [_vibemk_name(t) for t in _vibemk_tiers]
+    _entries = [e.strip() for e in _no_proxy.split(",") if e.strip()]
+    for _host in _bypass:
+        if _host not in _entries:
+            _entries.insert(0, _host)
+    _no_proxy = ",".join(_entries)
     environment = {
         "HOME": _YOLO_HOME,
         "CS_USER_ID": user_id,
@@ -696,16 +705,26 @@ def configure_claude_credentials(
             if not url:
                 continue
             transport = "http" if "http" in srv_cfg.get("transport", "streamable-http") else "sse"
+            # `claude mcp add` refuses an existing name ("already exists in user
+            # config") and still exits 0 — a changed URL or header would silently
+            # never arrive while the stale entry looks perfectly healthy. The
+            # .claude.json lives on a named volume, so "existing" is the normal
+            # case. Remove first, then add: this function owns the entry.
+            c.exec_run(["claude", "mcp", "remove", "--scope", "user", srv_name])
             cmd = ["claude", "mcp", "add", "--transport", transport, "--scope", "user", srv_name, url]
-            # Add auth header if the server requires a bearer token
             for h_name, h_value in (srv_cfg.get("headers") or {}).items():
                 if h_value:
                     cmd += ["--header", f"{h_name}: {h_value}"]
-            c.exec_run(cmd)
-            log.info("userenv_manager: MCP server '%s' registered for %s", srv_name, container_name(user_id))
+            code, out = c.exec_run(cmd)
+            if code != 0:
+                log.warning("userenv_manager: MCP server '%s' registration failed for %s: %s",
+                            srv_name, container_name(user_id), out.decode(errors="replace")[:200])
+            else:
+                log.info("userenv_manager: MCP server '%s' registered for %s", srv_name, container_name(user_id))
 
         # Playwright — stdio command server (browser automation). The `--` separates
         # claude's flags from the server command + its args.
+        c.exec_run(["claude", "mcp", "remove", "--scope", "user", "playwright"])
         pw_cmd = ["claude", "mcp", "add", "--scope", "user", "playwright", "--",
                   _PLAYWRIGHT_MCP_CMD, *_PLAYWRIGHT_MCP_ARGS]
         c.exec_run(pw_cmd)
