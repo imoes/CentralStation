@@ -114,6 +114,8 @@ async def _load_agent_creds(db: AsyncSession, user_id, agent_type: str) -> dict 
 
     if agent_type == "claude_cli":
         creds = await _refresh_claude_cli_if_expired(db, conn, creds)
+    elif agent_type == "codex_cli":
+        creds = await _refresh_codex_cli_if_expired(db, conn, creds)
     return creds
 
 
@@ -198,6 +200,31 @@ async def _refresh_claude_cli_if_expired(db: AsyncSession, conn, creds: dict) ->
         log.info("claude_cli token refreshed for connector %s", conn.id)
     except Exception as exc:  # noqa: BLE001
         log.warning("claude_cli token refresh failed (user must re-auth): %s", exc)
+    return creds
+
+
+async def _refresh_codex_cli_if_expired(db: AsyncSession, conn, creds: dict) -> dict:
+    """Refresh a personal ChatGPT/Codex OAuth token and persist rotation."""
+    from app.api.oauth_providers import _refresh_codex_token, _token_needs_refresh
+    from app.core.security import encrypt_credentials as _enc
+
+    access = creds.get("access_token") or ""
+    refresh = creds.get("refresh_token") or ""
+    if not access or not refresh or not _token_needs_refresh(access):
+        return creds
+
+    try:
+        new_access, new_refresh = await _refresh_codex_token(refresh)
+        creds = {
+            **creds,
+            "access_token": new_access,
+            "refresh_token": new_refresh,
+        }
+        conn.encrypted_credentials = _enc(creds)
+        await db.commit()
+        log.info("codex_cli token refreshed for connector %s", conn.id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("codex_cli token refresh failed (user must re-auth): %s", exc)
     return creds
 
 
@@ -386,14 +413,17 @@ async def get_agent_credentials(
 # ── CLI Model Selection ────────────────────────────────────────────
 
 _CLAUDE_FALLBACK = [
-    "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5",
-    "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
-    "claude-3-opus-20240229",
+    "claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-fable-5",
+    "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
+    "claude-sonnet-4-6", "claude-opus-4-5-20251101",
+    "claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001",
 ]
 _CODEX_FALLBACK = [
-    "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark",
-    "codex-auto-review",
+    "gpt-6-astra", "gpt-reserve", "gpt-5.6-sol", "gpt-5.6-terra",
+    "gpt-5.6-luna", "gpt-5.5", "codex-auto-review",
 ]
+
+
 async def _fetch_codex_models(access_token: str) -> list[str]:
     """Fetch Codex models with the ChatGPT OAuth token.
 
@@ -442,6 +472,7 @@ async def list_cli_models(
         }
 
     access_token = creds["access_token"]
+    fetch_error = ""
     try:
         if provider == "claude":
             async with httpx.AsyncClient(timeout=8.0) as client:
@@ -456,11 +487,12 @@ async def list_cli_models(
                 models = [m["id"] for m in r.json().get("data", [])]
                 if models:
                     return {
-                        "models": sorted(models),
+                        "models": models,
                         "source": "api",
                         "current_model": current_model,
                         "authenticated": True,
                     }
+            fetch_error = f"Anthropic API: HTTP {r.status_code}"
         else:
             models = await _fetch_codex_models(access_token)
             if models:
@@ -470,14 +502,17 @@ async def list_cli_models(
                     "current_model": current_model,
                     "authenticated": True,
                 }
+            fetch_error = "OpenAI-Modellliste nicht erreichbar oder Token abgelehnt"
     except Exception as exc:
         log.debug("Model fetch for %s failed: %s", provider, exc)
+        fetch_error = f"{type(exc).__name__}: {exc}"
 
     return {
         "models": fallback,
         "source": "static",
         "current_model": current_model,
         "authenticated": True,
+        "error": fetch_error,
     }
 
 

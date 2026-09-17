@@ -222,6 +222,11 @@ interface HermesLLM {
                 <mat-hint>{{ claudeModelsSource() === 'api' ? 'Live von Anthropic API' : 'Statische Auswahl' }}</mat-hint>
               </mat-form-field>
               <div class="llm-actions">
+                <button mat-stroked-button (click)="loadCLIModels('claude')" [disabled]="claudeModelsLoading()">
+                  @if (claudeModelsLoading()) { <mat-spinner diameter="18"></mat-spinner> }
+                  @else { <mat-icon>refresh</mat-icon> }
+                  Modelle neu laden
+                </button>
                 <button mat-flat-button color="primary" (click)="saveCLIModel('claude', claudeModel)">
                   <mat-icon>save</mat-icon> Speichern
                 </button>
@@ -285,6 +290,11 @@ interface HermesLLM {
                 <mat-hint>{{ codexModelsSource() === 'api' ? 'Live von OpenAI API' : 'Statische Auswahl' }}</mat-hint>
               </mat-form-field>
               <div class="llm-actions">
+                <button mat-stroked-button (click)="loadCLIModels('codex')" [disabled]="codexModelsLoading()">
+                  @if (codexModelsLoading()) { <mat-spinner diameter="18"></mat-spinner> }
+                  @else { <mat-icon>refresh</mat-icon> }
+                  Modelle neu laden
+                </button>
                 <button mat-flat-button color="primary" (click)="saveCLIModel('codex', codexModel)">
                   <mat-icon>save</mat-icon> Speichern
                 </button>
@@ -380,6 +390,7 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
   // Claude model selection
   claudeModels = signal<string[]>([]);
   claudeModelsSource = signal<'api' | 'static'>('static');
+  claudeModelsLoading = signal(false);
   claudeConnected = signal(false);
   claudeModel = '';
 
@@ -391,6 +402,7 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
   // Codex model selection
   codexModels = signal<string[]>([]);
   codexModelsSource = signal<'api' | 'static'>('static');
+  codexModelsLoading = signal(false);
   codexConnected = signal(false);
   codexModel = '';
 
@@ -506,8 +518,11 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
   // ── CLI Model Selection ─────────────────────────────────────────────
 
   loadCLIModels(provider: 'claude' | 'codex'): void {
+    const loading = provider === 'claude' ? this.claudeModelsLoading : this.codexModelsLoading;
+    loading.set(true);
     this.http.get<any>(`/api/computer/models/${provider}`).subscribe({
       next: (res) => {
+        loading.set(false);
         const models: string[] = res.models ?? [];
         const current: string = res.current_model ?? '';
         const connected = !!res.authenticated || res.source === 'api' || !!current;
@@ -524,8 +539,14 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
           if (current) this.codexModel = current;
           else if (models.length) this.codexModel = models[0];
         }
+        if (res.error) {
+          this.snack.open(`Live-Modellliste nicht verfügbar: ${res.error}`, '', { duration: 5000 });
+        }
       },
-      error: () => {},
+      error: (e) => {
+        loading.set(false);
+        this.snack.open(`Modelle konnten nicht geladen werden: ${e.error?.detail || e.message}`, '', { duration: 5000 });
+      },
     });
   }
 
