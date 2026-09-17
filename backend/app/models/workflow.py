@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -120,6 +120,9 @@ class Dashboard(Base):
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Generative dashboard only: when the AI last composed this layout
     generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Provenance for the generated view: scope, source availability, time windows
+    # and whether the deterministic fallback was used.
+    generation_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -336,6 +339,12 @@ class ComputerSession(Base):
     id = the session UUID (Hermes-generated for hermes, backend-generated for CLI agents).
     """
     __tablename__ = "computer_sessions"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "ticket_connector_id", "ticket_issue_id",
+            name="uq_computer_session_ticket",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -348,6 +357,16 @@ class ComputerSession(Base):
     # Alert external_id for handoff sessions — drives the "✓ GELÖST" button.
     # Persisted so the button survives reloads and container restarts.
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Stable Jira identity for ticket handoffs. The visible issue key is only an
+    # alias and can occur in more than one Jira instance.
+    ticket_connector_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("connector_configs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    ticket_issue_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ticket_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Hash of the ticket snapshot last handed to the agent. Reopening an unchanged
+    # ticket resumes the conversation without repeating the initial prompt.
+    context_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True

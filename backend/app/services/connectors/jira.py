@@ -422,6 +422,7 @@ class JiraConnector(BaseConnector):
             })
 
         return {
+            "id": str(data.get("id") or ""),
             "key": data.get("key"),
             "summary": fields.get("summary"),
             "description": description,

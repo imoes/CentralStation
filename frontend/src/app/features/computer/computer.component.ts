@@ -14,7 +14,7 @@ import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { marked } from 'marked';
 import { AuthService } from '../../core/auth/auth.service';
-import { ComputerService } from '../../core/services/computer.service';
+import { ComputerService, TicketReference } from '../../core/services/computer.service';
 import { I18nService } from '../../core/services/i18n.service';
 import { environment } from '../../../environments/environment';
 import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-create-dialog.component';
@@ -47,6 +47,9 @@ interface HermesSession {
   external_id?: string;
   /** True after the user clicked "✓ GELÖST" and the learning comment was saved. */
   resolved?: boolean;
+  ticket_ref?: { connector_id: string; issue_id: string; key: string } | null;
+  context_hash?: string | null;
+  reused?: boolean;
 }
 
 /**
@@ -435,8 +438,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.loadWriteApproval();
-    this._handoffSub = this.computerService.handoff$.subscribe(({ prompt, label, hostKey, externalId }) => {
-      this._handleHandoff(prompt, label, hostKey, externalId);
+    this._handoffSub = this.computerService.handoff$.subscribe(({ prompt, label, hostKey, externalId, ticketRef }) => {
+      this._handleHandoff(prompt, label, hostKey, externalId, ticketRef);
     });
     this._resumeSub = this.computerService.resume$.subscribe(async (sid) => {
       this.isOpen.set(true);
@@ -463,6 +466,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
       const list: Array<{
         session_id: string; label: string; msg_count: number;
         agent_type?: string; external_id?: string | null; resolved?: boolean;
+        ticket_ref?: { connector_id: string; issue_id: string; key: string } | null;
+        context_hash?: string | null;
       }> = await r.json();
       if (!list.length) return;
 
@@ -478,6 +483,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
           // for alert-handoff sessions after a reload.
           external_id: s.external_id ?? undefined,
           resolved: s.resolved ?? false,
+          ticket_ref: s.ticket_ref ?? null,
+          context_hash: s.context_hash ?? null,
         });
       });
 
@@ -724,8 +731,36 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Incident handoff ──────────────────────────────────────────────
 
-  private async _handleHandoff(prompt: string, label?: string, hostKey?: string, externalId?: string): Promise<void> {
+  private async _handleHandoff(
+    prompt: string,
+    label?: string,
+    hostKey?: string,
+    externalId?: string,
+    ticketRef?: TicketReference,
+  ): Promise<void> {
     this.open();
+
+    if (ticketRef) {
+      await this.loadSessions();
+      const contextHash = await this.hashContext(prompt);
+      let existing: HermesSession | null | undefined = this.sessions().find(s =>
+        s.ticket_ref?.connector_id === ticketRef.connectorId
+        && s.ticket_ref?.issue_id === ticketRef.issueId
+      );
+      if (!existing) {
+        existing = await this.newSession(label, undefined, ticketRef);
+      }
+      if (!existing) return;
+      this.activeTabId.set(existing.session_id);
+      this.selectTab(existing.session_id);
+      // The ticket snapshot did not change: resume the stored conversation without
+      // injecting the same analysis request for a second time.
+      if (existing.context_hash === contextHash) return;
+      this.inputText = prompt;
+      await this.send();
+      await this.persistContextHash(existing.session_id, contextHash);
+      return;
+    }
 
     // Reuse an existing session for this host if one exists
     if (hostKey) {
@@ -776,18 +811,59 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }
   }
 
-  async newSession(label?: string, externalId?: string): Promise<void> {
+  private async hashContext(value: string): Promise<string> {
+    const bytes = new TextEncoder().encode(value);
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  private async persistContextHash(sid: string, contextHash: string): Promise<void> {
+    const token = this.auth.getAccessToken();
+    try {
+      const r = await fetch(`${this.apiBase}/sessions/${sid}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ context_hash: contextHash }),
+      });
+      if (!r.ok) return;
+      this.sessions.update(ss => ss.map(s =>
+        s.session_id === sid ? { ...s, context_hash: contextHash } : s
+      ));
+    } catch (err) {
+      console.debug('persistContextHash failed:', err);
+    }
+  }
+
+  async newSession(
+    label?: string,
+    externalId?: string,
+    ticketRef?: TicketReference,
+  ): Promise<HermesSession | null> {
     // Guard against concurrent calls (e.g. double-click or race between _handleHandoff + send())
-    if (this._sessionCreating) return;
+    if (this._sessionCreating) return null;
     this._sessionCreating = true;
     const token = this.auth.getAccessToken();
     try {
       // Persist label (handoff host name) and external_id (alert id, drives the
       // "✓ GELÖST" button) so both survive reloads — otherwise the backend
       // generates a generic "Session N" and the resolve button is lost.
-      const createBody: { label?: string; external_id?: string } = {};
+      const createBody: {
+        label?: string;
+        external_id?: string;
+        ticket_connector_id?: string;
+        ticket_issue_id?: string;
+        ticket_key?: string;
+      } = {};
       if (label) createBody.label = label;
       if (externalId) createBody.external_id = externalId;
+      if (ticketRef) {
+        createBody.ticket_connector_id = ticketRef.connectorId;
+        createBody.ticket_issue_id = ticketRef.issueId;
+        createBody.ticket_key = ticketRef.key;
+      }
       const r = await fetch(`${this.apiBase}/sessions`, {
         method: 'POST',
         headers: {
@@ -796,18 +872,26 @@ export class ComputerComponent implements OnInit, OnDestroy {
         },
         body: JSON.stringify(createBody),
       });
-      if (!r.ok) { console.error('Session creation failed:', r.status); return; }
-      const session: { session_id: string; label: string } = await r.json();
+      if (!r.ok) { console.error('Session creation failed:', r.status); return null; }
+      const session: HermesSession = await r.json();
       const displayLabel = label ?? session.label;
       this.sessions.update(ss => {
         // Prevent duplicate entries if the session was somehow already added
         if (ss.some(s => s.session_id === session.session_id)) return ss;
-        return [...ss, { ...session, label: displayLabel, msg_count: 0, messages: [], external_id: externalId }];
+        return [...ss, {
+          ...session,
+          label: displayLabel,
+          msg_count: session.msg_count ?? 0,
+          messages: session.messages ?? [],
+          external_id: externalId,
+        }];
       });
       this.activeTabId.set(session.session_id);
       this.open();
+      return this.sessions().find(s => s.session_id === session.session_id) ?? session;
     } catch (err) {
       console.error('Failed to create session:', err);
+      return null;
     } finally {
       this._sessionCreating = false;
     }
