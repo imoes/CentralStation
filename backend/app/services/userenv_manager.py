@@ -370,6 +370,36 @@ def consume_just_created(user_id: str) -> bool:
     return False
 
 
+def ssh_config_ready(user_id: str, username: str) -> bool:
+    """True, wenn im Container eine brauchbare SSH-Konfiguration liegt.
+
+    Geprüft wird der Zustand, nicht ein gemerktes Ereignis. Der frühere Weg —
+    ein Merker im Arbeitsspeicher des Backends (`_just_created`) — überlebt weder
+    einen Backend-Neustart noch eine Neuerstellung aus einem anderen Prozess. Genau
+    das ist passiert: der Container wurde neu erstellt, der Merker war weg, und der
+    Agent meldete sich danach als Container-Benutzer `yolo` statt als `marvin` an
+    ("Invalid user yolo", "Too many authentication failures"). Ein Zustand, der sich
+    direkt ablesen lässt, kann so nicht verlorengehen.
+    """
+    import docker
+    want = (username or "").strip() or "marvin"
+    try:
+        c = _client().containers.get(container_name(user_id))
+    except docker.errors.NotFound:
+        return True  # kein Container → nichts zu reparieren
+    except Exception:  # noqa: BLE001
+        return True  # im Zweifel nicht dauernd neu schreiben
+    try:
+        code, _ = c.exec_run(
+            ["sh", "-c",
+             f"test -s $HOME/.ssh/user.key && grep -qE '^[[:space:]]*User[[:space:]]+{want}$' "
+             f"$HOME/.ssh/config"]
+        )
+        return code == 0
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "") -> None:
     """Write SSH key + config into the user's running container via exec_run.
 
