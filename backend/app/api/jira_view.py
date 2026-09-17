@@ -161,7 +161,8 @@ async def issue_hermes_context(
     — so the prompt names those instead of leaving it to guess.
     """
     from app.core.security import decrypt_credentials
-    from app.services.connectors.jira import JiraConnector, wiki_to_markdown
+    from app.services.connectors.jira import JiraConnector
+    from app.services.ticket_activity import build_full_ticket_prompt, build_ticket_snapshot
 
     connectors = await _get_all_jira_connectors(db, user.id)
     if connector_id:
@@ -185,59 +186,15 @@ async def issue_hermes_context(
         raise HTTPException(status_code=404, detail=f"Ticket nicht gefunden: {last_err}")
 
     key = detail.get("key") or issue_key
-    summary = (detail.get("summary") or "").strip()
-    # Jira Server/DC stores wiki markup ("h2. Aufgabe", "{{php.conf}}"). The console
-    # renders the prompt as Markdown, so without this the ticket arrives as literal
-    # markup instead of headings and inline code.
-    description = wiki_to_markdown((detail.get("description") or "").strip(), heading_offset=1)
-
-    lines = [
-        f"Bearbeite das Ticket **{key}**: {summary or '(kein Titel)'}",
-        "",
-        f"- **Status:** {detail.get('status') or '?'}",
-        f"- **Priorität:** {detail.get('priority') or '?'}",
-        f"- **Zugewiesen an:** {detail.get('assignee') or '(niemand)'}",
-        f"- **Aktualisiert:** {(detail.get('updated') or '')[:16]}",
-        "",
-        "## Beschreibung",
-        description or "(keine Beschreibung hinterlegt)",
-    ]
-
-    comments = detail.get("comments") or []
-    if comments:
-        # Newest last so the conversation reads chronologically; cap the volume but say
-        # so, rather than silently truncating the history.
-        shown = comments[-15:]
-        omitted = len(comments) - len(shown)
-        lines += ["", f"## Verlauf ({len(comments)} Kommentare"
-                      + (f", die {omitted} ältesten ausgelassen" if omitted else "") + ")"]
-        for c in shown:
-            body = wiki_to_markdown((c.get("body") or "").strip(), heading_offset=2)
-            lines.append(f"\n**{c.get('author') or '?'}** ({(c.get('created') or '')[:16]}):\n{body}")
-
-    lines += [
-        "",
-        "---",
-        "Analysiere das Ticket und schlage konkrete nächste Schritte vor. Für Recherche "
-        "im Bestand nutze die CentralStation-Werkzeuge (Feed, CheckMK, Wissensdatenbank). "
-        "Am Ticket selbst kannst du mit `jira_add_comment`, `jira_update_issue` und "
-        "`jira_transition_issue` arbeiten — frage vorher nach, bevor du etwas schreibst "
-        "oder den Status änderst.",
-        "",
-        "Was du ins Ticket schreibst, lesen Menschen — oft auch Externe. Formuliere in "
-        "Fließtext wie ein Kollege, der den Vorgang fortschreibt: kurze Absätze, keine "
-        "Stichpunktlisten, keine Überschriften, keine Statusmarker. Wie du an die "
-        "Information gekommen bist, gehört nicht hinein — also keine Werkzeug- oder "
-        "SSH-Erwähnungen und keine Aussagen über deinen eigenen Betriebszustand "
-        "(\"Read-only-Analyse\", \"kein Zugriff erlangt\", \"KI-Analyse\"). Konntest du "
-        "etwas nicht klären, sag es fachlich oder lass es weg.",
-    ]
+    prompt = build_full_ticket_prompt(detail, key)
 
     return {
-        "prompt": "\n".join(lines),
+        "prompt": prompt,
         "label": key,
         "issue_key": key,
         "issue_id": str(detail.get("id") or key),
         "connector_id": str(matched_connector.id),
         "source_url": matched_connector.base_url,
+        "snapshot": build_ticket_snapshot(detail),
+        "context_hash": __import__("hashlib").sha256(prompt.encode("utf-8")).hexdigest(),
     }
