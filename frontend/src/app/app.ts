@@ -18,6 +18,7 @@ interface NavItem {
   labelKey: string;
   icon: string;
   roles: string[];
+  group: 'betrieb' | 'arbeit' | 'infrastruktur';
 }
 
 @Component({
@@ -42,20 +43,29 @@ interface NavItem {
               <mat-icon class="cs-brand-icon">hub</mat-icon>
               <span class="cs-brand">CentralStation</span>
             </div>
-            @for (item of visibleNavItems(); track item.path) {
-              <a class="cs-nav-item" [routerLink]="item.path" routerLinkActive="cs-nav-item-active"
-                 [title]="i18n.t(item.labelKey)">
-                <mat-icon class="cs-nav-icon">{{ item.icon }}</mat-icon>
-                <span class="cs-nav-label">{{ i18n.t(item.labelKey) }}</span>
-                @if (item.path === '/feed' && unreadFeedCount() > 0) {
-                  <span class="cs-badge">{{ unreadFeedCount() > 99 ? '99+' : unreadFeedCount() }}</span>
-                }
-                @if (item.path === '/my-tickets' && unreadTicketCount() > 0) {
-                  <span class="cs-badge">{{ unreadTicketCount() > 99 ? '99+' : unreadTicketCount() }}</span>
-                }
-              </a>
+            @for (group of navGroups(); track group.id) {
+              <div class="cs-nav-group-label">{{ group.label }}</div>
+              @for (item of group.items; track item.path) {
+                <a class="cs-nav-item" [routerLink]="item.path" routerLinkActive="cs-nav-item-active"
+                   [title]="i18n.t(item.labelKey)">
+                  <mat-icon class="cs-nav-icon">{{ item.icon }}</mat-icon>
+                  <span class="cs-nav-label">{{ i18n.t(item.labelKey) }}</span>
+                  @if (item.path === '/feed' && unreadFeedCount() > 0) {
+                    <span class="cs-badge">{{ unreadFeedCount() > 99 ? '99+' : unreadFeedCount() }}</span>
+                  }
+                  @if (item.path === '/my-tickets' && unreadTicketCount() > 0) {
+                    <span class="cs-badge">{{ unreadTicketCount() > 99 ? '99+' : unreadTicketCount() }}</span>
+                  }
+                </a>
+              }
             }
             <div class="cs-nav-footer">
+              <a class="cs-nav-item" routerLink="/settings" routerLinkActive="cs-nav-item-active" title="Einstellungen">
+                <mat-icon class="cs-nav-icon">settings</mat-icon><span class="cs-nav-label">Einstellungen</span>
+              </a>
+              <a class="cs-nav-item" routerLink="/help" routerLinkActive="cs-nav-item-active" title="Hilfe">
+                <mat-icon class="cs-nav-icon">help</mat-icon><span class="cs-nav-label">Hilfe</span>
+              </a>
               <span class="cs-role-chip">{{ auth.userRole() }}</span>
               @if (computerEnabled()) {
                 <button mat-icon-button (click)="computer?.toggle()" title="Hermes (Ctrl+K)">
@@ -107,19 +117,13 @@ export class App implements OnInit, OnDestroy {
   readonly i18n = inject(I18nService);
 
   private readonly navItems: NavItem[] = [
-    { path: '/dashboard',   labelKey: 'app.nav.dashboard',  icon: 'dashboard',     roles: ['admin','sysadmin','network_technician','viewer'] },
-    { path: '/bridge',      labelKey: 'app.nav.bridge',     icon: 'rocket_launch', roles: ['admin','sysadmin','network_technician','viewer'] },
-    { path: '/feed',        labelKey: 'app.nav.feed',       icon: 'feed',          roles: ['admin','sysadmin','network_technician'] },
-    { path: '/problems',    labelKey: 'app.nav.problems',   icon: 'report_problem',roles: ['admin','sysadmin','network_technician'] },
-    { path: '/alerts',      labelKey: 'app.nav.alerts',     icon: 'notifications', roles: ['admin'] },
-    { path: '/my-tickets',  labelKey: 'app.nav.myTickets',  icon: 'assignment',    roles: ['admin','sysadmin'] },
-    { path: '/kanban',      labelKey: 'app.nav.kanban',     icon: 'view_kanban',   roles: ['admin','sysadmin','network_technician'] },
-    { path: '/ai-insights', labelKey: 'app.nav.aiInsights', icon: 'psychology',    roles: ['admin','sysadmin'] },
-    { path: '/topology',    labelKey: 'app.nav.topology',   icon: 'account_tree',  roles: ['admin','sysadmin','network_technician'] },
-    { path: '/projects',    labelKey: 'app.nav.projects',   icon: 'folder_open',   roles: ['admin','sysadmin'] },
-    { path: '/workbench',   labelKey: 'app.nav.workbench',  icon: 'construction',  roles: ['admin','sysadmin'] },
-    { path: '/settings',    labelKey: 'app.nav.settings',   icon: 'settings',      roles: ['admin','sysadmin','network_technician','viewer'] },
-    { path: '/help',        labelKey: 'app.nav.help',       icon: 'help',          roles: ['admin','sysadmin','network_technician','viewer'] },
+    { path: '/dashboard',  labelKey: 'app.nav.dashboard', icon: 'dashboard', roles: ['admin','sysadmin','network_technician','viewer'], group: 'betrieb' },
+    { path: '/problems',   labelKey: 'app.nav.problems', icon: 'report_problem', roles: ['admin','sysadmin','network_technician'], group: 'betrieb' },
+    { path: '/feed',       labelKey: 'app.nav.feed', icon: 'feed', roles: ['admin','sysadmin','network_technician'], group: 'betrieb' },
+    { path: '/my-tickets', labelKey: 'app.nav.myTickets', icon: 'assignment', roles: ['admin','sysadmin'], group: 'arbeit' },
+    { path: '/projects',   labelKey: 'app.nav.projects', icon: 'folder_open', roles: ['admin','sysadmin'], group: 'arbeit' },
+    { path: '/workbench',  labelKey: 'app.nav.workbench', icon: 'construction', roles: ['admin','sysadmin'], group: 'arbeit' },
+    { path: '/topology',   labelKey: 'app.nav.topology', icon: 'account_tree', roles: ['admin','sysadmin','network_technician'], group: 'infrastruktur' },
   ];
 
   unreadFeedCount = signal<number>(0);
@@ -144,15 +148,18 @@ export class App implements OnInit, OnDestroy {
     const role = this.auth.userRole();
     const items = this.navItems.filter(i => role && i.roles.includes(role));
     if (this.hasAwxNg()) {
-      const engineeringItem: NavItem = { path: '/engineering', labelKey: 'app.nav.engineering', icon: 'engineering', roles: ['admin','sysadmin'] };
-      const workbenchIdx = items.findIndex(i => i.path === '/workbench');
-      if (workbenchIdx >= 0) {
-        items.splice(workbenchIdx, 0, engineeringItem);
-      } else {
-        items.push(engineeringItem);
-      }
+      items.push({ path: '/engineering', labelKey: 'app.nav.engineering', icon: 'engineering', roles: ['admin','sysadmin'], group: 'infrastruktur' });
     }
     return items;
+  });
+
+  navGroups = computed(() => {
+    const items = this.visibleNavItems();
+    return [
+      { id: 'betrieb', label: 'BETRIEB', items: items.filter(i => i.group === 'betrieb') },
+      { id: 'arbeit', label: 'ARBEIT', items: items.filter(i => i.group === 'arbeit') },
+      { id: 'infrastruktur', label: 'INFRASTRUKTUR', items: items.filter(i => i.group === 'infrastruktur') },
+    ].filter(group => group.items.length > 0);
   });
 
   constructor(public auth: AuthService, private ws: WebsocketService) {
@@ -216,7 +223,11 @@ export class App implements OnInit, OnDestroy {
     ).subscribe({
       next: prefs => {
         const seenMap = prefs.ticket_seen_map ?? {};
-        this.http.get<Array<{ issues: Array<{ key: string; fields: { updated: string } }> }>>(
+        this.http.get<Array<{ issues: Array<{
+          key: string;
+          _centralstation?: { connector_id: string; issue_id: string };
+          fields: { updated: string };
+        }> }>>(
           `${environment.apiUrl}/jira-view/my-tickets`,
         ).subscribe({
           next: groups => {
@@ -226,13 +237,15 @@ export class App implements OnInit, OnDestroy {
             const updatedMap = { ...seenMap };
             for (const group of groups) {
               for (const issue of (group.issues ?? []) as Array<{ key: string; fields: { updated: string; status?: { statusCategory?: { key: string } } } }>) {
+                const ref = (issue as any)._centralstation as { connector_id: string; issue_id: string } | undefined;
+                const identity = ref ? `${ref.connector_id}:${ref.issue_id}` : issue.key;
                 const isDone = issue.fields.status?.statusCategory?.key === 'done';
                 if (isDone) {
-                  if (issue.key in updatedMap) { delete updatedMap[issue.key]; changed = true; }
+                  if (identity in updatedMap) { delete updatedMap[identity]; changed = true; }
                   continue;
                 }
-                const seen = updatedMap[issue.key];
-                if (!seen) { updatedMap[issue.key] = now; changed = true; continue; }
+                const seen = updatedMap[identity];
+                if (!seen) { updatedMap[identity] = now; changed = true; continue; }
                 if (new Date(issue.fields.updated) > new Date(seen)) count++;
               }
             }

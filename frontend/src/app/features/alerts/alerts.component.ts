@@ -17,6 +17,7 @@ import { WebsocketService, WsMessage } from '../../core/services/websocket.servi
 import { Alert, Severity } from '../../core/models/alert.model';
 import { environment } from '../../../environments/environment';
 import { I18nService } from '../../core/services/i18n.service';
+import { RouterLink } from '@angular/router';
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#d32f2f',
@@ -34,9 +35,13 @@ const SEVERITY_COLORS: Record<string, string> = {
     MatCardModule, MatButtonModule, MatIconModule,
     MatChipsModule, MatSelectModule, MatFormFieldModule,
     MatProgressSpinnerModule, MatTooltipModule, MatSnackBarModule,
+    RouterLink,
   ],
   template: `
     <div class="page-container">
+      <nav class="subview-nav" aria-label="Ereignisansichten">
+        <a routerLink="/feed">Ereignisse</a><span aria-current="page">Rohmeldungen</span>
+      </nav>
       <div class="page-header">
         <div>
           <h2>Alerts</h2>
@@ -217,6 +222,8 @@ const SEVERITY_COLORS: Record<string, string> = {
   `,
   styles: [`
     .page-container { padding: 24px; max-width: 1200px; }
+    .subview-nav { display:flex; gap:8px; margin-bottom:12px; font-size:12px; }
+    .subview-nav span { color:var(--mat-sys-primary); font-weight:600; }
     .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
     .page-header h2 { margin: 0; }
     .page-subtitle { font-size: 13px; color: var(--mat-sys-on-surface-variant); margin: 2px 0 0; }

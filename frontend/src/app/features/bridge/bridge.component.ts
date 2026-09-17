@@ -599,7 +599,7 @@ export class BridgeComponent implements OnInit, OnDestroy {
     { path: '/problems',    label: 'Problemboard',  icon: '⚠', roles: ['admin','sysadmin','network_technician'] },
     { path: '/alerts',      label: 'Alerts',        icon: '!', roles: ['admin'] },
     { path: '/my-tickets',  label: 'Meine Tickets', icon: '✓', roles: ['admin','sysadmin'] },
-    { path: '/kanban',      label: 'Kanban',        icon: '▤', roles: ['admin','sysadmin','network_technician'] },
+    { path: '/kanban',      label: 'Tickets · Board', icon: '▤', roles: ['admin','sysadmin','network_technician'] },
     { path: '/ai-insights', label: 'KI-Insights',   icon: '◎', roles: ['admin','sysadmin'] },
     { path: '/settings',    label: 'Einstellungen', icon: '⚙', roles: ['admin','sysadmin','network_technician','viewer'] },
     { path: '/help',        label: 'Hilfe',         icon: '?', roles: ['admin','sysadmin','network_technician','viewer'] },

@@ -1,5 +1,6 @@
 import { Component, OnInit, OnDestroy, inject, signal } from '@angular/core';
 import { I18nService } from '../../core/services/i18n.service';
+import { RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
@@ -34,13 +35,16 @@ const SEVERITY_COLORS: Record<string, string> = {
   selector: 'cs-ai-insights',
   standalone: true,
   imports: [
-    CommonModule,
+    CommonModule, RouterLink,
     MatCardModule, MatButtonModule, MatIconModule,
     MatChipsModule, MatProgressSpinnerModule,
     MatExpansionModule, MatDividerModule, MatSnackBarModule, MatTooltipModule,
   ],
   template: `
     <div class="page-container">
+      <nav class="subview-nav" aria-label="Problembearbeitung">
+        <a routerLink="/problems">Probleme</a><span aria-current="page">Analyseverlauf</span>
+      </nav>
       <div class="page-header">
         <h2>{{ i18n.t('ai_insights.title') }}</h2>
         <button mat-raised-button color="primary" [disabled]="triggering()" (click)="trigger()">
