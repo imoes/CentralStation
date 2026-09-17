@@ -959,14 +959,17 @@ def _load_claude_history(sid: str) -> list[dict]:
 
 @app.get("/sessions/{sid}/history")
 def get_history(sid: str):
-    # CLI sessions (codex_cli / claude_cli): prefer in-memory history; for claude,
-    # fall back to its durable .jsonl so the display survives restarts/idle-reaps.
+    # Claude's JSONL is the authoritative, complete history.  The in-memory list only
+    # contains messages exchanged since this userenv process created/restored the
+    # session and would therefore hide older turns after a restart or idle reap.
+    # Codex has no equivalent durable file, so it continues to use memory here.
     _agent_type = _sessions.get(sid, {}).get("agent_type")
     if _agent_type in ("claude_cli", "codex_cli"):
         mem = _sessions[sid].get("history") or []
-        if mem:
-            return mem
-        return _load_claude_history(sid) if _agent_type == "claude_cli" else []
+        if _agent_type == "claude_cli":
+            durable = _load_claude_history(sid)
+            return durable or mem
+        return mem
     # Not in memory (fresh container): try Claude's .jsonl before the Hermes path.
     if sid not in _sessions:
         claude_hist = _load_claude_history(sid)
