@@ -280,12 +280,14 @@ class TestApplyMetadataFilters:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestSearch:
-    async def test_no_filters_uses_match_all(self):
+    async def test_no_filters_still_applies_actionable_severity_floor(self):
         client = _os_client_stub()
         with patch("app.services.feed_index.get_opensearch", return_value=client):
             await search()
         body = client.search.call_args[1]["body"]
-        assert body["query"] == {"match_all": {}}
+        assert body["query"] == {
+            "bool": {"must_not": [{"terms": {"severity": ["info", "low"]}}]}
+        }
 
     async def test_queries_all_sources_by_default(self):
         client = _os_client_stub()

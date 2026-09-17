@@ -12,7 +12,9 @@ Rules (all must hold to create a new incident):
      of creating a duplicate — regardless of the incident's age (an ongoing
      problem stays one incident until it is resolved).
 
-Resolution is handled by resolve_stale_incidents() (housekeeping job).
+Resolution is handled from the current source state.  CheckMK-only incidents
+are closed in the same aggregation run in which their final service returns to
+OK; the housekeeping job is a safety net for all other sources.
 """
 from __future__ import annotations
 
@@ -179,16 +181,15 @@ async def _correlate_host(
 
 
 async def resolve_stale_incidents(db: AsyncSession) -> int:
-    """Auto-resolve incidents whose alerts are all resolved or stale.
+    """Auto-resolve incidents whose member alerts are all resolved.
 
-    An incident is resolved when:
-      - none of its member alerts are still open in OpenSearch, OR
-      - the incident has had no new member for > 2 hours (stale).
+    Incident age is deliberately not a resolution signal.  A long-running
+    monitoring problem remains open until its source reports that every member
+    alert has cleared.
 
     Returns the number of incidents resolved. Run from the housekeeping job.
     """
     now = datetime.now(timezone.utc)
-    stale_cutoff = now - timedelta(hours=2)
     resolved = 0
 
     rows = await db.execute(
@@ -202,14 +203,7 @@ async def resolve_stale_incidents(db: AsyncSession) -> int:
 
     for inc in incidents:
         try:
-            # Stale: no activity for 2h → close.
-            if inc.updated_at and inc.updated_at < stale_cutoff:
-                inc.status = "resolved"
-                inc.resolved_at = now
-                resolved += 1
-                continue
-
-            # Otherwise check whether any member alert is still open.
+            # Check whether any member alert is still open.
             mem = await db.execute(
                 select(IncidentMember.external_id).where(
                     IncidentMember.incident_id == inc.id
@@ -247,3 +241,55 @@ async def resolve_stale_incidents(db: AsyncSession) -> int:
             log.debug("resolve_stale_incidents: commit failed: %s", e)
             await db.rollback()
     return resolved
+
+
+def _checkmk_incident_is_inactive(
+    members: list[tuple[str, str]],
+    active_external_ids: set[str],
+) -> bool:
+    """Return True only for a CheckMK-only incident with no active member.
+
+    Mixed-source incidents cannot be decided from a CheckMK poll and remain for
+    the general housekeeping reconciliation.
+    """
+    return bool(members) and all(source == "checkmk" for _, source in members) and not any(
+        external_id in active_external_ids for external_id, _ in members
+    )
+
+
+async def resolve_inactive_checkmk_incidents(
+    active_external_ids: set[str],
+    db: AsyncSession,
+) -> tuple[int, set[str]]:
+    """Close CheckMK-only incidents immediately after all checks return to OK."""
+    now = datetime.now(timezone.utc)
+    rows = await db.execute(
+        select(Incident).where(Incident.status.in_(("open", "investigating")))
+    )
+    incidents = rows.scalars().all()
+    resolved = 0
+    recovered_hosts: set[str] = set()
+
+    for incident in incidents:
+        member_rows = await db.execute(
+            select(IncidentMember.external_id, IncidentMember.source).where(
+                IncidentMember.incident_id == incident.id
+            )
+        )
+        members = [(row[0], row[1]) for row in member_rows]
+        if not _checkmk_incident_is_inactive(members, active_external_ids):
+            continue
+        incident.status = "resolved"
+        incident.resolved_at = now
+        incident.updated_at = now
+        resolved += 1
+        if incident.primary_host:
+            recovered_hosts.add(incident.primary_host)
+
+    if resolved:
+        await db.commit()
+        log.info(
+            "resolve_inactive_checkmk_incidents: resolved %d incident(s) after CheckMK recovery",
+            resolved,
+        )
+    return resolved, recovered_hosts
