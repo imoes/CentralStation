@@ -12,6 +12,7 @@ import { ThemeService } from './core/services/theme.service';
 import { I18nService } from './core/services/i18n.service';
 import { environment } from '../environments/environment';
 import { ComputerComponent } from './features/computer/computer.component';
+import { ComputerService } from './core/services/computer.service';
 
 interface NavItem {
   path: string;
@@ -69,7 +70,13 @@ interface NavItem {
               <div class="cs-nav-footer-actions">
                 <span class="cs-role-chip">{{ auth.userRole() }}</span>
                 @if (computerEnabled()) {
-                  <button mat-icon-button (click)="computer?.toggle()" title="Hermes (Ctrl+K)">
+                  <button mat-icon-button class="cs-computer-button" (click)="computer?.toggle()"
+                          [title]="computerService.ticketActivitySessionCount() > 0
+                            ? computerService.ticketActivitySessionCount() + ' Ticket-Sitzung(en) mit Neuigkeiten'
+                            : 'Hermes (Ctrl+K)'"
+                          [attr.aria-label]="computerService.ticketActivitySessionCount() > 0
+                            ? 'KI-Konsole, ' + computerService.ticketActivitySessionCount() + ' Ticket-Sessionen mit Neuigkeiten'
+                            : 'KI-Konsole öffnen'">
                     <svg width="22" height="22" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                       <rect x="29" y="29" width="42" height="42" rx="7"/>
                       <text x="50" y="56" text-anchor="middle" font-family="Arial,sans-serif" font-size="15" font-weight="700" letter-spacing="1" fill="currentColor" stroke="none">AI</text>
@@ -86,6 +93,13 @@ interface NavItem {
                       <rect x="17" y="37" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="10" y="48" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="17" y="59" width="4" height="4" rx="1" fill="currentColor" stroke="none"/>
                       <rect x="79" y="37" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="86" y="48" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><rect x="79" y="59" width="4" height="4" rx="1" fill="currentColor" stroke="none"/>
                     </svg>
+                    @if (computerService.ticketActivitySessionCount() > 0) {
+                      <span class="cs-computer-badge">
+                        {{ computerService.ticketActivitySessionCount() > 9 ? '9+' : computerService.ticketActivitySessionCount() }}
+                      </span>
+                    } @else if (computerService.ticketActivityUnavailableCount() > 0) {
+                      <span class="cs-computer-warning" title="Mindestens eine Jira-Quelle ist nicht erreichbar">!</span>
+                    }
                   </button>
                 }
                 <button mat-icon-button (click)="auth.logout()" [title]="i18n.t('app.nav.logout')">
@@ -117,6 +131,7 @@ export class App implements OnInit, OnDestroy {
   hasAwxNg = computed(() => this.auth.user()?.has_awx_ng ?? false);
 
   readonly i18n = inject(I18nService);
+  readonly computerService = inject(ComputerService);
 
   private readonly navItems: NavItem[] = [
     { path: '/dashboard',  labelKey: 'app.nav.dashboard', icon: 'dashboard', roles: ['admin','sysadmin','network_technician','viewer'], group: 'betrieb' },
@@ -182,6 +197,14 @@ export class App implements OnInit, OnDestroy {
         }
         this.unreadFeedCount.set(0);
         this.unreadTicketCount.set(0);
+        this.computerService.stopTicketActivityPolling();
+      }
+    });
+    effect(() => {
+      if (this.auth.isLoggedIn() && this.computerEnabled()) {
+        this.computerService.startTicketActivityPolling();
+      } else {
+        this.computerService.stopTicketActivityPolling();
       }
     });
   }
@@ -202,6 +225,7 @@ export class App implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     if (this.badgeInterval) clearInterval(this.badgeInterval);
+    this.computerService.stopTicketActivityPolling();
     this.routerSub?.unsubscribe();
     window.removeEventListener('message', this._cockpitMsgHandler);
   }

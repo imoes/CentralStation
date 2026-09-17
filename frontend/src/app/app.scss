@@ -64,6 +64,27 @@ $nav-w: 220px;
 }
 .cs-nav-footer .cs-nav-item { width: 100%; box-sizing: border-box; margin-right: 0; }
 .cs-nav-footer-actions { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.cs-computer-button { position: relative; }
+.cs-computer-badge,
+.cs-computer-warning {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #d32f2f;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
+.cs-computer-warning { background: #ef8b17; color: #1c1200; }
 .cs-role-chip {
   flex: 1; font-size: 11px; padding: 3px 8px; border-radius: 10px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

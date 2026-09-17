@@ -107,6 +107,26 @@
     }
   }
 
+  .sync-btn {
+    background: none;
+    border: none;
+    color: #000;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+
+    mat-icon {
+      font-size: 1.1rem;
+      width: 1.1rem;
+      height: 1.1rem;
+    }
+
+    &:hover:not(:disabled) { background: rgba(0, 0, 0, 0.15); }
+    &:disabled { opacity: 0.45; cursor: default; }
+  }
+
   .close-btn {
     background: none;
     border: none;
@@ -307,6 +327,30 @@
   margin-left: 4px;
 }
 
+.activity-badge,
+.activity-warning {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: #b51f1f;
+  color: #fff;
+  font-family: Arial, sans-serif;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.activity-warning {
+  min-width: 17px;
+  background: #ef8b17;
+  color: #1c1200;
+}
+
 .agent-badge {
   font-size: 0.55rem;
   font-weight: 700;
@@ -338,6 +382,146 @@
   // Anchor for the floating jump-to-latest button.
   position: relative;
 }
+
+.ticket-activity {
+  flex-shrink: 0;
+  margin: 10px 12px 0;
+  padding: 10px 12px;
+  border: 1px solid #66aaff;
+  border-left: 5px solid #66aaff;
+  border-radius: 6px;
+  background: #071522;
+  color: #d9edff;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.45);
+  font-size: 0.78rem;
+
+  &--warning {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-color: #ef8b17;
+    background: #241707;
+    color: #ffd79b;
+
+    .ticket-activity-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+  }
+}
+
+.ticket-activity-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+
+  > div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  strong {
+    font-family: 'Antonio', sans-serif;
+    letter-spacing: 0.08em;
+    color: #99ccff;
+  }
+
+  span { color: #a8bfd0; }
+}
+
+.activity-details {
+  max-height: 190px;
+  margin-top: 8px;
+  padding-right: 4px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.activity-comment {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 7px 9px;
+  border-radius: 4px;
+  background: #0c2234;
+
+  time {
+    justify-self: end;
+    color: #7892a7;
+    font-size: 0.68rem;
+  }
+
+  p {
+    grid-column: 1 / -1;
+    margin: 3px 0 0;
+    color: #e4eef6;
+    line-height: 1.4;
+    white-space: pre-wrap;
+  }
+}
+
+.activity-kind {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #2c7a3f;
+  color: #d8ffe0;
+  font-size: 0.58rem;
+  font-weight: 800;
+
+  &--edited { background: #735d16; color: #fff0ad; }
+}
+
+.activity-field {
+  padding: 5px 8px;
+  border-left: 2px solid #ffcc66;
+  background: #181407;
+  color: #f5e7ba;
+
+  strong { margin-right: 8px; }
+}
+
+.activity-later,
+.activity-accept {
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'Antonio', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.activity-later {
+  padding: 3px 7px;
+  background: transparent;
+  color: #a8bfd0;
+
+  &:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+}
+
+.activity-accept {
+  margin-top: 9px;
+  padding: 6px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #66aaff;
+  color: #001528;
+
+  mat-icon { width: 17px; height: 17px; font-size: 17px; }
+  &:hover:not(:disabled) { background: #99ccff; }
+  &:disabled { opacity: 0.5; cursor: default; }
+}
+
+.spinning { animation: spin 0.9s linear infinite; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .empty-state {
   display: flex;
@@ -923,4 +1107,22 @@
     background: #2a1c0c;
     color: #ffdd99;
   }
+}
+
+@media (max-width: 720px) {
+  .computer-panel {
+    width: 100vw;
+    height: 100dvh;
+    max-height: none;
+    border-width: 0;
+    border-radius: 0;
+  }
+
+  .session-rail { width: 112px; }
+  .rail-pill { max-width: 104px; padding-left: 8px; font-size: 0.64rem; }
+  .ticket-activity { margin: 7px 7px 0; padding: 8px; }
+  .activity-details { max-height: 145px; }
+  .activity-comment { grid-template-columns: auto 1fr; }
+  .activity-comment time { grid-column: 1 / -1; justify-self: start; }
+  .panel-bottom .num-cell:nth-of-type(n + 3) { display: none; }
 }

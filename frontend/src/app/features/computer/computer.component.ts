@@ -14,7 +14,12 @@ import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { marked } from 'marked';
 import { AuthService } from '../../core/auth/auth.service';
-import { ComputerService, TicketReference } from '../../core/services/computer.service';
+import {
+  ComputerService,
+  TicketActivity,
+  TicketActivitySnapshot,
+  TicketReference,
+} from '../../core/services/computer.service';
 import { I18nService } from '../../core/services/i18n.service';
 import { environment } from '../../../environments/environment';
 import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-create-dialog.component';
@@ -49,6 +54,8 @@ interface HermesSession {
   resolved?: boolean;
   ticket_ref?: { connector_id: string; issue_id: string; key: string } | null;
   context_hash?: string | null;
+  has_activity_snapshot?: boolean;
+  context_synced_at?: string | null;
   reused?: boolean;
 }
 
@@ -93,6 +100,13 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
           </button>
         }
 
+        <button class="sync-btn" (click)="manualSync()"
+                [disabled]="computerService.ticketActivityRefreshing()"
+                title="Ticket-Neuigkeiten jetzt synchronisieren"
+                aria-label="Ticket-Neuigkeiten jetzt synchronisieren">
+          <mat-icon [class.spinning]="computerService.ticketActivityRefreshing()">sync</mat-icon>
+        </button>
+
         <!-- TTS mute toggle -->
         <button class="tts-btn" [class.muted]="muted()" (click)="toggleMute()"
                 [title]="muted() ? 'Enable voice output' : 'Mute voice output'">
@@ -133,6 +147,16 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                   }
                   @if (s.msg_count > 0) {
                     <span class="msg-badge">{{ s.msg_count }}</span>
+                  }
+                  @if (sessionActivity(s.session_id); as activity) {
+                    @if (activity.state === 'changed') {
+                      <span class="activity-badge"
+                            [attr.aria-label]="activity.comment_change_count + ' Kommentaränderungen'">
+                        {{ activity.comment_change_count > 9 ? '9+' : (activity.comment_change_count || '!') }}
+                      </span>
+                    } @else if (activity.state === 'unavailable') {
+                      <span class="activity-warning" aria-label="Jira-Quelle nicht erreichbar">!</span>
+                    }
                   }
                 </button>
               }
@@ -196,6 +220,79 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
               <div class="empty-sub">Start a new session or enter a command</div>
               <div class="empty-hint">⌨ Ctrl+K open/close · Space = microphone</div>
             </div>
+          }
+
+          @if (activeTicketActivity(); as activity) {
+            @if (!activityDismissed(activity)) {
+              @if (activity.state === 'unavailable') {
+                <section class="ticket-activity ticket-activity--warning" aria-live="polite">
+                  <mat-icon>cloud_off</mat-icon>
+                  <div class="ticket-activity-content">
+                    <strong>{{ activity.ticket_ref.key }} · Quelle nicht erreichbar</strong>
+                    <span>Der letzte bekannte Stand bleibt erhalten. Es wurde nichts als gelesen markiert.</span>
+                  </div>
+                  <button class="activity-later" (click)="dismissActivity(activity)" title="Hinweis einklappen">Später</button>
+                </section>
+              } @else if (activity.state === 'changed') {
+                <section class="ticket-activity" aria-live="polite">
+                  <div class="ticket-activity-heading">
+                    <div>
+                      <strong>{{ activity.ticket_ref.key }} · Neue Aktivität</strong>
+                      <span>
+                        {{ activity.comment_change_count }} Kommentaränderung{{ activity.comment_change_count === 1 ? '' : 'en' }}
+                        @if (activity.ticket_changed) { · Ticketdaten geändert }
+                        @if (activity.source_unavailable) { · Quelle derzeit nicht erreichbar }
+                      </span>
+                    </div>
+                    <button class="activity-later" (click)="dismissActivity(activity)">Später</button>
+                  </div>
+
+                  <div class="activity-details">
+                    @for (comment of activity.new_comments; track comment.id) {
+                      <article class="activity-comment">
+                        <span class="activity-kind">NEU</span>
+                        <strong>{{ comment.author || '?' }}</strong>
+                        <time>{{ formatActivityTime(comment.created) }}</time>
+                        <p>{{ comment.body }}</p>
+                      </article>
+                    }
+                    @for (comment of activity.edited_comments; track comment.id) {
+                      <article class="activity-comment">
+                        <span class="activity-kind activity-kind--edited">BEARBEITET</span>
+                        <strong>{{ comment.author || '?' }}</strong>
+                        <time>{{ formatActivityTime(comment.updated || comment.created) }}</time>
+                        <p>{{ comment.body }}</p>
+                      </article>
+                    }
+                    @for (change of activity.field_changes; track change.field) {
+                      <div class="activity-field">
+                        <strong>{{ change.label }}</strong>
+                        @if (change.field === 'description_hash') {
+                          <span>wurde geändert</span>
+                        } @else {
+                          <span>{{ change.before || '(leer)' }} → {{ change.after || '(leer)' }}</span>
+                        }
+                      </div>
+                    }
+                    @if (activity.deleted_comment_ids.length > 0) {
+                      <div class="activity-field">
+                        {{ activity.deleted_comment_ids.length }} Kommentar(e) wurde(n) entfernt.
+                      </div>
+                    }
+                    @if (activity.ticket_changed && activity.field_changes.length === 0) {
+                      <div class="activity-field">Weitere Ticketdaten wurden geändert.</div>
+                    }
+                  </div>
+
+                  <button class="activity-accept" (click)="acceptTicketActivity(activity)"
+                          [disabled]="loading() || acceptingTicketActivity() || activity.source_unavailable"
+                          [title]="activity.source_unavailable ? 'Erst nach erfolgreicher Jira-Prüfung verfügbar' : ''">
+                    <mat-icon>add_comment</mat-icon>
+                    {{ acceptingTicketActivity() ? 'WIRD ÜBERNOMMEN …' : 'IN KONTEXT ÜBERNEHMEN' }}
+                  </button>
+                </section>
+              }
+            }
           }
 
           <div class="messages" #msgContainer (scroll)="onMessagesScroll()">
@@ -318,7 +415,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   private auth = inject(AuthService);
   private router = inject(Router);
   private sanitizer = inject(DomSanitizer);
-  private computerService = inject(ComputerService);
+  readonly computerService = inject(ComputerService);
   private http = inject(HttpClient);
   private snackBar = inject(MatSnackBar);
   private dialog = inject(MatDialog);
@@ -356,6 +453,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
   listening = signal(false);
   muted = signal(localStorage.getItem('cs_computer_muted') === '1');
   voiceError = signal<string | null>(null);
+  acceptingTicketActivity = signal(false);
+  private dismissedActivityVersions = signal<Record<string, string>>({});
 
   private mediaRecorder?: MediaRecorder;
   private audioChunks: Blob[] = [];
@@ -391,6 +490,11 @@ export class ComputerComponent implements OnInit, OnDestroy {
   activeSession = computed<HermesSession | null>(() => {
     const sid = this.activeTabId();
     return this.sessions().find(s => s.session_id === sid) ?? null;
+  });
+
+  activeTicketActivity = computed<TicketActivity | null>(() => {
+    const sid = this.activeTabId();
+    return sid ? this.computerService.ticketActivities()[sid] ?? null : null;
   });
 
   totalMessages = computed(() =>
@@ -468,6 +572,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
         agent_type?: string; external_id?: string | null; resolved?: boolean;
         ticket_ref?: { connector_id: string; issue_id: string; key: string } | null;
         context_hash?: string | null;
+        has_activity_snapshot?: boolean;
+        context_synced_at?: string | null;
       }> = await r.json();
       if (!list.length) return;
 
@@ -485,6 +591,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
           resolved: s.resolved ?? false,
           ticket_ref: s.ticket_ref ?? null,
           context_hash: s.context_hash ?? null,
+          has_activity_snapshot: s.has_activity_snapshot ?? false,
+          context_synced_at: s.context_synced_at ?? null,
         });
       });
 
@@ -538,9 +646,66 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Panel controls ────────────────────────────────────────────────
 
-  toggle(): void { this.isOpen.update(v => !v); }
-  open(): void   { this.isOpen.set(true); }
+  toggle(): void {
+    this.isOpen.update(v => !v);
+    if (this.isOpen()) void this.refreshActiveTicketActivity();
+  }
+  open(): void {
+    this.isOpen.set(true);
+    void this.refreshActiveTicketActivity();
+  }
   close(): void  { this.isOpen.set(false); this._ttsAudio?.pause(); }
+
+  sessionActivity(sid: string): TicketActivity | undefined {
+    return this.computerService.activityFor(sid);
+  }
+
+  private activityVersion(activity: TicketActivity): string {
+    const snapshot = activity.snapshot;
+    if (!snapshot) return `${activity.state}:${activity.checked_at}`;
+    return [
+      activity.state,
+      activity.source_unavailable ? 'offline' : 'online',
+      snapshot.issue_updated_at,
+      JSON.stringify(snapshot.fields),
+      JSON.stringify(snapshot.comments),
+    ].join(':');
+  }
+
+  activityDismissed(activity: TicketActivity): boolean {
+    return this.dismissedActivityVersions()[activity.session_id] === this.activityVersion(activity);
+  }
+
+  dismissActivity(activity: TicketActivity): void {
+    this.dismissedActivityVersions.update(current => ({
+      ...current,
+      [activity.session_id]: this.activityVersion(activity),
+    }));
+  }
+
+  formatActivityTime(value: string): string {
+    if (!value) return '';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value.slice(0, 16) : parsed.toLocaleString('de-DE', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    });
+  }
+
+  private async refreshActiveTicketActivity(): Promise<boolean> {
+    const session = this.activeSession();
+    if (!session?.ticket_ref) return this.computerService.refreshTicketActivities();
+    return this.computerService.refreshTicketActivities(session.session_id);
+  }
+
+  async manualSync(): Promise<void> {
+    const ok = await this.refreshActiveTicketActivity();
+    this.snackBar.open(
+      ok ? 'Prüfung der Ticket-Aktivität abgeschlossen' : 'Jira-Aktivität konnte nicht geprüft werden',
+      '',
+      { duration: 3000 },
+    );
+  }
 
   focusInput(): void {
     setTimeout(() => this.inputEl?.nativeElement.focus(), 50);
@@ -742,7 +907,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
     if (ticketRef) {
       await this.loadSessions();
-      const contextHash = await this.hashContext(prompt);
+      const contextHash = ticketRef.contextHash || await this.hashContext(prompt);
       let existing: HermesSession | null | undefined = this.sessions().find(s =>
         s.ticket_ref?.connector_id === ticketRef.connectorId
         && s.ticket_ref?.issue_id === ticketRef.issueId
@@ -753,12 +918,31 @@ export class ComputerComponent implements OnInit, OnDestroy {
       if (!existing) return;
       this.activeTabId.set(existing.session_id);
       this.selectTab(existing.session_id);
-      // The ticket snapshot did not change: resume the stored conversation without
-      // injecting the same analysis request for a second time.
-      if (existing.context_hash === contextHash) return;
-      this.inputText = prompt;
-      await this.send();
-      await this.persistContextHash(existing.session_id, contextHash);
+      // An established ticket session only resumes here. Its live Jira changes are
+      // shown by the activity banner and require the explicit confirmation button.
+      if (existing.context_hash) {
+        // Legacy sessions predate structured snapshots. An identical full-context
+        // hash proves that the current Jira state was already handed to the agent,
+        // so adopting that snapshot does not discard unseen content.
+        if (
+          !existing.has_activity_snapshot
+          && existing.context_hash === contextHash
+          && ticketRef.snapshot
+        ) {
+          await this.acknowledgeTicketActivity(existing.session_id, ticketRef.snapshot, contextHash);
+        }
+        await this.computerService.refreshTicketActivities(existing.session_id);
+        return;
+      }
+
+      // First handoff: send the full ticket exactly once, then establish the Jira
+      // baseline only after the agent stream completed successfully.
+      const sent = await this.sendContent(prompt, existing.session_id);
+      if (sent && ticketRef.snapshot) {
+        await this.acknowledgeTicketActivity(existing.session_id, ticketRef.snapshot, contextHash);
+      } else if (sent) {
+        await this.persistContextHash(existing.session_id, contextHash);
+      }
       return;
     }
 
@@ -837,6 +1021,98 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }
   }
 
+  private async acknowledgeTicketActivity(
+    sid: string,
+    snapshot: TicketActivitySnapshot,
+    contextHash: string | null,
+  ): Promise<boolean> {
+    const token = this.auth.getAccessToken();
+    try {
+      const response = await fetch(`${this.apiBase}/sessions/${sid}/ticket-activity/ack`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ snapshot, context_hash: contextHash }),
+      });
+      if (!response.ok) return false;
+      const data = await response.json();
+      this.sessions.update(sessions => sessions.map(session =>
+        session.session_id === sid ? {
+          ...session,
+          context_hash: data.context_hash ?? contextHash,
+          context_synced_at: data.context_synced_at,
+          has_activity_snapshot: true,
+        } : session
+      ));
+      this.computerService.clearTicketActivity(sid);
+      return true;
+    } catch (err) {
+      console.debug('acknowledgeTicketActivity failed:', err);
+      return false;
+    }
+  }
+
+  async acceptTicketActivity(activity: TicketActivity): Promise<void> {
+    if (this.loading() || this.acceptingTicketActivity()) return;
+    this.acceptingTicketActivity.set(true);
+    const token = this.auth.getAccessToken();
+    try {
+      const response = await fetch(
+        `${this.apiBase}/sessions/${activity.session_id}/ticket-activity/context`,
+        {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        },
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.detail || 'Ticket-Aktivität konnte nicht geladen werden');
+      }
+      const data: TicketActivity & {
+        prompt: string;
+        context_hash: string | null;
+        snapshot?: TicketActivitySnapshot;
+      } = await response.json();
+      if (data.state !== 'changed' || !data.prompt || !data.snapshot) {
+        await this.computerService.refreshTicketActivities(activity.session_id);
+        this.snackBar.open('Keine neuen Ticketänderungen vorhanden', '', { duration: 2500 });
+        return;
+      }
+
+      const sent = await this.sendContent(data.prompt, activity.session_id);
+      if (!sent) {
+        this.snackBar.open(
+          'Die Änderungen bleiben ungelesen, weil die KI-Antwort nicht abgeschlossen wurde',
+          '',
+          { duration: 4500 },
+        );
+        return;
+      }
+      const acknowledged = await this.acknowledgeTicketActivity(
+        activity.session_id,
+        data.snapshot,
+        data.context_hash,
+      );
+      if (!acknowledged) {
+        this.snackBar.open('Die Änderungen konnten nicht als übernommen gespeichert werden', '', {
+          duration: 4500,
+        });
+        return;
+      }
+      await this.computerService.refreshTicketActivities(activity.session_id);
+    } catch (err) {
+      this.snackBar.open(
+        err instanceof Error ? err.message : 'Jira-Quelle nicht erreichbar',
+        '',
+        { duration: 4000 },
+      );
+    } finally {
+      this.acceptingTicketActivity.set(false);
+    }
+  }
+
   async newSession(
     label?: string,
     externalId?: string,
@@ -905,6 +1181,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
     if (session && session.messages.length === 0) {
       this.loadSessionHistory(sid);
     }
+    if (session?.ticket_ref) void this.computerService.refreshTicketActivities(sid);
   }
 
   async loadSessionHistory(sid: string): Promise<void> {
@@ -999,19 +1276,25 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Send message → SSE stream ─────────────────────────────────────
 
-  async send(): Promise<void> {
+  async send(): Promise<boolean> {
     const text = this.inputText.trim();
-    if (!text || this.loading()) return;
-
-    let sid = this.activeTabId();
-    if (!sid) {
-      await this.newSession();
-      sid = this.activeTabId();
-      if (!sid) return;
-    }
+    if (!text || this.loading()) return false;
 
     this.inputText = '';
     setTimeout(() => this.resizeInput(), 0);
+    return this.sendContent(text);
+  }
+
+  private async sendContent(text: string, targetSid?: string): Promise<boolean> {
+    if (!text.trim() || this.loading()) return false;
+
+    let sid = targetSid ?? this.activeTabId();
+    if (!sid) {
+      await this.newSession();
+      sid = this.activeTabId();
+      if (!sid) return false;
+    }
+
     this.loading.set(true);
     this._addMessage(sid, 'user', text);
     this._addMessage(sid, 'assistant', '');
@@ -1021,6 +1304,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
     const token = this.auth.getAccessToken();
     let fullAssistantText = '';
     let wasAborted = false;
+    let streamFailed = false;
     this._abortController = new AbortController();
 
     try {
@@ -1036,8 +1320,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
       if (!resp.ok) {
         this._appendToLast(sid, `[Fehler: HTTP ${resp.status}]`);
-        this.loading.set(false);
-        return;
+        streamFailed = true;
+        return false;
       }
 
       const reader = resp.body!.getReader();
@@ -1072,6 +1356,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
                 this._clearActiveTool(sid);
               }
               if (data.type === 'error') {
+                streamFailed = true;
                 this._appendToLast(sid, `\n[Fehler: ${data.text}]`);
               }
             });
@@ -1091,6 +1376,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
               fullAssistantText += data.text;
               this._appendToLast(sid, data.text);
             }
+            if (data.type === 'error') {
+              streamFailed = true;
+              this._appendToLast(sid, `\n[Fehler: ${data.text}]`);
+            }
           } catch { /* ignore */ }
         }
       }
@@ -1100,6 +1389,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
         wasAborted = true;
         this._appendToLast(sid, ' [gestoppt]');
       } else {
+        streamFailed = true;
         this._appendToLast(sid, `[Verbindungsfehler: ${err}]`);
       }
     } finally {
@@ -1118,6 +1408,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
         this.scrollToBottomIfFollowing();
       });
     }
+    return !wasAborted && !streamFailed && fullAssistantText.trim().length > 0;
   }
 
   // ── Voice input ───────────────────────────────────────────────────
