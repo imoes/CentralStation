@@ -427,6 +427,7 @@ class JiraConnector(BaseConnector):
             "summary": fields.get("summary"),
             "description": description,
             "status": (fields.get("status") or {}).get("name"),
+            "status_category": ((fields.get("status") or {}).get("statusCategory") or {}).get("key"),
             "priority": (fields.get("priority") or {}).get("name"),
             "assignee": (fields.get("assignee") or {}).get("displayName"),
             "created": fields.get("created"),

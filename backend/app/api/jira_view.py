@@ -110,6 +110,7 @@ async def get_issue_detail(
     issue_key: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    connector_id: str | None = Query(None),
 ):
     """Return full Jira issue detail: description + comment history.
 
@@ -119,6 +120,8 @@ async def get_issue_detail(
     from app.services.connectors.jira import JiraConnector
 
     connectors = await _get_all_jira_connectors(db, user.id)
+    if connector_id:
+        connectors = [c for c in connectors if str(c.id) == connector_id]
     if not connectors:
         raise HTTPException(status_code=503, detail="Jira nicht konfiguriert")
 
@@ -127,7 +130,13 @@ async def get_issue_detail(
         try:
             creds = decrypt_credentials(conn.encrypted_credentials)
             jira = JiraConnector(base_url=conn.base_url, credentials=creds)
-            return await jira.get_issue_detail(issue_key)
+            detail = await jira.get_issue_detail(issue_key)
+            detail["_centralstation"] = {
+                "connector_id": str(conn.id),
+                "issue_id": str(detail.get("id") or issue_key),
+                "base_url": conn.base_url,
+            }
+            return detail
         except Exception as e:
             last_err = e
 

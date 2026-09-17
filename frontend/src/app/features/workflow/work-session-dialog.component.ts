@@ -12,7 +12,6 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatDividerModule } from '@angular/material/divider';
-import { MatExpansionModule } from '@angular/material/expansion';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatBadgeModule } from '@angular/material/badge';
@@ -59,7 +58,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
     CommonModule, FormsModule, MatDialogModule, MatTabsModule,
     MatButtonModule, MatIconModule, MatFormFieldModule, MatInputModule,
     MatSelectModule, MatChipsModule, MatProgressSpinnerModule, MatDividerModule,
-    MatExpansionModule, MatSnackBarModule, MatTooltipModule, MatBadgeModule,
+    MatSnackBarModule, MatTooltipModule, MatBadgeModule,
   ],
   template: `
     <div class="dialog-root">
@@ -300,160 +299,6 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
           </div>
         </mat-tab>
 
-        <!-- Legacy generators remain API-compatible but are intentionally no longer
-             exposed: ticket AI work continues in the persisted Computer session. -->
-        @if (false) {
-        <mat-tab label="AI Assistant">
-          <div class="tab-content">
-
-            <!-- Comment Generator -->
-            <mat-expansion-panel expanded>
-              <mat-expansion-panel-header>
-                <mat-panel-title><mat-icon>comment</mat-icon> Generate ticket comment</mat-panel-title>
-              </mat-expansion-panel-header>
-              <div class="panel-body">
-                <div class="comment-type-row">
-                  @for (ct of commentTypes; track ct.value) {
-                    <button mat-stroked-button
-                      [class.selected]="selectedCommentType() === ct.value"
-                      (click)="selectedCommentType.set(ct.value)">
-                      {{ ct.label }}
-                    </button>
-                  }
-                </div>
-                <mat-form-field appearance="outline" class="full-width">
-                  <mat-label>Recent developments (optional)</mat-label>
-                  <textarea matInput [(ngModel)]="additionalContext" rows="3"
-                    placeholder="e.g. Service restarted last night, logs show no further errors. Sprint goal: complete migration by Friday."></textarea>
-                  <mat-hint>Describe recent developments — the AI will incorporate them into the comment.</mat-hint>
-                </mat-form-field>
-                <button mat-flat-button color="accent" (click)="generateComment()" [disabled]="aiLoading.comment()">
-                  @if (aiLoading.comment()) { <mat-spinner diameter="16"></mat-spinner> Generating… }
-                  @else { <ng-container><mat-icon>auto_awesome</mat-icon> Create comment</ng-container> }
-                </button>
-                @if (generatedComment()) {
-                  <div class="ai-result">
-                    <div class="ai-result-header">
-                      <span>Generated comment</span>
-                      <button mat-icon-button (click)="copyToClipboard(generatedComment()!)" matTooltip="Kopieren">
-                        <mat-icon>content_copy</mat-icon>
-                      </button>
-                    </div>
-                    <textarea class="ai-text-edit" rows="8"
-                      [value]="generatedComment()!"
-                      (input)="generatedComment.set($any($event.target).value)"></textarea>
-                    <div class="ai-result-actions">
-                      <button mat-flat-button color="primary"
-                        (click)="postCommentToJira()"
-                        [disabled]="aiLoading.posting() || !session()?.jira_key"
-                        [matTooltip]="session()?.jira_key ? 'Post comment to Jira ' + session()?.jira_key : 'No Jira ticket linked'">
-                        @if (aiLoading.posting()) {
-                          <mat-spinner diameter="16"></mat-spinner> Posting…
-                        } @else {
-                          <mat-icon>send</mat-icon> Post comment
-                        }
-                      </button>
-                      @if (commentPosted()) {
-                        <span class="post-success"><mat-icon>check_circle</mat-icon> Posted to Jira</span>
-                      }
-                    </div>
-                  </div>
-                }
-              </div>
-            </mat-expansion-panel>
-
-            <!-- Resolution Generator -->
-            <mat-expansion-panel>
-              <mat-expansion-panel-header>
-                <mat-panel-title><mat-icon>task_alt</mat-icon> Generate closure documentation</mat-panel-title>
-              </mat-expansion-panel-header>
-              <div class="panel-body">
-                <mat-form-field appearance="outline" class="full-width">
-                  <mat-label>Root Cause (optional)</mat-label>
-                  <textarea matInput [(ngModel)]="form.root_cause" rows="2"></textarea>
-                </mat-form-field>
-                <div class="row-2">
-                  <mat-form-field appearance="outline">
-                    <mat-label>Closure type</mat-label>
-                    <mat-select [(ngModel)]="form.closure_code">
-                      @for (c of closureCodes; track c.value) { <mat-option [value]="c.value">{{ c.label }}</mat-option> }
-                    </mat-select>
-                  </mat-form-field>
-                  <mat-form-field appearance="outline">
-                    <mat-label>Resolution type</mat-label>
-                    <mat-select [(ngModel)]="form.resolution_type">
-                      <mat-option value="permanent_fix">Permanent fix</mat-option>
-                      <mat-option value="workaround">Workaround</mat-option>
-                    </mat-select>
-                  </mat-form-field>
-                </div>
-                <button mat-flat-button color="accent" (click)="generateResolution()" [disabled]="aiLoading.resolution()">
-                  @if (aiLoading.resolution()) { <mat-spinner diameter="16"></mat-spinner> Generating… }
-                  @else { <ng-container><mat-icon>auto_awesome</mat-icon> Create documentation</ng-container> }
-                </button>
-                @if (generatedResolution()) {
-                  <div class="ai-result">
-                    <div class="ai-result-header">
-                      <span>Solution documentation</span>
-                      <button mat-icon-button (click)="copyToClipboard(generatedResolution()!)" matTooltip="Kopieren">
-                        <mat-icon>content_copy</mat-icon>
-                      </button>
-                    </div>
-                    <pre class="ai-text">{{ generatedResolution() }}</pre>
-                  </div>
-                }
-              </div>
-            </mat-expansion-panel>
-
-            <!-- Solution Suggester -->
-            <mat-expansion-panel>
-              <mat-expansion-panel-header>
-                <mat-panel-title><mat-icon>search</mat-icon> Solution suggestions (RAG + Web)</mat-panel-title>
-              </mat-expansion-panel-header>
-              <div class="panel-body">
-                <button mat-flat-button color="accent" (click)="suggestSolution()" [disabled]="aiLoading.solution()">
-                  @if (aiLoading.solution()) { <mat-spinner diameter="16"></mat-spinner> Searching… }
-                  @else { <ng-container><mat-icon>travel_explore</mat-icon> Search solutions</ng-container> }
-                </button>
-                @if (solutionData()) {
-                  @if (solutionData()!.solution_steps?.length) {
-                    <div class="solution-section">
-                      <strong>Solution steps</strong>
-                      <ol>@for (step of solutionData()!.solution_steps; track $index) { <li>{{ step }}</li> }</ol>
-                    </div>
-                  }
-                  @if (solutionData()!.possible_causes?.length) {
-                    <div class="solution-section">
-                      <strong>Possible causes</strong>
-                      <ul>@for (c of solutionData()!.possible_causes; track $index) { <li>{{ c }}</li> }</ul>
-                    </div>
-                  }
-                  @if (solutionData()!.rag_results?.length) {
-                    <div class="solution-section">
-                      <strong>Knowledge base</strong>
-                      @for (r of solutionData()!.rag_results; track $index) {
-                        <div class="rag-item"><mat-icon>article</mat-icon> {{ r.title ?? r }}</div>
-                      }
-                    </div>
-                  }
-                  @if (solutionData()!.web_results?.length) {
-                    <div class="solution-section">
-                      <strong>Web results</strong>
-                      @for (r of solutionData()!.web_results; track r.url) {
-                        <div class="rag-item"><mat-icon>language</mat-icon>
-                          <a [href]="r.url" target="_blank">{{ r.title }}</a>
-                        </div>
-                      }
-                    </div>
-                  }
-                }
-              </div>
-            </mat-expansion-panel>
-
-          </div>
-        </mat-tab>
-        }
-
         <!-- ── Tab: GitLab ── -->
         <mat-tab label="GitLab">
           <div class="tab-content">
@@ -579,21 +424,8 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
     /* AI Panels */
     mat-expansion-panel { margin-bottom: 4px; }
     mat-panel-title { display: flex; align-items: center; gap: 6px; }
-    .panel-body { padding: 12px 0; display: flex; flex-direction: column; gap: 10px; }
-    .comment-type-row { display: flex; gap: 6px; flex-wrap: wrap; }
-    .comment-type-row button.selected { background: var(--mat-sys-primary-container); }
-    .ai-result { background: var(--mat-sys-surface-variant); border-radius: 8px; padding: 12px; }
-    .ai-result-header { display: flex; align-items: center; justify-content: space-between; font-weight: 500; font-size: 13px; margin-bottom: 6px; }
-    pre.ai-text { margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-word; font-family: inherit; line-height: 1.5; }
-    .ai-text-edit { width: 100%; box-sizing: border-box; font-size: 12px; font-family: inherit; line-height: 1.5; padding: 8px 10px; border: 1px solid var(--mat-sys-outline-variant); border-radius: 6px; background: var(--mat-sys-surface); color: var(--mat-sys-on-surface); resize: vertical; outline: none; }
-    .ai-text-edit:focus { border-color: var(--mat-sys-primary); }
-    .ai-result-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
     .post-success { display: flex; align-items: center; gap: 4px; color: #2e7d32; font-size: 13px; font-weight: 500; }
     .post-success mat-icon { font-size: 16px; width: 16px; height: 16px; }
-    .solution-section { font-size: 13px; }
-    .solution-section strong { display: block; margin-bottom: 4px; }
-    .rag-item { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 0; }
-    .rag-item mat-icon { font-size: 14px; width: 14px; height: 14px; }
     .gitlab-info { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
     .gitlab-actions { display: flex; flex-direction: column; gap: 8px; }
     .info-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
@@ -620,31 +452,13 @@ export class WorkSessionDialogComponent implements OnInit {
   };
 
   newNote = '';
-  additionalContext = '';
   manualComment = '';
   manualCommentPosted = signal(false);
-  selectedCommentType = signal('progress');
-  generatedComment = signal<string | null>(null);
-  generatedResolution = signal<string | null>(null);
-  solutionData = signal<any | null>(null);
-  commentPosted = signal(false);
-  aiLoading = {
-    comment: signal(false),
-    resolution: signal(false),
-    solution: signal(false),
-    categorize: signal(false),
-    posting: signal(false),
-  };
+  aiLoading = { posting: signal(false) };
 
   readonly categories = CATEGORIES;
   readonly closureCodes = CLOSURE_CODES;
   readonly statusOptions = STATUS_OPTIONS;
-  readonly commentTypes = [
-    { value: 'progress', label: 'Progress' },
-    { value: 'pending', label: 'Pending' },
-    { value: 'escalation', label: 'Escalation' },
-    { value: 'handoff', label: 'Handoff' },
-  ];
 
   private sessionId: string | null = null;
   private router = inject(Router);
@@ -688,6 +502,7 @@ export class WorkSessionDialogComponent implements OnInit {
       title: this.dialogData.title,
       jira_key: this.dialogData.jira_key,
       jira_issue_id: this.dialogData.jira_issue_id,
+      jira_connector_id: this.dialogData.jira_connector_id,
       alert_id: this.dialogData.alert_id,
     }).subscribe({
       next: s => { this.setSession(s); this.loading.set(false); },
@@ -706,7 +521,8 @@ export class WorkSessionDialogComponent implements OnInit {
     this.session.set(s);
     this.sessionId = s.id;
     if (s.jira_key) {
-      this.http.get<any>(`${environment.apiUrl}/jira-view/issue/${s.jira_key}`)
+      const connector = s.jira_connector_id ? `?connector_id=${encodeURIComponent(s.jira_connector_id)}` : '';
+      this.http.get<any>(`${environment.apiUrl}/jira-view/issue/${s.jira_key}${connector}`)
         .subscribe({ next: d => this.jiraDetail.set(d), error: () => {} });
     }
     if (s.gitlab_project_id || s.gitlab_branch) {
@@ -807,7 +623,9 @@ export class WorkSessionDialogComponent implements OnInit {
     const key = this.session()?.jira_key;
     if (!key) return;
     this.jiraRefreshing.set(true);
-    this.http.get<any>(`${environment.apiUrl}/jira-view/issue/${key}`)
+    const connectorId = this.session()?.jira_connector_id;
+    const connector = connectorId ? `?connector_id=${encodeURIComponent(connectorId)}` : '';
+    this.http.get<any>(`${environment.apiUrl}/jira-view/issue/${key}${connector}`)
       .subscribe({
         next: d => { this.jiraDetail.set(d); this.jiraRefreshing.set(false); },
         error: () => this.jiraRefreshing.set(false),
@@ -819,76 +637,6 @@ export class WorkSessionDialogComponent implements OnInit {
     this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/notes`, { content: this.newNote }).subscribe({
       next: res => { this.session.update(s => ({ ...s, work_notes: res.notes })); this.newNote = ''; },
     });
-  }
-
-  generateComment() {
-    this.aiLoading.comment.set(true);
-    this.commentPosted.set(false);
-    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/generate-comment`, {
-      comment_type: this.selectedCommentType(),
-      additional_context: this.additionalContext.trim() || null,
-    }).subscribe({
-      next: res => { this.generatedComment.set(res.comment); this.aiLoading.comment.set(false); this.loadSession(this.sessionId!); },
-      error: () => { this.aiLoading.comment.set(false); this.snackBar.open('Error generating comment', '', { duration: 3000 }); },
-    });
-  }
-
-  generateResolution() {
-    this.aiLoading.resolution.set(true);
-    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/generate-resolution`, {
-      root_cause: this.form.root_cause || null,
-      resolution_type: this.form.resolution_type,
-      closure_code: this.form.closure_code,
-    }).subscribe({
-      next: res => { this.generatedResolution.set(res.resolution); this.aiLoading.resolution.set(false); this.loadSession(this.sessionId!); },
-      error: () => { this.aiLoading.resolution.set(false); this.snackBar.open('Error generating resolution', '', { duration: 3000 }); },
-    });
-  }
-
-  suggestSolution() {
-    this.aiLoading.solution.set(true);
-    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/suggest-solution`, { use_rag: true, use_web: true }).subscribe({
-      next: res => { this.solutionData.set(res); this.aiLoading.solution.set(false); },
-      error: () => { this.aiLoading.solution.set(false); this.snackBar.open('Error searching for solutions', '', { duration: 3000 }); },
-    });
-  }
-
-  autoCategorize() {
-    this.aiLoading.categorize.set(true);
-    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/auto-categorize`, {}).subscribe({
-      next: res => {
-        this.form.category = res.category ?? this.form.category;
-        this.form.subcategory = res.subcategory ?? this.form.subcategory;
-        this.form.impact = res.impact ?? this.form.impact;
-        this.form.urgency = res.urgency ?? this.form.urgency;
-        this.aiLoading.categorize.set(false);
-        this.loadSession(this.sessionId!);
-        this.snackBar.open('Categorisation applied', '', { duration: 2000 });
-      },
-      error: () => this.aiLoading.categorize.set(false),
-    });
-  }
-
-  postCommentToJira() {
-    const comment = this.generatedComment();
-    if (!comment) return;
-    this.aiLoading.posting.set(true);
-    this.http.post<any>(`${environment.apiUrl}/workflow/${this.sessionId}/post-comment`, { comment }).subscribe({
-      next: () => {
-        this.aiLoading.posting.set(false);
-        this.commentPosted.set(true);
-        this.snackBar.open(`Comment posted to ${this.session()?.jira_key}`, 'OK', { duration: 3000 });
-        this.loadSession(this.sessionId!);
-      },
-      error: (err) => {
-        this.aiLoading.posting.set(false);
-        this.snackBar.open(err?.error?.detail ?? 'Error posting comment', '', { duration: 4000 });
-      },
-    });
-  }
-
-  copyToClipboard(text: string) {
-    navigator.clipboard.writeText(text).then(() => this.snackBar.open('Copied to clipboard', '', { duration: 2000 }));
   }
 
   priorityColor() {

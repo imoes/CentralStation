@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, inject, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
@@ -71,16 +71,16 @@ const PRIORITY_COLORS: Record<string, string> = {
             <div class="column">
               <div class="column-header" [style.border-top-color]="col.color">
                 <span class="col-title">{{ col.label }}</span>
-                <span class="col-count">{{ getColumn(col.id).length }}</span>
+                <span class="col-count">{{ getColumn(col.id).length + stepsForColumn(col.id).length }}</span>
               </div>
               <!-- Ready project steps (only in Todo column) -->
-              @if (col.id === 'todo' && readySteps().length > 0) {
+              @if (stepsForColumn(col.id).length > 0) {
                 <div class="ready-steps-section">
                   <div class="ready-steps-header">
                     <mat-icon style="font-size:12px;width:12px;height:12px">folder_open</mat-icon>
                     Projektaufgaben
                   </div>
-                  @for (step of readySteps(); track step.step_id) {
+                  @for (step of stepsForColumn(col.id); track step.step_id) {
                     <div class="ready-step-card" [attr.data-type]="step.jira_issue_type">
                       <div class="ready-step-header">
                         <span class="ready-step-type">{{ step.jira_issue_type.toUpperCase() }}</span>
@@ -284,6 +284,10 @@ export class KanbanComponent implements OnInit, OnDestroy {
   readySteps = signal<ReadyStep[]>([]);
 
   private cards = signal<KanbanCard[]>([]);
+  visibleReadySteps = computed(() => {
+    const jiraKeys = new Set(this.cards().flatMap(card => card.jira_key ? [card.jira_key] : []));
+    return this.readySteps().filter(step => !step.jira_key || !jiraKeys.has(step.jira_key));
+  });
   private destroy$ = new Subject<void>();
 
   constructor(
@@ -335,6 +339,12 @@ export class KanbanComponent implements OnInit, OnDestroy {
   getColumn(status: KanbanStatus): KanbanCard[] {
     return this.cards().filter(c => c.status === status)
       .sort((a, b) => a.position - b.position);
+  }
+
+  stepsForColumn(status: KanbanStatus): ReadyStep[] {
+    return this.visibleReadySteps().filter(step =>
+      (step.status === 'in_progress' ? 'in_progress' : 'todo') === status
+    );
   }
 
   onDrop(event: CdkDragDrop<KanbanCard[]>) {

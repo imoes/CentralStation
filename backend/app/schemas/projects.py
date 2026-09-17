@@ -105,6 +105,7 @@ class StepResponse(BaseModel):
     pos_x: int | None
     pos_y: int | None
     jira_connector_type: str | None
+    jira_connector_id: uuid.UUID | None
     jira_key: str | None
     jira_issue_id: str | None
     jira_status: str | None
@@ -174,6 +175,7 @@ class StepNode(BaseModel):
     pos_x: int | None
     pos_y: int | None
     jira_connector_type: str | None
+    jira_connector_id: uuid.UUID | None
     jira_key: str | None
     jira_status: str | None
     jira_status_category: str | None

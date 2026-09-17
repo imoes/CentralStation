@@ -37,6 +37,7 @@ export interface StepNode {
   pos_x: number | null;
   pos_y: number | null;
   jira_connector_type: string | null;
+  jira_connector_id?: string | null;
   jira_key: string | null;
   jira_status: string | null;
   jira_status_category: string | null;
