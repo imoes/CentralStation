@@ -177,23 +177,35 @@ class CheckMKConnector(BaseConnector):
             })
         return results
 
-    async def get_problems(self, time_range_minutes: int = 60, include_unknown: bool = False) -> list[dict]:
-        """Return open WARN/CRIT services (+ UNKNOWN when include_unknown=True), including host tags for filtering."""
+    async def get_problems(
+        self,
+        time_range_minutes: int = 60,
+        include_unknown: bool = False,
+        include_handled: bool = False,
+    ) -> list[dict]:
+        """Return non-OK services, including host tags for filtering.
+
+        The regular feed requests actionable, unacknowledged problems.  Source
+        reconciliation uses ``include_handled=True`` so acknowledgement or
+        downtime is never mistaken for a recovery to OK.
+        """
         state_exprs: list[dict] = [
             {"op": "=", "left": "state", "right": "2"},
             {"op": "=", "left": "state", "right": "1"},
         ]
         if include_unknown:
             state_exprs.append({"op": "=", "left": "state", "right": "3"})
+        query_expr: list[dict] = [{"op": "or", "expr": state_exprs}]
+        if not include_handled:
+            query_expr.extend([
+                {"op": "=", "left": "acknowledged", "right": "0"},
+                {"op": "=", "left": "scheduled_downtime_depth", "right": "0"},
+                {"op": "=", "left": "host_scheduled_downtime_depth", "right": "0"},
+            ])
         payload = {
             "query": {
                 "op": "and",
-                "expr": [
-                    {"op": "or", "expr": state_exprs},
-                    {"op": "=", "left": "acknowledged", "right": "0"},
-                    {"op": "=", "left": "scheduled_downtime_depth", "right": "0"},
-                    {"op": "=", "left": "host_scheduled_downtime_depth", "right": "0"},
-                ],
+                "expr": query_expr,
             },
             "columns": [
                 "host_name", "description", "state",

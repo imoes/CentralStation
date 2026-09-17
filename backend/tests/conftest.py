@@ -33,7 +33,10 @@ _make_module(
     "app.models.workflow",
     FeedSearch=MagicMock(name="FeedSearch"),
     UserPreference=MagicMock(name="UserPreference"),
+    Dashboard=MagicMock(name="Dashboard"),
     DashboardWidget=MagicMock(name="DashboardWidget"),
     AlertScoreAdjustment=MagicMock(name="AlertScoreAdjustment"),
+    Incident=MagicMock(name="Incident"),
+    IncidentMember=MagicMock(name="IncidentMember"),
 )
 _make_module("app.models.alert", Alert=MagicMock(name="Alert"))

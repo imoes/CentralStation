@@ -144,7 +144,10 @@ async def collect_checkmk(connector: ConnectorConfig, time_range_minutes: int = 
         return []
 
 
-async def _resolve_stale_checkmk_alerts(active_ext_ids: set[str], db: AsyncSession) -> int:
+async def _resolve_stale_checkmk_alerts(
+    active_ext_ids: set[str],
+    db: AsyncSession,
+) -> tuple[int, set[str]]:
     """Mark open CheckMK alerts as resolved if no longer in the active problem set.
 
     Only called when CheckMK was successfully polled, so an empty active_ext_ids
@@ -163,9 +166,13 @@ async def _resolve_stale_checkmk_alerts(active_ext_ids: set[str], db: AsyncSessi
     )
     stale = result.scalars().all()
     if not stale:
-        return 0
+        return 0, set()
 
+    recovered_hosts: set[str] = set()
     for alert in stale:
+        host = str((alert.metadata_ or {}).get("host") or "").strip()
+        if host:
+            recovered_hosts.add(host)
         alert.status = "resolved"
         try:
             await feed_index.update_status(str(alert.id), "checkmk", "resolved")
@@ -174,7 +181,7 @@ async def _resolve_stale_checkmk_alerts(active_ext_ids: set[str], db: AsyncSessi
 
     await db.commit()
     log.info("Freshness: resolved %d stale CheckMK alert(s)", len(stale))
-    return len(stale)
+    return len(stale), recovered_hosts
 
 
 async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 60) -> list[dict]:
@@ -565,32 +572,44 @@ async def run_aggregation(db: AsyncSession) -> int:
     new_alerts: list[Alert] = []
     new_ext_urls: list[str | None] = []  # parallel list: external_url per new alert
     checkmk_active_ext_ids: set[str] = set()
-    checkmk_had_successful_poll = False
+    checkmk_poll_attempted = False
+    checkmk_all_state_polls_succeeded = True
 
     for connector in connectors:
         if connector.type == "checkmk":
+            checkmk_poll_attempted = True
             try:
                 items = await _fetch_checkmk_items(connector, time_range_minutes=cooldown_minutes)
-                checkmk_had_successful_poll = True
+                # Freshness must use every non-OK state.  The feed query above
+                # intentionally omits acknowledged/downtime problems, but those
+                # are still active and must never be marked as recovered.
+                from app.services.connectors.checkmk import CheckMKConnector
+                _svc = CheckMKConnector(
+                    base_url=connector.base_url,
+                    credentials=decrypt_credentials(connector.encrypted_credentials),
+                )
+                all_non_ok = await _svc.get_problems(
+                    include_unknown=True,
+                    include_handled=True,
+                )
+                checkmk_active_ext_ids.update(
+                    f"cmk:{problem['host']}:{problem['service']}"
+                    for problem in all_non_ok
+                    if problem.get("host") and problem.get("service")
+                )
                 for item in items:
-                    if ext_id := item.get("external_id"):
-                        checkmk_active_ext_ids.add(ext_id)
                     # Seed host cache from problem hosts (always available)
                     hostname = (item.get("metadata") or {}).get("host", "")
                     if hostname:
                         _host_meta_cache[hostname] = item.get("metadata") or {}
                 # Refresh full host inventory so non-problem hosts are also cacheable
                 try:
-                    from app.services.connectors.checkmk import CheckMKConnector
-                    _svc = CheckMKConnector(
-                        base_url=connector.base_url,
-                        credentials=decrypt_credentials(connector.encrypted_credentials),
-                    )
                     for h in await _svc.get_all_hosts():
                         _host_meta_cache.setdefault(h["hostname"], h["metadata"])
                 except Exception as exc:
                     log.debug("CheckMK full host scan skipped: %s", exc)
             except Exception as exc:
+                checkmk_all_state_polls_succeeded = False
                 log.warning("CheckMK collection failed: %s", exc)
                 items = []
         else:
@@ -726,10 +745,33 @@ async def run_aggregation(db: AsyncSession) -> int:
         except Exception as exc:
             log.warning("Could not schedule feed enrichment: %s", exc)
 
-    # Freshness: resolve CheckMK alerts whose problems no longer appear in CheckMK
-    if checkmk_had_successful_poll:
+    # Freshness: resolve CheckMK alerts whose problems no longer appear in CheckMK.
+    # Reconcile their incidents in this same run so the generative dashboard
+    # cannot observe the old incident between two independent scheduler jobs.
+    if checkmk_poll_attempted and checkmk_all_state_polls_succeeded:
         try:
-            await _resolve_stale_checkmk_alerts(checkmk_active_ext_ids, db)
+            resolved_alerts, recovered_hosts = await _resolve_stale_checkmk_alerts(
+                checkmk_active_ext_ids,
+                db,
+            )
+            from app.services.incident.correlator import resolve_inactive_checkmk_incidents
+            resolved_incidents, recovered_incident_hosts = await resolve_inactive_checkmk_incidents(
+                checkmk_active_ext_ids,
+                db,
+            )
+            recovered_hosts.update(recovered_incident_hosts)
+
+            # The generated rationale is persisted text. Invalidate it as soon
+            # as a source transition makes any of its claims potentially stale.
+            # Invalidation is immediate and does not wait for the LLM; the
+            # regular generative refresh replaces it with a fresh briefing.
+            if resolved_alerts or resolved_incidents:
+                from app.services.dashboard.generative_persistence import invalidate_generated_rationales
+                await invalidate_generated_rationales(
+                    db,
+                    reason="checkmk_recovery",
+                    affected_hosts=recovered_hosts,
+                )
         except Exception as exc:
             log.warning("CheckMK freshness check failed (non-fatal): %s", exc)
 

@@ -5,6 +5,7 @@ from app.services.dashboard.generative_designer import (
     _validate_widgets,
     semantic_widget_key,
 )
+from app.services.dashboard.generative_persistence import _generation_is_obsolete
 
 
 def _situation(*, incidents=False, forecasts=0):
@@ -83,3 +84,13 @@ def test_fallback_passes_the_same_final_validator():
         _DEFAULT_SIZE[widget["widget_type"]][0] * _DEFAULT_SIZE[widget["widget_type"]][1]
         for widget in final
     ) <= 110
+
+
+def test_generation_started_before_source_invalidation_is_rejected():
+    current = {
+        "result_state": "refresh_pending",
+        "invalidated_at": "2026-09-17T11:39:00+00:00",
+    }
+
+    assert _generation_is_obsolete(current, {"as_of": "2026-09-17T11:38:00+00:00"}) is True
+    assert _generation_is_obsolete(current, {"as_of": "2026-09-17T11:40:00+00:00"}) is False
