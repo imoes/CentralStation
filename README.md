@@ -964,10 +964,22 @@ the latter could call the Jira API directly. The goal is that *accidental* actio
 ### Ticket context does not start the agent
 
 Handing a ticket to the Console — the first handoff from the Jira view, and
-**"IN EINGABE ÜBERNEHMEN"** on the activity banner — places the text in the **input field**.
-The agent works when the operator sends the message, not before. The Jira baseline
-(`POST …/ticket-activity/acknowledge`) is recorded only on that send, so a change that never
-reached the agent stays visible as unread instead of silently disappearing.
+**"ALS KONTEXT ANHÄNGEN"** on the activity banner — **attaches** the text to the session.
+It does not go to the agent and it does not go into the input field: a wall of text there
+would have to be cleared away before the operator could type their own question.
+
+The attachment is shown as a named bar above the input ("geht mit deiner nächsten Nachricht
+mit"), can be expanded to read in full, and can be discarded. It travels with the **next
+message the operator writes**, prepended to it. In the transcript that message keeps the
+operator's own wording and carries the context as a collapsed block, because it did go to
+the agent and has to stay readable.
+
+Two or more attachments on one session are appended, not replaced — otherwise the first
+change would be lost while the banner claimed it had been taken over.
+
+The Jira baseline (`POST …/ticket-activity/acknowledge`) is recorded only when that message
+is sent. A change that never reached the agent stays visible as unread instead of silently
+disappearing; discarding the attachment brings the activity banner straight back.
 
 ### Browser automation (Playwright MCP)
 

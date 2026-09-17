@@ -843,6 +843,112 @@
 
 // ── Input Row ─────────────────────────────────────────────────────
 
+/* ── Angehängter Ticket-Kontext ────────────────────────────────────────────
+   Sitzt zwischen Verlauf und Eingabefeld, weil er dorthin gehört: er ist noch
+   nicht gesendet. Severity-Balken links nach LCARS-Muster, Butterscotch statt
+   Blau, damit er sich von der Aktivitätsmeldung (blau) unterscheidet. */
+.attached-context {
+  flex-shrink: 0;
+  border-top: 2px solid #2a1a08;
+  border-left: 7px solid #ffcc99;
+  border-radius: 0 8px 8px 0;
+  background: #14100a;
+  color: #ffe8a0;
+}
+
+.attached-context-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+
+  mat-icon {
+    font-size: 17px;
+    width: 17px;
+    height: 17px;
+    color: #ffcc99;
+  }
+}
+
+.attached-context-label {
+  font-family: 'Antonio', 'Eurostile', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.8rem;
+  color: #ffcc66;
+}
+
+/* Fließtext — kondensierte Schrift nur für Struktur (siehe docs/ux/lcars-design.md). */
+.attached-context-hint {
+  flex: 1;
+  font-family: Roboto, 'Helvetica Neue', sans-serif;
+  text-transform: none;
+  font-size: 0.72rem;
+  color: #e8a060;
+}
+
+.attached-context-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: #ffcc99;
+  display: flex;
+  align-items: center;
+
+  &:hover { color: #ff9933; }
+
+  mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+  }
+}
+
+.attached-context-body,
+.msg-context-body {
+  margin: 0;
+  padding: 8px 12px 10px;
+  max-height: 240px;
+  overflow: auto;
+  font-family: Roboto, 'Helvetica Neue', sans-serif;
+  text-transform: none;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #d8c49a;
+  border-top: 1px solid #2a1a08;
+}
+
+/* Kontext, der mit einer bereits gesendeten Nachricht mitging. */
+.msg-context-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 2px 6px;
+  background: none;
+  border: 1px solid #3a2a12;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: Roboto, 'Helvetica Neue', sans-serif;
+  text-transform: none;
+  font-size: 0.7rem;
+  color: #e8a060;
+
+  &:hover {
+    border-color: #ffcc99;
+    color: #ffcc99;
+  }
+
+  mat-icon {
+    font-size: 15px;
+    width: 15px;
+    height: 15px;
+  }
+}
+
 .input-row {
   display: flex;
   gap: 6px;
