@@ -84,6 +84,9 @@ def write_hermes_config(user_id: str, extra_servers: dict) -> str:
         "centralstation": {
             "transport": "sse",
             "url": f"{backend_url}/api/mcp/sse",
+            # Nutzerkennung, damit der Backend-MCP-Server die Schreibfreigabe
+            # dieses Nutzers prüfen kann (mcp_server._require_write).
+            "headers": {"X-CS-User-ID": user_id},
             # Deepsearch (search_knowledge_base deepsearch=True) can run up to ~300s.
             # Give the per-tool-call timeout headroom above that so Hermes doesn't
             # abort a legitimate long-running deepsearch.
@@ -99,10 +102,26 @@ def write_hermes_config(user_id: str, extra_servers: dict) -> str:
 
     config_path = hermes_config_path(user_id)
     os.makedirs(_user_base(user_id), exist_ok=True)
+    rendered = yaml.dump({"mcp_servers": servers}, default_flow_style=False,
+                         allow_unicode=True)
     with open(config_path, "w") as f:
-        yaml.dump({"mcp_servers": servers}, f, default_flow_style=False, allow_unicode=True)
+        f.write(rendered)
     log.info("hermes_config written: %s (%d servers: %s)",
              config_path, len(servers), list(servers.keys()))
+
+    # Die Datei wird nur beim Containerstart nach ~/.hermes/config.yaml kopiert
+    # (entrypoint.sh). Läuft der Container schon, bliebe eine Änderung — etwa ein
+    # neu hinzugefügter MCP-Server oder die Nutzerkennung — bis zum nächsten
+    # Neustart wirkungslos. Deshalb hier zusätzlich direkt hineinschreiben.
+    try:
+        c = _client().containers.get(container_name(user_id))
+        c.exec_run(
+            ["sh", "-c", f"mkdir -p {_YOLO_HOME}/.hermes && "
+                         f"printf '%s' \"$CFG\" > {_YOLO_HOME}/.hermes/config.yaml"],
+            environment={"CFG": rendered},
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.debug("hermes_config live-update skipped for %s: %s", user_id, exc)
     return config_path
 
 
@@ -196,6 +215,23 @@ def _migrate_to_yolo(ws_path: str, vs_path: str) -> None:
             log.warning("userenv_manager: yolo migration failed for %s: %s", dirpath, exc)
 
 
+def _image_outdated(cli, container) -> bool:
+    """True, wenn der Container auf einem anderen Image läuft als USERENV_IMAGE zeigt.
+
+    Bei Unsicherheit (Image nicht auffindbar) wird False geliefert — im Zweifel den
+    laufenden Container nicht wegwerfen; ein unnötiger Neustart kostet die Sitzung.
+    """
+    try:
+        current = str(cli.images.get(USERENV_IMAGE).id or "")
+        # attrs["Image"] ist die Image-ID als Zeichenkette. container.image würde das
+        # Image nachschlagen und bei einem abgelösten (nur noch dangling) Image eine
+        # Ausnahme werfen — also genau in dem Fall, den wir erkennen wollen.
+        running = str((container.attrs or {}).get("Image") or "")
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(current and running and current != running)
+
+
 def ensure_container(user_id: str) -> str:
     """Ensure the user's unified container is running. Returns ide_upstream for nginx.
 
@@ -211,11 +247,22 @@ def ensure_container(user_id: str) -> str:
         existing = None
 
     if existing is not None:
-        if existing.status != "running":
-            existing.start()
-            _wait_ready(existing)
-        touch(user_id)
-        return ide_upstream(user_id)
+        # Ein neu gebautes Image bleibt sonst folgenlos: der Container liefe mit dem
+        # alten Stand weiter, und nichts würde das anzeigen. Deshalb wird hier das
+        # Image des laufenden Containers mit dem aktuellen Tag verglichen.
+        if _image_outdated(cli, existing):
+            log.info("userenv_manager: %s läuft auf einem veralteten Image → wird neu erstellt", name)
+            try:
+                existing.remove(force=True)
+                existing = None
+            except Exception as exc:  # noqa: BLE001
+                log.warning("userenv_manager: %s konnte nicht entfernt werden: %s", name, exc)
+        if existing is not None:
+            if existing.status != "running":
+                existing.start()
+                _wait_ready(existing)
+            touch(user_id)
+            return ide_upstream(user_id)
 
     ws_path = workspace_dir(user_id)
     vs_path = vscode_dir(user_id)
@@ -640,6 +687,7 @@ def configure_claude_credentials(
             "centralstation": {
                 "transport": "streamable-http",
                 "url": f"{os.getenv('CENTRALSTATION_BACKEND_URL', 'http://backend:8000').rstrip('/')}/api/mcp-http/",
+                "headers": {"X-CS-User-ID": user_id},
             },
             **(extra_servers or {}),
         }
@@ -650,9 +698,9 @@ def configure_claude_credentials(
             transport = "http" if "http" in srv_cfg.get("transport", "streamable-http") else "sse"
             cmd = ["claude", "mcp", "add", "--transport", transport, "--scope", "user", srv_name, url]
             # Add auth header if the server requires a bearer token
-            token_header = (srv_cfg.get("headers") or {}).get("Authorization", "")
-            if token_header:
-                cmd += ["--header", f"Authorization: {token_header}"]
+            for h_name, h_value in (srv_cfg.get("headers") or {}).items():
+                if h_value:
+                    cmd += ["--header", f"{h_name}: {h_value}"]
             c.exec_run(cmd)
             log.info("userenv_manager: MCP server '%s' registered for %s", srv_name, container_name(user_id))
 
@@ -666,7 +714,7 @@ def configure_claude_credentials(
         log.warning("configure_claude_credentials: container %s not found", container_name(user_id))
 
 
-def _codex_config_toml(mcp_servers: dict | None) -> str:
+def _codex_config_toml(mcp_servers: dict | None, cs_user_id: str = "") -> str:
     """Render ~/.codex/config.toml: ChatGPT-backend provider + MCP servers.
 
     mcp_servers maps name → {transport, url, headers?} (same shape as the Hermes
@@ -696,6 +744,8 @@ def _codex_config_toml(mcp_servers: dict | None) -> str:
         # (/api/mcp-http/ — codex speaks streamable-http, not the legacy SSE app).
         '[mcp_servers.centralstation]',
         f'url = "{backend_url}/api/mcp-http/"',
+        # Nutzerkennung für die Schreibfreigabe-Prüfung im Backend.
+        f'http_headers = {{ "X-CS-User-ID" = "{cs_user_id}" }}',
         'default_tools_approval_mode = "approve"',
         # search_knowledge_base(deepsearch=True) can run up to ~300s — give headroom.
         'tool_timeout_sec = 330',
@@ -745,7 +795,7 @@ def configure_codex_credentials(
     """
     import docker as _docker
 
-    config_toml = _codex_config_toml(mcp_servers)
+    config_toml = _codex_config_toml(mcp_servers, cs_user_id=user_id)
     try:
         c = _client().containers.get(container_name(user_id))
         # CODEX_HOME lives under yolo's home: the codex subprocess runs as yolo

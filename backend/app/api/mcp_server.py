@@ -27,6 +27,83 @@ def _get_os():
     return get_opensearch()  # sync singleton, no await
 
 
+# ── Zustimmungspflicht für Schreiboperationen ───────────────────────────────
+#
+# Ein Hinweis im Prompt ("frage vorher nach") ist eine Bitte, kein Schutz — das
+# Modell kann ihn überlesen, und genau das ist passiert: Tickets wurden ohne
+# Rückfrage kommentiert. Schreibende Werkzeuge sind deshalb gesperrt, solange der
+# Mensch in der CentralStation-Konsole kein Zeitfenster geöffnet hat.
+#
+# Dieselbe Freigabe steuert bereits den Bash-Guard im Nutzercontainer
+# (userenv/cs-readonly-guard.py). Es gibt bewusst nur EINEN Freigabekanal und
+# EINEN Speicherort dafür: /opt/cs-write-approval.json im Container des Nutzers,
+# root-owned, vom Agenten nicht beschreibbar. Zustimmung im Chat zählt nicht —
+# der Agent kontrolliert den Chat, nicht aber diese Datei.
+#
+# Grenze, ausdrücklich benannt: der MCP-Endpunkt ist im internen Netz nicht
+# authentifiziert, die Nutzerkennung kommt als Kopfzeile vom Client. Das schützt
+# gegen einen übereifrigen Agenten, nicht gegen einen böswilligen — ein solcher
+# könnte die Jira-API auch direkt per HTTP ansprechen. Der Zweck ist, dass
+# *versehentliches* Handeln unmöglich wird.
+
+#: Kopfzeile mit der CentralStation-Nutzer-ID. Gleicher Name wie beim
+#: Agent-Credentials-Endpunkt (computer_proxy.py) — ein Ding, ein Name.
+CS_USER_HEADER = "x-cs-user-id"
+
+
+def _calling_user_id() -> str | None:
+    """CentralStation-Nutzer-ID des aufrufenden MCP-Clients, falls mitgeschickt."""
+    try:
+        from fastmcp.server.dependencies import get_http_headers
+        headers = get_http_headers(include_all=True) or {}
+    except Exception:
+        return None
+    value = (headers.get(CS_USER_HEADER) or "").strip()
+    return value or None
+
+
+async def _write_allowed() -> tuple[bool, str]:
+    """(erlaubt, Begründung). Begründung ist nur bei Verweigerung gefüllt."""
+    user_id = _calling_user_id()
+    if not user_id:
+        return False, (
+            "Der Aufrufer ist nicht identifizierbar (keine Nutzerkennung im "
+            "MCP-Aufruf), deshalb lässt sich keine Freigabe prüfen."
+        )
+    try:
+        from app.services.userenv_manager import get_write_approval
+        granted = await asyncio.to_thread(get_write_approval, user_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("write approval check failed for %s: %s", user_id, exc)
+        return False, f"Die Schreibfreigabe konnte nicht geprüft werden ({exc})."
+    if granted:
+        return True, ""
+    return False, "Es ist derzeit kein Schreib-Zeitfenster geöffnet."
+
+
+async def _require_write(action: str) -> dict | None:
+    """None, wenn erlaubt — sonst die Ablehnung, die das Werkzeug zurückgibt."""
+    allowed, why = await _write_allowed()
+    if allowed:
+        return None
+    log.info("MCP-Schreiboperation abgelehnt: %s (%s)", action, why)
+    return {
+        "ok": False,
+        "error": "Zustimmung erforderlich",
+        "reason": why,
+        "action": action,
+        "next_step": (
+            f"Diese Aktion ({action}) verändert etwas nach außen und wurde NICHT "
+            "ausgeführt. Eine Zustimmung im Chat genügt dafür nicht — sie ist hier "
+            "nicht sichtbar. Beschreibe dem Nutzer, was du vorhast (bei einem "
+            "Kommentar: den vollständigen Text im Wortlaut, bei einem Statuswechsel: "
+            "Ziel-Status und Ticket) und bitte ihn, in der CentralStation-Konsole "
+            "\"Schreibzugriff freigeben\" zu klicken. Danach kannst du die Aktion "
+            "im geöffneten Zeitfenster erneut aufrufen."
+        ),
+    }
+
+
 # ── Tool 1: Bridge Status ──────────────────────────────────────────
 
 @mcp.tool()
@@ -197,6 +274,9 @@ async def acknowledge_alert(alert_id: str) -> dict:
     - alert_id: UUID des Alerts (aus list_alerts)
 
     Nutze dieses Tool wenn der Nutzer einen Alert quittieren/bestätigen möchte."""
+    denied = await _require_write("Alert quittieren")
+    if denied:
+        return denied
     import uuid as uuid_mod
     from sqlalchemy import select
     from app.models.alert import Alert
@@ -433,6 +513,9 @@ async def create_jira_ticket(title: str, description: str, priority: str = "medi
     - priority: Priorität (critical/high/medium/low, Standard: medium)
 
     Nutze dieses Tool wenn der Nutzer ein Ticket oder eine Aufgabe erstellen möchte."""
+    denied = await _require_write("Jira-Ticket anlegen")
+    if denied:
+        return denied
     import json as _json
     from sqlalchemy import select
     from app.models.connector import ConnectorConfig
@@ -901,6 +984,9 @@ async def run_remediation(remediation_id: str) -> dict:
     Args:
         remediation_id: UUID of the RemediationProposal to execute.
     """
+    denied = await _require_write("AWX-Remediation ausführen")
+    if denied:
+        return denied
     import uuid as _uuid
     from sqlalchemy import select as sa_select
     from app.models.remediation import RemediationProposal
@@ -1054,6 +1140,9 @@ async def gitlab_create_branch(project: str, branch: str, ref: str = "main") -> 
         branch: Name of the new branch.
         ref: Source branch or commit to branch from (default: main).
     """
+    denied = await _require_write("GitLab-Branch anlegen")
+    if denied:
+        return denied
     gl = await _get_gitlab_connector()
     if not gl:
         return {"error": "No GitLab connector configured"}
@@ -1073,6 +1162,9 @@ async def gitlab_create_merge_request(project: str, source_branch: str, target_b
         target_branch: Branch to merge into (e.g. main).
         title: MR title.
     """
+    denied = await _require_write("GitLab-Merge-Request anlegen")
+    if denied:
+        return denied
     gl = await _get_gitlab_connector()
     if not gl:
         return {"error": "No GitLab connector configured"}
@@ -1594,6 +1686,9 @@ async def jira_update_issue(
     - description: Neue Beschreibung (optional)
     - priority: Neue Priorität, z.B. 'High', 'Medium', 'Low', 'Highest' (optional)
     """
+    denied = await _require_write("Jira-Ticket ändern")
+    if denied:
+        return denied
     connector, err = await _jira_for_issue(issue_key)
     if err:
         return {"ok": False, "error": err}
@@ -1638,6 +1733,9 @@ async def jira_add_comment(issue_key: str, body: str, body_format: str = "markdo
     keine Logeinträge vor") oder lass es weg — die Grenzen deiner Werkzeuge sind für
     den Leser des Tickets ohne Belang.
     """
+    denied = await _require_write("Ticket-Kommentar schreiben")
+    if denied:
+        return denied
     connector, err = await _jira_for_issue(issue_key)
     if err:
         return {"ok": False, "error": err}
@@ -1704,6 +1802,9 @@ async def jira_transition_issue(issue_key: str, status: str) -> dict:
 
     Bei Unsicherheit welche Status verfügbar sind: jira_get_transitions vorher aufrufen.
     """
+    denied = await _require_write("Ticket-Status ändern")
+    if denied:
+        return denied
     connector, err = await _jira_for_issue(issue_key)
     if err:
         return {"ok": False, "error": err}
@@ -1757,6 +1858,9 @@ async def jira_close_issue(
     Tool ihn anhand des Namens. Verwerfen/Ablehnen zählt NICHT als Schließen und wird
     nie automatisch gewählt.
     """
+    denied = await _require_write("Ticket schließen")
+    if denied:
+        return denied
     connector, err = await _jira_for_issue(issue_key)
     if err:
         return {"ok": False, "error": err}
