@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import uuid
 from typing import Annotated
 
 import urllib.parse
@@ -25,6 +26,7 @@ from sqlalchemy import delete, func, update
 
 from app.api.deps import CurrentUser, get_db
 from app.models.workflow import ComputerSession, UserPreference
+from app.models.connector import ConnectorConfig
 from app.services.codex_models import extract_codex_model_ids
 
 router = APIRouter(prefix="/computer", tags=["computer"])
@@ -642,6 +644,10 @@ class _CreateSessionBody(BaseModel):
     # Alert external_id for handoff sessions — persisted so the "✓ GELÖST"
     # button survives page reloads and container restarts.
     external_id: str | None = None
+    ticket_connector_id: uuid.UUID | None = None
+    ticket_issue_id: str | None = None
+    ticket_key: str | None = None
+    context_hash: str | None = None
 
 
 @router.post("/sessions", status_code=201)
@@ -651,9 +657,43 @@ async def create_session(
     body: _CreateSessionBody = _CreateSessionBody(),
     _: None = _ConsoleEnabled,
 ):
-    """Create a new Hermes session, persist metadata in PostgreSQL."""
+    """Create a session, or return the persisted session for the same Jira issue."""
     from app.services.settings import get_active_llm_config, get_searxng_config
     from app.models.connector import ConnectorConfig
+    if bool(body.ticket_connector_id) != bool(body.ticket_issue_id):
+        raise HTTPException(status_code=422, detail="ticket_connector_id and ticket_issue_id must be provided together")
+    if body.ticket_connector_id and body.ticket_issue_id:
+        connector = (await db.execute(
+            select(ConnectorConfig).where(
+                ConnectorConfig.id == body.ticket_connector_id,
+                ConnectorConfig.type.in_(("jira", "jira_sd")),
+                ConnectorConfig.enabled.is_(True),
+                ((ConnectorConfig.owner_user_id == user.id) | ConnectorConfig.owner_user_id.is_(None)),
+            )
+        )).scalar_one_or_none()
+        if not connector:
+            raise HTTPException(status_code=404, detail="Jira connector not found")
+        existing = (await db.execute(
+            select(ComputerSession).where(
+                ComputerSession.user_id == user.id,
+                ComputerSession.ticket_connector_id == body.ticket_connector_id,
+                ComputerSession.ticket_issue_id == body.ticket_issue_id,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            return {
+                "session_id": existing.id,
+                "label": existing.label,
+                "external_id": existing.external_id,
+                "agent_type": existing.agent_type,
+                "ticket_ref": {
+                    "connector_id": str(existing.ticket_connector_id),
+                    "issue_id": existing.ticket_issue_id,
+                    "key": existing.ticket_key,
+                },
+                "context_hash": existing.context_hash,
+                "reused": True,
+            }
     _ssh_creds: dict | None = None
     extra_servers: dict = {}  # personal MCP connectors; defined here so it survives
                               # an early exception in the LLM-config block below.
@@ -831,11 +871,27 @@ async def create_session(
         id=sid, user_id=user.id, label=label,
         external_id=(body.external_id or None),
         agent_type=agent_type,
+        ticket_connector_id=body.ticket_connector_id,
+        ticket_issue_id=(body.ticket_issue_id or None),
+        ticket_key=(body.ticket_key or None),
+        context_hash=(body.context_hash or None),
     ))
     await db.commit()
     log.info("Computer session %s created for user %s (label=%s, external_id=%s)",
              sid[:8], user.id, label, body.external_id or "-")
-    return {**data, "label": label, "external_id": body.external_id or None, "agent_type": agent_type}
+    return {
+        **data,
+        "label": label,
+        "external_id": body.external_id or None,
+        "agent_type": agent_type,
+        "ticket_ref": ({
+            "connector_id": str(body.ticket_connector_id),
+            "issue_id": body.ticket_issue_id,
+            "key": body.ticket_key,
+        } if body.ticket_connector_id else None),
+        "context_hash": body.context_hash or None,
+        "reused": False,
+    }
 
 
 @router.get("/sessions")
@@ -859,6 +915,12 @@ async def list_sessions(
             "external_id": r.external_id,
             "resolved": r.resolved,
             "agent_type": r.agent_type,
+            "ticket_ref": ({
+                "connector_id": str(r.ticket_connector_id),
+                "issue_id": r.ticket_issue_id,
+                "key": r.ticket_key,
+            } if r.ticket_connector_id and r.ticket_issue_id else None),
+            "context_hash": r.context_hash,
         }
         for r in rows
     ]
@@ -869,6 +931,7 @@ class _UpdateSessionBody(BaseModel):
     # resets resolved so the "✓ GELÖST" button reappears for the new alert.
     external_id: str | None = None
     label: str | None = None
+    context_hash: str | None = None
 
 
 @router.patch("/sessions/{sid}")
@@ -890,6 +953,8 @@ async def update_session(
         # Alert re-bind: reset resolved so "✓ GELÖST" reappears for the new alert.
         values["external_id"] = body.external_id or None
         values["resolved"] = False
+    if body.context_hash is not None:
+        values["context_hash"] = body.context_hash[:64] or None
     if values:
         await db.execute(
             update(ComputerSession)

@@ -259,13 +259,6 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
               </div>
             }
 
-            <!-- AI Auto-categorisation -->
-            <button mat-stroked-button (click)="autoCategorize()" [disabled]="aiLoading.categorize()">
-              @if (aiLoading.categorize()) { <mat-spinner diameter="16"></mat-spinner> }
-              @else { <mat-icon>psychology</mat-icon> }
-              AI auto-categorise
-            </button>
-
             <div class="form-actions">
               <button mat-flat-button color="primary" (click)="saveOverview()">
                 <mat-icon>save</mat-icon> {{ i18n.t('common.save') }}
@@ -307,7 +300,9 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
           </div>
         </mat-tab>
 
-        <!-- ── Tab 3: KI-Kommentar ── -->
+        <!-- Legacy generators remain API-compatible but are intentionally no longer
+             exposed: ticket AI work continues in the persisted Computer session. -->
+        @if (false) {
         <mat-tab label="AI Assistant">
           <div class="tab-content">
 
@@ -457,6 +452,7 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
 
           </div>
         </mat-tab>
+        }
 
         <!-- ── Tab: GitLab ── -->
         <mat-tab label="GitLab">

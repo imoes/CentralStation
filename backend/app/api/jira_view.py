@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,10 +73,10 @@ async def my_tickets(
 
     out = []
     for q in queries:
-        merged: dict[str, dict] = {}  # key → issue, dedup across instances
+        merged: dict[str, dict] = {}  # connector + Jira id → issue
         last_error: str | None = None
         had_success = False  # at least one connector responded without error
-        for _conn, jira in jira_clients:
+        for conn, jira in jira_clients:
             try:
                 issues = await jira.search_issues(
                     q.jql,
@@ -85,8 +85,15 @@ async def my_tickets(
                 had_success = True
                 for issue in issues:
                     key = issue.get("key", "")
-                    if key and key not in merged:
-                        merged[key] = issue
+                    issue_id = str(issue.get("id") or key)
+                    identity = f"{conn.id}:{issue_id}"
+                    if key and identity not in merged:
+                        issue["_centralstation"] = {
+                            "connector_id": str(conn.id),
+                            "issue_id": issue_id,
+                            "base_url": conn.base_url,
+                        }
+                        merged[identity] = issue
             except Exception as e:
                 last_error = str(e)
 
@@ -132,6 +139,7 @@ async def issue_hermes_context(
     issue_key: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    connector_id: str | None = Query(None),
 ):
     """Build a console starting prompt from a Jira/ServiceDesk ticket.
 
@@ -147,16 +155,20 @@ async def issue_hermes_context(
     from app.services.connectors.jira import JiraConnector, wiki_to_markdown
 
     connectors = await _get_all_jira_connectors(db, user.id)
+    if connector_id:
+        connectors = [c for c in connectors if str(c.id) == connector_id]
     if not connectors:
         raise HTTPException(status_code=503, detail="Jira nicht konfiguriert")
 
     detail: dict | None = None
     last_err: Exception | None = None
+    matched_connector = None
     for conn in connectors:
         try:
             creds = decrypt_credentials(conn.encrypted_credentials)
             jira = JiraConnector(base_url=conn.base_url, credentials=creds)
             detail = await jira.get_issue_detail(issue_key)
+            matched_connector = conn
             break
         except Exception as e:  # try the next connector — the key may live elsewhere
             last_err = e
@@ -216,4 +228,7 @@ async def issue_hermes_context(
         "prompt": "\n".join(lines),
         "label": key,
         "issue_key": key,
+        "issue_id": str(detail.get("id") or key),
+        "connector_id": str(matched_connector.id),
+        "source_url": matched_connector.base_url,
     }
