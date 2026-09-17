@@ -341,8 +341,11 @@ export class JqlQueryDialogComponent {
     .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
     .page-header h2 { margin: 0; }
     .header-actions { display: flex; gap: 8px; }
-    .ticket-view-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px; border-bottom:1px solid var(--mat-sys-outline-variant); }
-    .saved-views, .mode-toggle { display:flex; align-items:center; gap:4px; overflow:auto; }
+    .ticket-view-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:8px 12px; margin-bottom:16px; border-bottom:1px solid var(--mat-sys-outline-variant); }
+    .saved-views { display:flex; align-items:center; flex-wrap:wrap; gap:4px; min-width:0; padding-bottom:8px; }
+    .saved-views button { flex:0 0 auto; white-space:nowrap; }
+    .mode-toggle { display:flex; align-items:center; flex-wrap:nowrap; gap:4px; padding-bottom:8px; }
+    .mode-toggle button { flex:0 0 auto; white-space:nowrap; }
     .ticket-view-toolbar button.active { color:var(--mat-sys-primary); background:var(--mat-sys-primary-container); }
     .view-count { margin-left:4px; opacity:.7; font-size:11px; }
     .ticket-board { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; align-items:start; }
@@ -353,7 +356,11 @@ export class JqlQueryDialogComponent {
     .ticket-board-card:hover, .ticket-board-card:focus-visible { border-color:var(--mat-sys-primary); outline:none; }
     .ticket-board-key { color:var(--mat-sys-primary); font:600 11px/1.2 monospace; }
     .ticket-board-meta, .ticket-board-empty { color:var(--mat-sys-on-surface-variant); font-size:11px; }
-    @media (max-width:900px) { .ticket-board { grid-template-columns:1fr; } }
+    @media (max-width:900px) {
+      .ticket-board { grid-template-columns:1fr; }
+      .ticket-view-toolbar { grid-template-columns:1fr; }
+      .mode-toggle { justify-self:start; }
+    }
     :host-context(html.cs-theme-lcars) .ticket-view-toolbar { border-color:#FF9933; font-family:'Antonio','Eurostile',sans-serif; text-transform:uppercase; }
     :host-context(html.cs-theme-lcars) .ticket-view-toolbar button.active { background:#FFCC66; color:#000; border-radius:14px; }
     :host-context(html.cs-theme-holo) .ticket-view-toolbar { border-color:rgba(83,205,255,.38); }
