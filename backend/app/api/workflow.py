@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_db
-from app.models.workflow import WorkSession
+from app.models.workflow import ComputerSession, WorkSession
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
 
@@ -22,6 +22,7 @@ class WorkSessionCreate(BaseModel):
     title: str
     jira_key: str | None = None
     jira_issue_id: str | None = None
+    jira_connector_id: uuid.UUID | None = None
     alert_id: str | None = None
     computer_session_id: str | None = None
     category: str | None = None
@@ -46,6 +47,7 @@ class WorkSessionUpdate(BaseModel):
     gitlab_branch: str | None = None
     gitlab_mr_iid: int | None = None
     gitlab_mr_url: str | None = None
+    computer_session_id: str | None = None
 
 
 class WorkNoteAdd(BaseModel):
@@ -90,6 +92,7 @@ def _to_dict(s: WorkSession, jira_base_url: str | None = None) -> dict:
         "user_id": str(s.user_id),
         "jira_key": s.jira_key,
         "jira_issue_id": s.jira_issue_id,
+        "jira_connector_id": str(s.jira_connector_id) if s.jira_connector_id else None,
         "jira_browse_url": browse_url,
         "alert_id": str(s.alert_id) if s.alert_id else None,
         "computer_session_id": s.computer_session_id,
@@ -119,7 +122,12 @@ def _to_dict(s: WorkSession, jira_base_url: str | None = None) -> dict:
     }
 
 
-async def _get_jira_base_url(db: AsyncSession, jira_key: str | None = None) -> str | None:
+async def _get_jira_base_url(
+    db: AsyncSession,
+    jira_key: str | None = None,
+    connector_id: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
+) -> str | None:
     """Return the base URL of the Jira connector that owns this issue key.
 
     Checks both 'jira' and 'jira_sd' connector types. When multiple connectors
@@ -131,13 +139,19 @@ async def _get_jira_base_url(db: AsyncSession, jira_key: str | None = None) -> s
     from app.core.security import decrypt_credentials
     from app.services.connectors.jira import JiraConnector
 
-    result = await db.execute(
-        select(ConnectorConfig).where(
-            ConnectorConfig.type.in_(["jira", "jira_sd"]),
-            ConnectorConfig.enabled == True,
-        )
+    query = select(ConnectorConfig).where(
+        ConnectorConfig.type.in_(["jira", "jira_sd"]),
+        ConnectorConfig.enabled.is_(True),
     )
+    if user_id:
+        query = query.where(
+            (ConnectorConfig.owner_user_id == user_id) |
+            ConnectorConfig.owner_user_id.is_(None)
+        )
+    result = await db.execute(query)
     connectors = result.scalars().all()
+    if connector_id:
+        connectors = [conn for conn in connectors if conn.id == connector_id]
     if not connectors:
         return None
     if not jira_key or len(connectors) == 1:
@@ -181,11 +195,16 @@ async def _build_ticket_context(s: WorkSession, db: AsyncSession) -> str:
 
     if s.jira_key:
         try:
+            query = select(ConnectorConfig).where(
+                ConnectorConfig.type.in_(("jira", "jira_sd")),
+                ConnectorConfig.enabled.is_(True),
+                ((ConnectorConfig.owner_user_id == s.user_id) |
+                 ConnectorConfig.owner_user_id.is_(None)),
+            )
+            if s.jira_connector_id:
+                query = query.where(ConnectorConfig.id == s.jira_connector_id)
             conn_result = await db.execute(
-                select(ConnectorConfig)
-                .where(ConnectorConfig.type == "jira", ConnectorConfig.enabled.is_(True))
-                .order_by(ConnectorConfig.owner_user_id.is_(None))
-                .limit(1)
+                query.order_by(ConnectorConfig.owner_user_id.is_(None)).limit(1)
             )
             conn = conn_result.scalar_one_or_none()
             if conn:
@@ -226,8 +245,23 @@ async def list_sessions(
     if status:
         q = q.where(WorkSession.status == status)
     result = await db.execute(q)
-    jira_url = await _get_jira_base_url(db)
-    return [_to_dict(s, jira_url) for s in result.scalars().all()]
+    sessions = list(result.scalars().all())
+    connector_ids = {s.jira_connector_id for s in sessions if s.jira_connector_id}
+    connector_urls: dict[uuid.UUID, str] = {}
+    if connector_ids:
+        from app.models.connector import ConnectorConfig
+        connector_result = await db.execute(select(ConnectorConfig).where(
+            ConnectorConfig.id.in_(connector_ids),
+            ConnectorConfig.enabled.is_(True),
+            ((ConnectorConfig.owner_user_id == user.id) |
+             ConnectorConfig.owner_user_id.is_(None)),
+        ))
+        connector_urls = {conn.id: conn.base_url for conn in connector_result.scalars().all()}
+    legacy_url = await _get_jira_base_url(db, user_id=user.id)
+    return [
+        _to_dict(s, connector_urls.get(s.jira_connector_id) if s.jira_connector_id else legacy_url)
+        for s in sessions
+    ]
 
 
 @router.post("", status_code=201)
@@ -238,13 +272,44 @@ async def create_session(
 ):
     from app.services.workflow_ai import calculate_priority
 
+    if body.jira_connector_id and body.jira_issue_id:
+        linked_computer = (await db.execute(
+            select(ComputerSession).where(
+                ComputerSession.user_id == user.id,
+                ComputerSession.ticket_connector_id == body.jira_connector_id,
+                ComputerSession.ticket_issue_id == body.jira_issue_id,
+            )
+        )).scalar_one_or_none()
+        existing = (await db.execute(
+            select(WorkSession)
+            .where(
+                WorkSession.user_id == user.id,
+                WorkSession.jira_connector_id == body.jira_connector_id,
+                WorkSession.jira_issue_id == body.jira_issue_id,
+                WorkSession.status.notin_(("closed", "resolved")),
+            )
+            .order_by(WorkSession.updated_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if existing:
+            if linked_computer and not existing.computer_session_id:
+                existing.computer_session_id = linked_computer.id
+                await db.commit()
+            return _to_dict(existing, await _get_jira_base_url(
+                db, existing.jira_key, existing.jira_connector_id,
+                user.id,
+            ))
+    else:
+        linked_computer = None
+
     session = WorkSession(
         user_id=user.id,
         title=body.title,
         jira_key=body.jira_key,
         jira_issue_id=body.jira_issue_id,
+        jira_connector_id=body.jira_connector_id,
         alert_id=uuid.UUID(body.alert_id) if body.alert_id else None,
-        computer_session_id=body.computer_session_id,
+        computer_session_id=body.computer_session_id or (linked_computer.id if linked_computer else None),
         category=body.category,
         subcategory=body.subcategory,
         impact=body.impact,
@@ -261,7 +326,10 @@ async def create_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
-    return _to_dict(session, await _get_jira_base_url(db, session.jira_key))
+    return _to_dict(session, await _get_jira_base_url(
+        db, session.jira_key, session.jira_connector_id,
+        user.id,
+    ))
 
 
 @router.get("/{session_id}")
@@ -271,7 +339,7 @@ async def get_session(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     s = await _get_session(session_id, user.id, db)
-    jira_url = await _get_jira_base_url(db, s.jira_key)
+    jira_url = await _get_jira_base_url(db, s.jira_key, s.jira_connector_id, user.id)
     return _to_dict(s, jira_url)
 
 
@@ -391,6 +459,8 @@ async def post_comment_to_jira(
         ).order_by(CC.owner_user_id.is_(None), CC.updated_at.desc())
     )
     connectors = conn_result.scalars().all()
+    if s.jira_connector_id:
+        connectors = [conn for conn in connectors if conn.id == s.jira_connector_id]
     if not connectors:
         raise HTTPException(status_code=503, detail="Jira nicht konfiguriert")
 

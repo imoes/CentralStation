@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete, func, update
 
 from app.api.deps import CurrentUser, get_db
-from app.models.workflow import ComputerSession, UserPreference
+from app.models.workflow import ComputerSession, UserPreference, WorkSession
 from app.models.connector import ConnectorConfig
 from app.services.codex_models import extract_codex_model_ids
 
@@ -876,6 +876,20 @@ async def create_session(
         ticket_key=(body.ticket_key or None),
         context_hash=(body.context_hash or None),
     ))
+    if body.ticket_connector_id and body.ticket_issue_id:
+        work_session = (await db.execute(
+            select(WorkSession)
+            .where(
+                WorkSession.user_id == user.id,
+                WorkSession.jira_connector_id == body.ticket_connector_id,
+                WorkSession.jira_issue_id == body.ticket_issue_id,
+                WorkSession.status.notin_(("closed", "resolved")),
+            )
+            .order_by(WorkSession.updated_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if work_session and not work_session.computer_session_id:
+            work_session.computer_session_id = sid
     await db.commit()
     log.info("Computer session %s created for user %s (label=%s, external_id=%s)",
              sid[:8], user.id, label, body.external_id or "-")

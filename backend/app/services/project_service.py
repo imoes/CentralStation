@@ -146,6 +146,7 @@ async def get_project_graph(db: AsyncSession, project_id: str) -> PlanGraphRespo
             pos_x=s.pos_x,
             pos_y=s.pos_y,
             jira_connector_type=s.jira_connector_type,
+            jira_connector_id=s.jira_connector_id,
             jira_key=s.jira_key,
             jira_status=s.jira_status,
             jira_status_category=s.jira_status_category,
@@ -239,17 +240,21 @@ async def update_step(db: AsyncSession, step_id: str, project_id: str, **kwargs)
         else:
             setattr(step, k, v)
     step.updated_at = datetime.now(timezone.utc)
-    await db.commit()
-    await db.refresh(step)
-    await _broadcast(project_id)
 
-    # Push changed fields to Jira (non-blocking — failure never aborts the save)
+    # A linked step has one confirmed state. Do not report a successful local save
+    # when Jira rejected the same change.
     if step.jira_key and jira_changes:
         try:
             await _push_step_to_jira(db, step, jira_changes)
         except Exception as exc:
+            await db.rollback()
             log.warning("Jira push failed for step %s: %s", step_id, exc)
+            from fastapi import HTTPException
+            raise HTTPException(424, f"Jira-Synchronisation fehlgeschlagen: {exc}") from exc
 
+    await db.commit()
+    await db.refresh(step)
+    await _broadcast(project_id)
     return step
 
 
@@ -259,10 +264,21 @@ async def _push_step_to_jira(db: AsyncSession, step: ProjectStep, changes: dict[
     from app.services.connectors.jira import JiraConnector
 
     connector_type = step.jira_connector_type or "jira"
-    connector = await _get_preferred_connector(db, connector_type, None)
+    connector = None
+    if step.jira_connector_id:
+        from app.models.connector import ConnectorConfig
+        connector = (await db.execute(
+            select(ConnectorConfig).where(
+                ConnectorConfig.id == step.jira_connector_id,
+                ConnectorConfig.enabled.is_(True),
+            )
+        )).scalar_one_or_none()
+    if not connector:
+        connector = await _get_preferred_connector(db, connector_type, None)
     if not connector:
         return
-    jira = JiraConnector(connector)
+    from app.core.security import decrypt_credentials
+    jira = JiraConnector(base_url=connector.base_url, credentials=decrypt_credentials(connector.encrypted_credentials))
 
     # Map priority to Jira priority names
     PRIORITY_MAP = {
@@ -305,25 +321,32 @@ async def pull_step_from_jira(db: AsyncSession, step_id: str, project_id: str) -
     from app.services.connectors.jira import JiraConnector
 
     connector_type = step.jira_connector_type or "jira"
-    connector = await _get_preferred_connector(db, connector_type, None)
+    connector = None
+    if step.jira_connector_id:
+        from app.models.connector import ConnectorConfig
+        connector = (await db.execute(select(ConnectorConfig).where(
+            ConnectorConfig.id == step.jira_connector_id,
+            ConnectorConfig.enabled.is_(True),
+        ))).scalar_one_or_none()
+    if not connector:
+        connector = await _get_preferred_connector(db, connector_type, None)
     if not connector:
         from fastapi import HTTPException
         raise HTTPException(404, "Jira connector not found")
 
-    jira = JiraConnector(connector)
+    from app.core.security import decrypt_credentials
+    jira = JiraConnector(base_url=connector.base_url, credentials=decrypt_credentials(connector.encrypted_credentials))
     issue = await jira.get_issue_detail(step.jira_key)
-    fields = issue.get("fields", {})
 
-    step.jira_status = fields.get("status", {}).get("name")
-    cat = fields.get("status", {}).get("statusCategory", {}).get("key", "")
+    step.jira_status = issue.get("status")
+    cat = issue.get("status_category") or ""
     step.jira_status_category = _map_jira_category(cat)
     step.jira_synced_at = datetime.now(timezone.utc)
     _derive_step_status(step)
 
     # Sync back assignee if available
-    assignee = fields.get("assignee") or {}
-    if assignee.get("displayName"):
-        step.assignee = assignee["displayName"]
+    if issue.get("assignee"):
+        step.assignee = issue["assignee"]
 
     step.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -462,14 +485,16 @@ async def attach_jira_ticket(
         from fastapi import HTTPException
         raise HTTPException(404, f"No connector of type '{connector_type}' found")
 
-    jira = JiraConnector(connector)
+    from app.core.security import decrypt_credentials
+    jira = JiraConnector(base_url=connector.base_url, credentials=decrypt_credentials(connector.encrypted_credentials))
     issue = await jira.get_issue_detail(jira_key)
 
     step.jira_connector_type = connector_type
+    step.jira_connector_id = connector.id
     step.jira_key = issue.get("key") or jira_key
     step.jira_issue_id = str(issue.get("id") or "")
-    step.jira_status = issue.get("fields", {}).get("status", {}).get("name")
-    cat = issue.get("fields", {}).get("status", {}).get("statusCategory", {}).get("key", "")
+    step.jira_status = issue.get("status")
+    cat = issue.get("status_category") or ""
     step.jira_status_category = _map_jira_category(cat)
     step.jira_synced_at = datetime.now(timezone.utc)
     _derive_step_status(step)
@@ -500,8 +525,10 @@ async def create_jira_ticket_for_step(
         from fastapi import HTTPException
         raise HTTPException(404, f"No connector of type '{connector_type}' found")
 
-    jira = JiraConnector(connector)
-    proj_key = connector.config.get("project_key", "IMIT")
+    from app.core.security import decrypt_credentials
+    connector_credentials = decrypt_credentials(connector.encrypted_credentials)
+    jira = JiraConnector(base_url=connector.base_url, credentials=connector_credentials)
+    proj_key = connector_credentials.get("project_key", "IMIT")
 
     fields: dict[str, Any] = {
         "project": {"key": proj_key},
@@ -515,6 +542,7 @@ async def create_jira_ticket_for_step(
     issue = await jira.create_issue(fields)
 
     step.jira_connector_type = connector_type
+    step.jira_connector_id = connector.id
     step.jira_key = issue.get("key")
     step.jira_issue_id = str(issue.get("id") or "")
     step.jira_status = "Open"
@@ -545,18 +573,29 @@ async def sync_jira_statuses(db: AsyncSession, project_id: str) -> int:
     # Group by connector_type for batch queries
     by_connector: dict[str, list[ProjectStep]] = {}
     for s in steps:
-        ct = s.jira_connector_type or "jira"
-        by_connector.setdefault(ct, []).append(s)
+        connector_key = str(s.jira_connector_id) if s.jira_connector_id else (s.jira_connector_type or "jira")
+        by_connector.setdefault(connector_key, []).append(s)
 
     updated = 0
-    for connector_type, csteps in by_connector.items():
+    for connector_key, csteps in by_connector.items():
         keys = [s.jira_key for s in csteps if s.jira_key]
         if not keys:
             continue
-        connector = await _get_preferred_connector(db, connector_type, None)
+        connector = None
+        if csteps[0].jira_connector_id:
+            from app.models.connector import ConnectorConfig
+            connector = (await db.execute(select(ConnectorConfig).where(
+                ConnectorConfig.id == csteps[0].jira_connector_id,
+                ConnectorConfig.enabled.is_(True),
+            ))).scalar_one_or_none()
+        if not connector:
+            connector = await _get_preferred_connector(
+                db, csteps[0].jira_connector_type or "jira", None,
+            )
         if not connector:
             continue
-        jira = JiraConnector(connector)
+        from app.core.security import decrypt_credentials
+        jira = JiraConnector(base_url=connector.base_url, credentials=decrypt_credentials(connector.encrypted_credentials))
         jql = f'issueKey in ({",".join(keys)})'
         issues = await jira.search_issues(jql, fields=["status"])
         key_to_issue: dict[str, dict] = {i["key"]: i for i in issues}

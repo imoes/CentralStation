@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, signal, Inject, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, computed, Inject, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -23,6 +23,7 @@ import { WorkSessionDialogComponent } from '../workflow/work-session-dialog.comp
 import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-create-dialog.component';
 import { environment } from '../../../environments/environment';
 import { I18nService } from '../../core/services/i18n.service';
+import { ActivatedRoute } from '@angular/router';
 
 interface JqlQuery {
   id: string;
@@ -34,7 +35,13 @@ interface JqlQuery {
 }
 
 interface JiraIssue {
+  id?: string;
   key: string;
+  _centralstation?: {
+    connector_id: string;
+    issue_id: string;
+    base_url?: string;
+  };
   fields: {
     summary: string;
     status: { name: string; statusCategory?: { key: string } };
@@ -160,10 +167,55 @@ export class JqlQueryDialogComponent {
         </div>
       </div>
 
-      @if (loadingTickets()) {
+      <div class="ticket-view-toolbar">
+        <div class="saved-views" role="tablist" aria-label="Gespeicherte Ticketansichten">
+          @for (group of ticketGroups(); track group.id) {
+            <button mat-button role="tab" [class.active]="selectedGroupId() === group.id"
+                    [attr.aria-selected]="selectedGroupId() === group.id"
+                    (click)="selectedGroupId.set(group.id)">
+              {{ group.name }} <span class="view-count">{{ group.issues.length }}</span>
+            </button>
+          }
+        </div>
+        <div class="mode-toggle" aria-label="Darstellung">
+          <button mat-button [class.active]="viewMode() === 'list'" (click)="viewMode.set('list')">
+            <mat-icon>view_list</mat-icon> Liste
+          </button>
+          <button mat-button [class.active]="viewMode() === 'board'" (click)="viewMode.set('board')">
+            <mat-icon>view_kanban</mat-icon> Board
+          </button>
+        </div>
+      </div>
+
+      @if (viewMode() === 'board') {
+        <div class="ticket-board" aria-label="Ticket-Board">
+          @for (column of ticketBoardColumns(); track column.id) {
+            <section class="ticket-board-column">
+              <header>
+                <span>{{ column.label }}</span>
+                <span class="view-count">{{ column.issues.length }}</span>
+              </header>
+              <div class="ticket-board-cards">
+                @for (issue of column.issues; track issueIdentity(issue)) {
+                  <button class="ticket-board-card" (click)="openSession(issue)">
+                    <span class="ticket-board-key">{{ issue.key }}</span>
+                    <strong>{{ issue.fields.summary }}</strong>
+                    <span class="ticket-board-meta">
+                      {{ issue.fields.status.name }}
+                      @if (issue.fields.assignee?.displayName) { · {{ issue.fields.assignee?.displayName }} }
+                    </span>
+                  </button>
+                } @empty {
+                  <span class="ticket-board-empty">Keine Vorgänge</span>
+                }
+              </div>
+            </section>
+          }
+        </div>
+      } @else if (loadingTickets()) {
         <div class="spinner-center"><mat-spinner diameter="40"></mat-spinner></div>
       } @else {
-        @for (group of ticketGroups(); track group.id) {
+        @for (group of visibleTicketGroups(); track group.id) {
           <mat-card class="group-card">
             <mat-card-header>
               <mat-card-title>
@@ -180,7 +232,7 @@ export class JqlQueryDialogComponent {
               <div class="group-empty">{{ i18n.t('my_tickets.no_tickets') }}</div>
             } @else {
               <div class="issue-list">
-                @for (issue of group.issues; track issue.key) {
+                @for (issue of group.issues; track (issue._centralstation?.connector_id ?? '') + ':' + (issue._centralstation?.issue_id ?? issue.key)) {
                   <div class="issue-row" (click)="openSession(issue)">
                     @if (hasUnread(issue)) {
                       <span class="unread-dot" matTooltip="New activity since your last visit"></span>
@@ -201,10 +253,10 @@ export class JqlQueryDialogComponent {
                       </span>
                       <span class="updated-label">{{ issue.fields.updated | date:'dd.MM. HH:mm' }}</span>
                       <button mat-icon-button class="console-btn"
-                              [disabled]="openingInConsole().has(issue.key)"
+                              [disabled]="openingInConsole().has(issueIdentity(issue))"
                               (click)="openInConsole(issue, $event)"
                               matTooltip="In der KI-Konsole bearbeiten — öffnet das Ticket mit Beschreibung und Verlauf als Kontext">
-                        @if (openingInConsole().has(issue.key)) {
+                        @if (openingInConsole().has(issueIdentity(issue))) {
                           <mat-spinner diameter="16"></mat-spinner>
                         } @else {
                           <mat-icon>smart_toy</mat-icon>
@@ -289,6 +341,23 @@ export class JqlQueryDialogComponent {
     .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
     .page-header h2 { margin: 0; }
     .header-actions { display: flex; gap: 8px; }
+    .ticket-view-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px; border-bottom:1px solid var(--mat-sys-outline-variant); }
+    .saved-views, .mode-toggle { display:flex; align-items:center; gap:4px; overflow:auto; }
+    .ticket-view-toolbar button.active { color:var(--mat-sys-primary); background:var(--mat-sys-primary-container); }
+    .view-count { margin-left:4px; opacity:.7; font-size:11px; }
+    .ticket-board { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; align-items:start; }
+    .ticket-board-column { min-width:0; border:1px solid var(--mat-sys-outline-variant); border-radius:10px; background:var(--mat-sys-surface-container-low); overflow:hidden; }
+    .ticket-board-column > header { display:flex; justify-content:space-between; padding:10px 12px; font-weight:600; border-bottom:1px solid var(--mat-sys-outline-variant); }
+    .ticket-board-cards { display:flex; flex-direction:column; gap:8px; padding:10px; min-height:90px; }
+    .ticket-board-card { display:flex; flex-direction:column; gap:5px; width:100%; padding:10px; border:1px solid var(--mat-sys-outline-variant); border-radius:8px; background:var(--mat-sys-surface); color:var(--mat-sys-on-surface); text-align:left; cursor:pointer; }
+    .ticket-board-card:hover, .ticket-board-card:focus-visible { border-color:var(--mat-sys-primary); outline:none; }
+    .ticket-board-key { color:var(--mat-sys-primary); font:600 11px/1.2 monospace; }
+    .ticket-board-meta, .ticket-board-empty { color:var(--mat-sys-on-surface-variant); font-size:11px; }
+    @media (max-width:900px) { .ticket-board { grid-template-columns:1fr; } }
+    :host-context(html.cs-theme-lcars) .ticket-view-toolbar { border-color:#FF9933; font-family:'Antonio','Eurostile',sans-serif; text-transform:uppercase; }
+    :host-context(html.cs-theme-lcars) .ticket-view-toolbar button.active { background:#FFCC66; color:#000; border-radius:14px; }
+    :host-context(html.cs-theme-holo) .ticket-view-toolbar { border-color:rgba(83,205,255,.38); }
+    :host-context(html.cs-theme-holo) .ticket-view-toolbar button.active { background:rgba(44,163,210,.18); color:#9fe8ff; }
     .spinner-center { display: flex; justify-content: center; padding: 60px; }
     .group-card { margin-bottom: 16px; }
     mat-card-title { display: flex; align-items: center; gap: 8px; }
@@ -336,6 +405,22 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
   readonly i18n = inject(I18nService);
   private computerService = inject(ComputerService);
   ticketGroups = signal<TicketGroup[]>([]);
+  selectedGroupId = signal<string>('');
+  viewMode = signal<'list' | 'board'>('list');
+  visibleTicketGroups = computed(() => {
+    const groups = this.ticketGroups();
+    const selected = groups.find(group => group.id === this.selectedGroupId());
+    return selected ? [selected] : groups.slice(0, 1);
+  });
+  ticketBoardColumns = computed(() => {
+    const issues = this.visibleTicketGroups()[0]?.issues ?? [];
+    return [
+      { id: 'todo', label: 'Offen', issues: issues.filter(issue => this.statusCategory(issue) === 'todo') },
+      { id: 'progress', label: 'In Arbeit', issues: issues.filter(issue => this.statusCategory(issue) === 'progress') },
+      { id: 'done', label: 'Erledigt', issues: issues.filter(issue => this.statusCategory(issue) === 'done') },
+    ];
+  });
+  private deepLinkedTicketOpened = false;
   /** Keys currently being handed over to the console (spinner on the row button). */
   openingInConsole = signal<Set<string>>(new Set());
   queries = signal<JqlQuery[]>([]);
@@ -352,9 +437,11 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
     private http: HttpClient,
     private dialog: MatDialog,
     private snackBar: MatSnackBar,
+    private route: ActivatedRoute,
   ) {}
 
   ngOnInit() {
+    this.viewMode.set(this.route.snapshot.data['view'] === 'board' ? 'board' : 'list');
     this.http.get<{ ticket_seen_map: Record<string, string> }>(`${environment.apiUrl}/preferences`)
       .subscribe({
         next: prefs => {
@@ -373,14 +460,26 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
     this.http.patch(`${environment.apiUrl}/preferences`, { ticket_seen_map: this.seenMap }).subscribe();
   }
 
+  issueIdentity(issue: JiraIssue): string {
+    const ref = issue._centralstation;
+    return ref ? `${ref.connector_id}:${ref.issue_id}` : issue.key;
+  }
+
+  private statusCategory(issue: JiraIssue): 'todo' | 'progress' | 'done' {
+    const category = issue.fields.status?.statusCategory?.key?.toLowerCase();
+    if (category === 'done') return 'done';
+    if (category === 'indeterminate' || category === 'in_progress') return 'progress';
+    return 'todo';
+  }
+
   hasUnread(issue: JiraIssue): boolean {
-    const seen = this.seenMap[issue.key];
+    const seen = this.seenMap[this.issueIdentity(issue)];
     if (!seen) return false;
     return new Date(issue.fields.updated) > new Date(seen);
   }
 
   markSeen(issue: JiraIssue) {
-    this.seenMap[issue.key] = new Date().toISOString();
+    this.seenMap[this.issueIdentity(issue)] = new Date().toISOString();
     this._persistSeenMap();
   }
 
@@ -393,18 +492,19 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
         const allKeys = new Set<string>();
         for (const group of data) {
           for (const issue of group.issues) {
-            allKeys.add(issue.key);
+            const identity = this.issueIdentity(issue);
+            allKeys.add(identity);
             const isDone = issue.fields.status?.statusCategory?.key === 'done';
             if (isDone) {
               // Closed tickets: remove from seen map
-              if (issue.key in this.seenMap) {
-                delete this.seenMap[issue.key];
+              if (identity in this.seenMap) {
+                delete this.seenMap[identity];
                 changed = true;
               }
             } else {
               // Open tickets: add to seen map if not tracked yet
-              if (!(issue.key in this.seenMap)) {
-                this.seenMap[issue.key] = now;
+              if (!(identity in this.seenMap)) {
+                this.seenMap[identity] = now;
                 changed = true;
               }
             }
@@ -412,10 +512,30 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
         }
         if (changed) this._persistSeenMap();
         this.ticketGroups.set(data);
+        if (!this.selectedGroupId() || !data.some(group => group.id === this.selectedGroupId())) {
+          this.selectedGroupId.set(data[0]?.id ?? '');
+        }
         this.loadingTickets.set(false);
+        this.openDeepLinkedTicket(data);
       },
       error: () => this.loadingTickets.set(false),
     });
+  }
+
+  private openDeepLinkedTicket(groups: TicketGroup[]): void {
+    if (this.deepLinkedTicketOpened) return;
+    const key = this.route.snapshot.queryParamMap.get('ticket');
+    const connectorId = this.route.snapshot.queryParamMap.get('connector');
+    if (!key) return;
+    const issue = groups.flatMap(group => group.issues).find(candidate =>
+      candidate.key === key && (!connectorId || candidate._centralstation?.connector_id === connectorId)
+    );
+    if (!issue) return;
+    this.deepLinkedTicketOpened = true;
+    const group = groups.find(candidate => candidate.issues.includes(issue));
+    if (group) this.selectedGroupId.set(group.id);
+    this.viewMode.set('list');
+    this.openSession(issue);
   }
 
   loadQueries() {
@@ -545,19 +665,34 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
   openInConsole(issue: JiraIssue, ev: Event) {
     ev.stopPropagation();   // the row itself opens the work-session dialog
     const key = issue.key;
-    if (this.openingInConsole().has(key)) return;
-    this.openingInConsole.update(s => new Set(s).add(key));
+    const identity = this.issueIdentity(issue);
+    if (this.openingInConsole().has(identity)) return;
+    this.openingInConsole.update(s => new Set(s).add(identity));
 
-    this.http.get<{ prompt: string; label: string }>(
-      `${environment.apiUrl}/jira-view/hermes-context?issue_key=${encodeURIComponent(key)}`
+    const connectorParam = issue._centralstation?.connector_id
+      ? `&connector_id=${encodeURIComponent(issue._centralstation.connector_id)}` : '';
+    this.http.get<{
+      prompt: string;
+      label: string;
+      connector_id: string;
+      issue_id: string;
+      issue_key: string;
+    }>(
+      `${environment.apiUrl}/jira-view/hermes-context?issue_key=${encodeURIComponent(key)}${connectorParam}`
     ).subscribe({
       next: data => {
-        this.openingInConsole.update(s => { const n = new Set(s); n.delete(key); return n; });
+        this.openingInConsole.update(s => { const n = new Set(s); n.delete(identity); return n; });
         this.markSeen(issue);
-        this.computerService.openWithContext(data.prompt, data.label || key, key);
+        this.computerService.openWithContext(
+          data.prompt,
+          data.label || key,
+          undefined,
+          undefined,
+          { connectorId: data.connector_id, issueId: data.issue_id, key: data.issue_key },
+        );
       },
       error: err => {
-        this.openingInConsole.update(s => { const n = new Set(s); n.delete(key); return n; });
+        this.openingInConsole.update(s => { const n = new Set(s); n.delete(identity); return n; });
         this.snackBar.open(
           err?.error?.detail ?? 'Ticket-Kontext konnte nicht geladen werden', '',
           { duration: 4000 },
@@ -574,7 +709,8 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
       data: {
         jira_key: issue.key,
         title: issue.fields.summary,
-        jira_issue_id: issue.key,
+        jira_issue_id: issue._centralstation?.issue_id ?? issue.id ?? issue.key,
+        jira_connector_id: issue._centralstation?.connector_id,
       },
     });
     // After closing, the ticket may have new activity (e.g. a comment just posted) →

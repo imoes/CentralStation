@@ -212,6 +212,9 @@ class WorkSession(Base):
     )
     jira_key: Mapped[str | None] = mapped_column(String(50), index=True)
     jira_issue_id: Mapped[str | None] = mapped_column(String(50))
+    jira_connector_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("connector_configs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     alert_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("alerts.id", ondelete="SET NULL")
     )

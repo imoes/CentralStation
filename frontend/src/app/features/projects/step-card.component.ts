@@ -7,6 +7,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { Router } from '@angular/router';
 import { ProjectsService, StepNode } from '../../core/services/projects.service';
 
 interface JiraSection {
@@ -35,7 +36,7 @@ const PRIORITY_COLORS: Record<string, string> = {
             {{ editState.jira_issue_type | uppercase }}
           </span>
           @if (step.jira_key) {
-            <a class="jira-key" [href]="jiraUrl()" target="_blank">{{ step.jira_key }}</a>
+            <button class="jira-key link-button" (click)="openTicket()">{{ step.jira_key }}</button>
           }
           <div class="card-header-actions">
             <button mat-icon-button [matTooltip]="'Speichern'" (click)="save()">
@@ -202,9 +203,9 @@ const PRIORITY_COLORS: Record<string, string> = {
               <span class="jira-status-badge" [class]="'cat-' + (step.jira_status_category ?? 'new')">
                 {{ step.jira_status ?? 'Unbekannt' }}
               </span>
-              <a class="jira-key-link" [href]="jiraUrl()" target="_blank">
+              <button class="jira-key-link link-button" (click)="openTicket()">
                 {{ step.jira_key }} öffnen
-              </a>
+              </button>
               <button mat-icon-button [matTooltip]="'Von Jira aktualisieren'" (click)="pullFromJira()" [disabled]="syncing()">
                 <mat-icon [class.spin]="syncing()">sync</mat-icon>
               </button>
@@ -402,9 +403,11 @@ const PRIORITY_COLORS: Record<string, string> = {
     }
     .impl-bash-header mat-icon { font-size: 13px; width: 13px; height: 13px; }
     .impl-bash-cmd { margin: 0; padding: 8px 12px; font-family: 'Fira Code', monospace; font-size: 0.8rem; background: #111; color: #90EE90; overflow-x: auto; white-space: pre; }
+    .link-button { border: 0; padding: 0; background: none; font: inherit; color: inherit; cursor: pointer; text-decoration: underline; }
   `],
 })
 export class StepCardComponent implements OnChanges {
+  private router = inject(Router);
   @Input() step: StepNode | null = null;
   @Input() projectId = '';
   @Output() close = new EventEmitter<void>();
@@ -498,9 +501,14 @@ export class StepCardComponent implements OnChanges {
 
   priorityColor(p: string): string { return PRIORITY_COLORS[p] ?? '#FFCC99'; }
 
-  jiraUrl(): string {
-    if (!this.step?.jira_key) return '#';
-    return `https://servicedesk.example.com/browse/${this.step.jira_key}`;
+  openTicket(): void {
+    if (!this.step?.jira_key) return;
+    this.router.navigate(['/my-tickets'], {
+      queryParams: {
+        ticket: this.step.jira_key,
+        connector: this.step.jira_connector_id || undefined,
+      },
+    });
   }
 
   save() {
@@ -574,7 +582,7 @@ export class StepCardComponent implements OnChanges {
   unlinkTicket() {
     if (!this.step) return;
     this.svc.updateStep(this.projectId, this.step.id, {
-      jira_connector_type: null, jira_key: null, jira_issue_id: null,
+      jira_connector_type: null, jira_connector_id: null, jira_key: null, jira_issue_id: null,
     } as any).subscribe({ next: () => this.ticketChanged.emit() });
   }
 }

@@ -88,7 +88,7 @@ async def _import_jira_cards(db: AsyncSession, current_user: CurrentUser) -> Non
         if connector:
             connectors.append(connector)
 
-    seen_keys: set[str] = set()
+    seen_issues: set[tuple[str, str]] = set()
     for connector in connectors:
         creds = decrypt_credentials(connector.encrypted_credentials)
         jira = JiraConnector(base_url=connector.base_url, credentials=creds)
@@ -105,9 +105,11 @@ async def _import_jira_cards(db: AsyncSession, current_user: CurrentUser) -> Non
 
         for issue in issues:
             key = issue.get("key")
-            if not key or key in seen_keys:
+            issue_id = str(issue.get("id") or key or "")
+            identity = (str(connector.id), issue_id)
+            if not key or identity in seen_issues:
                 continue
-            seen_keys.add(key)
+            seen_issues.add(identity)
 
             fields = issue.get("fields") or {}
             status = _map_jira_status((fields.get("status") or {}).get("name"))
@@ -119,7 +121,10 @@ async def _import_jira_cards(db: AsyncSession, current_user: CurrentUser) -> Non
             if not isinstance(description, str):
                 description = None
 
-            result = await db.execute(select(KanbanCard).where(KanbanCard.jira_key == key))
+            result = await db.execute(select(KanbanCard).where(
+                KanbanCard.jira_connector_id == connector.id,
+                KanbanCard.jira_issue_id == issue_id,
+            ))
             card = result.scalar_one_or_none()
             if card:
                 card.title = summary
@@ -140,7 +145,8 @@ async def _import_jira_cards(db: AsyncSession, current_user: CurrentUser) -> Non
                     status=status,
                     priority=priority,
                     jira_key=key,
-                    jira_issue_id=issue.get("id"),
+                    jira_issue_id=issue_id,
+                    jira_connector_id=connector.id,
                     assigned_to=current_user.id,
                     ai_generated=False,
                     position=next_position,
@@ -149,7 +155,18 @@ async def _import_jira_cards(db: AsyncSession, current_user: CurrentUser) -> Non
     await db.commit()
 
 
-async def _get_jira_connector_for_user(db: AsyncSession, current_user: CurrentUser):
+async def _get_jira_connector_for_user(
+    db: AsyncSession, current_user: CurrentUser, card: KanbanCard | None = None,
+):
+    if card and card.jira_connector_id:
+        from app.models.connector import ConnectorConfig
+        connector = (await db.execute(select(ConnectorConfig).where(
+            ConnectorConfig.id == card.jira_connector_id,
+            ConnectorConfig.enabled.is_(True),
+            ((ConnectorConfig.owner_user_id == current_user.id) | ConnectorConfig.owner_user_id.is_(None)),
+        ))).scalar_one_or_none()
+        if connector:
+            return connector
     connector = await _get_preferred_connector(db, "jira", current_user.id)
     if connector:
         return connector
@@ -177,7 +194,7 @@ async def _sync_issue_fields(card: KanbanCard, current_user: CurrentUser, db: As
     from app.core.security import decrypt_credentials
     from app.services.connectors.jira import JiraConnector
 
-    connector = await _get_jira_connector_for_user(db, current_user)
+    connector = await _get_jira_connector_for_user(db, current_user, card)
     if not connector:
         raise HTTPException(424, "Kein persönlicher Jira- oder ServiceDesk-Connector verfügbar")
 
@@ -201,7 +218,7 @@ async def _sync_issue_status(card: KanbanCard, current_user: CurrentUser, db: As
     from app.core.security import decrypt_credentials
     from app.services.connectors.jira import JiraConnector
 
-    connector = await _get_jira_connector_for_user(db, current_user)
+    connector = await _get_jira_connector_for_user(db, current_user, card)
     if not connector:
         raise HTTPException(424, "Kein persönlicher Jira- oder ServiceDesk-Connector verfügbar")
 
@@ -370,6 +387,9 @@ async def jira_sync(
     existing_key = await jira.issue_exists_by_summary(project, card.title)
     if existing_key:
         card.jira_key = existing_key
+        detail = await jira.get_issue_detail(existing_key)
+        card.jira_issue_id = str(detail.get("id") or existing_key)
+        card.jira_connector_id = connector.id
         await db.commit()
         return {"jira_key": existing_key}
 
@@ -383,6 +403,8 @@ async def jira_sync(
         labels=["CentralStation"],
     )
     card.jira_key = issue.get("key")
+    card.jira_issue_id = str(issue.get("id") or card.jira_key or "")
+    card.jira_connector_id = connector.id
     await db.commit()
     return {"jira_key": card.jira_key}
 
@@ -405,6 +427,8 @@ async def get_card_jira_detail(
     from app.services.connectors.jira import JiraConnector
 
     connectors = await _get_all_jira_connectors(db, current_user.id)
+    if card.jira_connector_id:
+        connectors = [connector for connector in connectors if connector.id == card.jira_connector_id]
     if not connectors:
         return {"has_jira": True, "error": "Kein Jira-Connector verfügbar"}
 
@@ -445,6 +469,8 @@ async def add_card_jira_comment(
     from app.services.connectors.jira import JiraConnector
 
     connectors = await _get_all_jira_connectors(db, current_user.id)
+    if card.jira_connector_id:
+        connectors = [connector for connector in connectors if connector.id == card.jira_connector_id]
     if not connectors:
         raise HTTPException(424, "Kein Jira-Connector verfügbar")
 

@@ -8,6 +8,7 @@ export interface KanbanCard {
   status: KanbanStatus;
   priority: KanbanPriority;
   jira_key: string | null;
+  jira_connector_id?: string | null;
   assigned_to: string | null;
   alert_id: string | null;
   ai_generated: boolean;

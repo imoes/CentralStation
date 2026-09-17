@@ -34,6 +34,7 @@ class KanbanCardResponse(BaseModel):
     status: str
     priority: str
     jira_key: str | None
+    jira_connector_id: uuid.UUID | None
     assigned_to: uuid.UUID | None
     alert_id: uuid.UUID | None
     ai_generated: bool

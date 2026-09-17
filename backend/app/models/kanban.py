@@ -19,6 +19,9 @@ class KanbanCard(Base):
     priority: Mapped[str] = mapped_column(String(20), default="medium")
     jira_key: Mapped[str | None] = mapped_column(String(50), index=True)
     jira_issue_id: Mapped[str | None] = mapped_column(String(50))
+    jira_connector_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("connector_configs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     assigned_to: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )

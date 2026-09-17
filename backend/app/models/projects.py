@@ -68,6 +68,9 @@ class ProjectStep(Base):
     pos_y: Mapped[int | None] = mapped_column(Integer)
     # Jira issue linkage (one primary issue per step)
     jira_connector_type: Mapped[str | None] = mapped_column(String(30))   # jira | jira_sd
+    jira_connector_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("connector_configs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     jira_key: Mapped[str | None] = mapped_column(String(50), index=True)
     jira_issue_id: Mapped[str | None] = mapped_column(String(50))
     jira_status: Mapped[str | None] = mapped_column(String(100))
