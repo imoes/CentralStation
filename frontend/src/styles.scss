@@ -39,6 +39,50 @@ body {
 html, body { height: 100%; }
 body { margin: 0; font-family: Roboto, "Helvetica Neue", sans-serif; }
 
+/* Jira-rendered description and comment bodies. Jira supplies the HTML via
+   renderedFields/renderedBody; keeping these rules global lets every ticket view
+   present the same markup without duplicating renderer-specific component CSS. */
+.jira-rich-text { overflow-wrap: anywhere; }
+.jira-rich-text > :first-child { margin-top: 0; }
+.jira-rich-text > :last-child { margin-bottom: 0; }
+.jira-rich-text p { margin: 0 0 8px; }
+.jira-rich-text h1,
+.jira-rich-text h2,
+.jira-rich-text h3,
+.jira-rich-text h4,
+.jira-rich-text h5,
+.jira-rich-text h6 { margin: 14px 0 6px; line-height: 1.3; }
+.jira-rich-text ul,
+.jira-rich-text ol { margin: 6px 0; padding-left: 24px; }
+.jira-rich-text blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--mat-sys-outline);
+}
+.jira-rich-text code,
+.jira-rich-text pre {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  background: var(--mat-sys-surface-container-high);
+  border-radius: 4px;
+}
+.jira-rich-text code { padding: 1px 4px; }
+.jira-rich-text pre { padding: 10px; overflow-x: auto; white-space: pre; }
+.jira-rich-text table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  display: block;
+  overflow-x: auto;
+}
+.jira-rich-text th,
+.jira-rich-text td {
+  border: 1px solid var(--mat-sys-outline-variant);
+  padding: 5px 8px;
+  text-align: left;
+}
+.jira-rich-text img { max-width: 100%; height: auto; }
+.jira-rich-text a { color: var(--mat-sys-primary); }
+
 /* Global: Schrift 1px größer — alle rem-Werte skalieren proportional */
 html { font-size: 17px; }
 

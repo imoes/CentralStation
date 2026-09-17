@@ -84,7 +84,12 @@ import { I18nService } from '../../core/services/i18n.service';
         <div class="section-label">{{ i18n.t('common.description') }}</div>
         @if (card?.jira_key && jiraDetail()?.description) {
           <!-- Jira description read-only -->
-          <div class="description-block">{{ jiraDetail()!.description }}</div>
+          @if (jiraDetail()?.description_html) {
+            <div class="description-block jira-rich-text"
+                 [innerHTML]="jiraDetail()!.description_html"></div>
+          } @else {
+            <div class="description-block jira-plain-text">{{ jiraDetail()!.description }}</div>
+          }
         } @else {
           <mat-form-field appearance="outline" class="full-width">
             <textarea matInput formControlName="description"
@@ -124,7 +129,11 @@ import { I18nService } from '../../core/services/i18n.service';
                     <span class="comment-author">{{ c.author }}</span>
                     <span class="comment-date">{{ c.created | date:'dd.MM.yyyy, HH:mm' }}</span>
                   </div>
-                  <div class="comment-body">{{ c.body }}</div>
+                  @if (c.body_html) {
+                    <div class="comment-body jira-rich-text" [innerHTML]="c.body_html"></div>
+                  } @else {
+                    <div class="comment-body jira-plain-text">{{ c.body }}</div>
+                  }
                 </div>
               }
             </div>
@@ -213,7 +222,7 @@ import { I18nService } from '../../core/services/i18n.service';
     .section-divider { margin: 12px 0; }
 
     /* Description */
-    .description-block { white-space: pre-wrap; font-size: 13px; line-height: 1.6; padding: 12px; background: var(--mat-sys-surface-variant); border-radius: 6px; max-height: 200px; overflow-y: auto; color: var(--mat-sys-on-surface); margin-bottom: 8px; }
+    .description-block { font-size: 13px; line-height: 1.6; padding: 12px; background: var(--mat-sys-surface-variant); border-radius: 6px; max-height: 200px; overflow-y: auto; color: var(--mat-sys-on-surface); margin-bottom: 8px; }
 
     /* Comments */
     .comment-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
@@ -222,7 +231,8 @@ import { I18nService } from '../../core/services/i18n.service';
     .avatar-icon { font-size: 18px; width: 18px; height: 18px; color: var(--mat-sys-primary); }
     .comment-author { font-weight: 600; font-size: 12px; }
     .comment-date { font-size: 11px; color: var(--mat-sys-on-surface-variant); margin-left: auto; }
-    .comment-body { font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
+    .comment-body { font-size: 13px; line-height: 1.5; }
+    .jira-plain-text { white-space: pre-wrap; overflow-wrap: anywhere; }
     .no-comments { text-align: center; padding: 12px; font-size: 13px; color: var(--mat-sys-on-surface-variant); }
     .jira-error { display: flex; align-items: center; gap: 6px; color: #c62828; font-size: 13px; padding: 8px 0; }
 

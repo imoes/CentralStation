@@ -124,7 +124,12 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                 <div class="jira-section">
                   <div class="jira-section-title">Description</div>
                   @if (jiraDetail().description) {
-                    <pre class="jira-body-text">{{ jiraDetail().description }}</pre>
+                    @if (jiraDetail().description_html) {
+                      <div class="jira-rich-text jira-description"
+                           [innerHTML]="jiraDetail().description_html"></div>
+                    } @else {
+                      <pre class="jira-body-text">{{ jiraDetail().description }}</pre>
+                    }
                   } @else {
                     <span class="empty-notes">No description.</span>
                   }
@@ -142,7 +147,11 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
                             <span class="note-author">{{ c.author }}</span>
                             <span class="note-time">{{ c.created | date:'dd.MM.yyyy HH:mm' }}</span>
                           </div>
-                          <pre class="note-content">{{ c.body }}</pre>
+                          @if (c.body_html) {
+                            <div class="jira-rich-text comment-body" [innerHTML]="c.body_html"></div>
+                          } @else {
+                            <pre class="note-content">{{ c.body }}</pre>
+                          }
                         </div>
                       }
                     </div>
@@ -407,6 +416,8 @@ const PRIORITY_META: Record<string, { color: string; label: string }> = {
     .jira-section { display: flex; flex-direction: column; gap: 6px; }
     .jira-section-title { font-weight: 600; font-size: 13px; color: var(--mat-sys-on-surface-variant); text-transform: uppercase; letter-spacing: .5px; }
     pre.jira-body-text { margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-word; font-family: inherit; line-height: 1.6; background: var(--mat-sys-surface-variant); border-radius: 6px; padding: 10px 12px; }
+    .jira-description { background: var(--mat-sys-surface-variant); border-radius: 6px; padding: 10px 12px; }
+    .jira-rich-text { font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
     .comment-list { display: flex; flex-direction: column; gap: 8px; }
     .comment-entry { border-radius: 8px; padding: 8px 12px; background: var(--mat-sys-surface-variant); }
     .comment-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
