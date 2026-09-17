@@ -69,6 +69,7 @@ _ALLOWED_CONFIG_KEYS: dict[str, set[str]] = {
     "gauge":      {"index_pattern", "query_string", "total_query_string", "unit", "warn", "critical"},
     "ai_summary": {"agent_type"},
     "war_room":   {"agent_type"},
+    "incidents":  {"limit"},
     "timeseries": {"data_source", "host", "hosts", "service", "metric_id", "graph_index", "hours", "unit"},
     "forecast":   {"host", "service", "metric_id", "graph_index", "history_hours", "horizon_hours", "unit"},
 }
@@ -83,6 +84,7 @@ _DEFAULT_SIZE: dict[str, tuple[int, int]] = {
     "gauge":      (3, 3),
     "ai_summary": (6, 4),
     "war_room":   (12, 5),
+    "incidents":  (6, 5),
     "timeseries": (6, 6),
     "forecast":   (6, 6),   # needs room for history + forecast line
 }
@@ -96,13 +98,13 @@ _METRIC_SERVICE: dict[str, str] = {
 }
 
 
-async def _get_scoped_severity_counts(os_client: Any, host_scope: list[str]) -> dict[str, int]:
+async def _get_scoped_severity_counts(os_client: Any, host_scope: list[str]) -> dict[str, int] | None:
     """Severity counts constrained to the user's selected CheckMK host scope."""
     from datetime import datetime, timezone, timedelta
 
     hosts = [h for h in host_scope if h]
     if not hosts:
-        return {}
+        return None
     since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     try:
         resp = await os_client.search(
@@ -135,7 +137,7 @@ async def _get_scoped_severity_counts(os_client: Any, host_scope: list[str]) -> 
         }
     except Exception as e:
         log.debug("generative_designer: scoped severity counts failed: %s", e)
-        return {}
+        return None
 
 
 # ── 1. Situation gathering ──────────────────────────────────────────────────
@@ -152,17 +154,29 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
     from app.services.worklist_builder import get_latest_worklist
     from app.models.ai import AiAnalysis
     from sqlalchemy import select
+    from datetime import datetime, timezone
 
     os_client = get_opensearch()
+    source_state = {
+        "severity_counts": "available",
+        "analysis": "available",
+        "metrics": "available",
+        "worklist": "available",
+        "incidents": "available",
+    }
     host_scope = await get_user_checkmk_host_scope(db, user_id) if user_id else []
     host_scope_lc = {h.lower() for h in host_scope if h}
 
     # Severity counts (last hour, scoped to the user's selected sites when set)
     sev_counts = await _get_scoped_severity_counts(os_client, host_scope) if host_scope else await _get_severity_counts()
+    if sev_counts is None:
+        source_state["severity_counts"] = "unavailable"
+        sev_counts = {}
 
     # Latest sysadmin analysis findings
     findings: list[dict] = []
     severity_summary = "none"
+    analysis = None
     try:
         r = await db.execute(
             select(AiAnalysis)
@@ -191,7 +205,10 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
                     (sev for sev in sev_order if any(f.get("severity") == sev for f in findings)),
                     "none",
                 )
+        else:
+            source_state["analysis"] = "unknown"
     except Exception as e:
+        source_state["analysis"] = "unavailable"
         log.debug("gather_situation: findings failed: %s", e)
 
     # Fleet vitals + forecast candidates from cs-metrics-checkmk
@@ -223,6 +240,7 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
                 "eta_hours": f.get("eta_hours"),
             })
     except Exception as e:
+        source_state["metrics"] = "unavailable"
         log.debug("gather_situation: metrics failed: %s", e)
 
     # Worklist top items
@@ -230,16 +248,21 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
     try:
         wl = await get_latest_worklist(db)
         if wl:
-            for item in (wl.get("items") or [])[:6]:
-                if host_scope_lc and (item.get("host") or "").lower() not in host_scope_lc:
-                    continue
+            scoped_items = [
+                item for item in (wl.get("items") or [])
+                if not host_scope_lc or (item.get("host") or "").lower() in host_scope_lc
+            ]
+            for item in scoped_items[:6]:
                 worklist_items.append({
                     "host": item.get("host", ""),
                     "title": item.get("title", ""),
                     "severity": item.get("severity", ""),
                     "source": item.get("source", ""),
                 })
+        else:
+            source_state["worklist"] = "unknown"
     except Exception as e:
+        source_state["worklist"] = "unavailable"
         log.debug("gather_situation: worklist failed: %s", e)
 
     # Top recommendations from the latest analysis (max 3, sorted by priority).
@@ -301,6 +324,8 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
             .limit(5)
         )
         for inc in inc_rows.scalars().all():
+            if host_scope_lc and (inc.primary_host or "").lower() not in host_scope_lc:
+                continue
             cnt = await db.execute(
                 select(sa_func.count()).where(IncidentMember.incident_id == inc.id)
             )
@@ -312,6 +337,7 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
                 "member_count": cnt.scalar() or 0,
             })
     except Exception as e:
+        source_state["incidents"] = "unavailable"
         log.debug("gather_situation: open_incidents failed: %s", e)
 
     return {
@@ -325,6 +351,8 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
         "cue_production_hosts": cue_production_hosts,
         "top_recommendations": top_recommendations,
         "open_incidents": open_incidents,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+        "source_state": source_state,
     }
 
 
@@ -588,7 +616,28 @@ def _parse_json(raw: str) -> dict | None:
 
 # ── 3. Validation + grid packing ────────────────────────────────────────────
 
-def _validate_widgets(raw_widgets: list, situation: dict) -> list[dict]:
+def semantic_widget_key(spec: dict) -> tuple:
+    """Return the operational fact represented by a widget specification."""
+    wtype = spec.get("widget_type") or spec.get("type") or ""
+    cfg = spec.get("config") or {}
+    if wtype in ("forecast", "timeseries"):
+        return (
+            "metric", str(cfg.get("host") or "").lower(),
+            str(cfg.get("service") or "").lower(), str(cfg.get("metric_id") or "").lower(),
+        )
+    if wtype == "incidents":
+        return ("incidents",)
+    if wtype in ("ai_summary", "war_room"):
+        return ("briefing",)
+    return (
+        wtype,
+        str(cfg.get("index_pattern") or "").lower(),
+        " ".join(str(cfg.get("query_string") or "").lower().split()),
+        str(cfg.get("agg_field") or "").lower(),
+    )
+
+
+def _validate_widgets(raw_widgets: list, situation: dict, *, enforce_budget: bool = True) -> list[dict]:
     """Keep only well-formed widgets with valid configs; resolve metric widgets
     against the real candidates. Returns clean specs (grid packed later)."""
     # Valid metric reference sets
@@ -607,7 +656,7 @@ def _validate_widgets(raw_widgets: list, situation: dict) -> list[dict]:
     for w in raw_widgets:
         if not isinstance(w, dict):
             continue
-        wtype = str(w.get("type", "")).strip()
+        wtype = str(w.get("type") or w.get("widget_type") or "").strip()
         if wtype not in _ALLOWED_CONFIG_KEYS:
             continue
         title = str(w.get("title") or wtype).strip()[:100]
@@ -637,6 +686,8 @@ def _validate_widgets(raw_widgets: list, situation: dict) -> list[dict]:
             cfg["critical"] = min(max(crit, 0), 100)
         elif wtype in ("ai_summary", "war_room"):
             cfg["agent_type"] = cfg.get("agent_type") or "sysadmin"
+        elif wtype == "incidents":
+            cfg["limit"] = min(max(int(cfg.get("limit") or 5), 1), 20)
         elif wtype == "forecast":
             key = (cfg.get("host"), cfg.get("service"), cfg.get("metric_id"))
             if key not in forecast_keys:
@@ -665,16 +716,48 @@ def _validate_widgets(raw_widgets: list, situation: dict) -> list[dict]:
 
         clean.append({"widget_type": wtype, "title": title, "config": cfg})
 
-    # Enforce area budget: greedily add widgets until budget is exhausted.
-    # war_room (full-width 12×5=60) counts once and sits in its own row.
-    # Budget 110 units fits ~4–6 typical widgets comfortably without overflow.
+    if not enforce_budget:
+        return clean
+
+    # One visible representation per operational fact. The rationale banner is the
+    # single situation briefing, so a second ai_summary widget is redundant. When
+    # incidents exist they own their member alerts and replace a parallel war-room
+    # or generic active-alert list.
+    has_incidents = bool(situation.get("open_incidents"))
+    ranked = sorted(
+        enumerate(clean),
+        key=lambda item: (
+            {
+                "incidents": 0, "forecast": 1, "stat": 2, "gauge": 3,
+                "top_hosts": 4, "donut": 5, "bar": 6, "timeseries": 7,
+                "list": 8, "war_room": 9, "ai_summary": 10,
+            }.get(item[1]["widget_type"], 20),
+            item[0],
+        ),
+    )
+    deduped: list[dict] = []
+    seen: set[tuple] = set()
+    for _, spec in ranked:
+        wtype = spec["widget_type"]
+        if wtype in ("ai_summary", "war_room"):
+            continue
+        if has_incidents and wtype == "list":
+            continue
+        key = semantic_widget_key(spec)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(spec)
+
+    # Hard area budget. This is the final validator for LLM, fallback and injected
+    # forecast widgets alike; there is no overflow allowance.
     _AREA_BUDGET = 110
     budgeted: list[dict] = []
     area_used = 0
-    for spec in clean[:8]:
+    for spec in deduped:
         w_size, h_size = _DEFAULT_SIZE.get(spec["widget_type"], (4, 3))
         area = w_size * h_size
-        if area_used + area <= _AREA_BUDGET + 20:  # +20 slack for last widget
+        if area_used + area <= _AREA_BUDGET:
             budgeted.append(spec)
             area_used += area
         else:
@@ -718,17 +801,12 @@ def _fallback_widgets(situation: dict, lang: str) -> tuple[list[dict], str]:
          "config": {"index_pattern": "cs-feed-*", "query_string": "severity:high AND NOT status:resolved"}},
         {"widget_type": "stat", "title": "Gesamt" if lang == "de" else "Total",
          "config": {"index_pattern": "cs-feed-*", "query_string": "NOT status:resolved"}},
-        {"widget_type": "ai_summary", "title": "KI-Lagebericht" if lang == "de" else "AI situation report",
-         "config": {"agent_type": "sysadmin"}},
-        {"widget_type": "list", "title": "Aktive Alerts" if lang == "de" else "Active alerts",
-         "config": {"index_pattern": "cs-feed-*", "query_string": "NOT status:resolved", "limit": 15}},
+        {"widget_type": "incidents", "title": "Offene Incidents" if lang == "de" else "Open incidents",
+         "config": {"limit": 5}},
         {"widget_type": "top_hosts", "title": "Top Problem-Hosts" if lang == "de" else "Top problem hosts",
          "config": {"index_pattern": "cs-feed-*", "query_string": "NOT status:resolved", "limit": 8}},
     ]
     sev = situation.get("severity_summary", "none")
-    if sev in ("critical", "high"):
-        specs.insert(3, {"widget_type": "war_room", "title": "War Room",
-                         "config": {"agent_type": "sysadmin"}})
     # The acute forecast candidates → one forecast widget each (max 2)
     for c in situation.get("forecast_candidates", [])[:2]:
         specs.append({
@@ -799,11 +877,13 @@ async def design_dashboard(db: Any, user_id: str) -> dict:
     llm_result = await _ask_llm(db, situation, lang)
     rationale = ""
     specs: list[dict] = []
+    used_fallback = False
     if llm_result:
-        specs = _validate_widgets(llm_result.get("widgets", []), situation)
+        specs = _validate_widgets(llm_result.get("widgets", []), situation, enforce_budget=False)
         rationale = _clean_rationale(str(llm_result.get("rationale") or ""))
 
     if not specs:
+        used_fallback = True
         specs, fb_rationale = _fallback_widgets(situation, lang)
         if not rationale:
             rationale = fb_rationale
@@ -815,6 +895,7 @@ async def design_dashboard(db: Any, user_id: str) -> dict:
     # (it often just mentions it in prose), inject it — this is the whole
     # point of collecting the metrics in the first place.
     specs = _ensure_forecast_widgets(specs, situation, lang)
+    specs = _validate_widgets(specs, situation, enforce_budget=True)
 
     # Expand short host mentions (e.g. "nsa242") in the rationale to their FQDN
     # ("nsa242.example.com"). Qwen3 tends to write short names in prose, which the
@@ -822,8 +903,22 @@ async def design_dashboard(db: Any, user_id: str) -> dict:
     # the real situation hosts we restore the full names so the strip stays clickable.
     rationale = _expand_host_mentions(rationale, _situation_hosts(situation))
 
+    degraded = any(state != "available" for state in situation.get("source_state", {}).values())
     placed = _pack_grid(specs)
-    return {"widgets": placed, "rationale": rationale}
+    return {
+        "widgets": placed,
+        "rationale": rationale,
+        "meta": {
+            "version": 1,
+            "scope": {"kind": "it_operations", "hosts": situation.get("host_scope", [])},
+            "as_of": situation.get("as_of"),
+            "source_state": situation.get("source_state", {}),
+            "fallback": used_fallback,
+            "result_state": "fallback" if used_fallback else ("degraded" if degraded else "generated"),
+            "selection_reason": rationale,
+            "time_windows": {"event_counts": "1h", "active_problems": "current"},
+        },
+    }
 
 
 def _expand_host_mentions(rationale: str, hosts: list[str]) -> str:
@@ -877,4 +972,4 @@ def _ensure_forecast_widgets(specs: list[dict], situation: dict, lang: str) -> l
                 "history_hours": 72, "horizon_hours": 24,
             },
         })
-    return specs[:9]  # allow one extra slot beyond the 8-widget soft cap
+    return specs

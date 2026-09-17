@@ -23,7 +23,19 @@ export interface Dashboard {
   mode: 'classic' | 'generative';
   rationale?: string | null;
   generated_at?: string | null;
+  generation_meta?: GenerationMeta;
   created_at?: string | null;
+}
+
+export interface GenerationMeta {
+  version?: number;
+  scope?: { kind: 'it_operations'; hosts?: string[] };
+  as_of?: string | null;
+  source_state?: Record<string, 'available' | 'unavailable' | 'stale' | 'unknown'>;
+  fallback?: boolean;
+  result_state?: 'generated' | 'degraded' | 'fallback';
+  selection_reason?: string;
+  time_windows?: Record<string, string>;
 }
 
 /** Response from the generative dashboard endpoints. */
@@ -33,6 +45,7 @@ export interface GenerativePayload {
   rationale?: string | null;
   generated_at?: string | null;
   hosts?: string[];
+  meta?: GenerationMeta;
 }
 
 export interface RationaleSegment {
@@ -74,10 +87,13 @@ export interface IncidentsData {
   total: number;
 }
 
-export type WidgetData = StatData | ListData | DonutData | BarData | AiSummaryData | TopHostsData | TimeseriesData | GrafanaPanelData | ForecastData | WarRoomData | IncidentsData | GaugeData;
+export type WidgetData = (StatData | ListData | DonutData | BarData | AiSummaryData | TopHostsData | TimeseriesData | GrafanaPanelData | ForecastData | WarRoomData | IncidentsData | GaugeData) & {
+  state?: 'available' | 'unavailable' | 'stale';
+  error?: string;
+};
 
 export interface StatData {
-  count: number;
+  count: number | null;
 }
 
 export interface ListData {
@@ -148,9 +164,9 @@ export interface ForecastData {
 }
 
 export interface GaugeData {
-  value: number;
-  total: number;
-  percent: number;
+  value: number | null;
+  total: number | null;
+  percent: number | null;
   unit: string;
 }
 

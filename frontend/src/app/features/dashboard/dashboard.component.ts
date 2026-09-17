@@ -35,6 +35,7 @@ import {
   Dashboard,
   WidgetData,
   GenerativePayload,
+  GenerationMeta,
   RationaleSegment,
 } from './dashboard-widget.model';
 import { WebsocketService } from '../../core/services/websocket.service';
@@ -89,6 +90,9 @@ import { I18nService } from '../../core/services/i18n.service';
           </p>
         </div>
         <div class="hero-actions">
+          <button mat-stroked-button (click)="openBridge()" title="Leitstand im Vollbild öffnen">
+            <mat-icon>rocket_launch</mat-icon> Leitstand
+          </button>
           <mat-form-field appearance="outline" class="dashboard-select">
             <mat-label>{{ i18n.t('dashboard.select_label') }}</mat-label>
             <mat-select [ngModel]="selectedDashboardId()" (ngModelChange)="selectDashboard($event)">
@@ -165,24 +169,6 @@ import { I18nService } from '../../core/services/i18n.service';
       }
 
       @if (generativeMode()) {
-        @if (kiInsight()) {
-          <div class="ki-strip" [attr.data-sev]="kiInsight()!.severity_summary">
-            <span class="ki-strip-icon">
-              <mat-icon style="font-size:16px;height:16px;width:16px;vertical-align:middle">psychology</mat-icon>
-            </span>
-            <span class="ki-strip-sev">{{ (kiInsight()!.severity_summary ?? 'info').toUpperCase() }}</span>
-            <span class="ki-strip-text">{{ kiInsight()!.summary_text }}</span>
-            <span class="ki-strip-hosts">
-              @for (h of kiStripHosts(); track h) {
-                <span class="ki-strip-host" (click)="openFeedHost(h)">{{ h }}</span>
-              }
-            </span>
-            <span class="ki-strip-ago">{{ kiInsightAgo() }}</span>
-            <button mat-icon-button class="ki-strip-btn" (click)="openInsight(kiInsight()!.analysis_id)" matTooltip="KI-Insights öffnen">
-              <mat-icon style="font-size:16px;height:16px;width:16px">open_in_new</mat-icon>
-            </button>
-          </div>
-        }
         <div class="gen-banner">
           <!-- Header bar — same visual weight as a widget header -->
           <div class="gen-header">
@@ -210,11 +196,26 @@ import { I18nService } from '../../core/services/i18n.service';
               <button mat-button class="gen-why" (click)="rationaleExpanded.set(!rationaleExpanded())">
                 {{ rationaleExpanded() ? '▲ Less' : '▼ More' }}
               </button>
+              @if (generativeMeta(); as meta) {
+                <div class="gen-meta">
+                  <span>IT-Betrieb</span>
+                  <span>Ereignisse: letzte Stunde</span>
+                  <span>Aktive Probleme: aktuell</span>
+                  @if (meta.as_of) { <span>Datenstand {{ meta.as_of | date:'dd.MM. HH:mm' }}</span> }
+                  @if (meta.fallback) { <span class="gen-meta-warn">Standardauswahl</span> }
+                  @for (entry of unavailableSources(); track entry) {
+                    <span class="gen-meta-error">{{ entry }} nicht verfügbar</span>
+                  }
+                </div>
+              }
             </div>
           }
         </div>
       }
 
+      @if (generativeMode() && pinnedCount() > 0) {
+        <div class="favorites-label"><mat-icon>push_pin</mat-icon> Favoriten · {{ pinnedCount() }}</div>
+      }
       <div #grid class="grid-stack" [class.config-mode]="configMode()">
         @for (widget of widgets(); track widget.id) {
           <div class="grid-stack-item"
@@ -456,6 +457,11 @@ import { I18nService } from '../../core/services/i18n.service';
     }
     .gen-rationale { font-size: 13px; color: #ffcc99; line-height: 1.55; margin: 0; }
     .gen-rationale.collapsed { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .gen-meta { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:8px; font-size:11px; color:var(--mat-sys-on-surface-variant); }
+    .gen-meta-warn { color:#b26a00; }
+    .gen-meta-error { color:#c62828; font-weight:600; }
+    .favorites-label { display:flex; align-items:center; gap:6px; margin:12px 0 4px; font-size:12px; font-weight:600; color:var(--mat-sys-primary); }
+    .favorites-label mat-icon { font-size:16px; width:16px; height:16px; }
     .gen-why { font-size: 11px; min-height: 26px; line-height: 26px; padding: 0; color: #ffcc66; margin-top: 4px; display: inline-block; }
     .gen-host-link { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; border-radius: 3px; padding: 0 1px; transition: background .1s; }
     .gen-host-link:hover { background: rgba(255,204,153,.18); }
@@ -649,6 +655,11 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   generativeGeneratedAt = signal<string | null>(null);
   rationaleExpanded = signal(true);
   generativeHosts = signal<string[]>([]);
+  generativeMeta = signal<GenerationMeta | null>(null);
+  readonly pinnedCount = computed(() => this.widgets().filter(w => w.pinned).length);
+  readonly unavailableSources = computed(() => Object.entries(this.generativeMeta()?.source_state ?? {})
+    .filter(([, state]) => state !== 'available')
+    .map(([source]) => source.replaceAll('_', ' ')));
   kiInsight = signal<{ analysis_id: string; severity_summary: string; run_at: string; findings: { title: string; severity: string; host: string }[]; summary_text: string } | null>(null);
 
   readonly kiInsightAgo = computed(() => {
@@ -738,12 +749,9 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
         this.warRoomActive.set(true);
         this.refreshWarRoomWidgets();
         this.loadKiInsight();
-        // Escalation → recompose the generative dashboard (debounced so a wave
-        // of critical insights triggers a single regeneration, not many).
-        if (this.generativeMode()) {
-          if (this.wsRegenTimer) clearTimeout(this.wsRegenTimer);
-          this.wsRegenTimer = setTimeout(() => this.regenerate(), 8000);
-        }
+      }
+      if (msg?.type === 'dashboard_updated' && this.generativeMode() && !this.generativeLoading()) {
+        this.loadGenerative();
       }
     });
   }
@@ -1056,6 +1064,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
       localStorage.setItem(this.GEN_KEY, '0');
       this.generativeRationale.set(null);
       this.generativeGeneratedAt.set(null);
+      this.generativeMeta.set(null);
       this.widgetData.set({});
       this.loadWidgets();
     }
@@ -1101,6 +1110,7 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     this.generativeRationale.set(payload.rationale ?? null);
     this.generativeGeneratedAt.set(payload.generated_at ?? null);
     this.generativeHosts.set(payload.hosts ?? []);
+    this.generativeMeta.set(payload.meta ?? payload.dashboard?.generation_meta ?? null);
     this.widgetData.set({});
     this.widgets.set(payload.widgets ?? []);
     this.loading.set(false);
@@ -1143,7 +1153,12 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   toggleWidgetPin(widget: DashboardWidget) {
     const next = !widget.pinned;
     this.widgets.update(ws => ws.map(w => w.id === widget.id ? { ...w, pinned: next } : w));
-    this.http.patch(`${environment.apiUrl}/dashboard-widgets/${widget.id}`, { pinned: next }).subscribe();
+    this.http.patch(`${environment.apiUrl}/dashboard-widgets/${widget.id}`, { pinned: next }).subscribe({
+      error: () => {
+        this.widgets.update(ws => ws.map(w => w.id === widget.id ? { ...w, pinned: !next } : w));
+        this.snackBar.open('Favorit konnte nicht gespeichert werden', 'OK', { duration: 4000 });
+      },
+    });
   }
 
   // Set true by a dedicated inner-element handler (chart segment, finding, list item)
@@ -1158,6 +1173,10 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
   openFeedItem(itemId: string) {
     this.markHandled();
     this.router.navigate(['/feed'], { queryParams: { highlight: itemId } });
+  }
+
+  openBridge() {
+    this.router.navigate(['/bridge']);
   }
 
   openFeedFinding(finding: { source: string; host: string | null; severity: string }) {

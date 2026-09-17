@@ -49,6 +49,20 @@ class ConnectionManager:
         for ws in dead:
             self.disconnect(ws)
 
+    async def send_user(self, user_id: str, message: dict) -> None:
+        """Send an event only to active connections owned by one user."""
+        payload = json.dumps(message)
+        dead: list[WebSocket] = []
+        for ws, (connected_user_id, _) in list(self._meta.items()):
+            if connected_user_id != str(user_id):
+                continue
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws)
+
     @property
     def connection_count(self) -> int:
         return len(self._meta)

@@ -175,13 +175,14 @@ async def run_worklist_build() -> None:
 async def run_generative_refresh() -> None:
     """Re-compose every active generative dashboard from the current situation.
 
-    The situation is global, so the LLM is invoked ONCE per run and the resulting
-    spec is applied to all users' generative dashboards — keeps llama.cpp load low."""
-    import uuid as _uuid
+    Each dashboard is composed from that user's host scope, then reconciled so
+    pinned widgets and unchanged operational facts keep their identities."""
     from sqlalchemy import select
     from app.core.database import AsyncSessionLocal
-    from app.models.workflow import Dashboard, DashboardWidget
+    from app.models.workflow import Dashboard
     from app.services.dashboard.generative_designer import design_dashboard, GENERATIVE_DASHBOARD_NAME
+    from app.services.dashboard.generative_persistence import apply_generated_dashboard, generation_lock
+    from app.api.ws import manager
 
     async with AsyncSessionLocal() as db:
         # Only the reserved AI-singleton dashboards — never a user's hand-built one,
@@ -192,26 +193,16 @@ async def run_generative_refresh() -> None:
         dashboards = result.scalars().all()
         if not dashboards:
             return
-        from datetime import datetime as _dt, timezone as _tz
-        now = _dt.now(_tz.utc)
         for dash in dashboards:
-            spec = await design_dashboard(db, str(dash.user_id))
-            existing = await db.execute(
-                select(DashboardWidget).where(DashboardWidget.dashboard_id == dash.id)
-            )
-            for w in existing.scalars().all():
-                await db.delete(w)
-            await db.flush()
-            for spec_w in spec["widgets"]:
-                db.add(DashboardWidget(
-                    id=_uuid.uuid4(), user_id=dash.user_id, dashboard_id=dash.id,
-                    widget_type=spec_w["widget_type"], title=spec_w["title"],
-                    gs_x=spec_w["gs_x"], gs_y=spec_w["gs_y"],
-                    gs_w=spec_w["gs_w"], gs_h=spec_w["gs_h"], config=spec_w["config"],
-                ))
-            dash.rationale = spec.get("rationale") or ""
-            dash.generated_at = now
-        await db.commit()
+            async with generation_lock(str(dash.user_id)):
+                spec = await design_dashboard(db, str(dash.user_id))
+                await apply_generated_dashboard(db, dash, spec)
+                await db.commit()
+            await manager.send_user(str(dash.user_id), {
+                "type": "dashboard_updated",
+                "dashboard_id": str(dash.id),
+                "generated_at": dash.generated_at.isoformat(),
+            })
         logger.info("Generative refresh: recomposed %d user-scoped dashboard(s)", len(dashboards))
 
 
