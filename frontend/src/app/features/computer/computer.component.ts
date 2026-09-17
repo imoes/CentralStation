@@ -56,6 +56,7 @@ interface HermesSession {
   context_hash?: string | null;
   has_activity_snapshot?: boolean;
   context_synced_at?: string | null;
+  last_activity_at?: string;
   reused?: boolean;
 }
 
@@ -574,6 +575,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
         context_hash?: string | null;
         has_activity_snapshot?: boolean;
         context_synced_at?: string | null;
+        last_activity_at?: string;
       }> = await r.json();
       if (!list.length) return;
 
@@ -593,20 +595,28 @@ export class ComputerComponent implements OnInit, OnDestroy {
           context_hash: s.context_hash ?? null,
           has_activity_snapshot: s.has_activity_snapshot ?? false,
           context_synced_at: s.context_synced_at ?? null,
+          last_activity_at: s.last_activity_at,
         });
       });
 
-      // Restore active tab — keep current selection if still valid. Otherwise, pick a
-      // tab whose agent_type matches the currently configured Console agent (most
-      // recent first — the list is oldest→newest) so switching provider in Settings
-      // doesn't silently keep talking to a stale session pinned to the old agent.
+      // Restore the last explicitly selected session when it still belongs to the
+      // configured agent. Otherwise pick the most recently active matching session,
+      // because the backend returns the list newest-first. This keeps an older ticket
+      // that was just continued visible and active after a reload.
+      // Switching providers still starts a matching session instead of silently
+      // sending to a session owned by another agent backend.
       // If no session matches, start a fresh one for the current agent.
       const ids = list.map(s => s.session_id);
       if (!this.activeTabId() || !ids.includes(this.activeTabId()!)) {
         const currentAgent = await this.fetchCurrentAgent();
-        const matching = [...list].reverse().find(s => (s.agent_type ?? 'hermes') === currentAgent);
+        const storedSid = localStorage.getItem('cs_computer_active_session');
+        const stored = list.find(s =>
+          s.session_id === storedSid && (s.agent_type ?? 'hermes') === currentAgent
+        );
+        const matching = stored ?? list.find(s => (s.agent_type ?? 'hermes') === currentAgent);
         if (matching) {
           this.activeTabId.set(matching.session_id);
+          localStorage.setItem('cs_computer_active_session', matching.session_id);
         } else {
           await this.newSession();
           return;
@@ -1175,6 +1185,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   selectTab(sid: string): void {
     this.activeTabId.set(sid);
+    localStorage.setItem('cs_computer_active_session', sid);
     const session = this.sessions().find(s => s.session_id === sid);
     // Lazy-load history for sessions restored from DB (no messages in memory yet).
     // Always try — msg_count in PostgreSQL can be 0 even when state.db has messages.
@@ -1263,6 +1274,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }
 
     this.sessions.update(ss => ss.filter(s => s.session_id !== sid));
+    if (localStorage.getItem('cs_computer_active_session') === sid) {
+      localStorage.removeItem('cs_computer_active_session');
+    }
     const remaining = this.sessions();
     this.activeTabId.set(remaining.length > 0 ? remaining[remaining.length - 1].session_id : null);
   }
@@ -1296,6 +1310,16 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }
 
     this.loading.set(true);
+    const activityAt = new Date().toISOString();
+    this.sessions.update(sessions => {
+      const active = sessions.find(session => session.session_id === sid);
+      if (!active) return sessions;
+      return [
+        { ...active, last_activity_at: activityAt },
+        ...sessions.filter(session => session.session_id !== sid),
+      ];
+    });
+    localStorage.setItem('cs_computer_active_session', sid);
     this._addMessage(sid, 'user', text);
     this._addMessage(sid, 'assistant', '');
     this._updateMsgCount(sid);
