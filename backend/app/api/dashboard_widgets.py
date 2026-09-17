@@ -119,6 +119,7 @@ def _dashboard_to_dict(d: Dashboard) -> dict:
         "mode": getattr(d, "mode", "classic") or "classic",
         "rationale": getattr(d, "rationale", None),
         "generated_at": d.generated_at.isoformat() if getattr(d, "generated_at", None) else None,
+        "generation_meta": getattr(d, "generation_meta", None) or {},
         "created_at": d.created_at.isoformat() if d.created_at else None,
     }
 
@@ -476,6 +477,7 @@ async def _generative_payload(dashboard: Dashboard, db: AsyncSession) -> dict:
         "rationale": dashboard.rationale,
         "generated_at": dashboard.generated_at.isoformat() if dashboard.generated_at else None,
         "hosts": sorted(known_hosts),
+        "meta": dashboard.generation_meta or {},
     }
 
 
@@ -501,34 +503,20 @@ async def generate_dashboard(
     Replaces the generative dashboard's widgets with the new spec. The classic
     dashboards are untouched."""
     from app.services.dashboard.generative_designer import design_dashboard
+    from app.services.dashboard.generative_persistence import apply_generated_dashboard, generation_lock
+    from app.api.ws import manager
 
-    dashboard = await _get_or_create_generative_dashboard(current_user.id, db)
-    spec = await design_dashboard(db, str(current_user.id))
-
-    # Replace all widgets on the generative dashboard
-    existing = await db.execute(
-        select(DashboardWidget).where(DashboardWidget.dashboard_id == dashboard.id)
-    )
-    for w in existing.scalars().all():
-        await db.delete(w)
-    await db.flush()
-
-    for spec_w in spec["widgets"]:
-        db.add(DashboardWidget(
-            id=uuid.uuid4(),
-            user_id=current_user.id,
-            dashboard_id=dashboard.id,
-            widget_type=spec_w["widget_type"],
-            title=spec_w["title"],
-            gs_x=spec_w["gs_x"], gs_y=spec_w["gs_y"],
-            gs_w=spec_w["gs_w"], gs_h=spec_w["gs_h"],
-            config=spec_w["config"],
-        ))
-
-    dashboard.rationale = spec.get("rationale") or ""
-    dashboard.generated_at = datetime.now(timezone.utc)
-    await db.commit()
-    await db.refresh(dashboard)
+    async with generation_lock(str(current_user.id)):
+        dashboard = await _get_or_create_generative_dashboard(current_user.id, db)
+        spec = await design_dashboard(db, str(current_user.id))
+        await apply_generated_dashboard(db, dashboard, spec)
+        await db.commit()
+        await db.refresh(dashboard)
+    await manager.send_user(str(current_user.id), {
+        "type": "dashboard_updated",
+        "dashboard_id": str(dashboard.id),
+        "generated_at": dashboard.generated_at.isoformat(),
+    })
     return await _generative_payload(dashboard, db)
 
 
@@ -676,8 +664,9 @@ async def get_widget_data(
                 ignore_unavailable=True,
             )
             return {"count": resp.get("count", 0)}
-        except Exception:
-            return {"count": 0}
+        except Exception as exc:
+            log.warning("stat widget %s unavailable: %s", w.id, exc)
+            return {"count": None, "state": "unavailable", "error": "Datenquelle nicht erreichbar"}
 
     elif w.widget_type == "list":
         limit = int(cfg.get("limit", 8))
@@ -722,8 +711,9 @@ async def get_widget_data(
                 for b in resp.get("aggregations", {}).get("by_severity", {}).get("buckets", [])
             ]
             return {"buckets": buckets}
-        except Exception:
-            return {"buckets": []}
+        except Exception as exc:
+            log.warning("donut widget %s unavailable: %s", w.id, exc)
+            return {"buckets": [], "state": "unavailable", "error": "Datenquelle nicht erreichbar"}
 
     elif w.widget_type == "bar":
         os_client = feed_index.get_opensearch()
@@ -755,8 +745,9 @@ async def get_widget_data(
                 for b in resp.get("aggregations", {}).get("bars", {}).get("buckets", [])
             ]
             return {"buckets": buckets, "agg_field": agg_field}
-        except Exception:
-            return {"buckets": [], "agg_field": agg_field}
+        except Exception as exc:
+            log.warning("bar widget %s unavailable: %s", w.id, exc)
+            return {"buckets": [], "agg_field": agg_field, "state": "unavailable", "error": "Datenquelle nicht erreichbar"}
 
     elif w.widget_type == "ai_summary":
         from app.models.ai import AiAnalysis
@@ -1019,21 +1010,27 @@ async def get_widget_data(
             total = r_den.get("count", 0)
             percent = round(value / total * 100, 1) if total > 0 else 0.0
             return {"value": value, "total": total, "percent": percent, "unit": unit}
-        except Exception:
-            return {"value": 0, "total": 0, "percent": 0.0, "unit": unit}
+        except Exception as exc:
+            log.warning("gauge widget %s unavailable: %s", w.id, exc)
+            return {"value": None, "total": None, "percent": None, "unit": unit,
+                    "state": "unavailable", "error": "Datenquelle nicht erreichbar"}
 
     elif w.widget_type == "incidents":
         from app.models.workflow import Incident, IncidentMember
         from sqlalchemy import func as sa_func, desc
         limit = cfg.get("limit", 10)
-        rows = await db.execute(
+        query = (
             select(Incident)
             .where(Incident.status.in_(("open", "investigating")))
             .order_by(desc(Incident.updated_at))
-            .limit(limit)
         )
+        if not host_scope:
+            query = query.limit(limit)
+        rows = await db.execute(query)
         incidents = []
         for inc in rows.scalars().all():
+            if host_scope and (inc.primary_host or "").lower() not in {h.lower() for h in host_scope}:
+                continue
             cnt = await db.execute(
                 select(sa_func.count()).where(IncidentMember.incident_id == inc.id)
             )
@@ -1047,6 +1044,8 @@ async def get_widget_data(
                 "created_at": inc.created_at.isoformat(),
                 "updated_at": inc.updated_at.isoformat(),
             })
+            if len(incidents) >= limit:
+                break
         return {"incidents": incidents, "total": len(incidents)}
 
     return {}

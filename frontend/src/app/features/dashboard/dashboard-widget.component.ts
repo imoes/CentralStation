@@ -71,6 +71,12 @@ import {
       <div class="widget-body">
         @if (!data() && widget().widget_type !== 'grafana_panel') {
           <div class="loading"><mat-spinner diameter="26"></mat-spinner></div>
+        } @else if (data()?.state === 'unavailable') {
+          <div class="source-unavailable">
+            <mat-icon>cloud_off</mat-icon>
+            <strong>Nicht verfügbar</strong>
+            <span>{{ data()?.error || 'Datenquelle nicht erreichbar' }}</span>
+          </div>
         } @else {
           @switch (widget().widget_type) {
             @case ('stat') {
@@ -463,6 +469,8 @@ import {
     .inc-title { font-size: 11px; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .inc-badge { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: var(--mat-sys-surface-variant); white-space: nowrap; }
     .inc-time { font-size: 11px; opacity: .5; white-space: nowrap; font-family: monospace; }
+    .source-unavailable { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; color:var(--mat-sys-error); text-align:center; }
+    .source-unavailable span { color:var(--mat-sys-on-surface-variant); font-size:12px; }
   `],
 })
 export class DashboardWidgetComponent {
