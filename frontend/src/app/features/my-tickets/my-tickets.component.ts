@@ -18,7 +18,7 @@ import {
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-import { ComputerService } from '../../core/services/computer.service';
+import { ComputerService, TicketActivitySnapshot } from '../../core/services/computer.service';
 import { WorkSessionDialogComponent } from '../workflow/work-session-dialog.component';
 import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-create-dialog.component';
 import { environment } from '../../../environments/environment';
@@ -677,6 +677,8 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
       connector_id: string;
       issue_id: string;
       issue_key: string;
+      snapshot: TicketActivitySnapshot;
+      context_hash: string;
     }>(
       `${environment.apiUrl}/jira-view/hermes-context?issue_key=${encodeURIComponent(key)}${connectorParam}`
     ).subscribe({
@@ -688,7 +690,13 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
           data.label || key,
           undefined,
           undefined,
-          { connectorId: data.connector_id, issueId: data.issue_id, key: data.issue_key },
+          {
+            connectorId: data.connector_id,
+            issueId: data.issue_id,
+            key: data.issue_key,
+            snapshot: data.snapshot,
+            contextHash: data.context_hash,
+          },
         );
       },
       error: err => {
