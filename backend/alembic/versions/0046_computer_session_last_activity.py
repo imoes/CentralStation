@@ -25,10 +25,9 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
         ),
     )
-    op.execute(
-        "UPDATE computer_sessions SET last_activity_at = created_at "
-        "WHERE last_activity_at IS NULL"
-    )
+    # PostgreSQL fills existing rows with the server default while adding the
+    # column. Replace that migration timestamp with each session's real baseline.
+    op.execute("UPDATE computer_sessions SET last_activity_at = created_at")
     op.alter_column("computer_sessions", "last_activity_at", nullable=False)
     op.create_index(
         "ix_computer_sessions_last_activity_at",
