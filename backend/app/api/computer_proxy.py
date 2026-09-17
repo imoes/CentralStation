@@ -8,9 +8,12 @@ creation so Hermes always uses the same model as the rest of CentralStation.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated
 
 import urllib.parse
@@ -692,6 +695,8 @@ async def create_session(
                     "key": existing.ticket_key,
                 },
                 "context_hash": existing.context_hash,
+                "has_activity_snapshot": bool(existing.ticket_activity_snapshot),
+                "context_synced_at": existing.context_synced_at.isoformat() if existing.context_synced_at else None,
                 "reused": True,
             }
     _ssh_creds: dict | None = None
@@ -904,6 +909,8 @@ async def create_session(
             "key": body.ticket_key,
         } if body.ticket_connector_id else None),
         "context_hash": body.context_hash or None,
+        "has_activity_snapshot": False,
+        "context_synced_at": None,
         "reused": False,
     }
 
@@ -935,9 +942,236 @@ async def list_sessions(
                 "key": r.ticket_key,
             } if r.ticket_connector_id and r.ticket_issue_id else None),
             "context_hash": r.context_hash,
+            "has_activity_snapshot": bool(r.ticket_activity_snapshot),
+            "context_synced_at": r.context_synced_at.isoformat() if r.context_synced_at else None,
         }
         for r in rows
     ]
+
+
+def _ticket_ref_payload(session: ComputerSession, detail: dict | None = None) -> dict:
+    return {
+        "connector_id": str(session.ticket_connector_id),
+        "issue_id": session.ticket_issue_id,
+        "key": (detail or {}).get("key") or session.ticket_key,
+    }
+
+
+async def _load_ticket_session(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    sid: str,
+) -> ComputerSession:
+    session = (await db.execute(
+        select(ComputerSession).where(
+            ComputerSession.id == sid,
+            ComputerSession.user_id == user_id,
+        )
+    )).scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session nicht gefunden")
+    if not session.ticket_connector_id or not session.ticket_issue_id:
+        raise HTTPException(status_code=422, detail="Session hat keinen eindeutigen Ticketbezug")
+    return session
+
+
+async def _load_ticket_connector(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    connector_id: uuid.UUID,
+) -> ConnectorConfig:
+    connector = (await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.id == connector_id,
+            ConnectorConfig.type.in_(("jira", "jira_sd")),
+            ConnectorConfig.enabled.is_(True),
+            ((ConnectorConfig.owner_user_id == user_id) | ConnectorConfig.owner_user_id.is_(None)),
+        )
+    )).scalar_one_or_none()
+    if not connector:
+        raise HTTPException(status_code=503, detail="Jira-Quelle nicht erreichbar")
+    return connector
+
+
+async def _fetch_ticket_detail(connector: ConnectorConfig, issue_id: str) -> dict:
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
+    jira = JiraConnector(
+        base_url=connector.base_url,
+        credentials=decrypt_credentials(connector.encrypted_credentials),
+    )
+    detail = await jira.get_issue_detail(issue_id)
+    returned_id = str(detail.get("id") or "")
+    if returned_id and returned_id != str(issue_id):
+        raise ValueError("Jira lieferte eine abweichende Issue-ID")
+    return detail
+
+
+def _ticket_activity_payload(session: ComputerSession, detail: dict) -> dict:
+    from app.services.ticket_activity import build_ticket_snapshot, diff_ticket_activity
+
+    snapshot = build_ticket_snapshot(detail)
+    activity = diff_ticket_activity(
+        session.ticket_activity_snapshot,
+        snapshot,
+        detail,
+        synced_at=session.context_synced_at or session.created_at,
+    )
+    return {
+        "session_id": session.id,
+        "ticket_ref": _ticket_ref_payload(session, detail),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "issue_updated_at": snapshot.get("issue_updated_at"),
+        "snapshot": snapshot,
+        **activity,
+    }
+
+
+@router.get("/ticket-activity")
+async def list_ticket_activity(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    session_id: str | None = None,
+    _: None = _ConsoleEnabled,
+):
+    """Check saved ticket sessions against their exact Jira source.
+
+    The endpoint is read-only: activity remains unread until the explicit ack
+    endpoint stores the observed snapshot after a successful agent response.
+    """
+    query = select(ComputerSession).where(
+        ComputerSession.user_id == user.id,
+        ComputerSession.ticket_connector_id.is_not(None),
+        ComputerSession.ticket_issue_id.is_not(None),
+    )
+    if session_id:
+        query = query.where(ComputerSession.id == session_id)
+    sessions = (await db.execute(query.order_by(ComputerSession.created_at.asc()))).scalars().all()
+    if session_id and not sessions:
+        raise HTTPException(status_code=404, detail="Ticket-Session nicht gefunden")
+    if not sessions:
+        return []
+
+    connector_ids = {session.ticket_connector_id for session in sessions}
+    connectors = (await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.id.in_(connector_ids),
+            ConnectorConfig.type.in_(("jira", "jira_sd")),
+            ConnectorConfig.enabled.is_(True),
+            ((ConnectorConfig.owner_user_id == user.id) | ConnectorConfig.owner_user_id.is_(None)),
+        )
+    )).scalars().all()
+    connector_map = {connector.id: connector for connector in connectors}
+
+    semaphore = asyncio.Semaphore(4)
+
+    async def check(session: ComputerSession) -> dict:
+        connector = connector_map.get(session.ticket_connector_id)
+        if not connector:
+            return {
+                "session_id": session.id,
+                "ticket_ref": _ticket_ref_payload(session),
+                "state": "unavailable",
+                "comment_change_count": 0,
+                "new_comments": [],
+                "edited_comments": [],
+                "deleted_comment_ids": [],
+                "field_changes": [],
+                "ticket_changed": False,
+                "error": "Jira-Quelle nicht erreichbar",
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+            }
+        try:
+            async with semaphore:
+                detail = await _fetch_ticket_detail(connector, session.ticket_issue_id)
+            return _ticket_activity_payload(session, detail)
+        except Exception as exc:  # one unavailable Jira must not hide other sessions
+            log.warning("Ticket activity check failed for session %s: %s", session.id[:8], exc)
+            return {
+                "session_id": session.id,
+                "ticket_ref": _ticket_ref_payload(session),
+                "state": "unavailable",
+                "comment_change_count": 0,
+                "new_comments": [],
+                "edited_comments": [],
+                "deleted_comment_ids": [],
+                "field_changes": [],
+                "ticket_changed": False,
+                "error": "Jira-Quelle nicht erreichbar",
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+    return await asyncio.gather(*(check(session) for session in sessions))
+
+
+@router.post("/sessions/{sid}/ticket-activity/context")
+async def ticket_activity_context(
+    sid: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: None = _ConsoleEnabled,
+):
+    """Build a fresh delta prompt and its exact acknowledgement snapshot."""
+    from app.services.ticket_activity import (
+        build_full_ticket_prompt,
+        build_ticket_activity_prompt,
+    )
+
+    session = await _load_ticket_session(db, user.id, sid)
+    connector = await _load_ticket_connector(db, user.id, session.ticket_connector_id)
+    try:
+        detail = await _fetch_ticket_detail(connector, session.ticket_issue_id)
+    except Exception as exc:
+        log.warning("Ticket activity context failed for session %s: %s", sid[:8], exc)
+        raise HTTPException(status_code=503, detail="Jira-Quelle nicht erreichbar") from exc
+
+    payload = _ticket_activity_payload(session, detail)
+    if payload["state"] != "changed":
+        return {**payload, "prompt": "", "context_hash": session.context_hash}
+
+    full_prompt = build_full_ticket_prompt(detail, detail.get("key") or session.ticket_key)
+    return {
+        **payload,
+        "prompt": build_ticket_activity_prompt(detail, payload),
+        "context_hash": hashlib.sha256(full_prompt.encode("utf-8")).hexdigest(),
+    }
+
+
+class _AckTicketActivityBody(BaseModel):
+    snapshot: dict
+    context_hash: str | None = None
+
+
+@router.post("/sessions/{sid}/ticket-activity/ack")
+async def acknowledge_ticket_activity(
+    sid: str,
+    body: _AckTicketActivityBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: None = _ConsoleEnabled,
+):
+    """Persist only the Jira snapshot that was successfully sent to the agent."""
+    from app.services.ticket_activity import valid_ticket_snapshot
+
+    session = await _load_ticket_session(db, user.id, sid)
+    if not valid_ticket_snapshot(body.snapshot):
+        raise HTTPException(status_code=422, detail="Ungültiger Ticket-Snapshot")
+    if str(body.snapshot.get("issue_id") or "") != str(session.ticket_issue_id):
+        raise HTTPException(status_code=409, detail="Snapshot gehört zu einem anderen Ticket")
+    if len(json.dumps(body.snapshot, ensure_ascii=False)) > 256_000:
+        raise HTTPException(status_code=413, detail="Ticket-Snapshot ist zu groß")
+
+    session.ticket_activity_snapshot = body.snapshot
+    session.context_synced_at = datetime.now(timezone.utc)
+    if body.context_hash is not None:
+        session.context_hash = body.context_hash[:64] or None
+    await db.commit()
+    return {
+        "ok": True,
+        "context_synced_at": session.context_synced_at.isoformat(),
+        "context_hash": session.context_hash,
+    }
 
 
 class _UpdateSessionBody(BaseModel):

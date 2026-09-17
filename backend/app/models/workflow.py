@@ -370,6 +370,10 @@ class ComputerSession(Base):
     # Hash of the ticket snapshot last handed to the agent. Reopening an unchanged
     # ticket resumes the conversation without repeating the initial prompt.
     context_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Jira snapshot last successfully handed to the agent. It deliberately stores
+    # comment versions rather than bodies; live comment text is loaded on demand.
+    ticket_activity_snapshot: Mapped[dict | None] = mapped_column(postgresql.JSONB, nullable=True)
+    context_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True

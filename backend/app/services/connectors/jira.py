@@ -396,21 +396,32 @@ class JiraConnector(BaseConnector):
             inline_comments = comment_meta.get("comments") or []
             total_comments = comment_meta.get("total", len(inline_comments))
 
-            # Jira only returns the first few comments inline — fetch all if there are more
+            # Jira only returns a window of comments inline. Fetch every page so a
+            # moving 200-comment window cannot make old comments look "deleted".
             if total_comments > len(inline_comments):
-                rc = await client.get(
-                    self._api(f"/issue/{issue_key}/comment"),
-                    headers=self._headers(),
-                    params={"maxResults": 200, "orderBy": "created"},
-                )
-                if rc.status_code == 200:
-                    inline_comments = rc.json().get("comments") or inline_comments
+                all_comments: list[dict] = []
+                start_at = 0
+                while start_at < total_comments:
+                    rc = await client.get(
+                        self._api(f"/issue/{issue_key}/comment"),
+                        headers=self._headers(),
+                        params={"startAt": start_at, "maxResults": 100, "orderBy": "created"},
+                    )
+                    if rc.status_code != 200:
+                        break
+                    page = rc.json().get("comments") or []
+                    if not page:
+                        break
+                    all_comments.extend(page)
+                    start_at += len(page)
+                if all_comments:
+                    inline_comments = all_comments
 
         raw_desc = fields.get("description")
         description = _adf_to_text(raw_desc) if isinstance(raw_desc, dict) else (raw_desc or "")
 
         comments = []
-        for c in reversed(inline_comments):
+        for c in sorted(inline_comments, key=lambda item: item.get("created") or ""):
             raw_body = c.get("body", "")
             body = _adf_to_text(raw_body) if isinstance(raw_body, dict) else raw_body
             comments.append({
