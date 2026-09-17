@@ -1608,12 +1608,14 @@ async def jira_update_issue(
 
 
 @mcp.tool()
-async def jira_add_comment(issue_key: str, body: str) -> dict:
+async def jira_add_comment(issue_key: str, body: str, body_format: str = "markdown") -> dict:
     """Fügt einen Kommentar zu einem Jira-Ticket hinzu.
 
     Parameter:
     - issue_key: Ticket-Schlüssel, z.B. 'IMIT-1234'
-    - body: Kommentartext. Jira-Wiki-Markup ist erlaubt (h2., {{code}}, *fett*).
+    - body: Kommentartext. Markdown wird automatisch in Jira-Format übersetzt.
+    - body_format: "markdown" (Standard) oder "jira" für bereits fertiges
+      Jira-Wiki-Markup wie h2., {{code}} und *fett*.
 
     JEMANDEN ERWÄHNEN: Jira benachrichtigt nur bei `[~benutzername]` — ein '@' davor
     tut nichts, und der Anzeigename funktioniert nicht. Den Benutzernamen vorher mit
@@ -1639,7 +1641,12 @@ async def jira_add_comment(issue_key: str, body: str) -> dict:
     connector, err = await _jira_for_issue(issue_key)
     if err:
         return {"ok": False, "error": err}
+    if body_format not in ("markdown", "jira"):
+        return {"ok": False, "error": "body_format muss 'markdown' oder 'jira' sein"}
     try:
+        if body_format == "markdown":
+            from app.services.connectors.jira import markdown_to_jira_wiki
+            body = markdown_to_jira_wiki(body)
         comment = await connector.add_comment(issue_key, body)
         return {"ok": True, **comment}
     except Exception as exc:
@@ -1729,7 +1736,12 @@ _JIRA_NOT_CLOSE_WORDS = (
 
 
 @mcp.tool()
-async def jira_close_issue(issue_key: str, resolution: str = "Fertig", comment: str = "") -> dict:
+async def jira_close_issue(
+    issue_key: str,
+    resolution: str = "Fertig",
+    comment: str = "",
+    comment_format: str = "markdown",
+) -> dict:
     """Schließt ein Ticket — inklusive der verpflichtenden Lösung.
 
     Parameter:
@@ -1737,6 +1749,7 @@ async def jira_close_issue(issue_key: str, resolution: str = "Fertig", comment: 
     - resolution: Lösung, Standard 'Fertig'. Wird gegen die erlaubten Werte des
       Übergangs geprüft; passt sie nicht, nennt die Antwort die zulässigen Werte.
     - comment: optionaler Abschlusskommentar, wird VOR dem Schließen geschrieben
+    - comment_format: "markdown" (Standard) oder "jira" für fertiges Jira-Wiki-Markup
 
     Wichtig: Beide Instanzen verlangen beim Schließen das Feld 'Lösung' — ein reiner
     Statuswechsel ohne sie wird mit HTTP 400 abgelehnt. Die Übergänge heißen zudem
@@ -1747,6 +1760,8 @@ async def jira_close_issue(issue_key: str, resolution: str = "Fertig", comment: 
     connector, err = await _jira_for_issue(issue_key)
     if err:
         return {"ok": False, "error": err}
+    if comment_format not in ("markdown", "jira"):
+        return {"ok": False, "error": "comment_format muss 'markdown' oder 'jira' sein"}
     try:
         transitions = await connector.get_transitions(issue_key, with_fields=True)
         names = [t["name"] for t in transitions]
@@ -1787,7 +1802,11 @@ async def jira_close_issue(issue_key: str, resolution: str = "Fertig", comment: 
         if comment.strip():
             # Comment first: if the transition fails the note is still on the ticket,
             # whereas a comment after a failed close would never be written.
-            await connector.add_comment(issue_key, comment.strip())
+            comment_body = comment.strip()
+            if comment_format == "markdown":
+                from app.services.connectors.jira import markdown_to_jira_wiki
+                comment_body = markdown_to_jira_wiki(comment_body)
+            await connector.add_comment(issue_key, comment_body)
         await connector.transition_issue(issue_key, target["name"], fields=fields or None)
         return {"ok": True, "issue_key": issue_key, "new_status": target["name"],
                 "resolution": fields.get("resolution", {}).get("name"),

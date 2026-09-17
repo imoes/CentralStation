@@ -83,6 +83,128 @@ def wiki_to_markdown(text: str, heading_offset: int = 0) -> str:
     return text.strip()
 
 
+def markdown_to_jira_wiki(text: str) -> str:
+    """Convert common Markdown emitted by the console to Jira wiki markup.
+
+    Jira Server/Data Center REST v2 accepts comment bodies as strings and applies
+    the field's configured wiki renderer.  Console models naturally write Markdown,
+    whose headings, bold text, links and fenced code otherwise appear literally in
+    Jira.  This intentionally covers the portable Markdown subset used in ticket
+    comments; callers that already have Jira markup can opt out at the MCP boundary.
+    """
+    if not text:
+        return ""
+
+    value = text.replace("\r\n", "\n").replace("\r", "\n")
+    blocks: list[str] = []
+
+    def _stash(block: str) -> str:
+        blocks.append(block)
+        return f"\x00JIRABLOCK{len(blocks) - 1}\x00"
+
+    # Preserve explicit Jira blocks and translate Markdown fenced blocks before any
+    # line or inline rules can modify their contents.
+    value = re.sub(
+        r"\{(code(?::[^}]*)?|noformat)\}(.*?)\{(?:code|noformat)\}",
+        lambda match: _stash(match.group(0)),
+        value,
+        flags=re.S,
+    )
+    value = re.sub(
+        r"(?ms)^```([^\n`]*)\n(.*?)^```[ \t]*$",
+        lambda match: _stash(
+            "{code" + (":" + match.group(1).strip() if match.group(1).strip() else "")
+            + "}\n" + match.group(2).rstrip("\n") + "\n{code}"
+        ),
+        value,
+    )
+
+    lines = value.split("\n")
+    converted: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+
+        # GitHub-style Markdown table. Jira uses a double-pipe header and single-pipe
+        # data rows. Keep the cell contents for the inline pass below.
+        if index + 1 < len(lines) and "|" in line:
+            separator = lines[index + 1].strip().strip("|")
+            separator_cells = [cell.strip() for cell in separator.split("|")]
+            if separator_cells and all(re.fullmatch(r":?-{3,}:?", cell) for cell in separator_cells):
+                headers = [cell.strip() for cell in line.strip().strip("|").split("|")]
+                converted.append("||" + "||".join(headers) + "||")
+                index += 2
+                while index < len(lines) and "|" in lines[index]:
+                    cells = [cell.strip() for cell in lines[index].strip().strip("|").split("|")]
+                    converted.append("|" + "|".join(cells) + "|")
+                    index += 1
+                continue
+
+        heading = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if heading:
+            converted.append(f"h{len(heading.group(1))}. {heading.group(2)}")
+            index += 1
+            continue
+
+        unordered = re.match(r"^(\s*)[-+*]\s+(.+)$", line)
+        if unordered:
+            depth = max(1, len(unordered.group(1).expandtabs(2)) // 2 + 1)
+            converted.append("*" * depth + " " + unordered.group(2))
+            index += 1
+            continue
+
+        ordered = re.match(r"^(\s*)\d+[.)]\s+(.+)$", line)
+        if ordered:
+            depth = max(1, len(ordered.group(1).expandtabs(2)) // 2 + 1)
+            converted.append("#" * depth + " " + ordered.group(2))
+            index += 1
+            continue
+
+        quote = re.match(r"^>\s?(.*)$", line)
+        if quote:
+            converted.append("bq. " + quote.group(1))
+            index += 1
+            continue
+
+        if re.fullmatch(r"\s*(?:-{3,}|\*{3,}|_{3,})\s*", line):
+            converted.append("----")
+            index += 1
+            continue
+
+        converted.append(line)
+        index += 1
+
+    value = "\n".join(converted)
+
+    inline: list[str] = []
+
+    def _inline(replacement: str) -> str:
+        inline.append(replacement)
+        return f"\x00JIRAINLINE{len(inline) - 1}\x00"
+
+    # Existing Jira monospace and mentions are already valid and must survive the
+    # Markdown transformations unchanged.
+    value = re.sub(r"\{\{.*?\}\}", lambda match: _inline(match.group(0)), value)
+    value = re.sub(r"\[~[\w.\-]+\]", lambda match: _inline(match.group(0)), value)
+    value = re.sub(r"`([^`\n]+)`", lambda match: _inline("{{" + match.group(1) + "}}"), value)
+    value = re.sub(
+        r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+[\"'][^\"']*[\"'])?\)",
+        lambda match: f"!{match.group(2)}|alt={match.group(1)}!",
+        value,
+    )
+    value = re.sub(r"\[([^\]]+)\]\(([^)\s]+)(?:\s+[\"'][^\"']*[\"'])?\)", r"[\1|\2]", value)
+    value = re.sub(r"\*\*([^*\n]+)\*\*", lambda match: _inline("*" + match.group(1) + "*"), value)
+    value = re.sub(r"__([^_\n]+)__", lambda match: _inline("*" + match.group(1) + "*"), value)
+    value = re.sub(r"~~([^~\n]+)~~", r"-\1-", value)
+    value = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"_\1_", value)
+
+    for idx, replacement in enumerate(inline):
+        value = value.replace(f"\x00JIRAINLINE{idx}\x00", replacement)
+    for idx, block in enumerate(blocks):
+        value = value.replace(f"\x00JIRABLOCK{idx}\x00", block)
+    return value.strip()
+
+
 def _adf_to_text(node) -> str:
     """Recursively convert Atlassian Document Format (ADF) node to plain text."""
     if isinstance(node, str):
@@ -381,16 +503,31 @@ class JiraConnector(BaseConnector):
             r.raise_for_status()
 
     async def get_issue_detail(self, issue_key: str) -> dict:
-        """Full issue detail: description (ADF→text) + all comments."""
+        """Full issue detail with raw text and Jira-rendered HTML.
+
+        The raw values remain the source for snapshots and AI context.  Jira's own
+        renderer is exposed separately so the UI can faithfully show wiki markup,
+        configured field renderers and ADF without trying to reimplement them.
+        """
         async with self._client(timeout=20.0) as client:
             r = await client.get(
                 self._api(f"/issue/{issue_key}"),
                 headers=self._headers(),
-                params={"fields": "summary,description,comment,status,priority,assignee,created,updated,issuetype"},
+                params={
+                    "fields": "summary,description,comment,status,priority,assignee,created,updated,issuetype",
+                    "expand": "renderedFields",
+                },
             )
             r.raise_for_status()
             data = r.json()
             fields = data.get("fields") or {}
+            rendered_fields = data.get("renderedFields") or {}
+
+            rendered_comments = {
+                str(comment.get("id")): comment.get("body")
+                for comment in ((rendered_fields.get("comment") or {}).get("comments") or [])
+                if comment.get("id") is not None
+            }
 
             comment_meta = fields.get("comment") or {}
             inline_comments = comment_meta.get("comments") or []
@@ -405,7 +542,12 @@ class JiraConnector(BaseConnector):
                     rc = await client.get(
                         self._api(f"/issue/{issue_key}/comment"),
                         headers=self._headers(),
-                        params={"startAt": start_at, "maxResults": 100, "orderBy": "created"},
+                        params={
+                            "startAt": start_at,
+                            "maxResults": 100,
+                            "orderBy": "created",
+                            "expand": "renderedBody",
+                        },
                     )
                     if rc.status_code != 200:
                         break
@@ -428,6 +570,7 @@ class JiraConnector(BaseConnector):
                 "id": c.get("id"),
                 "author": (c.get("author") or {}).get("displayName", "?"),
                 "body": body,
+                "body_html": c.get("renderedBody") or rendered_comments.get(str(c.get("id"))),
                 "created": c.get("created"),
                 "updated": c.get("updated"),
             })
@@ -437,6 +580,7 @@ class JiraConnector(BaseConnector):
             "key": data.get("key"),
             "summary": fields.get("summary"),
             "description": description,
+            "description_html": rendered_fields.get("description"),
             "status": (fields.get("status") or {}).get("name"),
             "status_category": ((fields.get("status") or {}).get("statusCategory") or {}).get("key"),
             "priority": (fields.get("priority") or {}).get("name"),
@@ -477,6 +621,7 @@ class JiraConnector(BaseConnector):
             r = await client.post(
                 self._api(f"/issue/{issue_key}/comment"),
                 headers=self._headers(),
+                params={"expand": "renderedBody"},
                 json={"body": body},
             )
             r.raise_for_status()
@@ -486,6 +631,7 @@ class JiraConnector(BaseConnector):
             "id": c.get("id"),
             "author": (c.get("author") or {}).get("displayName", "?"),
             "body": _adf_to_text(raw_body) if isinstance(raw_body, dict) else raw_body,
+            "body_html": c.get("renderedBody"),
             "created": c.get("created"),
         }
 

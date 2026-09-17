@@ -46,6 +46,7 @@ export interface JiraComment {
   id: string;
   author: string;
   body: string;
+  body_html?: string | null;
   created: string;
   updated?: string;
 }
@@ -57,6 +58,7 @@ export interface JiraDetail {
   jira_browse_url?: string;
   summary?: string;
   description?: string;
+  description_html?: string | null;
   status?: string;
   priority?: string;
   assignee?: string;
