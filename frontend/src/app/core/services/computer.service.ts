@@ -9,12 +9,18 @@ export interface TicketActivitySnapshot {
   issue_key: string;
   issue_updated_at: string;
   fields: Record<string, string>;
-  comments: Record<string, { created: string; updated: string; body_hash: string }>;
+  comments: Record<string, {
+    created: string;
+    updated: string;
+    body_hash: string;
+    author_ids?: string[];
+  }>;
 }
 
 export interface TicketActivityComment {
   id: string;
   author: string;
+  author_ids?: string[];
   body: string;
   created: string;
   updated: string;

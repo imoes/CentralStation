@@ -29,9 +29,17 @@ def _parse_timestamp(value: Any) -> datetime | None:
         return None
 
 
+def _normalised_user_ids(values: Any) -> set[str]:
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, (list, tuple, set)):
+        return set()
+    return {_text(value).casefold() for value in values if _text(value)}
+
+
 def build_ticket_snapshot(detail: dict) -> dict:
     """Return a bounded, JSON-serialisable snapshot without comment bodies."""
-    comments: dict[str, dict[str, str]] = {}
+    comments: dict[str, dict[str, Any]] = {}
     for comment in detail.get("comments") or []:
         comment_id = _text(comment.get("id"))
         if not comment_id:
@@ -41,6 +49,7 @@ def build_ticket_snapshot(detail: dict) -> dict:
             "created": _text(comment.get("created")),
             "updated": _text(comment.get("updated") or comment.get("created")),
             "body_hash": _sha256(body),
+            "author_ids": list(comment.get("author_ids") or []),
         }
 
     return {
@@ -76,6 +85,7 @@ def diff_ticket_activity(
     detail: dict,
     *,
     synced_at: datetime | None = None,
+    current_user_ids: set[str] | list[str] | None = None,
 ) -> dict:
     """Compare a persisted snapshot with live Jira detail.
 
@@ -91,29 +101,47 @@ def diff_ticket_activity(
         for comment in (detail.get("comments") or [])
         if _text(comment.get("id"))
     }
+    own_ids = _normalised_user_ids(current_user_ids)
 
-    new_ids: list[str] = []
-    edited_ids: list[str] = []
-    deleted_ids: list[str] = []
+    def is_own_comment(comment_id: str, source: dict[str, dict] | None = None) -> bool:
+        comment = comments_by_id.get(comment_id)
+        author_ids = (comment or {}).get("author_ids")
+        if not author_ids and source:
+            author_ids = (source.get(comment_id) or {}).get("author_ids")
+        return bool(own_ids & _normalised_user_ids(author_ids))
+
+    raw_new_ids: list[str] = []
+    raw_edited_ids: list[str] = []
+    raw_deleted_ids: list[str] = []
 
     if previous_valid:
-        new_ids = [comment_id for comment_id in current_comments if comment_id not in old_comments]
-        edited_ids = [
+        raw_new_ids = [comment_id for comment_id in current_comments if comment_id not in old_comments]
+        raw_edited_ids = [
             comment_id for comment_id, meta in current_comments.items()
             if comment_id in old_comments and (
                 meta.get("updated") != old_comments[comment_id].get("updated")
                 or meta.get("body_hash") != old_comments[comment_id].get("body_hash")
             )
         ]
-        deleted_ids = [comment_id for comment_id in old_comments if comment_id not in current_comments]
+        raw_deleted_ids = [comment_id for comment_id in old_comments if comment_id not in current_comments]
     elif synced_at:
         for comment_id, meta in current_comments.items():
             created = _parse_timestamp(meta.get("created"))
             updated = _parse_timestamp(meta.get("updated"))
             if created and created > synced_at:
-                new_ids.append(comment_id)
+                raw_new_ids.append(comment_id)
             elif updated and updated > synced_at:
-                edited_ids.append(comment_id)
+                raw_edited_ids.append(comment_id)
+
+    # The Jira identity comes from /myself, which is the same account represented
+    # by currentUser() in JQL. Its own writes already exist in the console transcript
+    # and therefore must not return as unread inbound messages.
+    new_ids = [comment_id for comment_id in raw_new_ids if not is_own_comment(comment_id)]
+    edited_ids = [comment_id for comment_id in raw_edited_ids if not is_own_comment(comment_id)]
+    deleted_ids = [
+        comment_id for comment_id in raw_deleted_ids
+        if not is_own_comment(comment_id, old_comments)
+    ]
 
     field_labels = {
         "summary": "Titel",
@@ -146,7 +174,8 @@ def diff_ticket_activity(
     if not previous_valid and synced_at:
         issue_updated = _parse_timestamp(current.get("issue_updated_at"))
         generic_ticket_change = bool(
-            issue_updated and issue_updated > synced_at and not new_comments and not edited_comments
+            issue_updated and issue_updated > synced_at
+            and not raw_new_ids and not raw_edited_ids and not raw_deleted_ids
         )
 
     changed = bool(new_comments or edited_comments or deleted_ids or field_changes or generic_ticket_change)

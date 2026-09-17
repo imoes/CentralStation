@@ -247,6 +247,19 @@ def _adf_to_text(node) -> str:
         return "---"
     return "".join(children)
 
+
+def _jira_user_identifiers(user: dict | None) -> list[str]:
+    """Stable identifiers shared by Jira's /myself and comment author objects."""
+    if not user:
+        return []
+    values = (
+        user.get("accountId"),
+        user.get("key"),
+        user.get("name"),
+        user.get("emailAddress"),
+    )
+    return list(dict.fromkeys(str(value) for value in values if value))
+
 from app.schemas.connector import ConnectorTestResult
 from app.services.connectors.base import BaseConnector
 
@@ -277,6 +290,13 @@ class JiraConnector(BaseConnector):
             return ConnectorTestResult(success=False, message=f"HTTP {e.response.status_code}")
         except Exception as e:
             return ConnectorTestResult(success=False, message=str(e))
+
+    async def current_user_identifiers(self) -> list[str]:
+        """Return the Jira account identities represented by ``currentUser()``."""
+        async with self._client(timeout=15.0) as client:
+            response = await client.get(self._api("/myself"), headers=self._headers())
+            response.raise_for_status()
+        return _jira_user_identifiers(response.json())
 
     async def list_projects(self) -> list[dict]:
         """Return available projects: [{key, name}]. Works on Jira + ServiceDesk."""
@@ -566,9 +586,11 @@ class JiraConnector(BaseConnector):
         for c in sorted(inline_comments, key=lambda item: item.get("created") or ""):
             raw_body = c.get("body", "")
             body = _adf_to_text(raw_body) if isinstance(raw_body, dict) else raw_body
+            author = c.get("author") or {}
             comments.append({
                 "id": c.get("id"),
-                "author": (c.get("author") or {}).get("displayName", "?"),
+                "author": author.get("displayName", "?"),
+                "author_ids": _jira_user_identifiers(author),
                 "body": body,
                 "body_html": c.get("renderedBody") or rendered_comments.get(str(c.get("id"))),
                 "created": c.get("created"),
@@ -627,9 +649,11 @@ class JiraConnector(BaseConnector):
             r.raise_for_status()
         c = r.json()
         raw_body = c.get("body", "")
+        author = c.get("author") or {}
         return {
             "id": c.get("id"),
-            "author": (c.get("author") or {}).get("displayName", "?"),
+            "author": author.get("displayName", "?"),
+            "author_ids": _jira_user_identifiers(author),
             "body": _adf_to_text(raw_body) if isinstance(raw_body, dict) else raw_body,
             "body_html": c.get("renderedBody"),
             "created": c.get("created"),
