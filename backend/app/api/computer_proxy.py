@@ -47,20 +47,33 @@ def _target_url(user_id: str) -> str:
 
 
 async def _reapply_ssh_if_recreated(db: AsyncSession, user_id) -> None:
-    """Re-inject SSH config/key if ensure_container just recreated the container.
+    """Make sure the container has a usable SSH config; re-inject it when it does not.
 
-    The per-container ~/.ssh is ephemeral (no volume), so an on-demand recreation
-    (crash, docker rm, prune) drops the marvin key and reverts to the entrypoint
-    fallback config. configure_ssh otherwise only runs on explicit session-create,
-    so SSH would silently break until then. This closes that gap for the message
-    and history proxy paths, which recreate the container but never reconfigured it.
+    The per-container ~/.ssh is ephemeral (no volume), so any recreation (image
+    refresh, crash, docker rm, prune) drops the key and reverts to the entrypoint
+    fallback — a config with neither `User` nor `IdentityFile`. SSH then logs in as
+    the container account `yolo`, the target rejects it, and the agent reports
+    "Too many authentication failures", which reads like a problem on the far host.
+
+    The recreation flag alone is not enough to catch this: it lives in the backend's
+    memory, so a backend restart or a recreation from another process loses it — and
+    then nothing repairs the config. That happened. We therefore ASK THE CONTAINER
+    what its config looks like, and treat the flag only as a fast path.
     """
-    from app.services.userenv_manager import consume_just_created, configure_ssh
-    if not await asyncio.to_thread(consume_just_created, str(user_id)):
-        return
+    from app.services.userenv_manager import (
+        consume_just_created, configure_ssh, ssh_config_ready,
+    )
+    recreated = await asyncio.to_thread(consume_just_created, str(user_id))
     creds = await _load_ssh_creds(db, user_id)
     if not creds:
         return
+    if not recreated:
+        ok = await asyncio.to_thread(
+            ssh_config_ready, str(user_id), creds.get("username", "")
+        )
+        if ok:
+            return
+        log.warning("SSH config incomplete in container for %s — re-injecting", user_id)
     try:
         await asyncio.to_thread(
             configure_ssh, str(user_id),
