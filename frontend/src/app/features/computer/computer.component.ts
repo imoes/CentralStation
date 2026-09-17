@@ -35,10 +35,26 @@ interface ToolCall {
 interface HermesMessage {
   role: 'user' | 'assistant';
   text: string;
+  /** Ticket-Kontext, der mit dieser Nachricht mitging. Wird eingeklappt unter der
+   *  Nachricht gezeigt — er ging an die KI, also muss er nachlesbar bleiben. */
+  contextText?: string;
+  /** Kurzbezeichnung dieses Kontexts, z.B. "IMIT-1234 · Neue Aktivität". */
+  contextLabel?: string;
   /** Current tool being executed — shown as a spinner line while streaming. */
   activeTool?: string;
   /** Permanent log of all tool calls made during this message turn. */
   toolCalls?: ToolCall[];
+}
+
+/** Ticket-Kontext, der an einer Sitzung hängt und mit der nächsten Nachricht mitgeht. */
+interface PendingContext {
+  /** Der volle Text, der der KI vorangestellt wird. */
+  text: string;
+  /** Kurzbezeichnung für die Anzeige, z.B. "IMIT-1234 · Neue Aktivität". */
+  label: string;
+  /** Jira-Stand, der beim Absenden als übernommen gebucht wird. */
+  snapshot?: TicketActivitySnapshot;
+  contextHash: string | null;
 }
 
 interface HermesSession {
@@ -241,6 +257,19 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                 </div>
                 <div class="msg-text"
                      [innerHTML]="renderMarkdown(msg)"></div>
+                @if (msg.contextText) {
+                  <!-- Der Kontext ging mit dieser Nachricht an die KI, also muss er
+                       nachlesbar bleiben — eingeklappt, damit er die Unterhaltung
+                       nicht zuschüttet. -->
+                  <button class="msg-context-toggle"
+                          (click)="toggleMsgContext($index)">
+                    <mat-icon>{{ msgContextExpanded($index) ? 'expand_less' : 'expand_more' }}</mat-icon>
+                    Kontext: {{ msg.contextLabel }}
+                  </button>
+                  @if (msgContextExpanded($index)) {
+                    <pre class="msg-context-body">{{ msg.contextText }}</pre>
+                  }
+                }
                 <!-- Tool calls of PAST turns are intentionally not rendered; only the
                      live streaming turn below shows tool activity. -->
               </div>
@@ -311,7 +340,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                             [disabled]="loading() || acceptingTicketActivity() || activity.source_unavailable"
                             [title]="activity.source_unavailable ? 'Erst nach erfolgreicher Jira-Prüfung verfügbar' : ''">
                       <mat-icon>add_comment</mat-icon>
-                      {{ acceptingTicketActivity() ? 'WIRD ÜBERNOMMEN …' : 'IN EINGABE ÜBERNEHMEN' }}
+                      {{ acceptingTicketActivity() ? 'WIRD ÜBERNOMMEN …' : 'ALS KONTEXT ANHÄNGEN' }}
                     </button>
                   </section>
                 }
@@ -355,6 +384,30 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
           @if (voiceError()) {
             <div class="voice-error" (click)="voiceError.set(null)">
               ⚠ {{ voiceError() }}
+            </div>
+          }
+
+          <!-- Angehängter Ticket-Kontext: wartet neben dem Feld, geht mit der
+               nächsten eigenen Nachricht mit. Sichtbar benannt, damit kein
+               unsichtbarer Zustand entsteht — und einzeln verwerfbar. -->
+          @if (activeContext(); as ctx) {
+            <div class="attached-context">
+              <div class="attached-context-head">
+                <mat-icon>attachment</mat-icon>
+                <span class="attached-context-label">{{ ctx.label }}</span>
+                <span class="attached-context-hint">geht mit deiner nächsten Nachricht mit</span>
+                <button class="attached-context-btn" (click)="toggleContextExpanded()"
+                        [title]="contextExpanded() ? 'Einklappen' : 'Anzeigen'">
+                  <mat-icon>{{ contextExpanded() ? 'expand_less' : 'expand_more' }}</mat-icon>
+                </button>
+                <button class="attached-context-btn" (click)="discardActiveContext()"
+                        title="Kontext verwerfen">
+                  <mat-icon>close</mat-icon>
+                </button>
+              </div>
+              @if (contextExpanded()) {
+                <pre class="attached-context-body">{{ ctx.text }}</pre>
+              }
             </div>
           }
 
@@ -450,14 +503,28 @@ export class ComputerComponent implements OnInit, OnDestroy {
   editingSid = signal<string | null>(null);
   inputText = '';
 
-  /** Ticket-Kontext, der im Eingabefeld liegt und noch nicht abgeschickt wurde.
-   *  Erst das Absenden markiert die Jira-Änderungen als übernommen — solange der
-   *  Text nur im Feld steht, gilt er als ungelesen und die Aktivitätsmeldung
-   *  bleibt stehen. Sonst verschwände eine Änderung, die nie bei der KI ankam. */
-  private pendingTicketAck = new Map<
-    string,
-    { snapshot?: TicketActivitySnapshot; contextHash: string | null }
-  >();
+  /** Angehängter Ticket-Kontext je Sitzung — bereitgelegt, aber noch nicht gesendet.
+   *
+   *  Er landet NICHT im Eingabefeld: dort stünde eine Textwand, die der Nutzer erst
+   *  wegräumen müsste. Er hängt an der Sitzung und geht mit der nächsten Nachricht
+   *  mit, die der Nutzer selbst schreibt. Bis dahin arbeitet die KI nicht.
+   *
+   *  Erst das Absenden quittiert den Jira-Stand. Solange der Kontext nur anhängt,
+   *  gilt die Änderung als ungelesen und die Aktivitätsmeldung bleibt stehen —
+   *  sonst verschwände etwas, das die KI nie gesehen hat. */
+  private pendingContext = signal<Record<string, PendingContext>>({});
+
+  /** Kontext der aktiven Sitzung, für die Anzeige über dem Eingabefeld. */
+  readonly activeContext = computed<PendingContext | null>(() => {
+    const sid = this.activeTabId();
+    return sid ? this.pendingContext()[sid] ?? null : null;
+  });
+
+  /** Ist der angehängte Kontext ausgeklappt? */
+  readonly contextExpanded = signal(false);
+
+  /** Eingeklappte Nachrichten-Kontexte: Schlüssel ist "<sid>:<index>". */
+  private readonly expandedMsgContexts = signal<Record<string, boolean>>({});
   loading = signal(false);
   listening = signal(false);
   muted = signal(localStorage.getItem('cs_computer_muted') === '1');
@@ -965,14 +1032,15 @@ export class ComputerComponent implements OnInit, OnDestroy {
         return;
       }
 
-      // Erstübergabe: das Ticket landet im Eingabefeld, nicht beim Agenten. Die
-      // Jira-Grundlinie wird erst gesetzt, wenn der Nutzer die Nachricht abschickt
-      // (resolvePendingTicketAck) — vorher hat die KI den Stand nicht gesehen.
-      this.pendingTicketAck.set(existing.session_id, {
+      // Erstübergabe: das Ticket hängt als Kontext an der Sitzung, es geht nicht an
+      // den Agenten. Die Jira-Grundlinie wird erst gesetzt, wenn der Nutzer eine
+      // Nachricht schickt — vorher hat die KI den Stand nicht gesehen.
+      this.attachContext(existing.session_id, {
+        text: prompt,
+        label: `${ticketRef.key} · Ticket`,
         snapshot: ticketRef.snapshot,
         contextHash,
       });
-      this.stageInInput(prompt);
       return;
     }
 
@@ -1111,17 +1179,19 @@ export class ComputerComponent implements OnInit, OnDestroy {
         return;
       }
 
-      // Der Text geht ins Eingabefeld, nicht an die KI. Sie arbeitet erst, wenn der
-      // Nutzer abschickt; bis dahin bleibt die Änderung als ungelesen vermerkt.
+      // Der Text hängt als Kontext an der Sitzung, er geht nicht an die KI. Sie
+      // arbeitet erst, wenn der Nutzer eine Nachricht schreibt; bis dahin bleibt
+      // die Änderung als ungelesen vermerkt.
       this.activeTabId.set(activity.session_id);
       this.selectTab(activity.session_id);
-      this.pendingTicketAck.set(activity.session_id, {
+      this.attachContext(activity.session_id, {
+        text: data.prompt,
+        label: `${activity.ticket_ref.key} · Neue Aktivität`,
         snapshot: data.snapshot,
         contextHash: data.context_hash,
       });
-      this.stageInInput(data.prompt);
       this.snackBar.open(
-        'In das Eingabefeld übernommen — zum Bearbeiten absenden',
+        'Als Kontext angehängt — geht mit deiner nächsten Nachricht mit',
         '',
         { duration: 3500 },
       );
@@ -1303,29 +1373,66 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Send message → SSE stream ─────────────────────────────────────
 
-  /** Legt Text ins Eingabefeld, statt ihn abzuschicken.
+  /** Hängt Ticket-Kontext an eine Sitzung, ohne die KI zu starten.
    *
-   *  Ticket-Kontext startet die KI bewusst NICHT von selbst: der Mensch sieht
-   *  zuerst, was übernommen wurde, kann es ergänzen oder streichen, und erst
-   *  sein Absenden lässt die KI arbeiten. */
-  private stageInInput(text: string): void {
-    const current = this.inputText.trim();
-    this.inputText = current ? `${current}\n\n${text}` : text;
-    setTimeout(() => {
-      this.resizeInput();
-      this.inputEl?.nativeElement.focus();
-    }, 0);
+   *  Bewusst nicht ins Eingabefeld: dort stünde eine Textwand, die der Nutzer erst
+   *  wegräumen müsste, bevor er seine eigene Frage texample kann. Der Kontext wartet
+   *  neben dem Feld und geht mit der nächsten Nachricht mit. Ein zweiter Kontext
+   *  für dieselbe Sitzung wird angehängt, nicht ersetzt — sonst ginge die erste
+   *  Änderung verloren, obwohl sie als übernommen angezeigt wurde. */
+  private attachContext(sid: string, next: PendingContext): void {
+    this.pendingContext.update(all => {
+      const existing = all[sid];
+      const merged: PendingContext = existing
+        ? {
+            text: `${existing.text}\n\n---\n\n${next.text}`,
+            label: `${existing.label} + ${next.label}`,
+            snapshot: next.snapshot ?? existing.snapshot,
+            contextHash: next.contextHash ?? existing.contextHash,
+          }
+        : next;
+      return { ...all, [sid]: merged };
+    });
+    this.contextExpanded.set(false);
+    setTimeout(() => this.inputEl?.nativeElement.focus(), 50);
   }
 
-  /** Nach erfolgreichem Absenden: den vorgemerkten Jira-Stand als übernommen buchen. */
-  private async resolvePendingTicketAck(sid: string): Promise<void> {
-    const pending = this.pendingTicketAck.get(sid);
-    if (!pending) return;
-    this.pendingTicketAck.delete(sid);
-    if (pending.snapshot) {
-      await this.acknowledgeTicketActivity(sid, pending.snapshot, pending.contextHash);
-    } else if (pending.contextHash) {
-      await this.persistContextHash(sid, pending.contextHash);
+  /** Angehängten Kontext verwerfen. Die Aktivitätsmeldung kommt dadurch zurück,
+   *  weil nichts quittiert wurde — die Änderung bleibt sichtbar ungelesen. */
+  async discardContext(sid: string): Promise<void> {
+    this.pendingContext.update(all => {
+      const { [sid]: _dropped, ...rest } = all;
+      return rest;
+    });
+    this.contextExpanded.set(false);
+    await this.computerService.refreshTicketActivities(sid);
+  }
+
+  toggleContextExpanded(): void {
+    this.contextExpanded.update(v => !v);
+  }
+
+  msgContextExpanded(index: number): boolean {
+    return !!this.expandedMsgContexts()[`${this.activeTabId()}:${index}`];
+  }
+
+  toggleMsgContext(index: number): void {
+    const key = `${this.activeTabId()}:${index}`;
+    this.expandedMsgContexts.update(all => ({ ...all, [key]: !all[key] }));
+  }
+
+  /** Den Kontext der aktiven Sitzung verwerfen (Knopf in der Kontextleiste). */
+  async discardActiveContext(): Promise<void> {
+    const sid = this.activeTabId();
+    if (sid) await this.discardContext(sid);
+  }
+
+  /** Nach erfolgreichem Absenden: den mitgegangenen Jira-Stand als übernommen buchen. */
+  private async resolveSentContext(sid: string, sent: PendingContext): Promise<void> {
+    if (sent.snapshot) {
+      await this.acknowledgeTicketActivity(sid, sent.snapshot, sent.contextHash);
+    } else if (sent.contextHash) {
+      await this.persistContextHash(sid, sent.contextHash);
     }
     await this.computerService.refreshTicketActivities(sid);
   }
@@ -1335,14 +1442,32 @@ export class ComputerComponent implements OnInit, OnDestroy {
     if (!text || this.loading()) return false;
 
     const sid = this.activeTabId();
+    const context = sid ? this.pendingContext()[sid] ?? null : null;
     this.inputText = '';
     setTimeout(() => this.resizeInput(), 0);
-    const sent = await this.sendContent(text);
-    if (sent && sid) await this.resolvePendingTicketAck(sid);
+
+    // Der Kontext geht der eigenen Nachricht voran; gesendet wird beides, angezeigt
+    // die eigene Nachricht mit dem Kontext als aufklappbarem Anhang.
+    const payload = context ? `${context.text}\n\n---\n\n${text}` : text;
+    const sent = await this.sendContent(payload, undefined, {
+      display: text,
+      context,
+    });
+    if (sent && sid && context) {
+      this.pendingContext.update(all => {
+        const { [sid]: _used, ...rest } = all;
+        return rest;
+      });
+      await this.resolveSentContext(sid, context);
+    }
     return sent;
   }
 
-  private async sendContent(text: string, targetSid?: string): Promise<boolean> {
+  private async sendContent(
+    text: string,
+    targetSid?: string,
+    shown?: { display: string; context: PendingContext | null },
+  ): Promise<boolean> {
     if (!text.trim() || this.loading()) return false;
 
     let sid = targetSid ?? this.activeTabId();
@@ -1363,7 +1488,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
       ];
     });
     localStorage.setItem('cs_computer_active_session', sid);
-    this._addMessage(sid, 'user', text);
+    this._addMessage(sid, 'user', shown?.display ?? text, shown?.context ?? undefined);
     this._addMessage(sid, 'assistant', '');
     this._updateMsgCount(sid);
     this.scrollToBottom();
@@ -1588,10 +1713,18 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Helpers ───────────────────────────────────────────────────────
 
-  private _addMessage(sid: string, role: 'user' | 'assistant', text: string): void {
+  private _addMessage(
+    sid: string,
+    role: 'user' | 'assistant',
+    text: string,
+    context?: PendingContext,
+  ): void {
+    const msg: HermesMessage = context
+      ? { role, text, contextText: context.text, contextLabel: context.label }
+      : { role, text };
     this.sessions.update(ss => ss.map(s =>
       s.session_id === sid
-        ? { ...s, messages: [...s.messages, { role, text }] }
+        ? { ...s, messages: [...s.messages, msg] }
         : s
     ));
   }

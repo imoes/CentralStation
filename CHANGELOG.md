@@ -43,11 +43,20 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What changed
 
-- **Ticket context no longer starts the AI by itself.** "IN EINGABE ÜBERNEHMEN"
-  (formerly "IN KONTEXT ÜBERNEHMEN") and the first handoff of a ticket now place
-  the text in the input field instead of sending it. The AI works when the
-  operator sends a message — not before. The Jira baseline is recorded only on
-  that send, so a change that never reached the AI stays marked as unread.
+- **Ticket context no longer starts the AI by itself.** "ALS KONTEXT ANHÄNGEN"
+  (formerly "IN KONTEXT ÜBERNEHMEN") and the first handoff of a ticket now
+  *attach* the text to the session instead of sending it. It does not go into the
+  input field either — a wall of text there would have to be cleared away first.
+
+  The attachment appears as a named bar above the input, can be expanded and
+  discarded, and travels with the next message the operator writes. That message
+  keeps the operator's own wording in the transcript and carries the context as a
+  collapsed block. Several attachments are appended rather than replaced.
+
+  The Jira baseline is recorded only when that message is sent, so a change that
+  never reached the AI stays marked as unread; discarding brings the activity
+  banner back. *Verified:* the production bundle serves the new bar and the old
+  label is gone.
 
 - **Ticket comments are named as irreversible** in the Console system prompt:
   they go to people, often external ones, and are not retractable. The prompt
