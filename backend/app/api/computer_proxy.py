@@ -697,6 +697,7 @@ async def create_session(
                 "context_hash": existing.context_hash,
                 "has_activity_snapshot": bool(existing.ticket_activity_snapshot),
                 "context_synced_at": existing.context_synced_at.isoformat() if existing.context_synced_at else None,
+                "last_activity_at": existing.last_activity_at.isoformat(),
                 "reused": True,
             }
     _ssh_creds: dict | None = None
@@ -911,6 +912,7 @@ async def create_session(
         "context_hash": body.context_hash or None,
         "has_activity_snapshot": False,
         "context_synced_at": None,
+        "last_activity_at": datetime.now(timezone.utc).isoformat(),
         "reused": False,
     }
 
@@ -925,7 +927,7 @@ async def list_sessions(
     rows = (await db.execute(
         select(ComputerSession)
         .where(ComputerSession.user_id == user.id)
-        .order_by(ComputerSession.created_at.asc())
+        .order_by(ComputerSession.last_activity_at.desc(), ComputerSession.created_at.desc())
     )).scalars().all()
     return [
         {
@@ -933,6 +935,7 @@ async def list_sessions(
             "label": r.label,
             "msg_count": r.msg_count,
             "created_at": r.created_at.isoformat(),
+            "last_activity_at": r.last_activity_at.isoformat(),
             "external_id": r.external_id,
             "resolved": r.resolved,
             "agent_type": r.agent_type,
@@ -1434,7 +1437,10 @@ async def send_message(
                 await fresh_db.execute(
                     update(ComputerSession)
                     .where(ComputerSession.id == sid, ComputerSession.user_id == user.id)
-                    .values(msg_count=ComputerSession.msg_count + 1)
+                    .values(
+                        msg_count=ComputerSession.msg_count + 1,
+                        last_activity_at=datetime.now(timezone.utc),
+                    )
                 )
                 await fresh_db.commit()
         except Exception as exc:
