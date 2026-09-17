@@ -8,10 +8,8 @@ export const authGuard: CanActivateFn = (_route, state) => {
   const auth = inject(AuthService);
   const router = inject(Router);
 
-  if (auth.isLoggedIn()) return true;
-
-  // No in-memory token (fresh window via window.open, or full reload) —
-  // attempt a silent refresh using the HttpOnly cookie before bouncing to login.
+  // A stored token is not enough for role-protected routes: wait until the user
+  // profile is available before the next guard evaluates it.
   return auth.ensureAuthenticated().pipe(
     map(ok => ok
       ? true
@@ -20,12 +18,16 @@ export const authGuard: CanActivateFn = (_route, state) => {
 };
 
 export function roleGuard(...allowedRoles: Role[]): CanActivateFn {
-  return () => {
+  return (_route, state) => {
     const auth = inject(AuthService);
     const router = inject(Router);
 
-    const role = auth.userRole();
-    if (role && allowedRoles.includes(role as Role)) return true;
-    return router.createUrlTree(['/dashboard']);
+    return auth.ensureAuthenticated().pipe(map(ok => {
+      if (!ok) return router.createUrlTree(['/login'], { queryParams: { returnUrl: state.url } });
+      const role = auth.userRole();
+      return role && allowedRoles.includes(role as Role)
+        ? true
+        : router.createUrlTree(['/dashboard']);
+    }));
   };
 }

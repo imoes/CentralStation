@@ -29,6 +29,24 @@ $nav-w: 220px;
   letter-spacing: .04em;
   flex-shrink: 0;
 }
+
+.cs-nav-group-label {
+  margin: 16px 14px 5px;
+  color: var(--mat-sys-on-surface-variant);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+}
+
+:host-context(html.cs-theme-lcars) .cs-nav-group-label {
+  color: #ffcc66;
+  font-family: 'Antonio', 'Eurostile', sans-serif;
+  text-transform: uppercase;
+}
+
+:host-context(html.cs-theme-holo) .cs-nav-group-label {
+  color: #8fdcff;
+}
 .cs-nav-icon { font-size: 20px !important; width: 20px !important; height: 20px !important; flex-shrink: 0; }
 .cs-nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

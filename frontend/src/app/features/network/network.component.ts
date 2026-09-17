@@ -15,6 +15,7 @@ import { Subject, takeUntil } from 'rxjs';
 import { WebsocketService, WsMessage } from '../../core/services/websocket.service';
 import { environment } from '../../../environments/environment';
 import { I18nService } from '../../core/services/i18n.service';
+import { RouterLink } from '@angular/router';
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#d32f2f', high: '#f57c00', medium: '#1976d2', low: '#388e3c', info: '#607d8b',
@@ -31,9 +32,13 @@ const VENDOR_ICONS: Record<string, string> = {
     MatCardModule, MatButtonModule, MatIconModule,
     MatChipsModule, MatSelectModule, MatFormFieldModule,
     MatProgressSpinnerModule, MatTooltipModule, MatSnackBarModule,
+    RouterLink,
   ],
   template: `
     <div class="page-container">
+      <nav class="subview-nav" aria-label="Ereignisansichten">
+        <a routerLink="/feed">Ereignisse</a><span aria-current="page">Netzwerk</span>
+      </nav>
       <div class="page-header">
         <h2>Netzwerk Switch-Events</h2>
         <div class="header-actions">
@@ -126,6 +131,8 @@ const VENDOR_ICONS: Record<string, string> = {
   `,
   styles: [`
     .page-container { padding: 24px; max-width: 1200px; }
+    .subview-nav { display:flex; gap:8px; margin-bottom:12px; font-size:12px; }
+    .subview-nav span { color:var(--mat-sys-primary); font-weight:600; }
     .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
     .page-header h2 { margin: 0; }
     .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

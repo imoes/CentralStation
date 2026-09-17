@@ -99,6 +99,9 @@ const SEV_LABEL: Record<string, string> = {
         <button class="pill-btn refresh" (click)="load()" [disabled]="loading()">
           {{ loading() ? 'SYNC…' : '⟳ NEU' }}
         </button>
+        @if (canSeeInsights()) {
+          <button class="pill-btn refresh" (click)="go('/ai-insights')">◎ ANALYSEVERLAUF</button>
+        }
         <div class="cap cap-tr"></div>
       </div>
 
@@ -450,13 +453,12 @@ export class ProblemsComponent implements OnInit, OnDestroy {
   // Same role-gating as the app sidenav (app.ts navItems); current view (/problems) excluded.
   private readonly NAV_ALL = [
     { path: '/dashboard',   label: 'Dashboard',     icon: '▦', roles: ['admin','sysadmin','network_technician','viewer'] },
-    { path: '/bridge',      label: 'Brücke',        icon: '◈', roles: ['admin','sysadmin','network_technician','viewer'] },
     { path: '/feed',        label: 'News Feed',     icon: '≋', roles: ['admin','sysadmin','network_technician'] },
     { path: '/problems',    label: 'Problemboard',  icon: '⚠', roles: ['admin','sysadmin','network_technician'] },
-    { path: '/alerts',      label: 'Alerts',        icon: '!', roles: ['admin'] },
-    { path: '/my-tickets',  label: 'Meine Tickets', icon: '✓', roles: ['admin','sysadmin'] },
-    { path: '/kanban',      label: 'Kanban',        icon: '▤', roles: ['admin','sysadmin','network_technician'] },
-    { path: '/ai-insights', label: 'KI-Insights',   icon: '◎', roles: ['admin','sysadmin'] },
+    { path: '/my-tickets',  label: 'Tickets & Aufgaben', icon: '✓', roles: ['admin','sysadmin'] },
+    { path: '/projects',    label: 'Projekte',      icon: '◇', roles: ['admin','sysadmin'] },
+    { path: '/workbench',   label: 'Werkbank',      icon: '▤', roles: ['admin','sysadmin'] },
+    { path: '/topology',    label: 'Topologie',     icon: '⌘', roles: ['admin','sysadmin','network_technician'] },
     { path: '/settings',    label: 'Einstellungen', icon: '⚙', roles: ['admin','sysadmin','network_technician','viewer'] },
     { path: '/help',        label: 'Hilfe',         icon: '?', roles: ['admin','sysadmin','network_technician','viewer'] },
   ];
@@ -465,6 +467,7 @@ export class ProblemsComponent implements OnInit, OnDestroy {
     const role = this.auth.userRole();
     return this.NAV_ALL.filter(i => i.path !== '/problems' && role && i.roles.includes(role));
   });
+  canSeeInsights = computed(() => ['admin', 'sysadmin'].includes(this.auth.userRole() ?? ''));
 
   readonly filters = [
     { key: 'all',      label: 'ALLE' },

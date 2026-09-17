@@ -178,6 +178,15 @@ const SEVERITY_COLOR: Record<string, string> = {
           </button>
         </div>
       </div>
+      <nav class="feed-view-tabs" aria-label="Ereignisansichten">
+        <button class="active" type="button">Ereignisse</button>
+        @if (canSeeRawAlerts()) {
+          <button type="button" (click)="goView('/alerts')">Rohmeldungen</button>
+        }
+        @if (canSeeNetworkEvents()) {
+          <button type="button" (click)="goView('/network')">Netzwerk</button>
+        }
+      </nav>
 
       <!-- ── Cross-source search bar (all cs-feed-* indices) ────────────────── -->
       <div class="glog-bar">
@@ -864,6 +873,9 @@ const SEVERITY_COLOR: Record<string, string> = {
     /* Top bar */
     .feed-topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
     .feed-topbar h2 { margin: 0; font-size: 22px; font-weight: 600; }
+    .feed-view-tabs { display:flex; gap:4px; margin:-8px 0 16px; border-bottom:1px solid var(--mat-sys-outline-variant); }
+    .feed-view-tabs button { border:0; background:transparent; color:var(--mat-sys-on-surface-variant); padding:8px 12px; cursor:pointer; }
+    .feed-view-tabs button.active { color:var(--mat-sys-primary); border-bottom:2px solid var(--mat-sys-primary); font-weight:600; }
     .topbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
     /* ── Cross-source search bar ─────────────────────────────────────── */
@@ -2463,5 +2475,9 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private authSvc = inject(AuthService);
+  readonly canSeeRawAlerts = computed(() => this.authSvc.userRole() === 'admin');
+  readonly canSeeNetworkEvents = computed(() => ['admin', 'network_technician'].includes(this.authSvc.userRole() ?? ''));
+
+  goView(path: string): void { this.router.navigateByUrl(path); }
   get auth() { return this.authSvc; }
 }

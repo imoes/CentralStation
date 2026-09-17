@@ -25,7 +25,8 @@ export const routes: Routes = [
   {
     path: 'kanban',
     canActivate: [authGuard, roleGuard('admin', 'sysadmin', 'network_technician')],
-    loadComponent: () => import('./features/kanban/kanban.component').then(m => m.KanbanComponent),
+    data: { view: 'board' },
+    loadComponent: () => import('./features/my-tickets/my-tickets.component').then(m => m.MyTicketsComponent),
   },
   {
     path: 'network',
