@@ -18,6 +18,13 @@ ARG HTTP_PROXY=""
 ARG HTTPS_PROXY=""
 ARG NO_PROXY=""
 
+# Cache-Bruch für die Agenten-CLIs. Hermes, Claude Code, Codex und Playwright-MCP
+# sind bewusst NICHT auf eine Version gepinnt (git --depth=1 bzw. @latest) — ohne
+# diesen ARG liefert der Docker-Layer-Cache aber trotzdem dieselben alten Stände.
+# Neue Versionen holen:
+#   docker compose build --build-arg AGENT_REFRESH=$(date +%s) userenv
+ARG AGENT_REFRESH=""
+
 ENV http_proxy=${HTTP_PROXY} \
     https_proxy=${HTTPS_PROXY} \
     no_proxy=${NO_PROXY} \
@@ -79,7 +86,8 @@ RUN pip install --no-cache-dir ansible ansible-lint
 # code-server:latest base got a new digest and invalidated this layer's cache.
 # -e keeps the source at /opt/hermes on sys.path, which the image retains anyway
 # (Hermes modules are also imported via PYTHONPATH=/opt/hermes).
-RUN git clone --depth=1 https://github.com/NousResearch/hermes-agent /opt/hermes \
+RUN echo "agent-refresh=${AGENT_REFRESH}" \
+    && git clone --depth=1 https://github.com/NousResearch/hermes-agent /opt/hermes \
     && pip install --no-cache-dir -e /opt/hermes \
     && chmod -R a+rX /opt/hermes
 
@@ -96,7 +104,8 @@ ENV PYTHONPATH=/opt/hermes
 
 # ── Claude Code CLI (installed as yolo so it lands in /home/yolo/.local/bin) ──
 USER yolo
-RUN curl -fsSL https://claude.ai/install.sh | bash \
+RUN echo "agent-refresh=${AGENT_REFRESH}" \
+    && curl -fsSL https://claude.ai/install.sh | bash \
     && /home/yolo/.local/bin/claude --version
 USER root
 # Symlink so all users (and exec_run) can reach the binary via PATH.
@@ -105,7 +114,9 @@ ENV PATH=/home/yolo/.local/bin:$PATH \
     CLAUDE_CONFIG_DIR=/home/yolo/.claude
 
 # ── Codex CLI (@openai/codex) — global so yolo can use it ────────────
-RUN npm install -g @openai/codex
+RUN echo "agent-refresh=${AGENT_REFRESH}" \
+    && npm install -g @openai/codex \
+    && codex --version
 
 # ── Playwright MCP (browser automation for the Computer Console) ─────
 # Shared stdio MCP server usable by all three Console agents (Hermes,
@@ -115,7 +126,8 @@ RUN npm install -g @openai/codex
 # server is spawned with --browser chromium --headless --no-sandbox
 # (container has no user-namespace sandbox), see userenv_manager.py.
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
-RUN npm install -g @playwright/mcp@latest \
+RUN echo "agent-refresh=${AGENT_REFRESH}" \
+    && npm install -g @playwright/mcp@latest \
     && PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
        https_proxy=${HTTPS_PROXY} http_proxy=${HTTP_PROXY} \
        npx playwright install --with-deps chromium \

@@ -4,7 +4,8 @@ VibeMK reads its CheckMK credentials from the environment once at process start
 (`CheckMKConfig.from_env()`), so it cannot pick up connector changes by itself. This
 module owns the containers instead: it renders the environment from the SINGLE
 CheckMK connector in the database and recreates a container whenever those
-credentials change. There is deliberately no second copy of the CheckMK password.
+credentials — or the VibeMK image itself — change. There is deliberately no second
+copy of the CheckMK password.
 
 Two instances exist, because the write restriction has to be topological rather
 than advisory — an agent must not merely be *told* not to reconfigure monitoring:
@@ -133,10 +134,23 @@ def _env_for(tier: str, cmk: dict) -> dict:
     return env
 
 
-def _fingerprint(env: dict) -> str:
-    """Stable hash of the effective environment — changes force a recreate."""
+def _image_id(cli) -> str:
+    """Docker-ID des aktuellen VibeMK-Images, oder "" wenn nicht ermittelbar."""
+    try:
+        return str(cli.images.get(VIBEMK_IMAGE).id or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _fingerprint(env: dict, image_id: str = "") -> str:
+    """Hash über Zugangsdaten UND Image — beides erzwingt eine Neuerstellung.
+
+    Das Image gehört hinein, weil ein neu gebautes Image sonst folgenlos bleibt:
+    der Container lief weiter mit dem alten Stand, und nichts zeigte das an. Ein
+    `docker compose build vibemk` wirkt jetzt beim nächsten ensure_vibemk().
+    """
     return hashlib.sha256(
-        json.dumps(env, sort_keys=True).encode("utf-8")
+        json.dumps({"env": env, "image": image_id}, sort_keys=True).encode("utf-8")
     ).hexdigest()[:16]
 
 
@@ -145,7 +159,7 @@ def _ensure_sync(tier: str, cmk: dict) -> str:
     cli = _client()
     name = container_name(tier)
     env = _env_for(tier, cmk)
-    fp = _fingerprint(env)
+    fp = _fingerprint(env, _image_id(cli))
 
     try:
         existing = cli.containers.get(name)
@@ -155,7 +169,7 @@ def _ensure_sync(tier: str, cmk: dict) -> str:
     if existing is not None:
         stale = (existing.labels or {}).get(_FP_LABEL) != fp
         if stale:
-            log.info("vibemk_manager: credentials changed → recreating %s", name)
+            log.info("vibemk_manager: Zugangsdaten oder Image geändert → %s wird neu erstellt", name)
             existing.remove(force=True)
             existing = None
         else:

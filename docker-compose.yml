@@ -117,6 +117,12 @@ services:
     build:
       context: .
       dockerfile: userenv/Dockerfile
+      args:
+        # Cache-Bruch für die Agenten-CLIs (Hermes, Claude Code, Codex,
+        # Playwright-MCP). Leer = Layer-Cache gilt, ein neuer Wert holt die
+        # aktuellen Versionen:
+        #   docker compose build --build-arg AGENT_REFRESH=$(date +%s) userenv
+        AGENT_REFRESH: ${AGENT_REFRESH:-}
     image: centralstation-userenv:latest
     profiles: ["userenv"]
     command: ["--version"]
