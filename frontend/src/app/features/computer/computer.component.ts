@@ -223,79 +223,6 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
             </div>
           }
 
-          @if (activeTicketActivity(); as activity) {
-            @if (!activityDismissed(activity)) {
-              @if (activity.state === 'unavailable') {
-                <section class="ticket-activity ticket-activity--warning" aria-live="polite">
-                  <mat-icon>cloud_off</mat-icon>
-                  <div class="ticket-activity-content">
-                    <strong>{{ activity.ticket_ref.key }} · Quelle nicht erreichbar</strong>
-                    <span>Der letzte bekannte Stand bleibt erhalten. Es wurde nichts als gelesen markiert.</span>
-                  </div>
-                  <button class="activity-later" (click)="dismissActivity(activity)" title="Hinweis einklappen">Später</button>
-                </section>
-              } @else if (activity.state === 'changed') {
-                <section class="ticket-activity" aria-live="polite">
-                  <div class="ticket-activity-heading">
-                    <div>
-                      <strong>{{ activity.ticket_ref.key }} · Neue Aktivität</strong>
-                      <span>
-                        {{ activity.comment_change_count }} Kommentaränderung{{ activity.comment_change_count === 1 ? '' : 'en' }}
-                        @if (activity.ticket_changed) { · Ticketdaten geändert }
-                        @if (activity.source_unavailable) { · Quelle derzeit nicht erreichbar }
-                      </span>
-                    </div>
-                    <button class="activity-later" (click)="dismissActivity(activity)">Später</button>
-                  </div>
-
-                  <div class="activity-details">
-                    @for (comment of activity.new_comments; track comment.id) {
-                      <article class="activity-comment">
-                        <span class="activity-kind">NEU</span>
-                        <strong>{{ comment.author || '?' }}</strong>
-                        <time>{{ formatActivityTime(comment.created) }}</time>
-                        <p>{{ comment.body }}</p>
-                      </article>
-                    }
-                    @for (comment of activity.edited_comments; track comment.id) {
-                      <article class="activity-comment">
-                        <span class="activity-kind activity-kind--edited">BEARBEITET</span>
-                        <strong>{{ comment.author || '?' }}</strong>
-                        <time>{{ formatActivityTime(comment.updated || comment.created) }}</time>
-                        <p>{{ comment.body }}</p>
-                      </article>
-                    }
-                    @for (change of activity.field_changes; track change.field) {
-                      <div class="activity-field">
-                        <strong>{{ change.label }}</strong>
-                        @if (change.field === 'description_hash') {
-                          <span>wurde geändert</span>
-                        } @else {
-                          <span>{{ change.before || '(leer)' }} → {{ change.after || '(leer)' }}</span>
-                        }
-                      </div>
-                    }
-                    @if (activity.deleted_comment_ids.length > 0) {
-                      <div class="activity-field">
-                        {{ activity.deleted_comment_ids.length }} Kommentar(e) wurde(n) entfernt.
-                      </div>
-                    }
-                    @if (activity.ticket_changed && activity.field_changes.length === 0) {
-                      <div class="activity-field">Weitere Ticketdaten wurden geändert.</div>
-                    }
-                  </div>
-
-                  <button class="activity-accept" (click)="acceptTicketActivity(activity)"
-                          [disabled]="loading() || acceptingTicketActivity() || activity.source_unavailable"
-                          [title]="activity.source_unavailable ? 'Erst nach erfolgreicher Jira-Prüfung verfügbar' : ''">
-                    <mat-icon>add_comment</mat-icon>
-                    {{ acceptingTicketActivity() ? 'WIRD ÜBERNOMMEN …' : 'IN KONTEXT ÜBERNEHMEN' }}
-                  </button>
-                </section>
-              }
-            }
-          }
-
           <div class="messages" #msgContainer (scroll)="onMessagesScroll()">
             @for (msg of completedMessages(); track msg) {
               <div class="msg" [class.user]="msg.role === 'user'"
@@ -317,6 +244,78 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                 <!-- Tool calls of PAST turns are intentionally not rendered; only the
                      live streaming turn below shows tool activity. -->
               </div>
+            }
+            @if (activeTicketActivity(); as activity) {
+              @if (!activityDismissed(activity)) {
+                @if (activity.state === 'unavailable') {
+                  <section class="ticket-activity ticket-activity--warning" aria-live="polite">
+                    <mat-icon>cloud_off</mat-icon>
+                    <div class="ticket-activity-content">
+                      <strong>{{ activity.ticket_ref.key }} · Quelle nicht erreichbar</strong>
+                      <span>Der letzte bekannte Stand bleibt erhalten. Es wurde nichts als gelesen markiert.</span>
+                    </div>
+                    <button class="activity-later" (click)="dismissActivity(activity)" title="Hinweis einklappen">Später</button>
+                  </section>
+                } @else if (activity.state === 'changed') {
+                  <section class="ticket-activity" aria-live="polite">
+                    <div class="ticket-activity-heading">
+                      <div>
+                        <strong>{{ activity.ticket_ref.key }} · Neue Aktivität</strong>
+                        <span>
+                          {{ activity.comment_change_count }} Kommentaränderung{{ activity.comment_change_count === 1 ? '' : 'en' }}
+                          @if (activity.ticket_changed) { · Ticketdaten geändert }
+                          @if (activity.source_unavailable) { · Quelle derzeit nicht erreichbar }
+                        </span>
+                      </div>
+                      <button class="activity-later" (click)="dismissActivity(activity)">Später</button>
+                    </div>
+
+                    <div class="activity-details">
+                      @for (comment of activity.new_comments; track comment.id) {
+                        <article class="activity-comment">
+                          <span class="activity-kind">NEU</span>
+                          <strong>{{ comment.author || '?' }}</strong>
+                          <time>{{ formatActivityTime(comment.created) }}</time>
+                          <p>{{ comment.body }}</p>
+                        </article>
+                      }
+                      @for (comment of activity.edited_comments; track comment.id) {
+                        <article class="activity-comment">
+                          <span class="activity-kind activity-kind--edited">BEARBEITET</span>
+                          <strong>{{ comment.author || '?' }}</strong>
+                          <time>{{ formatActivityTime(comment.updated || comment.created) }}</time>
+                          <p>{{ comment.body }}</p>
+                        </article>
+                      }
+                      @for (change of activity.field_changes; track change.field) {
+                        <div class="activity-field">
+                          <strong>{{ change.label }}</strong>
+                          @if (change.field === 'description_hash') {
+                            <span>wurde geändert</span>
+                          } @else {
+                            <span>{{ change.before || '(leer)' }} → {{ change.after || '(leer)' }}</span>
+                          }
+                        </div>
+                      }
+                      @if (activity.deleted_comment_ids.length > 0) {
+                        <div class="activity-field">
+                          {{ activity.deleted_comment_ids.length }} Kommentar(e) wurde(n) entfernt.
+                        </div>
+                      }
+                      @if (activity.ticket_changed && activity.field_changes.length === 0) {
+                        <div class="activity-field">Weitere Ticketdaten wurden geändert.</div>
+                      }
+                    </div>
+
+                    <button class="activity-accept" (click)="acceptTicketActivity(activity)"
+                            [disabled]="loading() || acceptingTicketActivity() || activity.source_unavailable"
+                            [title]="activity.source_unavailable ? 'Erst nach erfolgreicher Jira-Prüfung verfügbar' : ''">
+                      <mat-icon>add_comment</mat-icon>
+                      {{ acceptingTicketActivity() ? 'WIRD ÜBERNOMMEN …' : 'IN KONTEXT ÜBERNEHMEN' }}
+                    </button>
+                  </section>
+                }
+              }
             }
             @if (streamingMsg(); as sm) {
               <div class="msg agent">
@@ -455,7 +454,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
   muted = signal(localStorage.getItem('cs_computer_muted') === '1');
   voiceError = signal<string | null>(null);
   acceptingTicketActivity = signal(false);
-  private dismissedActivityVersions = signal<Record<string, string>>({});
+  private readonly dismissedActivityStorageKey = 'cs_computer_dismissed_activity';
+  private dismissedActivityVersions = signal<Record<string, string>>(this.loadDismissedActivities());
 
   private mediaRecorder?: MediaRecorder;
   private audioChunks: Blob[] = [];
@@ -687,10 +687,21 @@ export class ComputerComponent implements OnInit, OnDestroy {
   }
 
   dismissActivity(activity: TicketActivity): void {
-    this.dismissedActivityVersions.update(current => ({
-      ...current,
+    const dismissed = {
+      ...this.dismissedActivityVersions(),
       [activity.session_id]: this.activityVersion(activity),
-    }));
+    };
+    this.dismissedActivityVersions.set(dismissed);
+    localStorage.setItem(this.dismissedActivityStorageKey, JSON.stringify(dismissed));
+  }
+
+  private loadDismissedActivities(): Record<string, string> {
+    try {
+      const stored = JSON.parse(localStorage.getItem(this.dismissedActivityStorageKey) || '{}');
+      return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+    } catch {
+      return {};
+    }
   }
 
   formatActivityTime(value: string): string {
