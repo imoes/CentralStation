@@ -11,10 +11,13 @@ Policy — DENY when:
     dd/mkfs, iptables, user mgmt, docker/kubectl mutations, git push, …) — anywhere,
     including inside `ssh host '…'`; OR
   * a file-modifying operation (rm/mv/cp/chmod/chown/sed -i/tee/`>` redirect/…)
-    targets a REMOTE host (ssh/scp/rsync present) or a SYSTEM path (/etc, /var, …).
+    targets a REMOTE host (ssh/scp/rsync present) or a SYSTEM path (/etc, /var, …); OR
+  * scp/rsync copies TO a remote destination (pulling from one stays allowed).
 ALLOW: read-only diagnostics (df, cat, journalctl, `systemctl status`, docker ps,
-ssh '<read cmd>') and local file writes inside the workspace (/home/yolo/workspaces,
-/tmp, relative paths) so the agent can still save reports/scripts.
+ssh '<read cmd>'), local file writes inside the workspace (/home/yolo/workspaces,
+/tmp, relative paths) so the agent can still save reports/scripts, and `pip install`
+into the agent's own venv (/home/yolo/pip/venv) — but not over ssh, not via sudo and
+not into the system Python.
 
 Wired via managed-settings.json → hooks.PreToolUse (matcher "Bash"), admin-scoped.
 """
@@ -29,7 +32,7 @@ _SYSTEM_OP = re.compile(
     \b(systemctl|service)\s+\S*\s*(restart|stop|start|reload|enable|disable|mask|unmask|kill)\b
     | \b(reboot|shutdown|halt|poweroff|init)\b
     | \b(apt|apt-get|aptitude|yum|dnf|zypper|snap)\s+(install|remove|purge|upgrade|autoremove|dist-upgrade)\b
-    | \b(pip3?|npm|yarn|pnpm|gem|cargo)\s+(install|uninstall|add|remove)\b
+    | \b(npm|yarn|pnpm|gem|cargo)\s+(install|uninstall|add|remove)\b
     | \bdocker\s+(run|rm|stop|start|restart|kill|rmi|pull|push|compose)\b
     | \bkubectl\s+(apply|delete|edit|scale|patch|create|replace|rollout|cordon|drain)\b
     | \bgit\s+(push|reset\s+--hard|clean)\b
@@ -55,9 +58,47 @@ _FILE_WRITE = re.compile(
 )
 
 _REMOTE = re.compile(r"(?ix)\b(ssh|scp|rsync|sshpass)\b")
+_SUDO = re.compile(r"(?ix)\bsudo\b")
+
+# Python-Pakete: der Agent braucht gelegentlich eine Bibliothek, um überhaupt
+# auswerten zu können (pandas für eine CSV, ein Parser für ein Logformat). Das
+# venv unter /home/yolo/pip/venv liegt auf einem eigenen Volume, gehört dem Agenten
+# und betrifft kein System — eine Installation dorthin ist keine Änderung, vor der
+# dieser Hook schützen soll. Sie ist deshalb erlaubt, ABER nur lokal: auf einem
+# entfernten Host, über sudo oder in das System-Python bleibt sie gesperrt.
+_PIP_INSTALL = re.compile(
+    r"(?ix)\b(?:python3?\s+-m\s+pip|uv\s+pip|pip3?)\s+"
+    r"(install|uninstall|download)\b"
+)
+_PIP_SYSTEM_TARGET = re.compile(
+    r"""(?ix)
+    /usr/bin/pip
+    | --break-system-packages
+    | --(target|prefix|root)[=\s]+/(usr|etc|opt|var|srv|boot|lib|bin|sbin)\b
+    """,
+    re.VERBOSE,
+)
 _SYSTEM_PATH = re.compile(
     r"(?i)(^|[\s'\":=])/(etc|var|usr|boot|root|bin|sbin|lib|lib64|sys|proc|opt|srv|run)(/|\b)"
 )
+
+# Copying TO a remote host is a write on that host, even though no rm/tee/> appears
+# anywhere — scp and rsync carry the verb in their argument order. Pulling FROM a
+# host is read-only and stays allowed, so the destination decides: the last operand.
+_SCP_LIKE = re.compile(r"(?ix)(?:^|[;&|]|\s)(scp|rsync)\s")
+_REMOTE_OPERAND = re.compile(r"^(?!/|\./|\.\./|-)[A-Za-z0-9_.+-]+(?:@[A-Za-z0-9_.-]+)?:")
+
+
+def _copies_to_remote(cmd: str) -> bool:
+    """True when an scp/rsync in `cmd` writes to a remote destination."""
+    for segment in re.split(r"[;&|]+", cmd):
+        if not _SCP_LIKE.search(" " + segment.strip()):
+            continue
+        operands = [t for t in segment.split() if not t.startswith("-")]
+        # operands[0] is the scp/rsync binary itself; the destination is the last one.
+        if len(operands) >= 3 and _REMOTE_OPERAND.match(operands[-1]):
+            return True
+    return False
 
 
 def _is_write(cmd: str) -> bool:
@@ -66,6 +107,14 @@ def _is_write(cmd: str) -> bool:
     if _FILE_WRITE.search(cmd):
         # Remote target (production) or a local system path → block.
         if _REMOTE.search(cmd) or _SYSTEM_PATH.search(cmd):
+            return True
+    if _copies_to_remote(cmd):
+        return True
+    if _PIP_INSTALL.search(cmd):
+        # Only the local user venv is free. Note that this branch never *unblocks*
+        # anything: the rules above have already had their say on the whole command,
+        # so `pip install x && rm -rf /etc` is still caught by the file-write rule.
+        if _REMOTE.search(cmd) or _SUDO.search(cmd) or _PIP_SYSTEM_TARGET.search(cmd):
             return True
     return False
 
