@@ -999,6 +999,27 @@ The Jira baseline (`POST …/ticket-activity/acknowledge`) is recorded only when
 is sent. A change that never reached the agent stays visible as unread instead of silently
 disappearing; discarding the attachment brings the activity banner straight back.
 
+### One workspace, shared with the Werkbank
+
+The Console agents run **in** `/home/yolo/workspaces` — the same folder code-server
+opens in the Werkbank. A file the agent writes is immediately editable in the browser
+IDE, and edits made there are what the agent reads back. Relative paths in the Console
+mean that folder.
+
+It is a bind mount from the host (`IDE_WORKSPACES_BASE/<uid>/workspaces`), so it also
+survives container recreation — unlike the container layer, where files written to
+`/app` used to land.
+
+`CS_AGENT_CWD` overrides the directory; if it cannot be created the agent falls back to
+its previous working directory rather than failing to start.
+
+### Moving files between servers
+
+`ssh`, `scp`, `sftp` and `rsync` are in the image and use the same user and key.
+Fetching from a host is reading and is always allowed; **pushing to one is a change to
+that host** and needs a write window like any other outward action. `rsync` has to
+exist on both ends — where it does not, `scp` and `sftp` still work.
+
 ### Ticket attachments
 
 The agent writes the file into its workspace and then names the path — the content

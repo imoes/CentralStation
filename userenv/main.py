@@ -60,6 +60,25 @@ log = logging.getLogger("userenv")
 # unwritable here. All state that used to assume HOME=/root lives under yolo's home.
 _YOLO_HOME = "/home/yolo"
 
+#: Arbeitsverzeichnis der Agenten — dasselbe, das die Werkbank (code-server) öffnet.
+#: Die Konsole und die Werkbank sollen an denselben Dateien arbeiten: was der Agent
+#: anlegt, muss in der Werkbank sofort editierbar sein und umgekehrt. Liefe der Agent
+#: wie früher in /app, landeten seine Dateien in der Container-Schicht — unsichtbar
+#: für die Werkbank und beim nächsten Neuaufbau verloren.
+AGENT_CWD = os.environ.get("CS_AGENT_CWD", "/home/yolo/workspaces")
+
+
+def _agent_cwd() -> str:
+    """AGENT_CWD, angelegt falls nötig; fällt auf das aktuelle Verzeichnis zurück."""
+    try:
+        os.makedirs(AGENT_CWD, exist_ok=True)
+        return AGENT_CWD
+    except OSError as exc:
+        log.warning("Arbeitsverzeichnis %s nicht nutzbar (%s) — bleibe in %s",
+                    AGENT_CWD, exc, os.getcwd())
+        return os.getcwd()
+
+
 app = FastAPI(title="UserEnv Agent Service", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -136,7 +155,7 @@ SYSTEM_PROMPT = (
     "→ Am Ticket: jira_add_comment, jira_update_issue, jira_transition_issue, jira_close_issue.\n"
     "  Ein Ticket-Kommentar ist KEINE Nebensache — er geht an Menschen, oft an Externe, und ist\n"
     "  nicht zurücknehmbar. Niemals ungefragt kommentieren, auch nicht 'zur Dokumentation'.\n"
-    "→ Dateien anlegen oder überschreiben (außer in /root/workspaces/ nach Aufforderung)\n\n"
+    "→ Dateien anlegen oder überschreiben (außer in /home/yolo/workspaces/ nach Aufforderung)\n\n"
     "**Procedure bei Schreiboperationen:**\n"
     "  1. STOPPE — führe die Aktion NICHT aus\n"
     "  2. Beschreibe was du tun würdest: Befehl, Ziel, erwartete Wirkung.\n"
@@ -259,23 +278,23 @@ SYSTEM_PROMPT = (
     "Netzwerk-Diagnose (ping, traceroute, curl): Terminal-Tool verwenden.\n\n"
 
     "## WORKSPACE — DATEIEN IMMER HIER ABLEGEN:\n"
-    "Dein persönlicher Arbeitsbereich ist `/root/workspaces/`. Alle Skripte, Configs,\n"
+    "Dein persönlicher Arbeitsbereich ist `/home/yolo/workspaces/`. Alle Skripte, Configs,\n"
     "Analysen und sonstige Artefakte die du erzeugst, legst du dort ab — NIEMALS in\n"
     "`/tmp`, `/app` oder anderen flüchtigen Verzeichnissen.\n"
     "Struktur-Empfehlung:\n"
-    "  /root/workspaces/scripts/   → ausführbare Skripte (.py, .sh)\n"
-    "  /root/workspaces/reports/   → Analysen und Berichte (.md, .txt)\n"
-    "  /root/workspaces/configs/   → Konfigurationsdateien\n"
-    "  /root/workspaces/ansible/   → Ansible Playbooks (SCM-Verzeichnis)\n\n"
+    "  /home/yolo/workspaces/scripts/   → ausführbare Skripte (.py, .sh)\n"
+    "  /home/yolo/workspaces/reports/   → Analysen und Berichte (.md, .txt)\n"
+    "  /home/yolo/workspaces/configs/   → Konfigurationsdateien\n"
+    "  /home/yolo/workspaces/ansible/   → Ansible Playbooks (SCM-Verzeichnis)\n\n"
 
     "## AGENTS.MD — AGENTEN-ÜBERGREIFENDE KOORDINATION:\n"
-    "Pflege `/root/workspaces/agents.md` als geteiltes Logbuch zwischen Hermes und der\n"
+    "Pflege `/home/yolo/workspaces/agents.md` als geteiltes Logbuch zwischen Hermes und der\n"
     "Werkbank-IDE. Trage dort jede erzeugte Datei und jeden wesentlichen Schritt ein.\n"
     "Format:\n"
     "```\n"
     "## [Datum] Thema (Session-Label)\n"
     "- Aktion: was wurde getan\n"
-    "- Datei: `/root/workspaces/pfad/datei.py`\n"
+    "- Datei: `/home/yolo/workspaces/pfad/datei.py`\n"
     "- Quelle: Alert-ID / Hostname / Jira-Ticket\n"
     "```\n"
     "Regeln:\n"
@@ -288,7 +307,7 @@ SYSTEM_PROMPT = (
     "```markdown\n"
     "## [2026-06-21] Disk-Analyse cue0175 (Alert glog:c91a32dd)\n"
     "- Aktion: SSH-Diagnose + Cleanup-Skript erstellt\n"
-    "- Datei: `/root/workspaces/scripts/cleanup_cue0175.sh`\n"
+    "- Datei: `/home/yolo/workspaces/scripts/cleanup_cue0175.sh`\n"
     "- Quelle: Alert glog:c91a32dd53935673\n"
     "```\n\n"
 
@@ -673,6 +692,7 @@ async def _run_cli_agent(
             stderr=asyncio.subprocess.PIPE,
             limit=4 * 1024 * 1024,  # 4 MB — stream-json init line can exceed 64 KB default
             env=env,
+            cwd=_agent_cwd(),
         )
         pending_tool: str | None = None
         log.info("[cli:claude] subprocess started pid=%s cmd=%s", proc.pid, " ".join(cmd[:6]))
@@ -777,6 +797,7 @@ async def _run_cli_agent(
         stderr=asyncio.subprocess.PIPE,
         env={**env, "HOME": "/home/yolo", "CODEX_HOME": codex_home,
              "MSG": message, "CODEX_MODEL": model or ""},
+        cwd=_agent_cwd(),
     )
     emitted = False
     log.info("[cli:codex] subprocess started pid=%s", proc.pid)

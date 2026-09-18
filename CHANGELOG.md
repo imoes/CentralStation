@@ -71,6 +71,21 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   **Not yet exercised: the upload itself** — that writes to a real ticket and is
   waiting for the go-ahead.
 
+- **The Console agents work in the Werkbank's workspace.** They ran in `/app`
+  before, so anything they wrote landed in the container layer: invisible in the
+  Werkbank and gone on the next rebuild. All three now start in
+  `/home/yolo/workspaces`, the folder code-server opens — create a file in the
+  Console, keep editing it in the browser IDE. *Verified:* a `claude_cli` session
+  driven through the Console API answers `pwd` with `/home/yolo/workspaces`.
+
+  No history was migrated, and none needed to be: Claude resolves `--resume` by
+  session id regardless of the working directory. Checked before changing anything —
+  a session recorded under `/app` resumed from the new directory with its full
+  context (375k cached tokens read).
+
+- **`rsync` is installed**, next to the `scp`/`sftp` that came with the SSH client.
+  Fetching from a host stays free; pushing to one needs a write window.
+
 - **`CHANGELOG.md` exists and is linked from the README.**
 
 ### What changed
@@ -103,6 +118,10 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   agent asks for the approval instead of retrying.
 
 ### What was fixed
+
+- **Hermes was told to use `/root/workspaces`**, in nine places. The container has
+  run as `yolo` since the root→yolo migration and `/root` is `0700 root:root`, so
+  that path was unusable — a leftover the migration missed.
 
 - **`scp`/`rsync` could copy files onto a remote host unguarded.** The guard looked
   for a writing verb (`rm`, `tee`, `>`) and these carry it in their argument order,
