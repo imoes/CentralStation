@@ -82,8 +82,59 @@ export class ComputerService {
   /** Resume an existing persisted session by its session_id. */
   readonly resume$ = new Subject<string>();
   readonly ticketActivities = this._ticketActivities.asReadonly();
+
+  /** Sitzungen, deren Ticket-Aktivität bereits als Kontext an der Eingabe hängt.
+   *
+   *  Liegt hier, nicht in der Konsolen-Komponente, weil zwei Stellen dieselbe
+   *  Tatsache anzeigen: das Aktivitätsbanner in der Konsole und der Zähler im
+   *  Kopfbereich. Stünde der Zustand nur in der Komponente, meldete der Zähler
+   *  weiter "neu", nachdem der Kommentar längst übernommen wurde. */
+  private readonly _contextAttached = signal<Record<string, string>>({});
+  readonly contextAttached = this._contextAttached.asReadonly();
+
+  /** Kennzeichnet EINEN Stand einer Aktivität. Trifft ein neuerer Kommentar ein,
+   *  ändert sich die Kennung — und die Aktivität gilt wieder als ungelesen, auch
+   *  wenn der ältere Stand schon als Kontext hängt. Sonst würde ein Kommentar,
+   *  der nach dem Anhängen eintrifft, stillschweigend unterdrückt. */
+  static activityVersion(activity: TicketActivity): string {
+    const snapshot = activity.snapshot;
+    if (!snapshot) return `${activity.state}:${activity.checked_at}`;
+    return [
+      activity.state,
+      activity.source_unavailable ? 'offline' : 'online',
+      snapshot.issue_updated_at,
+      JSON.stringify(snapshot.fields),
+      JSON.stringify(snapshot.comments),
+    ].join(':');
+  }
+
+  markContextAttached(sessionId: string, version: string): void {
+    this._contextAttached.update(all => ({ ...all, [sessionId]: version }));
+  }
+
+  clearContextAttached(sessionId: string): void {
+    this._contextAttached.update(all => {
+      const { [sessionId]: _dropped, ...rest } = all;
+      return rest;
+    });
+  }
+
+  private isAttached(sessionId: string, activity: TicketActivity): boolean {
+    const attached = this._contextAttached()[sessionId];
+    return !!attached && attached === ComputerService.activityVersion(activity);
+  }
+
+  /** Aktivität einer Sitzung, sofern dieser Stand nicht schon als Kontext hängt. */
+  pendingActivity(sessionId: string): TicketActivity | null {
+    const activity = this._ticketActivities()[sessionId] ?? null;
+    if (!activity) return null;
+    return this.isAttached(sessionId, activity) ? null : activity;
+  }
+
   readonly ticketActivitySessionCount = computed(() =>
-    Object.values(this._ticketActivities()).filter(activity => activity.state === 'changed').length
+    Object.entries(this._ticketActivities())
+      .filter(([sid, activity]) => activity.state === 'changed' && !this.isAttached(sid, activity))
+      .length
   );
   readonly ticketActivityUnavailableCount = computed(() =>
     Object.values(this._ticketActivities()).filter(activity => activity.state === 'unavailable').length

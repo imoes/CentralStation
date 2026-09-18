@@ -53,6 +53,11 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   keeps the operator's own wording in the transcript and carries the context as a
   collapsed block. Several attachments are appended rather than replaced.
 
+  Once attached, the activity banner and the header badge disappear for that state
+  of the ticket — the context bar shows the same fact, and a banner left standing
+  would let the same comment be attached twice. The suppression is tied to the
+  activity's version, so a comment arriving afterwards announces itself again.
+
   The Jira baseline is recorded only when that message is sent, so a change that
   never reached the AI stays marked as unread; discarding brings the activity
   banner back. *Verified:* the production bundle serves the new bar and the old
