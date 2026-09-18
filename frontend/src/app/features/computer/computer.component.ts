@@ -35,11 +35,6 @@ interface ToolCall {
 interface HermesMessage {
   role: 'user' | 'assistant';
   text: string;
-  /** Ticket-Kontext, der mit dieser Nachricht mitging. Wird eingeklappt unter der
-   *  Nachricht gezeigt — er ging an die KI, also muss er nachlesbar bleiben. */
-  contextText?: string;
-  /** Kurzbezeichnung dieses Kontexts, z.B. "IMIT-1234 · Neue Aktivität". */
-  contextLabel?: string;
   /** Current tool being executed — shown as a spinner line while streaming. */
   activeTool?: string;
   /** Permanent log of all tool calls made during this message turn. */
@@ -263,19 +258,6 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                 </div>
                 <div class="msg-text"
                      [innerHTML]="renderMarkdown(msg)"></div>
-                @if (msg.contextText) {
-                  <!-- Der Kontext ging mit dieser Nachricht an die KI, also muss er
-                       nachlesbar bleiben — eingeklappt, damit er die Unterhaltung
-                       nicht zuschüttet. -->
-                  <button class="msg-context-toggle"
-                          (click)="toggleMsgContext($index)">
-                    <mat-icon>{{ msgContextExpanded($index) ? 'expand_less' : 'expand_more' }}</mat-icon>
-                    Kontext: {{ msg.contextLabel }}
-                  </button>
-                  @if (msgContextExpanded($index)) {
-                    <pre class="msg-context-body">{{ msg.contextText }}</pre>
-                  }
-                }
                 <!-- Tool calls of PAST turns are intentionally not rendered; only the
                      live streaming turn below shows tool activity. -->
               </div>
@@ -529,8 +511,6 @@ export class ComputerComponent implements OnInit, OnDestroy {
   /** Ist der angehängte Kontext ausgeklappt? */
   readonly contextExpanded = signal(false);
 
-  /** Eingeklappte Nachrichten-Kontexte: Schlüssel ist "<sid>:<index>". */
-  private readonly expandedMsgContexts = signal<Record<string, boolean>>({});
   loading = signal(false);
   listening = signal(false);
   muted = signal(localStorage.getItem('cs_computer_muted') === '1');
@@ -1426,15 +1406,6 @@ export class ComputerComponent implements OnInit, OnDestroy {
     this.contextExpanded.update(v => !v);
   }
 
-  msgContextExpanded(index: number): boolean {
-    return !!this.expandedMsgContexts()[`${this.activeTabId()}:${index}`];
-  }
-
-  toggleMsgContext(index: number): void {
-    const key = `${this.activeTabId()}:${index}`;
-    this.expandedMsgContexts.update(all => ({ ...all, [key]: !all[key] }));
-  }
-
   /** Den Kontext der aktiven Sitzung verwerfen (Knopf in der Kontextleiste). */
   async discardActiveContext(): Promise<void> {
     const sid = this.activeTabId();
@@ -1463,10 +1434,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
     // Der Kontext geht der eigenen Nachricht voran; gesendet wird beides, angezeigt
     // die eigene Nachricht mit dem Kontext als aufklappbarem Anhang.
     const payload = context ? `${context.text}\n\n---\n\n${text}` : text;
-    const sent = await this.sendContent(payload, undefined, {
-      display: text,
-      context,
-    });
+    const sent = await this.sendContent(payload);
     if (sent && sid && context) {
       this.pendingContext.update(all => {
         const { [sid]: _used, ...rest } = all;
@@ -1478,11 +1446,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
     return sent;
   }
 
-  private async sendContent(
-    text: string,
-    targetSid?: string,
-    shown?: { display: string; context: PendingContext | null },
-  ): Promise<boolean> {
+  private async sendContent(text: string, targetSid?: string): Promise<boolean> {
     if (!text.trim() || this.loading()) return false;
 
     let sid = targetSid ?? this.activeTabId();
@@ -1503,7 +1467,11 @@ export class ComputerComponent implements OnInit, OnDestroy {
       ];
     });
     localStorage.setItem('cs_computer_active_session', sid);
-    this._addMessage(sid, 'user', shown?.display ?? text, shown?.context ?? undefined);
+    // Angezeigt wird genau das, was gesendet wurde: der Ticket-Kontext als ganz
+    // normale Nachricht im Verlauf, gefolgt von der eigenen Zeile. Kein Aufklapper
+    // und keine gekürzte Fassung — nach einem Neuladen liefert der Agent dieselbe
+    // eine Nachricht zurück, und beide Ansichten müssen übereinstimmen.
+    this._addMessage(sid, 'user', text);
     this._addMessage(sid, 'assistant', '');
     this._updateMsgCount(sid);
     this.scrollToBottom();
@@ -1728,18 +1696,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Helpers ───────────────────────────────────────────────────────
 
-  private _addMessage(
-    sid: string,
-    role: 'user' | 'assistant',
-    text: string,
-    context?: PendingContext,
-  ): void {
-    const msg: HermesMessage = context
-      ? { role, text, contextText: context.text, contextLabel: context.label }
-      : { role, text };
+  private _addMessage(sid: string, role: 'user' | 'assistant', text: string): void {
     this.sessions.update(ss => ss.map(s =>
       s.session_id === sid
-        ? { ...s, messages: [...s.messages, msg] }
+        ? { ...s, messages: [...s.messages, { role, text }] }
         : s
     ));
   }
