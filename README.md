@@ -970,9 +970,10 @@ would have to be cleared away before the operator could type their own question.
 
 The attachment is shown as a named bar above the input ("geht mit deiner nächsten Nachricht
 mit"), can be expanded to read in full, and can be discarded. It travels with the **next
-message the operator writes**, prepended to it. In the transcript that message keeps the
-operator's own wording and carries the context as a collapsed block, because it did go to
-the agent and has to stay readable.
+message the operator writes**, prepended to it. In the transcript it then appears as an
+ordinary message — the ticket context rendered as Markdown, a rule, then the operator's own
+line. That is exactly what the agent received, and exactly what comes back from the agent's
+own history after a reload, so the live view and the reloaded view cannot drift apart.
 
 Once attached, the activity banner and the header badge disappear for **that** state of
 the ticket: the context bar above the input shows the same fact and says what happens next,

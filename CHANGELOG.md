@@ -49,9 +49,11 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   input field either — a wall of text there would have to be cleared away first.
 
   The attachment appears as a named bar above the input, can be expanded and
-  discarded, and travels with the next message the operator writes. That message
-  keeps the operator's own wording in the transcript and carries the context as a
-  collapsed block. Several attachments are appended rather than replaced.
+  discarded, and travels with the next message the operator writes. In the
+  transcript it is an ordinary message — the comment rendered as Markdown, a rule,
+  then the operator's own line — which is both what the agent received and what its
+  history returns after a reload. Several attachments are appended rather than
+  replaced.
 
   Once attached, the activity banner and the header badge disappear for that state
   of the ticket — the context bar shows the same fact, and a banner left standing
