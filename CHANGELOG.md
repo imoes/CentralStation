@@ -39,6 +39,20 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   is possible at all. *Verified:* the header appears in the live
   `~/.hermes/config.yaml` and changes the server's refusal reason.
 
+- **The Console agent may install Python packages.** `pip install` into its own
+  virtualenv (`/home/yolo/pip/venv`, persistent on the `cs-pip-{uid}` volume) no
+  longer needs approval — the agent sometimes needs a library to evaluate anything
+  at all, and that venv touches no system. `sudo pip`, `/usr/bin/pip`,
+  `--break-system-packages`, `--target` into a system directory and any `pip
+  install` over ssh stay blocked, as do `npm`, `gem`, `cargo` and `apt`.
+  *Verified:* `backend/tests/test_readonly_guard.py` pins 40 decisions, allowed and
+  refused, and passes.
+
+- **Codex gets the same briefing as Claude.** Codex previously had no environment
+  instructions at all — it knew nothing about SSH, the workspace or the read-only
+  rule. One text now feeds both: `~/.claude/CLAUDE.md` for Claude,
+  `$CODEX_HOME/AGENTS.md` for Codex.
+
 - **`CHANGELOG.md` exists and is linked from the README.**
 
 ### What changed
@@ -71,6 +85,26 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   agent asks for the approval instead of retrying.
 
 ### What was fixed
+
+- **`scp`/`rsync` could copy files onto a remote host unguarded.** The guard looked
+  for a writing verb (`rm`, `tee`, `>`) and these carry it in their argument order,
+  so nothing matched. A remote *destination* now counts as a write; pulling a file
+  from a host stays allowed. Found by the new guard tests, not by the change that
+  prompted them.
+
+- **The user venv vanished in login shells.** `/etc/profile` resets `PATH`, so
+  `bash -lc 'pip install …'` hit the system Python instead of the agent's venv. A
+  `/etc/profile.d` snippet puts it back after the reset. *Verified:* `bash -lc`
+  now resolves `pip3` to the venv, and `pip install humanize` imports from
+  `/home/yolo/pip/venv/…`.
+
+- **Editing one line rebuilt the whole Console image.** `main.py`,
+  `hermes_config.yaml` and the guard were copied in above the Claude and Codex
+  installs, the ~150 MB Chromium download and the VS Code extensions. Docker
+  invalidates everything below a changed layer, so a two-line edit paid for all of
+  it. Those files are copied last now. *Measured:* a rebuild after editing
+  `main.py` went from ~99 s to **4 s**, with 22 layers served from cache. (It was
+  not the proxy.)
 
 - **A rebuilt image had no effect.** Both `ensure_container` (Console) and
   `vibemk_manager` reused a running container regardless of which image it was

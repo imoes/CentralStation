@@ -95,12 +95,9 @@ WORKDIR /app
 COPY userenv/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY userenv/main.py ./main.py
-COPY userenv/hermes_config.yaml ./hermes_config.yaml
-# Read-only guard for Claude CLI (PreToolUse hook — blocks system-modifying Bash).
-COPY userenv/cs-readonly-guard.py /opt/cs-readonly-guard.py
-RUN chmod a+rx /opt/cs-readonly-guard.py
 ENV PYTHONPATH=/opt/hermes
+# NB: main.py, hermes_config.yaml and cs-readonly-guard.py are copied at the very
+# END of this file on purpose — see the note there.
 
 # ── Claude Code CLI (installed as yolo so it lands in /home/yolo/.local/bin) ──
 USER yolo
@@ -172,8 +169,35 @@ RUN _ep="/usr/lib/code-server/lib/vscode/out/vs/workbench/api/node/extensionHost
 # PATH is prepended so the user venv wins over the system /opt/venv.
 ENV PATH=/home/yolo/pip/venv/bin:$PATH
 RUN mkdir -p /home/yolo/pip && chown yolo:yolo /home/yolo/pip
+# ENV only covers non-login shells. A login shell (`bash -lc`, which is how some
+# agents invoke commands) sources /etc/profile, which RESETS PATH — the user venv
+# then vanishes and `pip install` silently hits the system Python instead. The
+# profile.d snippet runs after that reset and puts it back.
+RUN printf '%s\n' \
+        '# CentralStation: keep the per-user pip venv ahead of the system Python,' \
+        '# also in login shells where /etc/profile has just reset PATH.' \
+        'case ":$PATH:" in' \
+        '  *":/home/yolo/pip/venv/bin:"*) ;;' \
+        '  *) PATH="/home/yolo/pip/venv/bin:/home/yolo/.local/bin:/opt/venv/bin:$PATH" ;;' \
+        'esac' \
+        'export PATH' \
+        > /etc/profile.d/10-cs-path.sh \
+    && chmod 644 /etc/profile.d/10-cs-path.sh
 
 RUN touch /home/yolo/.bashrc && chown yolo:yolo /home/yolo/.bashrc
+
+# ── Our own source files, last ────────────────────────────────────────
+# These four change on nearly every commit; everything above them changes
+# rarely. Docker invalidates every layer BELOW a changed one, so while these
+# sat further up, editing one line of main.py threw away the Claude CLI
+# install, the Codex install, the ~150 MB Chromium download and the VS Code
+# extensions — a full rebuild for a two-line edit. Keep them at the bottom.
+WORKDIR /app
+COPY userenv/main.py ./main.py
+COPY userenv/hermes_config.yaml ./hermes_config.yaml
+# Read-only guard for Claude CLI (PreToolUse hook — blocks system-modifying Bash).
+COPY userenv/cs-readonly-guard.py /opt/cs-readonly-guard.py
+RUN chmod a+rx /opt/cs-readonly-guard.py
 
 COPY userenv/entrypoint.sh /usr/local/bin/cs-entrypoint.sh
 RUN chmod +x /usr/local/bin/cs-entrypoint.sh

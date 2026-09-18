@@ -946,6 +946,18 @@ Guarded MCP tools: `jira_add_comment`, `jira_update_issue`, `jira_transition_iss
 `jira_close_issue`, `create_jira_ticket`, `acknowledge_alert`, `run_remediation`,
 `gitlab_create_branch`, `gitlab_create_merge_request`. Read tools are never affected.
 
+**Python packages are the deliberate exception.** The agent may run `pip install` into
+its own virtualenv (`/home/yolo/pip/venv`, on the `cs-pip-{uid}` volume, first on PATH)
+without asking — it sometimes needs a library to evaluate anything at all, and that venv
+belongs to the agent and touches no system. Still blocked: `sudo pip`, `/usr/bin/pip`,
+`--break-system-packages`, `--target` into a system directory, and any `pip install` on a
+remote host over ssh. Other package managers (`npm`, `gem`, `cargo`, `apt`) stay blocked.
+The policy is pinned by `backend/tests/test_readonly_guard.py`.
+
+Both CLI agents are told this in the same words: `agent_instructions()` in
+`userenv_manager.py` produces one text, written as `~/.claude/CLAUDE.md` for Claude and
+`$CODEX_HOME/AGENTS.md` for Codex. Hermes gets the same content through its system prompt.
+
 **How consent is given:** the operator clicks **"Schreibzugriff freigeben"** in the Console
 (`POST /api/computer/write-approval`, 1–120 minutes). The backend writes
 `/opt/cs-write-approval.json` into the user's container as root; the agent runs as `yolo`

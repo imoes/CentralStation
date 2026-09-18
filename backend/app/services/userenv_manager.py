@@ -499,24 +499,19 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
     configure_claude_md(user_id, ssh_user)
 
 
-def configure_claude_md(user_id: str, ssh_user: str = "marvin") -> None:
-    """Write ~/.claude/CLAUDE.md into the container (on cs-ide-cfg volume → persistent).
+def agent_instructions(ssh_user: str = "marvin") -> str:
+    """The environment briefing both CLI agents get, as Markdown.
 
-    Provides Claude CLI with the same environment context that Hermes gets via system
-    prompt: SSH instructions, workspace location, site topology. Read automatically
-    by every claude CLI invocation as the global user-level CLAUDE.md.
+    ONE text, two readers: Claude CLI reads it as ~/.claude/CLAUDE.md, Codex as
+    $CODEX_HOME/AGENTS.md. Written once here because the two agents share the same
+    container — if the texts drifted apart, the same question would get different
+    answers depending on which agent the user happens to have selected.
 
     The example hostnames are built from CS_INTERNAL_DOMAINS (gitignored .env) — an
     agent told to `ssh host.example.com` when the estate is somewhere else wastes its
     first turns on hosts that do not exist.
     """
-    import docker as _docker
     from app.core.domains import internal_domains
-    name = container_name(user_id)
-    try:
-        c = _client().containers.get(name)
-    except _docker.errors.NotFound:
-        return
 
     _domains = [d for d in internal_domains() if d not in ("internal", "local")] or list(internal_domains())
     _dom = _domains[-1]          # broadest suffix (sorted longest-first)
@@ -551,12 +546,37 @@ Serverantwort wieder und nenne, was auf dem Zielsystem fehlt.
 ## WORKSPACE
 Alle Dateien, Skripte und Artefakte immer in `/home/yolo/workspaces/` ablegen — niemals in /tmp.
 
+## PYTHON-BIBLIOTHEKEN: pip DARFST du benutzen
+Fehlt dir eine Bibliothek für eine Auswertung, installiere sie einfach — ohne zu fragen:
+
+```bash
+pip install pandas
+```
+
+Das geht in dein eigenes virtuelles Environment (`/home/yolo/pip/venv`), das bereits
+aktiv und im PATH ist. Es liegt auf einem eigenen Volume, Pakete bleiben also über
+Container-Neustarts erhalten. `pip list` zeigt, was schon da ist — erst schauen, dann
+installieren.
+
+Erlaubt sind `pip install`, `pip uninstall`, `pip download` und `uv pip install`.
+
+NICHT erlaubt und vom Sicherheits-Hook blockiert:
+- `sudo pip …` und `/usr/bin/pip …` — das System-Python bleibt unangetastet
+- `pip install` auf einem entfernten Host (`ssh <host> 'pip install …'`) — fremde
+  Systeme verändert man nicht nebenbei
+- `--break-system-packages` oder `--target` in ein Systemverzeichnis
+- andere Paketmanager (`npm`, `gem`, `cargo`, `apt`) — die brauchst du hier nicht
+
+Scheitert ein Import trotz Installation, prüfe mit `which python3` und `pip -V`, ob du
+im venv bist.
+
 ## KRITISCHE REGEL: READ-ONLY — NIEMALS UNGEFRAGT SCHREIBEN
 Du arbeitest standardmäßig NUR LESEND (Diagnose). Führe NIEMALS eigenständig eine
 Operation aus, die ein System verändert. Verändernde Operationen sind u.a.:
 - Dienste: `systemctl restart|stop|start|reload|enable|disable`, `service ... restart`, reboot, shutdown
 - Dateien: `rm`, `mv`, `cp`, `chmod`, `chown`, `sed -i`, `tee`, `nano/vim`, Umleitung mit `>`/`>>` in echte Dateien
-- Pakete: `apt/yum/dnf install|remove|upgrade`, `pip/npm install`
+- Pakete: `apt/yum/dnf install|remove|upgrade`, `npm/gem/cargo install`
+  (AUSNAHME: `pip install` in dein eigenes venv ist erlaubt — siehe oben)
 - Container/Cluster: `docker restart|stop|rm`, `kubectl apply|delete|scale`
 - Git: `git push|commit|reset|checkout`
 - Nutzer/Netz: `useradd`, `passwd`, `iptables`, `crontab`
@@ -576,12 +596,35 @@ ist jederzeit erlaubt.)
 - SSH-Fehler sofort und vollständig melden (exit code + stderr), nicht ausweichen
 - subprocess.run() immer mit timeout=120 aufrufen
 """
+    return content
 
+
+def configure_agent_instructions(user_id: str, ssh_user: str = "marvin") -> None:
+    """Write the briefing into the container for BOTH CLI agents.
+
+    Claude reads ~/.claude/CLAUDE.md (on the cs-ide-cfg volume, persistent), Codex
+    reads $CODEX_HOME/AGENTS.md (ephemeral layer, rewritten at each session create).
+    """
+    import docker as _docker
+    name = container_name(user_id)
+    try:
+        c = _client().containers.get(name)
+    except _docker.errors.NotFound:
+        return
+
+    content = agent_instructions(ssh_user)
     c.exec_run(
-        ["sh", "-c", "mkdir -p $HOME/.claude && printf '%s' \"$MD\" > $HOME/.claude/CLAUDE.md"],
+        ["sh", "-c",
+         "mkdir -p $HOME/.claude $HOME/.codex && "
+         "printf '%s' \"$MD\" > $HOME/.claude/CLAUDE.md && "
+         "printf '%s' \"$MD\" > $HOME/.codex/AGENTS.md"],
         environment={"MD": content},
     )
-    log.info("userenv_manager: CLAUDE.md written for %s", name)
+    log.info("userenv_manager: agent instructions written for %s (CLAUDE.md + AGENTS.md)", name)
+
+
+#: Kept as the old name so existing callers keep working.
+configure_claude_md = configure_agent_instructions
 
 
 def _expires_to_ms(expires_at) -> int:
