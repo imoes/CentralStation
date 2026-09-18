@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 
 from fastmcp import FastMCP
@@ -1747,6 +1748,128 @@ async def jira_add_comment(issue_key: str, body: str, body_format: str = "markdo
             body = markdown_to_jira_wiki(body)
         comment = await connector.add_comment(issue_key, body)
         return {"ok": True, **comment}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+# ── Anhänge ─────────────────────────────────────────────────────────────────
+#
+# Der Agent legt Dateien in seinem Container unter /home/yolo/workspaces ab; dieser
+# MCP-Server läuft im Backend. Beide sehen dasselbe Verzeichnis, weil der Host-Pfad
+# IDE_WORKSPACES_BASE/<user>/workspaces in beide Container gemountet ist — der Agent
+# nennt also einen Pfad, statt den Inhalt durch das Protokoll zu schieben.
+#
+# Welcher Nutzer das ist, kommt aus derselben Kopfzeile wie bei der Schreibfreigabe.
+# Ohne sie lässt sich kein Arbeitsverzeichnis bestimmen, und das Werkzeug verweigert.
+
+#: Obergrenze. Jira lehnt größere Uploads serverseitig ohnehin ab (Standard 10 MB),
+#: aber ein klarer Fehler hier ist besser als ein HTTP 413 aus der Ferne.
+_ATTACH_MAX_BYTES = 25 * 1024 * 1024
+
+#: Wie der Pfad im Container des Agenten heißt.
+_AGENT_WORKSPACE = "/home/yolo/workspaces"
+
+
+def _resolve_workspace_file(user_id: str, file_path: str) -> tuple[str | None, str]:
+    """Übersetzt einen Agenten-Pfad in einen Backend-Pfad. (Pfad, Fehlergrund)."""
+    base = os.getenv("IDE_WORKSPACES_BASE", "/opt/centralstation/ide-workspaces")
+    root = os.path.realpath(os.path.join(base, user_id, "workspaces"))
+
+    raw = (file_path or "").strip()
+    if not raw:
+        return None, "Kein Dateipfad angegeben"
+    if raw == _AGENT_WORKSPACE or raw.startswith(_AGENT_WORKSPACE + "/"):
+        raw = raw[len(_AGENT_WORKSPACE):].lstrip("/")
+    elif os.path.isabs(raw):
+        return None, (
+            f"Nur Dateien aus dem Arbeitsverzeichnis ({_AGENT_WORKSPACE}) können "
+            f"angehängt werden. Lege die Datei dort ab und nenne diesen Pfad."
+        )
+
+    full = os.path.realpath(os.path.join(root, raw))
+    # realpath löst auch Symlinks auf: ein Link nach /etc führt hier heraus und wird
+    # damit erkannt — ein reiner Zeichenketten-Vergleich auf ".." täte das nicht.
+    if full != root and not full.startswith(root + os.sep):
+        return None, "Pfad zeigt aus dem Arbeitsverzeichnis heraus"
+    if not os.path.isfile(full):
+        return None, f"Datei nicht gefunden: {file_path}"
+    return full, ""
+
+
+@mcp.tool()
+async def jira_add_attachment(issue_key: str, file_path: str, filename: str = "") -> dict:
+    """Hängt eine Datei aus dem Arbeitsverzeichnis an ein Jira-/ServiceDesk-Ticket.
+
+    Parameter:
+    - issue_key: Ticket-Schlüssel, z.B. 'IMIT-1234'
+    - file_path: Pfad im Arbeitsverzeichnis, z.B. '/home/yolo/workspaces/analyse.csv'
+      oder kurz 'analyse.csv'. Andere Orte sind nicht erlaubt.
+    - filename: optionaler Name, unter dem der Anhang im Ticket erscheint
+      (Standard: der Dateiname). Nutze das für einen sprechenden Namen wie
+      'disk-auslastung-2026-09.csv' statt 'out.csv'.
+
+    ABLAUF: Datei zuerst mit Bash im Arbeitsverzeichnis erzeugen (Bericht, CSV,
+    Logauszug, Diagramm), danach dieses Werkzeug aufrufen. Der Inhalt wird NICHT
+    über den Chat übertragen — es wird nur der Pfad genannt.
+
+    ABGRENZUNG: für Fließtext im Vorgang ist jira_add_comment richtig. Ein Anhang
+    lohnt sich für das, was als Kommentar unlesbar wäre: lange Logauszüge, Tabellen,
+    Messreihen, Bilder. Lade nichts hoch, was Zugangsdaten oder personenbezogene
+    Daten enthält, die nicht ohnehin schon im Ticket stehen.
+
+    SCHREIBOPERATION — ein Anhang ist für alle Ticket-Leser sichtbar und lässt sich
+    nicht spurlos entfernen. Sie braucht die Freigabe des Nutzers.
+    """
+    denied = await _require_write("Ticket-Anhang hochladen")
+    if denied:
+        return denied
+
+    user_id = _calling_user_id()
+    if not user_id:
+        return {"ok": False, "error": "Aufrufer nicht identifizierbar — "
+                                      "Arbeitsverzeichnis nicht bestimmbar"}
+    full, err = _resolve_workspace_file(user_id, file_path)
+    if err:
+        return {"ok": False, "error": err}
+
+    size = os.path.getsize(full)
+    if size == 0:
+        return {"ok": False, "error": "Die Datei ist leer — nichts hochzuladen"}
+    if size > _ATTACH_MAX_BYTES:
+        return {"ok": False, "error": f"Datei zu groß ({size} Bytes, erlaubt sind "
+                                      f"{_ATTACH_MAX_BYTES}). Kürze sie oder hänge "
+                                      f"einen Auszug an."}
+
+    connector, err = await _jira_for_issue(issue_key)
+    if err:
+        return {"ok": False, "error": err}
+
+    import mimetypes
+    name = (filename or "").strip() or os.path.basename(full)
+    name = os.path.basename(name)          # kein Pfad im Anzeigenamen
+    guessed = mimetypes.guess_type(name)[0] or ""
+    try:
+        data = await asyncio.to_thread(lambda: open(full, "rb").read())
+        created = await connector.add_attachment(issue_key, name, data, guessed)
+        return {"ok": True, "issue_key": issue_key, "attachments": created}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@mcp.tool()
+async def jira_list_attachments(issue_key: str) -> dict:
+    """Listet die Anhänge eines Jira-/ServiceDesk-Tickets (Name, Größe, Datum, Autor).
+
+    Nützlich vor dem Hochladen — so hängst du nichts doppelt an — und um zu sehen,
+    was der Melder dem Ticket beigelegt hat.
+    """
+    connector, err = await _jira_for_issue(issue_key)
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        items = await connector.list_attachments(issue_key)
+        return {"ok": True, "issue_key": issue_key, "count": len(items),
+                "attachments": items}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
