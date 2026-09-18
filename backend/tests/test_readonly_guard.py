@@ -18,6 +18,15 @@ import pytest
 
 _GUARD = Path(__file__).resolve().parents[2] / "userenv" / "cs-readonly-guard.py"
 
+# The guard ships into the Console image, not into the backend image, so inside the
+# backend container there is no userenv/ directory. Skip rather than fail there: a
+# red suite that means "wrong directory" trains people to ignore red suites. On a
+# repo checkout — where this test is meant to run — the file is present.
+pytestmark = pytest.mark.skipif(
+    not _GUARD.is_file(),
+    reason=f"guard not present at {_GUARD} (backend image has no userenv/ directory)",
+)
+
 
 def _load():
     spec = importlib.util.spec_from_file_location("cs_readonly_guard", _GUARD)
@@ -27,7 +36,7 @@ def _load():
     return module
 
 
-guard = _load()
+guard = _load() if _GUARD.is_file() else None
 
 
 #: Commands the agent must be able to run unasked — diagnosis and its own sandbox.

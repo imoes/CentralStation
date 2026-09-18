@@ -46,9 +46,12 @@ RUN if [ -n "$HTTP_PROXY" ]; then \
 # sshpass: password auth for hosts where the marvin key is not deployed. The
 # read-only guard already counts sshpass as a remote command, so a write wrapped in
 # it still needs an explicit approval window.
+# rsync: moving files between servers. scp/sftp come with openssh-client; rsync is a
+# separate package and was missing. Note it must exist on BOTH ends of a transfer —
+# it is not a protocol the remote sshd speaks by itself.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        git openssh-client sshpass ca-certificates curl jq wget sudo \
+        git openssh-client sshpass rsync ca-certificates curl jq wget sudo \
         python3 python3-pip python3-venv \
         iputils-ping traceroute nmap dnsutils netcat-openbsd mtr-tiny iproute2 \
     && rm -rf /var/lib/apt/lists/*
