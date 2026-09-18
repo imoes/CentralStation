@@ -55,6 +55,12 @@ interface PendingContext {
   /** Jira-Stand, der beim Absenden als übernommen gebucht wird. */
   snapshot?: TicketActivitySnapshot;
   contextHash: string | null;
+  /** Kennung der Aktivität, die hier übernommen wurde — nur bei einer Meldung aus
+   *  dem Aktivitätsbanner gesetzt. Solange sie hängt, verschwindet das Banner für
+   *  genau diesen Stand; ein neuerer Kommentar hat eine andere Kennung und meldet
+   *  sich wieder. Bei der Erstübergabe eines Tickets gibt es keine Meldung, also
+   *  auch nichts zu unterdrücken. */
+  activityVersion?: string;
 }
 
 interface HermesSession {
@@ -571,7 +577,12 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   activeTicketActivity = computed<TicketActivity | null>(() => {
     const sid = this.activeTabId();
-    return sid ? this.computerService.ticketActivities()[sid] ?? null : null;
+    // Hängt die Aktivität bereits als Kontext an der Eingabe, verschwindet das
+    // Banner: die Kontextleiste über dem Eingabefeld zeigt dieselbe Tatsache und
+    // sagt zusätzlich, was als Nächstes passiert. Zwei Anzeigen für dasselbe wären
+    // nicht nur überflüssig — der Knopf im Banner ließe sich erneut drücken und
+    // hinge denselben Kommentar ein zweites Mal an.
+    return sid ? this.computerService.pendingActivity(sid) : null;
   });
 
   totalMessages = computed(() =>
@@ -746,16 +757,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
     return this.computerService.activityFor(sid);
   }
 
+  /** Eine Kennung, eine Stelle: die Berechnung steht im ComputerService, weil der
+   *  Kopfzeilen-Zähler sie ebenfalls braucht. Zwei Kopien würden auseinanderlaufen. */
   private activityVersion(activity: TicketActivity): string {
-    const snapshot = activity.snapshot;
-    if (!snapshot) return `${activity.state}:${activity.checked_at}`;
-    return [
-      activity.state,
-      activity.source_unavailable ? 'offline' : 'online',
-      snapshot.issue_updated_at,
-      JSON.stringify(snapshot.fields),
-      JSON.stringify(snapshot.comments),
-    ].join(':');
+    return ComputerService.activityVersion(activity);
   }
 
   activityDismissed(activity: TicketActivity): boolean {
@@ -1189,6 +1194,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
         label: `${activity.ticket_ref.key} · Neue Aktivität`,
         snapshot: data.snapshot,
         contextHash: data.context_hash,
+        // Der frisch geholte Stand, nicht der beim Klick angezeigte: zwischen
+        // Klick und Antwort kann ein Kommentar dazugekommen sein.
+        activityVersion: this.activityVersion({ ...activity, ...data }),
       });
       this.snackBar.open(
         'Als Kontext angehängt — geht mit deiner nächsten Nachricht mit',
@@ -1393,6 +1401,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
         : next;
       return { ...all, [sid]: merged };
     });
+    if (next.activityVersion) {
+      this.computerService.markContextAttached(sid, next.activityVersion);
+    }
     this.contextExpanded.set(false);
     setTimeout(() => this.inputEl?.nativeElement.focus(), 50);
   }
@@ -1404,6 +1415,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
       const { [sid]: _dropped, ...rest } = all;
       return rest;
     });
+    // Verworfen heißt: nicht übernommen. Das Banner kommt zurück, weil die Änderung
+    // weiterhin ungelesen ist — sonst verschwände sie, ohne dass sie jemand sah.
+    this.computerService.clearContextAttached(sid);
     this.contextExpanded.set(false);
     await this.computerService.refreshTicketActivities(sid);
   }
@@ -1458,6 +1472,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
         const { [sid]: _used, ...rest } = all;
         return rest;
       });
+      this.computerService.clearContextAttached(sid);
       await this.resolveSentContext(sid, context);
     }
     return sent;

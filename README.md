@@ -974,6 +974,11 @@ message the operator writes**, prepended to it. In the transcript that message k
 operator's own wording and carries the context as a collapsed block, because it did go to
 the agent and has to stay readable.
 
+Once attached, the activity banner and the header badge disappear for **that** state of
+the ticket: the context bar above the input shows the same fact and says what happens next,
+and leaving the banner up would let the same comment be attached a second time. A comment
+arriving afterwards has a different activity version, so it announces itself again.
+
 Two or more attachments on one session are appended, not replaced — otherwise the first
 change would be lost while the banner claimed it had been taken over.
 
