@@ -999,6 +999,28 @@ The Jira baseline (`POST …/ticket-activity/acknowledge`) is recorded only when
 is sent. A change that never reached the agent stays visible as unread instead of silently
 disappearing; discarding the attachment brings the activity banner straight back.
 
+### Ticket attachments
+
+The agent writes the file into its workspace and then names the path — the content
+never travels through the chat:
+
+```
+ssh host 'journalctl -u foo --since -2h' > /home/yolo/workspaces/foo.log
+jira_add_attachment(issue_key="IMIT-1234", file_path="foo.log",
+                    filename="foo-journal-2026-09-18.log")
+```
+
+This works because `IDE_WORKSPACES_BASE/<uid>/workspaces` is mounted into **both**
+containers — the agent sees it as `/home/yolo/workspaces`, the backend at the host
+path. The user is identified by the same `X-CS-User-ID` header as the write approval,
+which is also what scopes the lookup to that user's workspace.
+
+Only files under that workspace can be attached. The path is resolved with
+`os.path.realpath`, so `..` and symlinks pointing outside are refused rather than
+followed — the backend has far more of the host mounted than the agent does, so this
+check is the boundary, and `backend/tests/test_mcp_attachment_paths.py` pins it.
+Uploads are capped at 25 MB and need a write window like every other outward action.
+
 ### Browser automation (Playwright MCP)
 
 All three agents share a **Playwright MCP** server (`playwright-mcp`, stdio) baked into the
@@ -1048,6 +1070,8 @@ The Computer Console supports three agent backends, configurable per user under 
 | `get_checkmk_host(hostname)` | Host status and services |
 | `acknowledge_alert(alert_id)` | Acknowledge an alert |
 | `create_jira_ticket(title, description, priority)` | Create a Jira ticket |
+| `jira_add_attachment(issue_key, file_path, filename)` | Attach a workspace file to a ticket |
+| `jira_list_attachments(issue_key)` | List a ticket's attachments |
 
 Two MCP transports are mounted simultaneously:
 - `/api/mcp/sse` — legacy SSE (used by Hermes)

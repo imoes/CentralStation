@@ -53,6 +53,24 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   rule. One text now feeds both: `~/.claude/CLAUDE.md` for Claude,
   `$CODEX_HOME/AGENTS.md` for Codex.
 
+- **The agent can attach files to Jira and ServiceDesk tickets.** Two new MCP
+  tools, `jira_add_attachment` and `jira_list_attachments`, plus the connector
+  methods they need — none of this existed before. The agent writes a file into its
+  workspace and names the path; the content never travels through the chat, because
+  the workspace is mounted into the agent's container and the backend alike.
+
+  Only that workspace is reachable: paths are resolved with `realpath`, so `..`,
+  foreign absolute paths and symlinks pointing outside are refused. Uploads are
+  capped at 25 MB and require a write window like every other outward action.
+
+  *Verified:* the tools are registered on the live MCP endpoint (51 tools);
+  `jira_add_attachment` without an open window is refused with "kein
+  Schreib-Zeitfenster geöffnet"; `jira_list_attachments` answers from the real Jira
+  instance. `backend/tests/test_mcp_attachment_paths.py` pins 8 path decisions,
+  including the symlink escape and reaching into another user's workspace.
+  **Not yet exercised: the upload itself** — that writes to a real ticket and is
+  waiting for the go-ahead.
+
 - **`CHANGELOG.md` exists and is linked from the README.**
 
 ### What changed

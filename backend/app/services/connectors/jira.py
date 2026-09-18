@@ -659,6 +659,63 @@ class JiraConnector(BaseConnector):
             "created": c.get("created"),
         }
 
+    # ── Anhänge ──────────────────────────────────────────────────────────
+
+    async def add_attachment(
+        self, issue_key: str, filename: str, data: bytes, content_type: str = "",
+    ) -> list[dict]:
+        """Hängt eine Datei an einen Vorgang. Gibt die angelegten Anhänge zurück.
+
+        Zwei Eigenheiten der Jira-API, die man beim Nachbauen sonst übersieht:
+
+        * `X-Atlassian-Token: no-check` ist Pflicht. Ohne diese Kopfzeile lehnt Jira
+          den Upload als möglichen XSRF-Versuch ab — mit HTTP 403 und ohne Hinweis,
+          was gefehlt hat.
+        * Der Content-Type darf NICHT gesetzt werden. httpx erzeugt für multipart
+          selbst einen mit `boundary=`; ein mitgegebenes `application/json` aus
+          `_headers()` würde ihn überschreiben und der Upload schlüge fehl.
+        """
+        headers = {k: v for k, v in self._headers().items() if k.lower() != "content-type"}
+        headers["X-Atlassian-Token"] = "no-check"
+        files = {"file": (filename, data, content_type or "application/octet-stream")}
+        # Große Dateien über eine langsame Leitung: der Standard-Timeout reicht nicht.
+        async with self._client(timeout=120.0) as client:
+            r = await client.post(
+                self._api(f"/issue/{issue_key}/attachments"),
+                headers=headers,
+                files=files,
+            )
+            r.raise_for_status()
+        created = r.json()
+        if isinstance(created, dict):      # manche Instanzen antworten einzeln
+            created = [created]
+        return [self._attachment_summary(a) for a in created]
+
+    @staticmethod
+    def _attachment_summary(a: dict) -> dict:
+        author = a.get("author") or {}
+        return {
+            "id": a.get("id"),
+            "filename": a.get("filename"),
+            "size_bytes": a.get("size"),
+            "mime_type": a.get("mimeType"),
+            "created": a.get("created"),
+            "author": author.get("displayName", "?"),
+            "url": a.get("content"),
+        }
+
+    async def list_attachments(self, issue_key: str) -> list[dict]:
+        """Alle Anhänge eines Vorgangs."""
+        async with self._client(timeout=15.0) as client:
+            r = await client.get(
+                self._api(f"/issue/{issue_key}"),
+                headers=self._headers(),
+                params={"fields": "attachment"},
+            )
+            r.raise_for_status()
+        fields = (r.json() or {}).get("fields") or {}
+        return [self._attachment_summary(a) for a in (fields.get("attachment") or [])]
+
     async def get_unassigned_issues(self, project: str) -> list[dict]:
         jql = f'project="{project}" AND assignee is EMPTY AND statusCategory != Done ORDER BY created DESC'
         return await self.search_issues(jql)
