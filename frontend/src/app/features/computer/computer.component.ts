@@ -35,10 +35,27 @@ interface ToolCall {
 interface HermesMessage {
   role: 'user' | 'assistant';
   text: string;
+  /** Bilder, die mit dieser Nachricht gingen — als <img> gerendert, nicht über
+   *  Markdown/innerHTML. */
+  images?: { url: string; agentPath: string }[];
   /** Current tool being executed — shown as a spinner line while streaming. */
   activeTool?: string;
   /** Permanent log of all tool calls made during this message turn. */
   toolCalls?: ToolCall[];
+}
+
+/** Ein eingefügtes Bild, das an der nächsten Nachricht hängt. */
+interface PastedImage {
+  /** Serverseitig vergebener Dateiname, zugleich die ID in der Bild-URL. */
+  id: string;
+  /** Pfad, unter dem der Agent das Bild im Workspace sieht. */
+  agentPath: string;
+  /** URL zum Anzeigen (Vorschau vor dem Senden und im Verlauf nach einem Neuladen). */
+  url: string;
+  /** Lokale Objekt-URL des eingefügten Blobs — sofort da, ohne auf den Server zu warten. */
+  previewUrl: string;
+  size: number;
+  mime: string;
 }
 
 /** Ticket-Kontext, der an einer Sitzung hängt und mit der nächsten Nachricht mitgeht. */
@@ -258,6 +275,18 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                 </div>
                 <div class="msg-text"
                      [innerHTML]="renderMarkdown(msg)"></div>
+                @if (msg.images?.length) {
+                  <!-- Als <img> im Template, NICHT über Markdown/innerHTML: dort läuft
+                       bypassSecurityTrustHtml ohne Sanitizer, und diese Fläche soll
+                       nicht zusätzlich belastet werden. -->
+                  <div class="msg-images">
+                    @for (im of msg.images!; track im.url) {
+                      <a [href]="im.url" target="_blank" rel="noopener" [title]="im.agentPath">
+                        <img [src]="im.url" alt="Eingefügtes Bild" loading="lazy">
+                      </a>
+                    }
+                  </div>
+                }
                 <!-- Tool calls of PAST turns are intentionally not rendered; only the
                      live streaming turn below shows tool activity. -->
               </div>
@@ -399,14 +428,37 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
             </div>
           }
 
+          <!-- Eingefügte Bilder: warten neben dem Feld und gehen mit der nächsten
+               Nachricht mit — dasselbe Muster wie der Ticket-Kontext darüber. -->
+          @if (activeImages().length || uploadingImages() > 0) {
+            <div class="pasted-images">
+              @for (im of activeImages(); track im.id) {
+                <div class="pasted-image">
+                  <img [src]="im.previewUrl" alt="Vorschau">
+                  <span class="pasted-image-size">{{ formatBytes(im.size) }}</span>
+                  <button class="pasted-image-remove" (click)="removeImage(im)"
+                          title="Bild entfernen">
+                    <mat-icon>close</mat-icon>
+                  </button>
+                </div>
+              }
+              @if (uploadingImages() > 0) {
+                <div class="pasted-image pasted-image--loading">
+                  <mat-icon class="spinning">sync</mat-icon>
+                </div>
+              }
+            </div>
+          }
+
           <!-- Input -->
           <div class="input-row">
             <textarea #inputEl
                       class="lcars-input"
                       [(ngModel)]="inputText"
-                      placeholder="Computer, ...  (Space = microphone)"
+                      placeholder="Computer, ...  (Space = Mikrofon, Strg+V für Bilder)"
                       [disabled]="loading()"
                       (input)="resizeInput()"
+                      (paste)="onPaste($event)"
                       (keydown)="onInputKeydown($event)"></textarea>
             <button class="icon-btn"
                     [class.active]="listening()"
@@ -421,7 +473,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
             } @else {
               <button class="send-btn"
                       (click)="send()"
-                      [disabled]="!inputText.trim()">→</button>
+                      [disabled]="(!inputText.trim() && !activeImages().length) || uploadingImages() > 0">→</button>
             }
           </div>
         </div>
@@ -500,6 +552,19 @@ export class ComputerComponent implements OnInit, OnDestroy {
    *  Erst das Absenden quittiert den Jira-Stand. Solange der Kontext nur anhängt,
    *  gilt die Änderung als ungelesen und die Aktivitätsmeldung bleibt stehen —
    *  sonst verschwände etwas, das die KI nie gesehen hat. */
+  /** Eingefügte Bilder je Sitzung, noch nicht abgeschickt. Gleiches Muster wie der
+   *  angehängte Ticket-Kontext: an der Sitzung, nicht im Eingabefeld. */
+  private pendingImages = signal<Record<string, PastedImage[]>>({});
+
+  /** Bilder der aktiven Sitzung, für die Leiste über dem Eingabefeld. */
+  readonly activeImages = computed<PastedImage[]>(() => {
+    const sid = this.activeTabId();
+    return sid ? this.pendingImages()[sid] ?? [] : [];
+  });
+
+  /** Läuft gerade ein Bild-Upload? Blockiert das Absenden, damit kein Bild verloren geht. */
+  readonly uploadingImages = signal(0);
+
   private pendingContext = signal<Record<string, PendingContext>>({});
 
   /** Kontext der aktiven Sitzung, für die Anzeige über dem Eingabefeld. */
@@ -1278,7 +1343,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
       const messages: HermesMessage[] = raw
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .filter(m => typeof m.content === 'string' && m.content.trim())
-        .map(m => ({ role: m.role as 'user' | 'assistant', text: m.content }));
+        .map(m => this.withImagesFromMarker(m.role as 'user' | 'assistant', m.content));
       if (!messages.length) return;
       this.sessions.update(ss => ss.map(s =>
         s.session_id === sid ? { ...s, messages } : s
@@ -1286,6 +1351,24 @@ export class ComputerComponent implements OnInit, OnDestroy {
     } catch (err) {
       console.debug('loadSessionHistory failed:', err);
     }
+  }
+
+  /** Baut aus dem `[Bilder: …]`-Marker einer geladenen Nachricht wieder Vorschauen.
+   *
+   *  Die Historie kommt vom Agenten und kennt nur Text. Ohne diesen Schritt stünden
+   *  nach einem Neuladen rohe Pfade im Verlauf, wo vorher Bilder waren — dieselbe
+   *  Unterhaltung sähe je nach Zeitpunkt des Öffnens anders aus. */
+  private withImagesFromMarker(role: 'user' | 'assistant', text: string): HermesMessage {
+    const images: { url: string; agentPath: string }[] = [];
+    const re = new RegExp(ComputerComponent.IMAGE_MARKER.source, 'gm');
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(text)) !== null) {
+      for (const path of match[1].split(/\s+/).filter(Boolean)) {
+        const id = path.split('/').pop() || '';
+        if (id) images.push({ url: `${this.apiBase}/images/${id}`, agentPath: path });
+      }
+    }
+    return images.length ? { role, text, images } : { role, text };
   }
 
   async renameSession(sid: string, label: string): Promise<void> {
@@ -1361,6 +1444,78 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Send message → SSE stream ─────────────────────────────────────
 
+  // ── Bilder einfügen (Strg+V) ──────────────────────────────────────
+
+  /** Marker, mit dem Bildpfade in der Nachricht stehen. Er ist zugleich Nutzlast
+   *  (der Agent liest die Pfade) und Anzeige-Anker (beim Nachladen der Historie
+   *  werden daraus wieder Miniaturbilder). */
+  static readonly IMAGE_MARKER = /^\[Bilder:\s*(.+?)\]$/gm;
+
+  async onPaste(e: ClipboardEvent): Promise<void> {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const imageItems = items.filter(i => i.kind === 'file' && i.type.startsWith('image/'));
+    if (!imageItems.length) return;   // reiner Text: normal einfügen lassen
+    e.preventDefault();
+
+    let sid = this.activeTabId();
+    if (!sid) {
+      await this.newSession();
+      sid = this.activeTabId();
+      if (!sid) return;
+    }
+    for (const item of imageItems) {
+      const blob = item.getAsFile();
+      if (blob) await this.uploadPastedImage(sid, blob);
+    }
+  }
+
+  private async uploadPastedImage(sid: string, blob: Blob): Promise<void> {
+    const previewUrl = URL.createObjectURL(blob);
+    this.uploadingImages.update(n => n + 1);
+    try {
+      const fd = new FormData();
+      fd.append('file', blob, 'pasted');
+      const token = this.auth.getAccessToken();
+      const r = await fetch(`${this.apiBase}/images`, {
+        method: 'POST',
+        body: fd,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) {
+        const detail = await r.json().catch(() => null);
+        throw new Error(detail?.detail || `HTTP ${r.status}`);
+      }
+      const data = await r.json();
+      const img: PastedImage = {
+        id: data.id, agentPath: data.agent_path, url: data.url,
+        previewUrl, size: data.size, mime: data.mime,
+      };
+      this.pendingImages.update(all => ({ ...all, [sid]: [...(all[sid] ?? []), img] }));
+    } catch (err) {
+      URL.revokeObjectURL(previewUrl);
+      this.snackBar.open(
+        err instanceof Error ? err.message : 'Bild konnte nicht hochgeladen werden',
+        '', { duration: 4000 },
+      );
+    } finally {
+      this.uploadingImages.update(n => Math.max(0, n - 1));
+    }
+  }
+
+  removeImage(img: PastedImage): void {
+    const sid = this.activeTabId();
+    if (!sid) return;
+    URL.revokeObjectURL(img.previewUrl);
+    this.pendingImages.update(all => ({
+      ...all, [sid]: (all[sid] ?? []).filter(i => i.id !== img.id),
+    }));
+  }
+
+  formatBytes(n: number): string {
+    return n < 1024 * 1024 ? `${Math.round(n / 1024)} KB`
+                           : `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   /** Hängt Ticket-Kontext an eine Sitzung, ohne die KI zu starten.
    *
    *  Bewusst nicht ins Eingabefeld: dort stünde eine Textwand, die der Nutzer erst
@@ -1424,17 +1579,30 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   async send(): Promise<boolean> {
     const text = this.inputText.trim();
-    if (!text || this.loading()) return false;
-
     const sid = this.activeTabId();
+    const images = sid ? this.pendingImages()[sid] ?? [] : [];
+    // Ein Bild allein genügt — so verhalten sich Claude und Google auch. Solange ein
+    // Upload läuft, wird nicht gesendet: sonst ginge das Bild still verloren.
+    if ((!text && !images.length) || this.loading() || this.uploadingImages() > 0) return false;
+
     const context = sid ? this.pendingContext()[sid] ?? null : null;
     this.inputText = '';
     setTimeout(() => this.resizeInput(), 0);
 
     // Der Kontext geht der eigenen Nachricht voran; gesendet wird beides, angezeigt
     // die eigene Nachricht mit dem Kontext als aufklappbarem Anhang.
-    const payload = context ? `${context.text}\n\n---\n\n${text}` : text;
-    const sent = await this.sendContent(payload);
+    let payload = context ? `${context.text}\n\n---\n\n${text}` : text;
+    if (images.length) {
+      // Der Marker ist Nutzlast und Anzeige zugleich: der Agent liest die Pfade,
+      // und beim Nachladen der Historie werden daraus wieder Miniaturbilder.
+      const marker = `[Bilder: ${images.map(i => i.agentPath).join(' ')}]`;
+      payload = payload ? `${payload}\n\n${marker}` : marker;
+      this.pendingImages.update(all => {
+        const { [sid!]: _used, ...rest } = all;
+        return rest;
+      });
+    }
+    const sent = await this.sendContent(payload, undefined, images);
     if (sent && sid && context) {
       this.pendingContext.update(all => {
         const { [sid]: _used, ...rest } = all;
@@ -1446,7 +1614,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
     return sent;
   }
 
-  private async sendContent(text: string, targetSid?: string): Promise<boolean> {
+  private async sendContent(
+    text: string, targetSid?: string, images: PastedImage[] = [],
+  ): Promise<boolean> {
     if (!text.trim() || this.loading()) return false;
 
     let sid = targetSid ?? this.activeTabId();
@@ -1471,7 +1641,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
     // normale Nachricht im Verlauf, gefolgt von der eigenen Zeile. Kein Aufklapper
     // und keine gekürzte Fassung — nach einem Neuladen liefert der Agent dieselbe
     // eine Nachricht zurück, und beide Ansichten müssen übereinstimmen.
-    this._addMessage(sid, 'user', text);
+    this._addMessage(sid, 'user', text,
+                     images.map(i => ({ url: i.url, agentPath: i.agentPath })));
     this._addMessage(sid, 'assistant', '');
     this._updateMsgCount(sid);
     this.scrollToBottom();
@@ -1489,7 +1660,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ content: text }),
+        body: JSON.stringify({
+          content: text,
+          ...(images.length ? { image_paths: images.map(i => i.agentPath) } : {}),
+        }),
         signal: this._abortController.signal,
       });
 
@@ -1696,11 +1870,13 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Helpers ───────────────────────────────────────────────────────
 
-  private _addMessage(sid: string, role: 'user' | 'assistant', text: string): void {
+  private _addMessage(
+    sid: string, role: 'user' | 'assistant', text: string,
+    images: { url: string; agentPath: string }[] = [],
+  ): void {
+    const msg: HermesMessage = images.length ? { role, text, images } : { role, text };
     this.sessions.update(ss => ss.map(s =>
-      s.session_id === sid
-        ? { ...s, messages: [...s.messages, { role, text }] }
-        : s
+      s.session_id === sid ? { ...s, messages: [...s.messages, msg] } : s
     ));
   }
 
