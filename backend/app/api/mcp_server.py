@@ -1766,34 +1766,18 @@ async def jira_add_comment(issue_key: str, body: str, body_format: str = "markdo
 #: aber ein klarer Fehler hier ist besser als ein HTTP 413 aus der Ferne.
 _ATTACH_MAX_BYTES = 25 * 1024 * 1024
 
-#: Wie der Pfad im Container des Agenten heißt.
-_AGENT_WORKSPACE = "/home/yolo/workspaces"
+#: Wie der Pfad im Container des Agenten heißt (eine Quelle: userenv_manager).
+from app.services.userenv_manager import AGENT_WORKSPACE as _AGENT_WORKSPACE
 
 
 def _resolve_workspace_file(user_id: str, file_path: str) -> tuple[str | None, str]:
-    """Übersetzt einen Agenten-Pfad in einen Backend-Pfad. (Pfad, Fehlergrund)."""
-    base = os.getenv("IDE_WORKSPACES_BASE", "/opt/centralstation/ide-workspaces")
-    root = os.path.realpath(os.path.join(base, user_id, "workspaces"))
+    """Übersetzt einen Agenten-Pfad in einen Backend-Pfad. (Pfad, Fehlergrund).
 
-    raw = (file_path or "").strip()
-    if not raw:
-        return None, "Kein Dateipfad angegeben"
-    if raw == _AGENT_WORKSPACE or raw.startswith(_AGENT_WORKSPACE + "/"):
-        raw = raw[len(_AGENT_WORKSPACE):].lstrip("/")
-    elif os.path.isabs(raw):
-        return None, (
-            f"Nur Dateien aus dem Arbeitsverzeichnis ({_AGENT_WORKSPACE}) können "
-            f"angehängt werden. Lege die Datei dort ab und nenne diesen Pfad."
-        )
-
-    full = os.path.realpath(os.path.join(root, raw))
-    # realpath löst auch Symlinks auf: ein Link nach /etc führt hier heraus und wird
-    # damit erkannt — ein reiner Zeichenketten-Vergleich auf ".." täte das nicht.
-    if full != root and not full.startswith(root + os.sep):
-        return None, "Pfad zeigt aus dem Arbeitsverzeichnis heraus"
-    if not os.path.isfile(full):
-        return None, f"Datei nicht gefunden: {file_path}"
-    return full, ""
+    Dünne Weiterleitung: die Regel — und damit die Sicherheitsgrenze — steht in
+    userenv_manager, weil auch der Bild-Upload der Konsole sie braucht.
+    """
+    from app.services.userenv_manager import resolve_workspace_file
+    return resolve_workspace_file(user_id, file_path)
 
 
 @mcp.tool()

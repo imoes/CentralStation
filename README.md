@@ -1020,6 +1020,35 @@ Fetching from a host is reading and is always allowed; **pushing to one is a cha
 that host** and needs a write window like any other outward action. `rsync` has to
 exist on both ends — where it does not, `scp` and `sftp` still work.
 
+### Pasting images (Ctrl+V)
+
+Paste a screenshot into the chat input and it is attached to the next message. The
+image is **not** pushed through the chat protocol: it is uploaded to
+`POST /api/computer/images`, stored in the shared workspace under
+`.console-uploads/<YYYY-MM>/`, and the message carries only a marker line:
+
+```
+[Bilder: /home/yolo/workspaces/.console-uploads/2026-09/<id>.png]
+```
+
+That marker is payload and display at once — the agent reads the path, and on reload
+the frontend turns it back into thumbnails via `GET /api/computer/images/{id}`, so the
+transcript looks the same whenever it is opened. Sending with no text at all is allowed.
+
+How each agent sees it: **Claude** reads the path with its `Read` tool; **Codex** gets
+`-i <path>` per image; **Hermes** receives OpenAI-style content blocks with a data URL —
+whether that yields a useful answer depends on the configured LLM having vision at all
+(a local text-only model does not).
+
+Because the file lands in the workspace, it is also editable in the Werkbank and can be
+put on a ticket with `jira_add_attachment` — no extra code for either.
+
+Safeguards: the format is decided by **magic bytes**, never the browser's content-type;
+the filename is generated server-side; 10 MB per image (nginx `/api/` allows 25 MB —
+without that line the default of 1 MB would reject most screenshots); files are chowned
+to the agent's uid so it can clean up after itself. `backend/app/services/image_sniff.py`
+holds the format table and is covered by `backend/tests/test_mcp_attachment_paths.py`.
+
 ### Ticket attachments
 
 The agent writes the file into its workspace and then names the path — the content

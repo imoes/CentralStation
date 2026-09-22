@@ -52,6 +52,10 @@ http {
             # DeepSearch up to 300s). Default 60s caused 504s on those.
             proxy_read_timeout 600s;
             proxy_send_timeout 600s;
+            # Pasted screenshots go through here. nginx defaults to 1m, which a
+            # full-screen PNG exceeds — the upload then fails with 413 before it
+            # ever reaches the backend's own size check.
+            client_max_body_size 25m;
         }
 
         # Werkbank Web-IDE (code-server). Per-user containers cs-ide-<uid>.

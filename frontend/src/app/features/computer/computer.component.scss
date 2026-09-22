@@ -920,6 +920,94 @@
   border-top: 1px solid #2a1a08;
 }
 
+/* ── Eingefügte Bilder ─────────────────────────────────────────────────────
+   Leiste zwischen Verlauf und Eingabefeld, gleiche Sprache wie .attached-context:
+   dort wartet Text, hier warten Bilder — beide gehen mit der nächsten Nachricht. */
+.pasted-images {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 2px solid #2a1a08;
+  border-left: 7px solid #ffcc99;
+  border-radius: 0 8px 8px 0;
+  background: #14100a;
+}
+
+.pasted-image {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 4px;
+  border: 1px solid #3a2a12;
+  border-radius: 4px;
+  background: #0a0804;
+
+  img {
+    display: block;
+    height: 46px;
+    width: auto;
+    max-width: 90px;
+    object-fit: cover;
+    border-radius: 3px;
+  }
+
+  &--loading {
+    min-width: 58px;
+    justify-content: center;
+    color: #ffcc99;
+  }
+}
+
+/* Fließtext in Roboto — kondensierte Schrift nur für Struktur
+   (siehe docs/ux/lcars-design.md). */
+.pasted-image-size {
+  font-family: Roboto, 'Helvetica Neue', sans-serif;
+  text-transform: none;
+  font-size: 0.68rem;
+  color: #e8a060;
+}
+
+.pasted-image-remove {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: #e8a060;
+  display: flex;
+  align-items: center;
+
+  &:hover { color: #ff5544; }
+
+  mat-icon {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+  }
+}
+
+/* Bilder, die mit einer gesendeten Nachricht gingen. */
+.msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+
+  img {
+    display: block;
+    max-width: 320px;
+    max-height: 240px;
+    width: auto;
+    height: auto;
+    border: 1px solid #3a2a12;
+    border-radius: 4px;
+  }
+
+  a:hover img { border-color: #ff9933; }
+}
+
 .input-row {
   display: flex;
   gap: 6px;

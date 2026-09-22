@@ -86,6 +86,18 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 - **`rsync` is installed**, next to the `scp`/`sftp` that came with the SSH client.
   Fetching from a host stays free; pushing to one needs a write window.
 
+- **Images can be pasted into the Console with Ctrl+V.** A screenshot goes into
+  the shared workspace and the message carries only its path, so nothing large
+  travels through the chat protocol. The same marker line is what the agent reads
+  and what the frontend turns back into thumbnails after a reload. Sending with no
+  text is allowed.
+
+  *Verified end to end:* a generated red PNG was uploaded through
+  `POST /api/computer/images` (stored as uid 1000 so the agent owns it), and a
+  `claude_cli` session asked "which colour is this image" answered **"Rot"**. A
+  PHP payload named `.png` is refused, and `../../../etc/passwd` as an image id
+  returns 404.
+
 - **`CHANGELOG.md` exists and is linked from the README.**
 
 ### What changed

@@ -57,8 +57,19 @@ def container_name(user_id: str) -> str:
     return f"cs-userenv-{user_id}"
 
 
+def _workspaces_base() -> str:
+    """Host-Basisverzeichnis der Workspaces — bei JEDEM Aufruf aus der Umgebung.
+
+    Nicht die Modulkonstante verwenden: die wird beim Import festgeschrieben, und
+    damit hinge das Ergebnis davon ab, wann das Modul zuerst geladen wurde. Für eine
+    Funktion, die eine Sicherheitsgrenze zieht, ist das die falsche Eigenschaft — und
+    in Tests, die den Pfad setzen, schlicht falsch.
+    """
+    return os.getenv("IDE_WORKSPACES_BASE", USERENV_WORKSPACES_BASE)
+
+
 def _user_base(user_id: str) -> str:
-    return os.path.join(USERENV_WORKSPACES_BASE, user_id)
+    return os.path.join(_workspaces_base(), user_id)
 
 
 def hermes_config_path(user_id: str) -> str:
@@ -127,6 +138,71 @@ def write_hermes_config(user_id: str, extra_servers: dict) -> str:
 
 def workspace_dir(user_id: str) -> str:
     return os.path.join(_user_base(user_id), "workspaces")
+
+
+# ── Workspace-Pfade: eine Stelle, die das Layout kennt ──────────────────────
+#
+# Der Workspace ist in zwei Container gemountet und heißt dort verschieden: der Agent
+# sieht AGENT_WORKSPACE, das Backend den Host-Pfad unter IDE_WORKSPACES_BASE. Die
+# Übersetzung steht deshalb hier, neben workspace_dir(), und nicht bei den Aufrufern —
+# zwei Kopien dieser Regel würden auseinanderlaufen, und eine davon wäre eine
+# Sicherheitsgrenze.
+
+#: Wie der Workspace im Container des Agenten heißt.
+AGENT_WORKSPACE = "/home/yolo/workspaces"
+
+#: Ablage für Bilder, die in der Konsole eingefügt wurden. Punkt-Verzeichnis, damit es
+#: in der Werkbank nicht zwischen den Arbeitsdateien steht.
+CONSOLE_UPLOAD_SUBDIR = ".console-uploads"
+
+
+def console_upload_dir(user_id: str, month: str = "") -> str:
+    """Host-Verzeichnis für eingefügte Bilder, nach Monat unterteilt."""
+    from datetime import datetime, timezone
+    month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+    return os.path.join(workspace_dir(user_id), CONSOLE_UPLOAD_SUBDIR, month)
+
+
+def to_agent_path(user_id: str, host_path: str) -> str:
+    """Host-Pfad → der Pfad, unter dem der Agent dieselbe Datei sieht."""
+    root = os.path.realpath(workspace_dir(user_id))
+    full = os.path.realpath(host_path)
+    if full == root:
+        return AGENT_WORKSPACE
+    if not full.startswith(root + os.sep):
+        raise ValueError(f"{host_path} liegt nicht im Workspace von {user_id}")
+    return AGENT_WORKSPACE + "/" + os.path.relpath(full, root)
+
+
+def resolve_workspace_file(
+    user_id: str, file_path: str, must_exist: bool = True,
+) -> tuple[str | None, str]:
+    """Agenten-Pfad (oder relativer Pfad) → Host-Pfad. Liefert (Pfad, Fehlergrund).
+
+    Diese Funktion ist eine Sicherheitsgrenze: das Backend hat sehr viel mehr vom Host
+    gemountet als der Container des Agenten. Aufgelöst wird mit realpath, damit `..`
+    UND Symlinks, die aus dem Workspace hinausführen, auffallen — ein Vergleich auf
+    ".." allein würde den Symlink-Fall übersehen.
+    """
+    root = os.path.realpath(workspace_dir(user_id))
+
+    raw = (file_path or "").strip()
+    if not raw:
+        return None, "Kein Dateipfad angegeben"
+    if raw == AGENT_WORKSPACE or raw.startswith(AGENT_WORKSPACE + "/"):
+        raw = raw[len(AGENT_WORKSPACE):].lstrip("/")
+    elif os.path.isabs(raw):
+        return None, (
+            f"Nur Dateien aus dem Arbeitsverzeichnis ({AGENT_WORKSPACE}) können "
+            f"verwendet werden. Lege die Datei dort ab und nenne diesen Pfad."
+        )
+
+    full = os.path.realpath(os.path.join(root, raw))
+    if full != root and not full.startswith(root + os.sep):
+        return None, "Pfad zeigt aus dem Arbeitsverzeichnis heraus"
+    if must_exist and not os.path.isfile(full):
+        return None, f"Datei nicht gefunden: {file_path}"
+    return full, ""
 
 
 def vscode_dir(user_id: str) -> str:
@@ -558,6 +634,22 @@ Deshalb:
   Ansible-SCM-Verzeichnis — dort liegen Playbooks, die AWX direkt sieht.
 - Sag dem Nutzer, wie die Datei heißt, wenn du eine angelegt hast. Er findet sie unter
   demselben Namen in der Werkbank.
+
+## EINGEFÜGTE BILDER
+Der Nutzer kann in der Konsole Bilder per Strg+V einfügen — Screenshots, Fehlerdialoge,
+Grafana-Panels, Fotos. Sie erscheinen in seiner Nachricht als Zeile:
+
+```
+[Bilder: /home/yolo/workspaces/.console-uploads/2026-09/<id>.png]
+```
+
+Steht so eine Zeile da, **sieh dir die Datei an, bevor du antwortest** — mit deinem
+Read-Werkzeug (es zeigt dir Bilder). Rate nicht anhand des Dateinamens; er ist eine
+zufällige Kennung und sagt nichts über den Inhalt.
+
+Die Bilder liegen im Workspace. Du kannst sie also auch mit `jira_add_attachment` an
+ein Ticket hängen, wenn das zur Aufgabe passt — dann bekommt der Vorgang den
+Screenshot, den der Nutzer dir gezeigt hat.
 
 ## DATEIEN ZWISCHEN SERVERN BEWEGEN
 Verfügbar sind `scp`, `sftp` und `rsync` — mit demselben User und Key wie `ssh`.

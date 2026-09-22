@@ -527,9 +527,45 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
 
 # ── Session endpoints ──────────────────────────────────────────────
 
+def _hermes_user_message(content: str, image_paths: list[str] | None):
+    """Nachricht für Hermes — Text, oder Content-Blöcke wenn Bilder dabei sind.
+
+    Hermes nimmt für ``user_message`` ausdrücklich auch eine Liste entgegen und legt
+    sie unverändert als ``content`` ab (agent/conversation_loop.py: der Zweig
+    ``isinstance(user_message, list)``). Wir bauen deshalb das OpenAI-Vision-Format
+    mit einer data-URL.
+
+    Ob daraus eine brauchbare Antwort wird, hängt am eingestellten LLM: ein lokales
+    Modell ohne Bildverständnis ignoriert den Block oder lehnt ihn ab. Das ist eine
+    Eigenschaft der Konfiguration, keine dieses Codes — deshalb wird hier nichts
+    geraten und nichts stillschweigend weggelassen.
+    """
+    if not image_paths:
+        return content
+
+    import base64 as _b64
+    import mimetypes as _mt
+
+    blocks: list[dict] = [{"type": "text", "text": content}]
+    for path in image_paths:
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+        except OSError as exc:
+            log.warning("Bild %s nicht lesbar: %s", path, exc)
+            continue
+        mime = _mt.guess_type(path)[0] or "image/png"
+        url = f"data:{mime};base64," + _b64.b64encode(raw).decode()
+        blocks.append({"type": "image_url", "image_url": {"url": url}})
+
+    # Kam kein Bild durch, bleibt es bei reinem Text — eine Liste mit nur einem
+    # Textblock wäre eine unnötige Abweichung vom Normalfall.
+    return blocks if len(blocks) > 1 else content
+
+
 async def _run_cli_agent(
     agent_type: str, sid: str, model: str, message: str,
-    history: list[dict], session: dict,
+    history: list[dict], session: dict, image_paths: list[str] | None = None,
 ):
     """Async generator: stream output from claude/codex CLI subprocess as SSE events.
 
@@ -790,13 +826,26 @@ async def _run_cli_agent(
             codex_cmd += f' --model "$CODEX_MODEL"'
         sh_cmd = f'. "$CODEX_HOME/env"; exec codex {codex_cmd} "$MSG"'
 
+    # Bilder: codex nimmt sie als -i/--image <FILE>. Die Pfade gehen als eigene
+    # Umgebungsvariablen mit und werden im Kommando nur referenziert — in den
+    # sh -c-String interpoliert wären sie eine Shell-Injektion, denn sie stammen
+    # letztlich aus einem Upload.
+    img_env: dict[str, str] = {}
+    if image_paths:
+        flags = []
+        for i, path in enumerate(image_paths):
+            var = f"CS_IMG_{i}"
+            img_env[var] = path
+            flags.append(f'-i "${var}"')
+        sh_cmd = sh_cmd.replace("exec codex ", "exec codex " + " ".join(flags) + " ", 1)
+
     proc = await asyncio.create_subprocess_exec(
         "sh", "-c", sh_cmd,
         stdin=asyncio.subprocess.DEVNULL,   # codex exec else tries to read piped stdin → "Reading additional input from stdin..."
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env={**env, "HOME": "/home/yolo", "CODEX_HOME": codex_home,
-             "MSG": message, "CODEX_MODEL": model or ""},
+             "MSG": message, "CODEX_MODEL": model or "", **img_env},
         cwd=_agent_cwd(),
     )
     emitted = False
@@ -1050,6 +1099,9 @@ class MessageBody(BaseModel):
     llm_timeout_seconds: int | None = None
     show_reasoning: bool = True
     extra_mcp_servers: list[dict] | None = None
+    # Pfade eingefügter Bilder, im Container sichtbar (/home/yolo/workspaces/...).
+    # Das Bild selbst reist nicht durch das Protokoll — siehe computer_proxy.
+    image_paths: list[str] | None = None
     # Console agent type override forwarded from the backend
     agent_type: str | None = None
 
@@ -1175,7 +1227,7 @@ async def send_message(sid: str, body: MessageBody):
         async def cli_event_stream():
             output_parts: list[str] = []
             try:
-                async for event in _run_cli_agent(effective_agent_type, sid, body.llm_model or "", body.content, history[:-1], _sessions[sid]):
+                async for event in _run_cli_agent(effective_agent_type, sid, body.llm_model or "", body.content, history[:-1], _sessions[sid], body.image_paths):
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                     if event["type"] == "delta":
                         output_parts.append(event["text"])
@@ -1301,7 +1353,7 @@ async def send_message(sid: str, body: MessageBody):
             agent.tool_progress_callback = on_tool_progress
             try:
                 agent.run_conversation(
-                    user_message=body.content,
+                    user_message=_hermes_user_message(body.content, body.image_paths),
                     stream_callback=on_delta,
                     conversation_history=history if history else None,
                 )
