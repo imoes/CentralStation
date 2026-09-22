@@ -686,6 +686,8 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
       issue_key: string;
       snapshot: TicketActivitySnapshot;
       context_hash: string;
+      ticket_context?: string;
+      task_prompt?: string;
     }>(
       `${environment.apiUrl}/jira-view/hermes-context?issue_key=${encodeURIComponent(key)}${connectorParam}`
     ).subscribe({
@@ -703,6 +705,11 @@ export class MyTicketsComponent implements OnInit, OnDestroy {
             key: data.issue_key,
             snapshot: data.snapshot,
             contextHash: data.context_hash,
+            // Getrennt: Ticketinhalt hängt als Kontext an, die Aufgabe steht im
+            // Eingabefeld. Fehlen die Felder (älteres Backend), fällt die Konsole
+            // auf den Gesamt-Prompt zurück.
+            ticketContext: data.ticket_context,
+            taskPrompt: data.task_prompt,
           },
         );
       },

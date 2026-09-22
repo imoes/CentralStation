@@ -422,6 +422,20 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                   <mat-icon>close</mat-icon>
                 </button>
               </div>
+              @if (taskStaged()) {
+                <!-- Nach der Ticket-Übergabe: die Aufgabe steht im Eingabefeld. Beide
+                     Wege sind gleich richtig, deshalb stehen beide da — losschicken
+                     oder erst anpassen. -->
+                <div class="attached-context-actions">
+                  <span class="attached-context-hint">Aufgabe steht im Eingabefeld:</span>
+                  <button class="ctx-action ctx-action--go" (click)="startTask()">
+                    <mat-icon>play_arrow</mat-icon> LEG LOS
+                  </button>
+                  <button class="ctx-action" (click)="editTask()">
+                    <mat-icon>edit</mat-icon> BEARBEITEN
+                  </button>
+                </div>
+              }
               @if (contextExpanded()) {
                 <pre class="attached-context-body">{{ ctx.text }}</pre>
               }
@@ -575,6 +589,11 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   /** Ist der angehängte Kontext ausgeklappt? */
   readonly contextExpanded = signal(false);
+
+  /** Liegt eine frisch übergebene Aufgabe im Eingabefeld? Steuert die beiden Knöpfe
+   *  "Leg los" / "Bearbeiten". Wird zurückgesetzt, sobald gesendet oder verworfen
+   *  wird — die Knöpfe sollen nicht stehenbleiben, wenn es nichts mehr zu starten gibt. */
+  readonly taskStaged = signal(false);
 
   loading = signal(false);
   listening = signal(false);
@@ -1082,15 +1101,25 @@ export class ComputerComponent implements OnInit, OnDestroy {
         return;
       }
 
-      // Erstübergabe: das Ticket hängt als Kontext an der Sitzung, es geht nicht an
-      // den Agenten. Die Jira-Grundlinie wird erst gesetzt, wenn der Nutzer eine
-      // Nachricht schickt — vorher hat die KI den Stand nicht gesehen.
+      // Erstübergabe: der Ticketinhalt hängt als Kontext an der Sitzung, die Aufgabe
+      // kommt sichtbar ins Eingabefeld. Beides geht erst los, wenn der Nutzer
+      // abschickt — vorher hat die KI den Stand nicht gesehen.
+      //
+      // Getrennt, weil es zwei verschiedene Dinge sind: der Inhalt ist Material und
+      // gehört nicht ins Eingabefeld, die Aufgabe ist die Bitte an die KI und muss
+      // lesbar und änderbar sein. Steckte sie wie zuvor im eingeklappten Kontext,
+      // sähe der Nutzer nur "TICKET" und ein leeres Feld.
       this.attachContext(existing.session_id, {
-        text: prompt,
+        text: ticketRef.ticketContext || prompt,
         label: `${ticketRef.key} · Ticket`,
         snapshot: ticketRef.snapshot,
         contextHash,
       });
+      if (ticketRef.taskPrompt) {
+        this.inputText = ticketRef.taskPrompt;
+        this.taskStaged.set(true);
+        setTimeout(() => this.resizeInput(), 60);
+      }
       return;
     }
 
@@ -1554,7 +1583,25 @@ export class ComputerComponent implements OnInit, OnDestroy {
     // weiterhin ungelesen ist — sonst verschwände sie, ohne dass sie jemand sah.
     this.computerService.clearContextAttached(sid);
     this.contextExpanded.set(false);
+    this.taskStaged.set(false);
     await this.computerService.refreshTicketActivities(sid);
+  }
+
+  /** "Leg los": schickt die Aufgabe ab, wie sie im Feld steht. */
+  async startTask(): Promise<void> {
+    this.taskStaged.set(false);
+    await this.send();
+  }
+
+  /** "Bearbeiten": Fokus ins Eingabefeld, Cursor ans Ende. Die Knöpfe verschwinden,
+   *  weil der Nutzer ab hier selbst entscheidet, wann er sendet. */
+  editTask(): void {
+    this.taskStaged.set(false);
+    const el = this.inputEl?.nativeElement;
+    if (el) {
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
   }
 
   toggleContextExpanded(): void {
@@ -1609,6 +1656,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
         return rest;
       });
       this.computerService.clearContextAttached(sid);
+      this.taskStaged.set(false);
       await this.resolveSentContext(sid, context);
     }
     return sent;

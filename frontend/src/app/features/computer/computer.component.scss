@@ -905,6 +905,50 @@
   }
 }
 
+/* Zwei gleichwertige Wege nach der Ticket-Übergabe: sofort starten oder erst
+   anpassen. "Leg los" ist hervorgehoben, weil es der häufigere Fall ist — nicht,
+   weil der andere schlechter wäre. */
+.attached-context-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 8px;
+  flex-wrap: wrap;
+}
+
+.ctx-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid #3a2a12;
+  border-radius: 14px;
+  background: none;
+  cursor: pointer;
+  font-family: 'Antonio', 'Eurostile', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+  color: #ffcc99;
+
+  &:hover { border-color: #ffcc99; }
+
+  mat-icon {
+    font-size: 15px;
+    width: 15px;
+    height: 15px;
+  }
+
+  &--go {
+    background: #ff9933;
+    border-color: #ff9933;
+    color: #1a1006;
+    font-weight: 600;
+
+    &:hover { background: #ffcc66; border-color: #ffcc66; }
+  }
+}
+
 .attached-context-body {
   margin: 0;
   padding: 8px 12px 10px;

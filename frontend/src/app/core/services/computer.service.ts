@@ -56,6 +56,11 @@ export interface TicketReference {
   key: string;
   snapshot?: TicketActivitySnapshot;
   contextHash?: string;
+  /** Ticketinhalt ohne die Aufgabe — hängt als Kontext an der nächsten Nachricht. */
+  ticketContext?: string;
+  /** Die Aufgabe an die KI — wird sichtbar ins Eingabefeld gelegt, damit der Nutzer
+   *  sie liest, ändern kann und selbst abschickt. */
+  taskPrompt?: string;
 }
 
 export interface ComputerHandoff {
