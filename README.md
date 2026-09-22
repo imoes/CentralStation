@@ -975,6 +975,13 @@ the latter could call the Jira API directly. The goal is that *accidental* actio
 
 ### Ticket context does not start the agent
 
+Handing a ticket to the Console splits the old single prompt in two: the **ticket
+content** is attached to the session, and the **task** ("Analysiere das Ticket und
+schlage konkrete nächste Schritte vor …") goes visibly into the input field, where it
+can be read and edited. Two buttons on the context bar offer both ways —
+**LEG LOS** sends it as it stands, **BEARBEITEN** hands over to the input field. Either
+way the agent starts only on send.
+
 Handing a ticket to the Console — the first handoff from the Jira view, and
 **"ALS KONTEXT ANHÄNGEN"** on the activity banner — **attaches** the text to the session.
 It does not go to the agent and it does not go into the input field: a wall of text there

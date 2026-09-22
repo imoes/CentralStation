@@ -162,7 +162,10 @@ async def issue_hermes_context(
     """
     from app.core.security import decrypt_credentials
     from app.services.connectors.jira import JiraConnector
-    from app.services.ticket_activity import build_full_ticket_prompt, build_ticket_snapshot
+    from app.services.ticket_activity import (
+        TICKET_TASK_PROMPT, build_full_ticket_prompt, build_ticket_context,
+        build_ticket_snapshot,
+    )
 
     connectors = await _get_all_jira_connectors(db, user.id)
     if connector_id:
@@ -189,7 +192,13 @@ async def issue_hermes_context(
     prompt = build_full_ticket_prompt(detail, key)
 
     return {
+        # prompt: Inhalt UND Aufgabe in einem Text. Bleibt, weil der Kontext-Hash
+        # darauf beruht und ältere Aufrufer einen fertigen Prompt erwarten.
         "prompt": prompt,
+        # Getrennte Teile für die Konsole: der Inhalt hängt als Kontext an der
+        # Nachricht, die Aufgabe steht sichtbar im Eingabefeld.
+        "ticket_context": build_ticket_context(detail, key),
+        "task_prompt": TICKET_TASK_PROMPT,
         "label": key,
         "issue_key": key,
         "issue_id": str(detail.get("id") or key),

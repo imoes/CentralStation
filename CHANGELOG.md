@@ -131,6 +131,15 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **The task prompt disappeared when a ticket was handed to the Console.** Moving
+  the handoff into an attached context put the whole prompt — ticket *and* task —
+  behind a collapsed bar, so the operator saw a label and an empty input and
+  nothing saying what to ask for. The two are now separated at the source
+  (`ticket_activity.py`): the content is attached, the task goes into the input
+  field where it can be read and changed, and the context bar offers **LEG LOS**
+  (send as-is) or **BEARBEITEN**. The combined `prompt` is unchanged, because the
+  context hash that detects an already-handed-over state is computed from it.
+
 - **Hermes was told to use `/root/workspaces`**, in nine places. The container has
   run as `yolo` since the root→yolo migration and `/root` is `0700 root:root`, so
   that path was unusable — a leftover the migration missed.

@@ -190,8 +190,54 @@ def diff_ticket_activity(
     }
 
 
+#: Die Aufgabe, die der Konsole beim Übergeben eines Tickets ins Eingabefeld gelegt
+#: wird. Getrennt vom Ticketinhalt, weil beide verschiedenen Zwecken dienen: der Inhalt
+#: ist Kontext (hängt an der Nachricht), das hier ist die Bitte an die KI — und die
+#: gehört sichtbar ins Eingabefeld, wo der Nutzer sie lesen und ändern kann, bevor er
+#: sie abschickt. Vorher steckte sie im Kontext und war damit unsichtbar eingeklappt.
+TICKET_TASK_PROMPT = (
+    "Analysiere das Ticket und schlage konkrete nächste Schritte vor. Für Recherche "
+    "im Bestand nutze die CentralStation-Werkzeuge (Feed, CheckMK, Wissensdatenbank). "
+    "Am Ticket selbst kannst du mit `jira_add_comment`, `jira_update_issue` und "
+    "`jira_transition_issue` arbeiten — frage vorher nach, bevor du etwas schreibst "
+    "oder den Status änderst."
+)
+
+#: Stilvorgabe für Ticketkommentare. Bleibt beim Kontext, nicht im Eingabefeld: sie ist
+#: Dauerregel für die KI, nichts, was der Nutzer jedes Mal mitschicken möchte.
+TICKET_STYLE_NOTE = (
+    "Was du ins Ticket schreibst, lesen Menschen — oft auch Externe. Formuliere in "
+    "Fließtext wie ein Kollege, der den Vorgang fortschreibt: kurze Absätze, keine "
+    "Stichpunktlisten, keine Überschriften, keine Statusmarker. Wie du an die "
+    "Information gekommen bist, gehört nicht hinein — also keine Werkzeug- oder "
+    "SSH-Erwähnungen und keine Aussagen über deinen eigenen Betriebszustand "
+    "(\"Read-only-Analyse\", \"kein Zugriff erlangt\", \"KI-Analyse\"). Konntest du "
+    "etwas nicht klären, sag es fachlich oder lass es weg."
+)
+
+
+def build_ticket_context(detail: dict, issue_key: str | None = None) -> str:
+    """Nur der Ticketinhalt — Kopfdaten, Beschreibung, Kommentarverlauf, Stilvorgabe.
+
+    Das ist der Teil, der als Kontext an der Nachricht hängt. Die Aufgabe steht in
+    TICKET_TASK_PROMPT und landet im Eingabefeld.
+    """
+    return _ticket_body(detail, issue_key) + "\n\n---\n" + TICKET_STYLE_NOTE
+
+
 def build_full_ticket_prompt(detail: dict, issue_key: str | None = None) -> str:
-    """Build the stable full ticket prompt used for the initial handoff hash."""
+    """Ticketinhalt UND Aufgabe in einem Text.
+
+    Weiterhin die Grundlage für den Kontext-Hash und für Aufrufer, die einen einzigen
+    fertigen Prompt erwarten — an dieser Zeichenkette hängt die Erkennung, ob ein
+    Stand schon übergeben wurde, deshalb bleibt sie unverändert.
+    """
+    return (_ticket_body(detail, issue_key) + "\n\n---\n" + TICKET_TASK_PROMPT
+            + "\n\n" + TICKET_STYLE_NOTE)
+
+
+def _ticket_body(detail: dict, issue_key: str | None = None) -> str:
+    """Kopfdaten, Beschreibung und Kommentarverlauf des Tickets."""
     key = detail.get("key") or issue_key or "?"
     summary = _text(detail.get("summary"))
     description = wiki_to_markdown(_text(detail.get("description")), heading_offset=1)
@@ -220,23 +266,6 @@ def build_full_ticket_prompt(detail: dict, issue_key: str | None = None) -> str:
                 f"({_text(comment.get('created'))[:16]}):\n{body}"
             )
 
-    lines += [
-        "",
-        "---",
-        "Analysiere das Ticket und schlage konkrete nächste Schritte vor. Für Recherche "
-        "im Bestand nutze die CentralStation-Werkzeuge (Feed, CheckMK, Wissensdatenbank). "
-        "Am Ticket selbst kannst du mit `jira_add_comment`, `jira_update_issue` und "
-        "`jira_transition_issue` arbeiten — frage vorher nach, bevor du etwas schreibst "
-        "oder den Status änderst.",
-        "",
-        "Was du ins Ticket schreibst, lesen Menschen — oft auch Externe. Formuliere in "
-        "Fließtext wie ein Kollege, der den Vorgang fortschreibt: kurze Absätze, keine "
-        "Stichpunktlisten, keine Überschriften, keine Statusmarker. Wie du an die "
-        "Information gekommen bist, gehört nicht hinein — also keine Werkzeug- oder "
-        "SSH-Erwähnungen und keine Aussagen über deinen eigenen Betriebszustand "
-        "(\"Read-only-Analyse\", \"kein Zugriff erlangt\", \"KI-Analyse\"). Konntest du "
-        "etwas nicht klären, sag es fachlich oder lass es weg.",
-    ]
     return "\n".join(lines)
 
 
