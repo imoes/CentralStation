@@ -1519,7 +1519,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   /** Hängt Ticket-Kontext an eine Sitzung, ohne die KI zu starten.
    *
    *  Bewusst nicht ins Eingabefeld: dort stünde eine Textwand, die der Nutzer erst
-   *  wegräumen müsste, bevor er seine eigene Frage texample kann. Der Kontext wartet
+   *  wegräumen müsste, bevor er seine eigene Frage schreiben kann. Der Kontext wartet
    *  neben dem Feld und geht mit der nächsten Nachricht mit. Ein zweiter Kontext
    *  für dieselbe Sitzung wird angehängt, nicht ersetzt — sonst ginge die erste
    *  Änderung verloren, obwohl sie als übernommen angezeigt wurde. */
