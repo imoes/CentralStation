@@ -172,6 +172,28 @@ async def run_worklist_build() -> None:
         await build_worklist(db, hours=24, size=cfg.worklist_size)
 
 
+def _viewed_within(dashboard, days: int) -> bool:
+    """Wurde dieses Lagebild in den letzten `days` Tagen angesehen?
+
+    Der Zeitstempel kommt aus generation_meta["last_viewed_at"] und wird beim Abruf
+    der Ansicht gesetzt (dashboard_widgets._stamp_viewed). Fehlt er, gilt das
+    Lagebild als nicht angesehen — im Zweifel NICHT arbeiten, denn ein unnötiger
+    LLM-Aufruf kostet, ein ausgelassener nicht.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    raw = (dashboard.generation_meta or {}).get("last_viewed_at")
+    if not raw:
+        return False
+    try:
+        seen = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=timezone.utc)
+    return seen >= datetime.now(timezone.utc) - timedelta(days=max(0, days))
+
+
 async def run_generative_refresh() -> None:
     """Re-compose every active generative dashboard from the current situation.
 
@@ -184,7 +206,13 @@ async def run_generative_refresh() -> None:
     from app.services.dashboard.generative_persistence import apply_generated_dashboard, generation_lock
     from app.api.ws import manager
 
+    from app.services.settings import get_agent_config
+
     async with AsyncSessionLocal() as db:
+        config = await get_agent_config(db)
+        if not config.generative_enabled:
+            return
+
         # Only the reserved AI-singleton dashboards — never a user's hand-built one,
         # even if its mode column was mislabelled by an earlier version.
         result = await db.execute(
@@ -193,6 +221,22 @@ async def run_generative_refresh() -> None:
         dashboards = result.scalars().all()
         if not dashboards:
             return
+
+        # Nur Lagebilder neu bauen, die jemand auch ansieht. Zuvor lief hier für JEDES
+        # existierende Lagebild ein LLM-Aufruf, alle 15 Minuten, Tag und Nacht — auch
+        # für Konten, die seit Monaten niemand geöffnet hatte. Fünf Lagebilder brauchten
+        # zusammen länger als das Intervall, die Läufe überholten sich, und das Modell
+        # kam nie zur Ruhe.
+        #
+        # Ein nie angesehenes Lagebild zählt als inaktiv: es wird erst wieder
+        # aufgebaut, wenn jemand die Ansicht öffnet (das setzt den Zeitstempel).
+        dashboards = [d for d in dashboards
+                      if _viewed_within(d, config.generative_active_days)]
+        if not dashboards:
+            logger.debug("Generative refresh: no dashboard viewed within %d days — nothing to do",
+                         config.generative_active_days)
+            return
+
         for dash in dashboards:
             async with generation_lock(str(dash.user_id)):
                 spec = await design_dashboard(db, str(dash.user_id))
