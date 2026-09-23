@@ -110,6 +110,13 @@ class AgentConfig:
     worklist_interval_minutes: int = 15
     worklist_size: int = 15
     generative_interval_minutes: int = 15
+    #: Ob das KI-Lagebild überhaupt im Hintergrund neu gebaut wird. Es gab dafür bisher
+    #: keinen Schalter, nur ein Intervall — abschalten war also nicht möglich.
+    generative_enabled: bool = True
+    #: Nur Lagebilder neu bauen, die in diesem Zeitraum (Tage) angesehen wurden. Ohne
+    #: diese Grenze lief für JEDEN Nutzer mit Lagebild alle 15 Minuten ein LLM-Aufruf,
+    #: auch für Konten, die seit Monaten niemand geöffnet hat.
+    generative_active_days: int = 7
     topology_refresh_interval_minutes: int = 10
 
     def __post_init__(self):
@@ -367,6 +374,8 @@ async def get_agent_config(db: AsyncSession) -> AgentConfig:
         worklist_interval_minutes=int(s.get("agent.worklist_interval_minutes") or 15),
         worklist_size=int(s.get("agent.worklist_size") or 15),
         generative_interval_minutes=int(s.get("agent.generative_interval_minutes") or 15),
+        generative_enabled=s.get("agent.generative_enabled", "true") == "true",
+        generative_active_days=int(s.get("agent.generative_active_days") or 7),
         topology_refresh_interval_minutes=int(s.get("agent.topology_refresh_interval_minutes") or 10),
     )
 

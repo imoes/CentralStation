@@ -481,6 +481,28 @@ async def _generative_payload(dashboard: Dashboard, db: AsyncSession) -> dict:
     }
 
 
+async def _stamp_viewed(dashboard, db: AsyncSession) -> None:
+    """Vermerkt, wann das Lagebild zuletzt angesehen wurde.
+
+    Der Hintergrund-Job baut nur noch Lagebilder neu, die jemand tatsächlich
+    anschaut. Vorher lief er für jeden Nutzer mit Lagebild — auch für Konten, die
+    seit Monaten niemand geöffnet hatte, rund um die Uhr, ein LLM-Aufruf je Lauf.
+    Ein Blick auf die Ansicht ist das ehrlichste Signal dafür, dass jemand das
+    Ergebnis auch sehen will.
+
+    Der Zeitstempel liegt in generation_meta (JSONB) statt in einer eigenen Spalte:
+    er ist Betriebsinformation zur Erzeugung, und so braucht es keine Migration.
+    """
+    from datetime import datetime, timezone
+    from sqlalchemy.orm.attributes import flag_modified
+
+    meta = dict(dashboard.generation_meta or {})
+    meta["last_viewed_at"] = datetime.now(timezone.utc).isoformat()
+    dashboard.generation_meta = meta
+    flag_modified(dashboard, "generation_meta")
+    await db.commit()
+
+
 @router.get("/dashboards/generative", status_code=200)
 async def get_generative_dashboard(
     current_user: CurrentUser,
@@ -490,6 +512,7 @@ async def get_generative_dashboard(
 
     Used when toggling into Generativ mode and by the interval refresh check."""
     dashboard = await _get_or_create_generative_dashboard(current_user.id, db)
+    await _stamp_viewed(dashboard, db)
     return await _generative_payload(dashboard, db)
 
 

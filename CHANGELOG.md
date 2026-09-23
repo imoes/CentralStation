@@ -131,6 +131,25 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **The AI dashboard kept the LLM busy around the clock.** `run_generative_refresh`
+  recomposed *every* "🪄 KI-Lagebild" that existed, every 15 minutes, day and night.
+  Five existed — two belonging to accounts that had not been used for 85 and 102
+  days. One pass took longer than the interval, so runs overlapped and apscheduler
+  logged `skipped: maximum number of running instances reached` twice an hour; the
+  model was never idle at roughly 11 calls per hour.
+
+  Refreshing now happens only for dashboards someone has actually looked at
+  (`agent.generative_active_days`, default 7), and there is finally an off switch
+  (`agent.generative_enabled`) — before, only the interval could be changed, so it
+  could not be turned off at all. A dashboard with no recorded view counts as
+  inactive: in doubt, do not spend an LLM call.
+
+  *Measured on the running instance:* 5 dashboards exist, **0** now qualify for a
+  rebuild. The two long-dormant ones were deleted; they return by themselves if
+  those users open the view. `backend/tests/test_generative_refresh_scope.py` pins
+  the rule, including that a window of 0 stops everything rather than behaving
+  oddly.
+
 - **The task prompt disappeared when a ticket was handed to the Console.** Moving
   the handoff into an attached context put the whole prompt — ticket *and* task —
   behind a collapsed bar, so the operator saw a label and an empty input and
