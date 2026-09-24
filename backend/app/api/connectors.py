@@ -124,6 +124,13 @@ async def upsert_my_connector(
     if connector_type == "ssh":
         creds = decrypt_credentials(connector.encrypted_credentials)
         import asyncio as _aio
+        from app.services.connectors.aikb import aikb_configured
+
+        # configure_ssh schreibt auch die Agenten-Anleitung neu. Ob sie den Abschnitt zur
+        # Wissensdatenbank enthält, muss JETZT ermittelt werden: _apply_ssh läuft erst
+        # nach dem Request, und die Sitzung `db` ist dann womöglich schon geschlossen.
+        # Ließe man den Wert weg, fiele der Abschnitt bei jeder SSH-Änderung still weg.
+        kb_available = await aikb_configured(db)
 
         async def _apply_ssh() -> None:
             try:
@@ -134,6 +141,7 @@ async def upsert_my_connector(
                     creds.get("username", ""),
                     creds.get("private_key", ""),
                     creds.get("password", ""),
+                    kb_available=kb_available,
                 )
             except Exception as exc:
                 import logging

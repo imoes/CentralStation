@@ -843,19 +843,13 @@ async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
     - Du Runbooks oder Anleitungen für bekannte Probleme brauchst
     - Du dir bei einer technischen Lösung unsicher bist und interne Doku prüfen willst
     """
-    from sqlalchemy import select
-    from app.models.connector import ConnectorConfig
     from app.core.security import decrypt_credentials
-    from app.services.connectors.aikb import AIKBConnector
+    from app.services.connectors.aikb import AIKBConnector, load_aikb_connector
 
+    # Dieselbe Abfrage, nach der die Agenten-Anleitung entscheidet, ob sie dieses
+    # Werkzeug überhaupt erwähnt (load_aikb_connector) — eine Definition für beides.
     async with (await _get_db_session()) as db:
-        result = await db.execute(
-            select(ConnectorConfig).where(
-                ConnectorConfig.type == "aikb",
-                ConnectorConfig.enabled.is_(True),
-            )
-        )
-        conn = result.scalar_one_or_none()
+        conn = await load_aikb_connector(db)
 
     if not conn:
         return {"error": "Kein aktiver IT-AIKB Connector konfiguriert"}

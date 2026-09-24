@@ -476,7 +476,10 @@ def ssh_config_ready(user_id: str, username: str) -> bool:
         return True
 
 
-def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "") -> None:
+def configure_ssh(
+    user_id: str, username: str, key_pem: str, password: str = "",
+    *, kb_available: bool = False,
+) -> None:
     """Write SSH key + config into the user's running container via exec_run.
 
     Generates Host * / User <username> / IdentityFile ~/.ssh/user.key
@@ -572,11 +575,17 @@ def configure_ssh(user_id: str, username: str, key_pem: str, password: str = "")
     )
     log.info("userenv_manager: SSH configured for %s (user=%s key=%s)",
              name, ssh_user, "yes" if key_pem else "no")
-    configure_claude_md(user_id, ssh_user)
+    configure_claude_md(user_id, ssh_user, kb_available=kb_available)
 
 
-def agent_instructions(ssh_user: str = "marvin") -> str:
+def agent_instructions(ssh_user: str = "marvin", *, kb_available: bool = False) -> str:
     """The environment briefing both CLI agents get, as Markdown.
+
+    kb_available: is the IT-AIKB knowledge base usable (aikb_configured())? The
+    section on it is written ONLY then. Telling an agent to consult a tool that
+    answers "kein Konnektor konfiguriert" would cost a turn on every question and
+    teach it that the instruction is unreliable. Keyword-only, so no caller can pass
+    it positionally by accident.
 
     ONE text, two readers: Claude CLI reads it as ~/.claude/CLAUDE.md, Codex as
     $CODEX_HOME/AGENTS.md. Written once here because the two agents share the same
@@ -720,10 +729,52 @@ ist jederzeit erlaubt.)
 - SSH-Fehler sofort und vollständig melden (exit code + stderr), nicht ausweichen
 - subprocess.run() immer mit timeout=120 aufrufen
 """
+    if kb_available:
+        content += _KB_SECTION
     return content
 
 
-def configure_agent_instructions(user_id: str, ssh_user: str = "marvin") -> None:
+#: Abschnitt zur Wissensdatenbank — nur in der Anleitung, wenn aikb nutzbar ist.
+#:
+#: Ohne diesen Abschnitt schlug Claude bei einer Frage zu einem Server selten nach und
+#: ging direkt per SSH oder CheckMK auf den Host: die Werkzeugbeschreibung allein
+#: reicht nicht, und nur der Hermes-Prompt erwähnte die Wissensdatenbank überhaupt.
+#: Dort stehen aber Runbooks, Abhängigkeiten und bekannte Probleme, die man am Host
+#: selbst nicht sieht.
+_KB_SECTION = """
+## WISSENSDATENBANK — bei Server-Fragen zuerst nachschlagen
+Geht es um einen bestimmten Server, Dienst oder eine Fehlermeldung, schlage **zuerst**
+in der Wissensdatenbank nach, bevor du auf den Host gehst:
+
+    search_knowledge_base(query="<hostname oder dienst> <stichwort>")
+
+Dort stehen Runbooks, Abhängigkeiten zwischen Diensten, Konfigurationsanleitungen und
+bereits gelöste Probleme — Wissen, das du am Host selbst nicht siehst. Ein Treffer spart
+oft die ganze Diagnose; wenn nicht, weißt du wenigstens, was schon bekannt ist.
+
+So fragst du gut:
+- Hostname **und** Stichwort: `cue0110 Alfa Import`, `docker50 Abhängigkeiten`
+- Den Fehlertext wörtlich, wenn es einen gibt
+- Kurz halten — die Suche erweitert die Anfrage selbst. Lange Sätze verwässern sie.
+
+`deepsearch=True` liefert eine ausformulierte Antwort mit Quellen, braucht aber deutlich
+länger. Nimm es, wenn die schnelle Suche nur Bruchstücke liefert.
+
+Die Suche kann **10–20 Sekunden** dauern. Das ist kein Fehler — warte das Ergebnis ab,
+statt sie abzubrechen oder mehrfach parallel zu starten.
+
+Findest du nichts, sag es so: „In der Wissensdatenbank ist dazu nichts dokumentiert."
+Liefert das Werkzeug einen Fehler, ist das etwas anderes — dann ist die Datenbank nicht
+erreichbar, und daraus folgt **nicht**, dass nichts dokumentiert ist.
+
+Eigene Erkenntnisse legst du mit `store_knowledge` ab; das ist das Gedächtnis dieser
+Konsole, getrennt von der Wissensdatenbank.
+"""
+
+
+def configure_agent_instructions(
+    user_id: str, ssh_user: str = "marvin", *, kb_available: bool = False,
+) -> None:
     """Write the briefing into the container for BOTH CLI agents.
 
     Claude reads ~/.claude/CLAUDE.md (on the cs-ide-cfg volume, persistent), Codex
@@ -736,7 +787,7 @@ def configure_agent_instructions(user_id: str, ssh_user: str = "marvin") -> None
     except _docker.errors.NotFound:
         return
 
-    content = agent_instructions(ssh_user)
+    content = agent_instructions(ssh_user, kb_available=kb_available)
     c.exec_run(
         ["sh", "-c",
          "mkdir -p $HOME/.claude $HOME/.codex && "

@@ -131,6 +131,32 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **Claude and Codex rarely consulted the knowledge base for server questions.**
+  Their shared instructions never mentioned it — only the Hermes prompt did — so
+  whether they looked something up was left to the tool description alone. Asked
+  about a host, they went straight to SSH or CheckMK and missed runbooks,
+  dependencies and known problems. The instructions now tell them to search the
+  knowledge base first, **only when an aikb connector is actually enabled**:
+  pointing an agent at a tool that answers "no connector configured" would cost a
+  turn on every question.
+
+  "Enabled" has one definition, `load_aikb_connector()` in the aikb connector, used
+  both by `search_knowledge_base` and by the instructions — two separate queries
+  could have promised a tool that then refuses. All three code paths that rewrite
+  the instructions pass the flag, including the SSH-connector live update, which
+  runs after the request and would otherwise have dropped the section silently on
+  every SSH change.
+
+  *Verified:* a fresh `claude_cli` session asked "what is cue0110 and what does it
+  depend on" called `search_knowledge_base` as its first real tool, three times in
+  all. Sessions started before the change, asked about the same host, went straight
+  to vibemk and Bash. `backend/tests/test_agent_instructions_kb.py` pins that the
+  section appears exactly when the knowledge base is available.
+
+  Still slow: a "quick" search takes 13–19 s, because aikb expands the query with an
+  LLM and reranks on llm-host03, which aikb's own website crawl keeps saturated.
+  OpenSearch itself answers in 0.03 s. That is aikb's to fix, not ours.
+
 - **The AI dashboard kept the LLM busy around the clock.** `run_generative_refresh`
   recomposed *every* "🪄 KI-Lagebild" that existed, every 15 minutes, day and night.
   Five existed — two belonging to accounts that had not been used for 85 and 102

@@ -20,6 +20,36 @@ from app.services.connectors.base import BaseConnector
 
 log = logging.getLogger(__name__)
 
+#: Connector-Typ, unter dem die Wissensdatenbank angebunden ist. Es gibt daneben einen
+#: zweiten Typ "it_aikb" — der gehört NICHT dazu: search_knowledge_base fragt genau
+#: diesen hier ab, und nur er entscheidet, ob das Werkzeug funktioniert.
+AIKB_CONNECTOR_TYPE = "aikb"
+
+
+async def load_aikb_connector(db):
+    """Der aktivierte Wissensdatenbank-Konnektor, oder None.
+
+    EINE Definition von "aikb ist konfiguriert", genutzt vom MCP-Werkzeug
+    search_knowledge_base UND von der Agenten-Anleitung. Wären das zwei Abfragen,
+    könnte die Anleitung ein Werkzeug versprechen, das dann mit "kein Konnektor"
+    verweigert — oder schweigen, obwohl es funktionieren würde.
+    """
+    from sqlalchemy import select
+    from app.models.connector import ConnectorConfig
+
+    result = await db.execute(
+        select(ConnectorConfig).where(
+            ConnectorConfig.type == AIKB_CONNECTOR_TYPE,
+            ConnectorConfig.enabled.is_(True),
+        ).limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def aikb_configured(db) -> bool:
+    """Ist die Wissensdatenbank für die Agenten nutzbar?"""
+    return await load_aikb_connector(db) is not None
+
 
 class AIKBConnector(BaseConnector):
     """Credentials keys: api_token  (preferred)  OR  username + password."""

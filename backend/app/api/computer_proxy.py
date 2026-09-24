@@ -75,10 +75,12 @@ async def _reapply_ssh_if_recreated(db: AsyncSession, user_id) -> None:
             return
         log.warning("SSH config incomplete in container for %s — re-injecting", user_id)
     try:
+        from app.services.connectors.aikb import aikb_configured
         await asyncio.to_thread(
             configure_ssh, str(user_id),
             creds.get("username", ""), creds.get("private_key", ""),
             creds.get("password", ""),
+            kb_available=await aikb_configured(db),
         )
         log.info("re-applied SSH creds after container recreation for %s", user_id)
     except Exception as exc:
@@ -868,10 +870,12 @@ async def create_session(
     try:
         await asyncio.to_thread(ensure_container, str(user.id))
         if _ssh_creds:
+            from app.services.connectors.aikb import aikb_configured
             await asyncio.to_thread(
                 configure_ssh, str(user.id),
                 _ssh_creds.get("username", ""), _ssh_creds.get("private_key", ""),
                 _ssh_creds.get("password", ""),
+                kb_available=await aikb_configured(db),
             )
         # Re-inject CLI agent credentials at session create (codex: not on volume).
         if agent_type == "claude_cli":
