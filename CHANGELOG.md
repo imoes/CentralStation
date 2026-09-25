@@ -137,7 +137,8 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   The Jira baseline is recorded only when that message is sent, so a change that
   never reached the AI stays marked as unread; discarding brings the activity
   banner back. *Verified:* the production bundle serves the new bar and the old
-  label is gone.
+  label is gone. **Superseded** — acknowledging on send was the wrong moment; see
+  "A comment stayed new after Später or attaching".
 
 - **Ticket comments are named as irreversible** in the Console system prompt:
   they go to people, often external ones, and are not retractable. The prompt
@@ -145,6 +146,27 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   agent asks for the approval instead of retrying.
 
 ### What was fixed
+
+- **A comment stayed "new" after Später or attaching.** On JCUE-5604 one foreign
+  comment reappeared after every message, although it had been attached and
+  dismissed repeatedly; the session's stored Jira state was from 18 September. Two
+  faults, both mine. Attaching acknowledged only once the message carrying the
+  context had been *successfully* sent — and that turn failed (the Claude CLI
+  regression below), so no acknowledgement happened. The "attached" mark lives only
+  in memory while "unread" lives in the database, so a failed turn, a reload or a
+  restart made the comment return. And "Später" only hid it locally, keyed on the
+  whole ticket state: any later change, including the operator's own comments,
+  voided the dismissal.
+
+  Both now acknowledge at the moment of the click, in the database. A failed
+  acknowledgement is shown instead of only logged to the console — it had failed
+  silently for a week. *Verified on the real session, in a rolled-back
+  transaction:* before `changed`, 1 new; after the acknowledgement `current`,
+  0 new. The backend log confirmed the old path: `/ticket-activity/context` was
+  called, `/ticket-activity/ack` never.
+
+  Not covered by a test: the frontend has no spec files at all (Karma is set up
+  but unused), which is why a timing bug like this reached production.
 
 - **A normal build silently downgraded Claude Code.** The Console reported
   "Claude Code 2.1.278 does not support this model; version 2.1.280 or newer is

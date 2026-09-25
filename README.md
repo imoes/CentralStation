@@ -1002,9 +1002,16 @@ arriving afterwards has a different activity version, so it announces itself aga
 Two or more attachments on one session are appended, not replaced — otherwise the first
 change would be lost while the banner claimed it had been taken over.
 
-The Jira baseline (`POST …/ticket-activity/acknowledge`) is recorded only when that message
-is sent. A change that never reached the agent stays visible as unread instead of silently
-disappearing; discarding the attachment brings the activity banner straight back.
+**When a comment counts as read.** The Jira state is acknowledged
+(`POST …/ticket-activity/ack`) as soon as the operator acts on it — clicking
+**ALS KONTEXT ANHÄNGEN** or **Später** on the activity banner. Only a comment that arrives
+*after* that announces itself again; later changes to the ticket, including the operator's
+own comments, do not bring an already-seen comment back.
+
+This used to be tied to the successful send of the message carrying the context, which
+turned out to be the wrong moment: a failed turn, a reload or a restart lost the in-memory
+"attached" mark while the database still said "unread", so a comment could stay "new" for
+a week. A failed acknowledgement is now reported in the UI instead of only in the console.
 
 ### One workspace, shared with the Werkbank
 

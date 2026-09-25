@@ -886,12 +886,40 @@ export class ComputerComponent implements OnInit, OnDestroy {
   }
 
   dismissActivity(activity: TicketActivity): void {
+    // Sofort ausblenden — die Quittierung unten läuft asynchron.
     const dismissed = {
       ...this.dismissedActivityVersions(),
       [activity.session_id]: this.activityVersion(activity),
     };
     this.dismissedActivityVersions.set(dismissed);
     localStorage.setItem(this.dismissedActivityStorageKey, JSON.stringify(dismissed));
+
+    // Bei neuer Aktivität heißt "Später": gesehen. Das wird jetzt QUITTIERT, nicht nur
+    // lokal ausgeblendet. Die lokale Ausblendung allein hing am ganzen Ticketstand —
+    // jeder spätere eigene Kommentar änderte ihn, und der längst gesehene fremde
+    // Kommentar kam wieder als neu. Beim Banner "Quelle nicht erreichbar" gibt es
+    // nichts zu quittieren; dort bleibt es beim Ausblenden.
+    if (activity.state === 'changed' && activity.snapshot) {
+      void this.acknowledgeSeen(activity.session_id, activity.snapshot, null);
+    }
+  }
+
+  /** Quittiert einen gesehenen Ticketstand und meldet ein Scheitern sichtbar.
+   *
+   *  Vorher schlug die Quittierung still fehl (nur console.debug) — und genau deshalb
+   *  fiel eine Woche lang nicht auf, dass sie nie geschah. */
+  private async acknowledgeSeen(
+    sid: string, snapshot: TicketActivitySnapshot, contextHash: string | null,
+  ): Promise<void> {
+    const ok = await this.acknowledgeTicketActivity(sid, snapshot, contextHash);
+    if (!ok) {
+      this.snackBar.open(
+        'Der Ticketstand konnte nicht als gelesen gespeichert werden — der Kommentar kann wieder als neu erscheinen.',
+        '', { duration: 6000 },
+      );
+      return;
+    }
+    await this.computerService.refreshTicketActivities(sid);
   }
 
   private loadDismissedActivities(): Record<string, string> {
@@ -1756,6 +1784,14 @@ export class ComputerComponent implements OnInit, OnDestroy {
     if (next.activityVersion) {
       this.computerService.markContextAttached(sid, next.activityVersion);
     }
+    // Angehängt heißt: übernommen. Quittiert wird JETZT, nicht erst nach dem
+    // erfolgreichen Senden. Hing es am Senden, ging es bei jeder gescheiterten Runde,
+    // jedem Neuladen und jedem Neustart verloren — der Merker "angehängt" lebt nur im
+    // Arbeitsspeicher, das "ungelesen" aber in der Datenbank. So blieb ein Kommentar
+    // eine Woche lang "neu", obwohl er mehrfach übernommen worden war.
+    if (next.snapshot) {
+      void this.acknowledgeSeen(sid, next.snapshot, next.contextHash);
+    }
     this.contextExpanded.set(false);
     setTimeout(() => this.inputEl?.nativeElement.focus(), 50);
   }
@@ -1804,9 +1840,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   /** Nach erfolgreichem Absenden: den mitgegangenen Jira-Stand als übernommen buchen. */
   private async resolveSentContext(sid: string, sent: PendingContext): Promise<void> {
-    if (sent.snapshot) {
-      await this.acknowledgeTicketActivity(sid, sent.snapshot, sent.contextHash);
-    } else if (sent.contextHash) {
+    // Der Ticketstand wurde bereits beim Anhängen quittiert (attachContext). Hier
+    // bleibt nur der Kontext-Hash für Sitzungen ohne strukturierten Snapshot.
+    if (!sent.snapshot && sent.contextHash) {
       await this.persistContextHash(sid, sent.contextHash);
     }
     await this.computerService.refreshTicketActivities(sid);
