@@ -1913,10 +1913,15 @@ docker compose build centralcore && docker compose up -d --no-deps centralcore
 
 # Pull NEW versions of the agent CLIs into the Console image.
 # Hermes, Claude Code, Codex and Playwright MCP are deliberately unpinned
-# (@latest / git --depth=1), so only a cache bust actually fetches them —
-# a plain `build userenv` reuses the cached layers and changes nothing.
-docker compose build --build-arg AGENT_REFRESH=$(date +%s) userenv
+# (@latest / git --depth=1). Which version lands in the image is keyed on the
+# versioned file userenv/AGENT_REFRESH — bump it to fetch, commit it with the change:
+date -u +%Y-%m-%dT%H:%MZ > userenv/AGENT_REFRESH && docker compose build userenv
 ```
+
+A plain `docker compose build userenv` afterwards keeps the refreshed versions. That is
+the point of using a file instead of a build-arg: with the arg, a build *with* a value and
+a later build *without* one left two cache entries, and the plain build silently picked
+the older one — it once rolled Claude Code back from 2.1.281 to 2.1.278.
 
 Running `cs-userenv-*` and `cs-vibemk*` containers are **not** rebuilt by Compose — the
 backend owns their lifecycle. Both now compare their running image against the current tag

@@ -146,6 +146,21 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **A normal build silently downgraded Claude Code.** The Console reported
+  "Claude Code 2.1.278 does not support this model; version 2.1.280 or newer is
+  required" — although 2.1.281 had been built and verified the day before. The
+  cause was the `AGENT_REFRESH` build-arg introduced earlier: a build with a value
+  and a later build without one produced two separate cache entries, and the
+  plain build (for the file upload) matched the older one. The build log showed it:
+  `agent-refresh=` (empty) → `CACHED`.
+
+  The version is now keyed on a versioned file, `userenv/AGENT_REFRESH`, copied
+  in right before the CLI layers. There is no second state for a build to fall
+  back to. To fetch newer versions, bump the file.
+  *Verified:* build with the new file → Claude Code **2.1.282**; a second plain
+  build afterwards → still 2.1.282, all CLI layers from cache. The running Console
+  reports 2.1.282, Codex 0.157.0.
+
 - **Pasted images did not show in the transcript after a reload.** The image
   endpoints require a Bearer token, and an `<img src>` does not send one — the
   request got 403 and the thumbnail stayed empty. Earlier this changelog claimed the
@@ -250,6 +265,8 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   but the cache served the same old builds forever. A new `AGENT_REFRESH`
   build-arg busts exactly those layers:
   `docker compose build --build-arg AGENT_REFRESH=$(date +%s) userenv`.
+  **Superseded** — that build-arg could roll versions back; see the fix entry
+  "A normal build silently downgraded Claude Code".
   *Measured:* Claude Code 2.1.267 → 2.1.274, Playwright MCP 0.0.80 → 0.0.81,
   Hermes to HEAD of 2026-09-17; Codex was already current at 0.154.0.
 

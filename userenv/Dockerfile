@@ -18,12 +18,9 @@ ARG HTTP_PROXY=""
 ARG HTTPS_PROXY=""
 ARG NO_PROXY=""
 
-# Cache-Bruch für die Agenten-CLIs. Hermes, Claude Code, Codex und Playwright-MCP
-# sind bewusst NICHT auf eine Version gepinnt (git --depth=1 bzw. @latest) — ohne
-# diesen ARG liefert der Docker-Layer-Cache aber trotzdem dieselben alten Stände.
-# Neue Versionen holen:
-#   docker compose build --build-arg AGENT_REFRESH=$(date +%s) userenv
-ARG AGENT_REFRESH=""
+# Agenten-CLIs (Hermes, Claude Code, Codex, Playwright-MCP) sind bewusst NICHT auf
+# eine Version gepinnt. Welcher Stand ins Image kommt, bestimmt die Datei
+# userenv/AGENT_REFRESH — siehe den COPY unmittelbar vor der ersten CLI-Schicht.
 
 ENV http_proxy=${HTTP_PROXY} \
     https_proxy=${HTTPS_PROXY} \
@@ -89,7 +86,19 @@ RUN pip install --no-cache-dir ansible ansible-lint
 # code-server:latest base got a new digest and invalidated this layer's cache.
 # -e keeps the source at /opt/hermes on sys.path, which the image retains anyway
 # (Hermes modules are also imported via PYTHONPATH=/opt/hermes).
-RUN echo "agent-refresh=${AGENT_REFRESH}" \
+# ── Which CLI versions end up in the image ────────────────────────────
+# The CLIs below are unpinned (@latest / git --depth=1), so the Docker layer cache
+# decides the version. This used to be steered by a build-arg, and that was a trap:
+# a build with a fresh value and a later build without one created two separate
+# cache entries, and the plain build silently picked the OLD one — it rolled Claude
+# Code back from 2.1.281 to 2.1.278 and broke a model that needs >= 2.1.280.
+#
+# A versioned file has no such second state. Every build keys on its content, so a
+# plain build always reuses the most recent refresh and can never go backwards.
+# To fetch newer versions, bump it:
+#     date -u +%Y-%m-%dT%H:%MZ > userenv/AGENT_REFRESH && docker compose build userenv
+COPY userenv/AGENT_REFRESH /etc/cs-agent-refresh
+RUN echo "agent-refresh=$(cat /etc/cs-agent-refresh)" \
     && git clone --depth=1 https://github.com/NousResearch/hermes-agent /opt/hermes \
     && pip install --no-cache-dir -e /opt/hermes \
     && chmod -R a+rX /opt/hermes
@@ -104,7 +113,7 @@ ENV PYTHONPATH=/opt/hermes
 
 # ── Claude Code CLI (installed as yolo so it lands in /home/yolo/.local/bin) ──
 USER yolo
-RUN echo "agent-refresh=${AGENT_REFRESH}" \
+RUN echo "agent-refresh=$(cat /etc/cs-agent-refresh)" \
     && curl -fsSL https://claude.ai/install.sh | bash \
     && /home/yolo/.local/bin/claude --version
 USER root
@@ -114,7 +123,7 @@ ENV PATH=/home/yolo/.local/bin:$PATH \
     CLAUDE_CONFIG_DIR=/home/yolo/.claude
 
 # ── Codex CLI (@openai/codex) — global so yolo can use it ────────────
-RUN echo "agent-refresh=${AGENT_REFRESH}" \
+RUN echo "agent-refresh=$(cat /etc/cs-agent-refresh)" \
     && npm install -g @openai/codex \
     && codex --version
 
@@ -126,7 +135,7 @@ RUN echo "agent-refresh=${AGENT_REFRESH}" \
 # server is spawned with --browser chromium --headless --no-sandbox
 # (container has no user-namespace sandbox), see userenv_manager.py.
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
-RUN echo "agent-refresh=${AGENT_REFRESH}" \
+RUN echo "agent-refresh=$(cat /etc/cs-agent-refresh)" \
     && npm install -g @playwright/mcp@latest \
     && PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
        https_proxy=${HTTPS_PROXY} http_proxy=${HTTP_PROXY} \
