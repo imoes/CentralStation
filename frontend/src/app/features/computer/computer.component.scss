@@ -1032,24 +1032,90 @@
   }
 }
 
-/* Bilder, die mit einer gesendeten Nachricht gingen. */
-.msg-images {
+/* Datei-Chip in der Leiste über dem Eingabefeld (Bilder haben dort ihre Vorschau). */
+.pasted-image--file {
+  padding-left: 8px;
+}
+
+.pasted-file-icon {
+  color: #ffcc99;
+  font-size: 22px;
+  width: 22px;
+  height: 22px;
+}
+
+/* Fließtext — Dateinamen sind Inhalt, keine Struktur (docs/ux/lcars-design.md). */
+.pasted-file-name {
+  font-family: Roboto, 'Helvetica Neue', sans-serif;
+  text-transform: none;
+  font-size: 0.74rem;
+  color: #ffe8a0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Anhänge einer gesendeten Nachricht. */
+.msg-attachments {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 6px;
+}
 
-  img {
-    display: block;
-    max-width: 320px;
-    max-height: 240px;
-    width: auto;
-    height: auto;
-    border: 1px solid #3a2a12;
-    border-radius: 4px;
+.msg-attachment-img {
+  display: block;
+  max-width: 320px;
+  max-height: 240px;
+  width: auto;
+  height: auto;
+  border: 1px solid #3a2a12;
+  border-radius: 4px;
+  cursor: zoom-in;
+
+  &:hover { border-color: #ff9933; }
+
+  &--loading {
+    width: 120px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #3a2a12;
+    cursor: default;
   }
+}
 
-  a:hover img { border-color: #ff9933; }
+.msg-attachment-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid #3a2a12;
+  border-radius: 4px;
+  background: #14100a;
+  cursor: pointer;
+  font-family: Roboto, 'Helvetica Neue', sans-serif;
+  text-transform: none;
+  font-size: 0.76rem;
+  color: #ffe8a0;
+
+  &:hover { border-color: #ff9933; }
+
+  mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    color: #ffcc99;
+  }
+}
+
+/* Datei wird über die Konsole gezogen. */
+.conversation.drag-over {
+  outline: 2px dashed #ff9933;
+  outline-offset: -6px;
+  background: rgba(255, 153, 51, 0.05);
 }
 
 .input-row {

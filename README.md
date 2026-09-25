@@ -1027,34 +1027,44 @@ Fetching from a host is reading and is always allowed; **pushing to one is a cha
 that host** and needs a write window like any other outward action. `rsync` has to
 exist on both ends — where it does not, `scp` and `sftp` still work.
 
-### Pasting images (Ctrl+V)
+### Attaching files and images
 
-Paste a screenshot into the chat input and it is attached to the next message. The
-image is **not** pushed through the chat protocol: it is uploaded to
-`POST /api/computer/images`, stored in the shared workspace under
-`.console-uploads/<YYYY-MM>/`, and the message carries only a marker line:
+Files can be attached to the next message three ways — the **paperclip** next to the
+microphone, **drag-and-drop** onto the conversation, or **Ctrl+V** (screenshots as well as
+files copied in the file manager). All three go through one endpoint,
+`POST /api/computer/uploads`, and land in the shared workspace under
+`.console-uploads/<YYYY-MM>/`. Nothing large travels through the chat protocol; the message
+carries a marker line with the path:
 
 ```
 [Bilder: /home/yolo/workspaces/.console-uploads/2026-09/<id>.png]
+[Dateien: /home/yolo/workspaces/.console-uploads/2026-09/<id>-umsatz_q3.xlsx]
 ```
 
-That marker is payload and display at once — the agent reads the path, and on reload
-the frontend turns it back into thumbnails via `GET /api/computer/images/{id}`, so the
-transcript looks the same whenever it is opened. Sending with no text at all is allowed.
+Images and other files are kept apart because the agents treat them differently: images
+reach Codex as `-i` and Hermes as an image block, while files are opened by the agent
+itself. The readers it needs — `pandas`, `openpyxl`, `xlrd`, `pypdf` — are baked into the
+image as Debian packages, because the agent's venv sees `/usr/lib/python3` but not
+`/opt/venv`.
 
-How each agent sees it: **Claude** reads the path with its `Read` tool; **Codex** gets
-`-i <path>` per image; **Hermes** receives OpenAI-style content blocks with a data URL —
-whether that yields a useful answer depends on the configured LLM having vision at all
-(a local text-only model does not).
+**What is accepted** is decided by `app/services/upload_policy.py`, from the extension
+**and** the content, never the browser's content-type: spreadsheets (xlsx, xlsm, xls, ods,
+csv, tsv), documents (docx, doc, odt, rtf, pptx, ppt, odp), PDF, text and data files, logs,
+configuration, scripts, archives (zip, gz, tgz), and images. A `.xlsx` must be a ZIP, a
+`.pdf` must start with `%PDF-`, a `.csv` must contain no NUL byte — so a renamed executable
+is refused with a stated reason. Limits: 20 MB per file, 10 MB per image (images go into
+the LLM request as a data URL for Hermes).
 
-Because the file lands in the workspace, it is also editable in the Werkbank and can be
-put on a ticket with `jira_add_attachment` — no extra code for either.
+Stored names are `<uuid>-<cleaned original name>`, without spaces — the marker separates
+paths with spaces, and the agent would otherwise have to quote every path in the shell.
 
-Safeguards: the format is decided by **magic bytes**, never the browser's content-type;
-the filename is generated server-side; 10 MB per image (nginx `/api/` allows 25 MB —
-without that line the default of 1 MB would reject most screenshots); files are chowned
-to the agent's uid so it can clean up after itself. `backend/app/services/image_sniff.py`
-holds the format table and is covered by `backend/tests/test_mcp_attachment_paths.py`.
+**Displaying them.** The endpoints need a Bearer token, which an `<img src>` or a plain
+download link does not send, so the frontend fetches attachments with the token and shows
+them as blob URLs. Non-image files are only ever served as `application/octet-stream`
+downloads — an uploaded `.html` would otherwise run inside CentralStation's origin.
+
+Because every file lands in the workspace it is also editable in the Werkbank, and
+`jira_add_attachment` can put it on a ticket without extra code.
 
 ### Ticket attachments
 

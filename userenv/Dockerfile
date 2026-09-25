@@ -189,6 +189,22 @@ RUN printf '%s\n' \
 
 RUN touch /home/yolo/.bashrc && chown yolo:yolo /home/yolo/.bashrc
 
+# ── Readers for files uploaded in the Console ─────────────────────────
+# The Console accepts spreadsheets, PDFs and documents; the agent opens them itself.
+# Without these the first uploaded .xlsx started with a pip install through the
+# proxy — about a minute before the agent could look at anything.
+#
+# Debian packages on purpose, not pip into /opt/venv: the agent's own venv is
+# created with --system-site-packages from /usr/bin/python3, so it sees
+# /usr/lib/python3/dist-packages but NOT /opt/venv. A pip install into /opt/venv
+# would have been invisible to exactly the process that needs it.
+#
+# Placed this late so adding a reader does not invalidate the expensive layers above.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3-openpyxl python3-pandas python3-pypdf python3-xlrd \
+    && rm -rf /var/lib/apt/lists/*
+
 # ── Our own source files, last ────────────────────────────────────────
 # These four change on nearly every commit; everything above them changes
 # rarely. Docker invalidates every layer BELOW a changed one, so while these

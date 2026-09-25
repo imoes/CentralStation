@@ -98,6 +98,21 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   PHP payload named `.png` is refused, and `../../../etc/passwd` as an image id
   returns 404.
 
+- **Files can be uploaded into the Console — spreadsheets, PDFs, documents, logs.**
+  Via a paperclip button, drag-and-drop onto the conversation, or Ctrl+V. The
+  image paste from earlier and this share one endpoint (`POST /api/computer/uploads`)
+  instead of two parallel paths. What is accepted is decided from the extension and
+  the content together, so a renamed executable is refused with a stated reason. The
+  agent has `pandas`, `openpyxl`, `xlrd` and `pypdf` ready, so the first spreadsheet
+  does not start with a minute-long pip install.
+
+  *Verified end to end:* a real `.xlsx` with known values (two sheets) was uploaded;
+  asked for revenue per site, a `claude_cli` session answered München 4.000,
+  Kassel 2.800, total 6.800, two sheets — all correct, and it also read the note
+  on the second sheet. Through nginx with a real login: upload 201, download with
+  token bit-identical, a 3 MB file accepted. A `.xlsx` that is really an executable
+  was refused. `backend/tests/test_upload_policy.py` pins 33 decisions.
+
 - **`CHANGELOG.md` exists and is linked from the README.**
 
 ### What changed
@@ -130,6 +145,14 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   agent asks for the approval instead of retrying.
 
 ### What was fixed
+
+- **Pasted images did not show in the transcript after a reload.** The image
+  endpoints require a Bearer token, and an `<img src>` does not send one — the
+  request got 403 and the thumbnail stayed empty. Earlier this changelog claimed the
+  transcript "looks the same whenever it is opened"; that was never verified — only
+  the live preview (a local blob URL) and the agent reading the file were. Attachments
+  are now fetched with the token and shown as blob URLs. *Verified through nginx:*
+  the same file returns 403 without the token and 200 with it.
 
 - **Claude and Codex rarely consulted the knowledge base for server questions.**
   Their shared instructions never mentioned it — only the Hermes prompt did — so

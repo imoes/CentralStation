@@ -1557,49 +1557,62 @@ async def transcribe(
     return r.json()
 
 
-# ── Eingefügte Bilder ──────────────────────────────────────────────
+# ── Hochgeladene Dateien und eingefügte Bilder ─────────────────────
 #
-# Ein per Strg+V eingefügtes Bild wird NICHT durch das Chat-Protokoll geschoben. Es
-# landet im Workspace, und die Nachricht nennt nur den Pfad. Das geht, weil der
-# Workspace in beide Container gemountet ist — und es hat drei Nebenwirkungen, die
-# alle erwünscht sind: der Agent liest das Bild mit seinen normalen Werkzeugen, der
-# Nutzer sieht es in der Werkbank, und `jira_add_attachment` kann es ohne eine Zeile
-# Zusatzcode an ein Ticket hängen.
+# Eine Datei wird NICHT durch das Chat-Protokoll geschoben. Sie landet im Workspace,
+# und die Nachricht nennt nur den Pfad. Das geht, weil der Workspace in beide
+# Container gemountet ist — mit drei erwünschten Nebenwirkungen: der Agent öffnet die
+# Datei mit seinen normalen Werkzeugen, der Nutzer sieht sie in der Werkbank, und
+# `jira_add_attachment` kann sie ohne Zusatzcode an ein Ticket hängen.
+#
+# EIN Upload-Weg für alles. Bilder und andere Dateien unterscheiden sich erst danach:
+# nur Bilder bekommen Vorschauen, Codex' `-i` und Hermes' Bildblöcke. Welche Art eine
+# Datei ist, entscheidet app.services.upload_policy — Endung UND Inhalt, nie der vom
+# Browser gemeldete Content-Type.
 
-#: Obergrenze je Bild. nginx lässt 25 MB durch (location /api/), hier ist früher
-#: Schluss — ein benannter Fehler ist besser als ein abgeschnittener Upload.
-_IMAGE_MAX_BYTES = 10 * 1024 * 1024
-
-#: Formaterkennung: app.services.image_sniff (reine Funktion, eigenes Modul, damit sie
-#: ohne die halbe Anwendung testbar bleibt).
-from app.services.image_sniff import sniff_image as _sniff_image
+from app.services.image_sniff import sniff_image as _sniff_image  # noqa: E402
 
 
-@router.post("/images", status_code=201)
-async def upload_image(
+def _stored_name(kind: str, ext: str, original: str) -> str:
+    """Dateiname auf der Platte. Kommt vom Server, nie ungeprüft vom Client.
+
+    Bilder: `<uuid><ext>` — so hießen sie schon vorher, und bestehende Verläufe
+    verweisen darauf. Andere Dateien: `<uuid>-<bereinigter Name>` — der Agent soll
+    sehen, dass er `umsatz_q3.xlsx` vor sich hat und nicht eine Kennung ohne Sinn.
+    """
+    from app.services.upload_policy import safe_filename
+
+    uid = uuid.uuid4().hex
+    if kind == "image":
+        return f"{uid}{ext}"
+    return f"{uid}-{safe_filename(original)}"
+
+
+def _display_name(stored: str) -> str:
+    """Gespeicherter Name → Anzeigename (ohne die vorangestellte Kennung)."""
+    head, sep, rest = stored.partition("-")
+    return rest if sep and len(head) == 32 else stored
+
+
+@router.post("/uploads", status_code=201)
+async def upload_file(
     user: CurrentUser,
     file: UploadFile = File(...),
     _: None = _ConsoleEnabled,
 ):
-    """Nimmt ein eingefügtes Bild entgegen und legt es im Workspace des Nutzers ab."""
+    """Nimmt eine Datei oder ein eingefügtes Bild entgegen und legt sie im Workspace ab."""
+    from app.services.upload_policy import MAX_FILE_BYTES, Refused, classify
     from app.services.userenv_manager import console_upload_dir, to_agent_path
 
-    data = await file.read()
-    if not data:
-        raise HTTPException(400, "Leere Datei")
-    if len(data) > _IMAGE_MAX_BYTES:
-        raise HTTPException(
-            413, f"Bild zu groß ({len(data) // 1024} KB, erlaubt sind "
-                 f"{_IMAGE_MAX_BYTES // (1024 * 1024)} MB)"
-        )
-    sniffed = _sniff_image(data)
-    if not sniffed:
-        raise HTTPException(400, "Kein unterstütztes Bildformat (PNG, JPEG, GIF, WebP)")
-    mime, ext = sniffed
+    # Höchstens eine Grenze plus ein Byte lesen: so ist "zu groß" erkennbar, ohne eine
+    # beliebig große Datei vollständig in den Speicher zu holen.
+    data = await file.read(MAX_FILE_BYTES + 1)
+    verdict = classify(file.filename or "", data[:8192], len(data))
+    if isinstance(verdict, Refused):
+        status = 413 if "zu groß" in verdict.reason else 400
+        raise HTTPException(status, verdict.reason)
 
-    # Der Dateiname kommt vom Server, nie vom Client: ein mitgeschickter Name ist
-    # Angreiferdaten und hätte hier Pfadanteile oder Endungen enthalten können.
-    name = f"{uuid.uuid4().hex}{ext}"
+    name = _stored_name(verdict.kind, verdict.ext, file.filename or "")
     target_dir = console_upload_dir(str(user.id))
 
     def _write() -> str:
@@ -1617,38 +1630,43 @@ async def upload_image(
         return full
 
     full = await asyncio.to_thread(_write)
-    log.info("console image stored for %s: %s (%d bytes, %s)", user.id, name, len(data), mime)
+    log.info("console upload stored for %s: %s (%d bytes, %s/%s)",
+             user.id, name, len(data), verdict.kind, verdict.label)
     return {
         "id": name,
+        "kind": verdict.kind,
+        "label": verdict.label,
+        "name": _display_name(name),
         "agent_path": to_agent_path(str(user.id), full),
-        "url": f"/api/computer/images/{name}",
-        "mime": mime,
+        "url": f"/api/computer/uploads/{urllib.parse.quote(name)}",
+        "mime": verdict.mime,
         "size": len(data),
     }
 
 
-@router.get("/images/{image_id}")
-async def get_image(
-    image_id: str,
+@router.get("/uploads/{upload_id}")
+async def get_upload(
+    upload_id: str,
     user: CurrentUser,
     _: None = _ConsoleEnabled,
 ):
-    """Liefert ein eingefügtes Bild zurück — nur aus dem Workspace DIESES Nutzers.
+    """Liefert eine hochgeladene Datei zurück — nur aus dem Workspace DIESES Nutzers.
 
-    Die Eingrenzung macht resolve_workspace_file(); `image_id` wird zusätzlich auf
-    einen reinen Dateinamen reduziert, damit ein Pfadanteil in der URL gar nicht erst
-    bis zur Auflösung kommt.
+    Bilder werden direkt angezeigt, andere Dateien zum Herunterladen angeboten. Die
+    Eingrenzung macht resolve_workspace_file(); `upload_id` wird zusätzlich auf einen
+    reinen Dateinamen reduziert, damit ein Pfadanteil in der URL gar nicht erst bis zur
+    Auflösung kommt.
     """
     from app.services.userenv_manager import CONSOLE_UPLOAD_SUBDIR, resolve_workspace_file
 
-    safe = os.path.basename(image_id or "")
+    safe = os.path.basename(upload_id or "")
     if not safe or safe.startswith("."):
-        raise HTTPException(400, "Ungültige Bild-ID")
+        raise HTTPException(400, "Ungültige Datei-ID")
 
     root_rel = CONSOLE_UPLOAD_SUBDIR
     base, err = resolve_workspace_file(str(user.id), root_rel, must_exist=False)
     if err or not base or not os.path.isdir(base):
-        raise HTTPException(404, "Bild nicht gefunden")
+        raise HTTPException(404, "Datei nicht gefunden")
 
     # Die Monatsordner durchsuchen — die ID ist eindeutig, der Monat steckt nicht drin.
     for month in sorted(os.listdir(base), reverse=True):
@@ -1656,12 +1674,17 @@ async def get_image(
         full, err = resolve_workspace_file(
             str(user.id), f"{root_rel}/{month}/{safe}", must_exist=True
         )
-        if not err and full == os.path.realpath(candidate):
-            sniffed = None
-            with open(full, "rb") as fh:
-                sniffed = _sniff_image(fh.read(16))
-            return FileResponse(full, media_type=(sniffed or ("image/png", ""))[0])
-    raise HTTPException(404, "Bild nicht gefunden")
+        if err or full != os.path.realpath(candidate):
+            continue
+        with open(full, "rb") as fh:
+            sniffed = _sniff_image(fh.read(16))
+        if sniffed:
+            return FileResponse(full, media_type=sniffed[0])
+        # Keine Bilder werden NIE inline ausgeliefert: eine hochgeladene .html würde
+        # sonst im Kontext von CentralStation ausgeführt.
+        return FileResponse(full, media_type="application/octet-stream",
+                            filename=_display_name(safe))
+    raise HTTPException(404, "Datei nicht gefunden")
 
 
 # ── Google TTS proxy ───────────────────────────────────────────────

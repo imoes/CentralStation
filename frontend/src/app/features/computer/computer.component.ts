@@ -35,9 +35,9 @@ interface ToolCall {
 interface HermesMessage {
   role: 'user' | 'assistant';
   text: string;
-  /** Bilder, die mit dieser Nachricht gingen — als <img> gerendert, nicht über
-   *  Markdown/innerHTML. */
-  images?: { url: string; agentPath: string }[];
+  /** Anhänge, die mit dieser Nachricht gingen — im Template gerendert (Bilder als
+   *  <img>, Dateien als Chip), nicht über Markdown/innerHTML. */
+  attachments?: MessageAttachment[];
   /** Current tool being executed — shown as a spinner line while streaming. */
   activeTool?: string;
   /** Permanent log of all tool calls made during this message turn. */
@@ -45,17 +45,34 @@ interface HermesMessage {
 }
 
 /** Ein eingefügtes Bild, das an der nächsten Nachricht hängt. */
-interface PastedImage {
-  /** Serverseitig vergebener Dateiname, zugleich die ID in der Bild-URL. */
+/** Eine Datei oder ein Bild, das an der nächsten Nachricht hängt.
+ *
+ *  Beides läuft über denselben Upload. Der Unterschied liegt nur danach: Bilder
+ *  bekommen eine Vorschau und gehen an Codex/Hermes als Bild, andere Dateien öffnet
+ *  der Agent selbst über den Pfad. */
+interface PendingAttachment {
+  kind: 'image' | 'file';
+  /** Serverseitig vergebener Dateiname, zugleich die ID in der URL. */
   id: string;
-  /** Pfad, unter dem der Agent das Bild im Workspace sieht. */
+  /** Anzeigename, z. B. "umsatz_q3.xlsx". */
+  name: string;
+  /** Kategorie für die Anzeige, z. B. "Tabelle". */
+  label: string;
+  /** Pfad, unter dem der Agent die Datei im Workspace sieht. */
   agentPath: string;
-  /** URL zum Anzeigen (Vorschau vor dem Senden und im Verlauf nach einem Neuladen). */
+  /** URL zum Anzeigen bzw. Herunterladen. */
   url: string;
-  /** Lokale Objekt-URL des eingefügten Blobs — sofort da, ohne auf den Server zu warten. */
-  previewUrl: string;
+  /** Lokale Objekt-URL — nur bei Bildern, für die Vorschau ohne Umweg über den Server. */
+  previewUrl?: string;
   size: number;
-  mime: string;
+}
+
+/** Was eine gesendete Nachricht an Anhängen trägt — für die Anzeige im Verlauf. */
+interface MessageAttachment {
+  kind: 'image' | 'file';
+  url: string;
+  agentPath: string;
+  name: string;
 }
 
 /** Ticket-Kontext, der an einer Sitzung hängt und mit der nächsten Nachricht mitgeht. */
@@ -246,7 +263,14 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
         </div>
 
         <!-- Conversation area -->
-        <div class="conversation">
+        <!-- Drag-and-Drop auf die ganze Unterhaltung, nicht nur aufs Eingabefeld:
+             das Feld ist klein, und eine Datei soll man einfach "in die Konsole"
+             ziehen können. -->
+        <div class="conversation"
+             [class.drag-over]="dragOver()"
+             (dragover)="onDragOver($event)"
+             (dragleave)="onDragLeave($event)"
+             (drop)="onDrop($event)">
 
           @if (!activeTabId()) {
             <div class="empty-state">
@@ -275,15 +299,29 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                 </div>
                 <div class="msg-text"
                      [innerHTML]="renderMarkdown(msg)"></div>
-                @if (msg.images?.length) {
-                  <!-- Als <img> im Template, NICHT über Markdown/innerHTML: dort läuft
+                @if (msg.attachments?.length) {
+                  <!-- Im Template gerendert, NICHT über Markdown/innerHTML: dort läuft
                        bypassSecurityTrustHtml ohne Sanitizer, und diese Fläche soll
-                       nicht zusätzlich belastet werden. -->
-                  <div class="msg-images">
-                    @for (im of msg.images!; track im.url) {
-                      <a [href]="im.url" target="_blank" rel="noopener" [title]="im.agentPath">
-                        <img [src]="im.url" alt="Eingefügtes Bild" loading="lazy">
-                      </a>
+                       nicht zusätzlich belastet werden. Bilder kommen als Blob-URL,
+                       weil ein <img src> keinen Authorization-Header mitschickt. -->
+                  <div class="msg-attachments">
+                    @for (a of msg.attachments!; track a.url) {
+                      @if (a.kind === 'image') {
+                        @if (imageSrc(a.url); as src) {
+                          <img class="msg-attachment-img" [src]="src" [alt]="a.name"
+                               [title]="a.agentPath" (click)="openAttachment(a)">
+                        } @else {
+                          <div class="msg-attachment-img msg-attachment-img--loading">
+                            <mat-icon>image</mat-icon>
+                          </div>
+                        }
+                      } @else {
+                        <button class="msg-attachment-file" (click)="openAttachment(a)"
+                                [title]="a.agentPath + ' — herunterladen'">
+                          <mat-icon>insert_drive_file</mat-icon>
+                          <span>{{ a.name }}</span>
+                        </button>
+                      }
                     }
                   </div>
                 }
@@ -444,19 +482,25 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
 
           <!-- Eingefügte Bilder: warten neben dem Feld und gehen mit der nächsten
                Nachricht mit — dasselbe Muster wie der Ticket-Kontext darüber. -->
-          @if (activeImages().length || uploadingImages() > 0) {
+          @if (activeAttachments().length || uploadingCount() > 0) {
             <div class="pasted-images">
-              @for (im of activeImages(); track im.id) {
-                <div class="pasted-image">
-                  <img [src]="im.previewUrl" alt="Vorschau">
-                  <span class="pasted-image-size">{{ formatBytes(im.size) }}</span>
-                  <button class="pasted-image-remove" (click)="removeImage(im)"
-                          title="Bild entfernen">
+              @for (a of activeAttachments(); track a.id) {
+                <div class="pasted-image" [class.pasted-image--file]="a.kind === 'file'"
+                     [title]="a.agentPath">
+                  @if (a.kind === 'image' && a.previewUrl) {
+                    <img [src]="a.previewUrl" [alt]="a.name">
+                  } @else {
+                    <mat-icon class="pasted-file-icon">{{ attachmentIcon(a.label) }}</mat-icon>
+                    <span class="pasted-file-name">{{ a.name }}</span>
+                  }
+                  <span class="pasted-image-size">{{ formatBytes(a.size) }}</span>
+                  <button class="pasted-image-remove" (click)="removeAttachment(a)"
+                          [title]="a.name + ' entfernen'">
                     <mat-icon>close</mat-icon>
                   </button>
                 </div>
               }
-              @if (uploadingImages() > 0) {
+              @if (uploadingCount() > 0) {
                 <div class="pasted-image pasted-image--loading">
                   <mat-icon class="spinning">sync</mat-icon>
                 </div>
@@ -474,6 +518,13 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                       (input)="resizeInput()"
                       (paste)="onPaste($event)"
                       (keydown)="onInputKeydown($event)"></textarea>
+            <!-- Dateien hochladen. Das <input> bleibt unsichtbar; der Knopf öffnet es.
+                 Dieselben Dateien gehen auch per Strg+V und per Drag-and-Drop. -->
+            <input #fileInput type="file" multiple hidden (change)="onFilesPicked($event)">
+            <button class="icon-btn" (click)="openFilePicker()" [disabled]="loading()"
+                    title="Datei anhängen (auch per Strg+V oder Drag-and-Drop)">
+              <mat-icon>attach_file</mat-icon>
+            </button>
             <button class="icon-btn"
                     [class.active]="listening()"
                     (click)="toggleVoice()"
@@ -487,7 +538,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
             } @else {
               <button class="send-btn"
                       (click)="send()"
-                      [disabled]="(!inputText.trim() && !activeImages().length) || uploadingImages() > 0">→</button>
+                      [disabled]="(!inputText.trim() && !activeAttachments().length) || uploadingCount() > 0">→</button>
             }
           </div>
         </div>
@@ -568,16 +619,19 @@ export class ComputerComponent implements OnInit, OnDestroy {
    *  sonst verschwände etwas, das die KI nie gesehen hat. */
   /** Eingefügte Bilder je Sitzung, noch nicht abgeschickt. Gleiches Muster wie der
    *  angehängte Ticket-Kontext: an der Sitzung, nicht im Eingabefeld. */
-  private pendingImages = signal<Record<string, PastedImage[]>>({});
+  private pendingAttachments = signal<Record<string, PendingAttachment[]>>({});
 
   /** Bilder der aktiven Sitzung, für die Leiste über dem Eingabefeld. */
-  readonly activeImages = computed<PastedImage[]>(() => {
+  readonly activeAttachments = computed<PendingAttachment[]>(() => {
     const sid = this.activeTabId();
-    return sid ? this.pendingImages()[sid] ?? [] : [];
+    return sid ? this.pendingAttachments()[sid] ?? [] : [];
   });
 
   /** Läuft gerade ein Bild-Upload? Blockiert das Absenden, damit kein Bild verloren geht. */
-  readonly uploadingImages = signal(0);
+  readonly uploadingCount = signal(0);
+
+  /** Liegt gerade eine Datei über der Konsole (Drag-and-Drop)? */
+  readonly dragOver = signal(false);
 
   private pendingContext = signal<Record<string, PendingContext>>({});
 
@@ -1372,7 +1426,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
       const messages: HermesMessage[] = raw
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .filter(m => typeof m.content === 'string' && m.content.trim())
-        .map(m => this.withImagesFromMarker(m.role as 'user' | 'assistant', m.content));
+        .map(m => this.withAttachmentsFromMarker(m.role as 'user' | 'assistant', m.content));
       if (!messages.length) return;
       this.sessions.update(ss => ss.map(s =>
         s.session_id === sid ? { ...s, messages } : s
@@ -1387,17 +1441,36 @@ export class ComputerComponent implements OnInit, OnDestroy {
    *  Die Historie kommt vom Agenten und kennt nur Text. Ohne diesen Schritt stünden
    *  nach einem Neuladen rohe Pfade im Verlauf, wo vorher Bilder waren — dieselbe
    *  Unterhaltung sähe je nach Zeitpunkt des Öffnens anders aus. */
-  private withImagesFromMarker(role: 'user' | 'assistant', text: string): HermesMessage {
-    const images: { url: string; agentPath: string }[] = [];
-    const re = new RegExp(ComputerComponent.IMAGE_MARKER.source, 'gm');
-    let match: RegExpExecArray | null;
-    while ((match = re.exec(text)) !== null) {
-      for (const path of match[1].split(/\s+/).filter(Boolean)) {
-        const id = path.split('/').pop() || '';
-        if (id) images.push({ url: `${this.apiBase}/images/${id}`, agentPath: path });
+  private withAttachmentsFromMarker(role: 'user' | 'assistant', text: string): HermesMessage {
+    const attachments: MessageAttachment[] = [];
+    const markers: [RegExp, 'image' | 'file'][] = [
+      [ComputerComponent.IMAGE_MARKER, 'image'],
+      [ComputerComponent.FILE_MARKER, 'file'],
+    ];
+    for (const [marker, kind] of markers) {
+      const re = new RegExp(marker.source, 'gm');
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(text)) !== null) {
+        for (const path of match[1].split(/\s+/).filter(Boolean)) {
+          const id = path.split('/').pop() || '';
+          if (!id) continue;
+          attachments.push({
+            kind, agentPath: path,
+            url: `${this.apiBase}/uploads/${encodeURIComponent(id)}`,
+            name: ComputerComponent.displayName(id),
+          });
+        }
       }
     }
-    return images.length ? { role, text, images } : { role, text };
+    return attachments.length ? { role, text, attachments } : { role, text };
+  }
+
+  /** Gespeicherter Name → Anzeigename: `<32 Hex-Zeichen>-umsatz.xlsx` → `umsatz.xlsx`.
+   *  Dieselbe Regel wie `_display_name` im Backend, damit ein Anhang live und nach
+   *  einem Neuladen gleich heißt. */
+  static displayName(stored: string): string {
+    const m = /^[0-9a-f]{32}-(.+)$/.exec(stored);
+    return m ? m[1] : stored;
   }
 
   async renameSession(sid: string, label: string): Promise<void> {
@@ -1473,39 +1546,80 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   // ── Send message → SSE stream ─────────────────────────────────────
 
-  // ── Bilder einfügen (Strg+V) ──────────────────────────────────────
+  // ── Anhänge: Strg+V, Dateiauswahl, Drag-and-Drop ──────────────────
 
-  /** Marker, mit dem Bildpfade in der Nachricht stehen. Er ist zugleich Nutzlast
-   *  (der Agent liest die Pfade) und Anzeige-Anker (beim Nachladen der Historie
-   *  werden daraus wieder Miniaturbilder). */
+  /** Marker für Bildpfade — Nutzlast (der Agent liest sie) und Anzeige-Anker (beim
+   *  Nachladen der Historie werden daraus wieder Vorschauen). */
   static readonly IMAGE_MARKER = /^\[Bilder:\s*(.+?)\]$/gm;
+  /** Marker für andere Dateien. Getrennt vom Bild-Marker, weil die Agenten beides
+   *  unterschiedlich behandeln: Bilder sehen sie, Dateien öffnen sie selbst. */
+  static readonly FILE_MARKER = /^\[Dateien:\s*(.+?)\]$/gm;
+
+  @ViewChild('fileInput') private fileInput?: ElementRef<HTMLInputElement>;
 
   async onPaste(e: ClipboardEvent): Promise<void> {
-    const items = Array.from(e.clipboardData?.items ?? []);
-    const imageItems = items.filter(i => i.kind === 'file' && i.type.startsWith('image/'));
-    if (!imageItems.length) return;   // reiner Text: normal einfügen lassen
+    // Dateien aus der Zwischenablage — Screenshots ebenso wie im Dateimanager
+    // kopierte Dateien. Reiner Text bleibt beim normalen Einfügen.
+    const files = Array.from(e.clipboardData?.files ?? []);
+    if (!files.length) return;
     e.preventDefault();
+    await this.uploadFiles(files);
+  }
 
+  openFilePicker(): void {
+    this.fileInput?.nativeElement.click();
+  }
+
+  async onFilesPicked(e: Event): Promise<void> {
+    const input = e.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    input.value = '';   // dieselbe Datei muss erneut wählbar sein
+    await this.uploadFiles(files);
+  }
+
+  onDragOver(e: DragEvent): void {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    this.dragOver.set(true);
+  }
+
+  onDragLeave(e: DragEvent): void {
+    // Nur wirklich verlassen zählen — beim Überfahren von Kindelementen feuert
+    // dragleave ständig, und die Markierung würde flackern.
+    const into = e.relatedTarget as Node | null;
+    if (into && (e.currentTarget as Node).contains(into)) return;
+    this.dragOver.set(false);
+  }
+
+  async onDrop(e: DragEvent): Promise<void> {
+    e.preventDefault();
+    this.dragOver.set(false);
+    await this.uploadFiles(Array.from(e.dataTransfer?.files ?? []));
+  }
+
+  private async uploadFiles(files: File[]): Promise<void> {
+    if (!files.length) return;
     let sid = this.activeTabId();
     if (!sid) {
       await this.newSession();
       sid = this.activeTabId();
       if (!sid) return;
     }
-    for (const item of imageItems) {
-      const blob = item.getAsFile();
-      if (blob) await this.uploadPastedImage(sid, blob);
-    }
+    // Nacheinander, nicht parallel: bei einem Fehler bleibt klar, welche Datei es war.
+    for (const f of files) await this.uploadAttachment(sid, f);
   }
 
-  private async uploadPastedImage(sid: string, blob: Blob): Promise<void> {
-    const previewUrl = URL.createObjectURL(blob);
-    this.uploadingImages.update(n => n + 1);
+  private async uploadAttachment(sid: string, file: Blob & { name?: string }): Promise<void> {
+    const isImage = (file.type || '').startsWith('image/');
+    const previewUrl = isImage ? URL.createObjectURL(file) : undefined;
+    this.uploadingCount.update(n => n + 1);
     try {
       const fd = new FormData();
-      fd.append('file', blob, 'pasted');
+      // Den Namen mitschicken: der Server leitet daraus Art und Anzeigenamen ab (und
+      // prüft beides gegen den Inhalt). Ein eingefügter Screenshot hat keinen Namen.
+      fd.append('file', file, file.name || 'eingefuegt');
       const token = this.auth.getAccessToken();
-      const r = await fetch(`${this.apiBase}/images`, {
+      const r = await fetch(`${this.apiBase}/uploads`, {
         method: 'POST',
         body: fd,
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -1515,29 +1629,103 @@ export class ComputerComponent implements OnInit, OnDestroy {
         throw new Error(detail?.detail || `HTTP ${r.status}`);
       }
       const data = await r.json();
-      const img: PastedImage = {
-        id: data.id, agentPath: data.agent_path, url: data.url,
-        previewUrl, size: data.size, mime: data.mime,
+      const att: PendingAttachment = {
+        kind: data.kind, id: data.id, name: data.name, label: data.label,
+        agentPath: data.agent_path, url: data.url,
+        previewUrl: data.kind === 'image' ? previewUrl : undefined,
+        size: data.size,
       };
-      this.pendingImages.update(all => ({ ...all, [sid]: [...(all[sid] ?? []), img] }));
+      if (att.kind !== 'image' && previewUrl) URL.revokeObjectURL(previewUrl);
+      this.pendingAttachments.update(all => ({ ...all, [sid]: [...(all[sid] ?? []), att] }));
     } catch (err) {
-      URL.revokeObjectURL(previewUrl);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      const what = file.name ? `„${file.name}"` : 'Die Datei';
       this.snackBar.open(
-        err instanceof Error ? err.message : 'Bild konnte nicht hochgeladen werden',
-        '', { duration: 4000 },
+        `${what} wurde nicht angenommen: ${err instanceof Error ? err.message : 'Upload fehlgeschlagen'}`,
+        '', { duration: 5000 },
       );
     } finally {
-      this.uploadingImages.update(n => Math.max(0, n - 1));
+      this.uploadingCount.update(n => Math.max(0, n - 1));
     }
   }
 
-  removeImage(img: PastedImage): void {
+  removeAttachment(att: PendingAttachment): void {
     const sid = this.activeTabId();
     if (!sid) return;
-    URL.revokeObjectURL(img.previewUrl);
-    this.pendingImages.update(all => ({
-      ...all, [sid]: (all[sid] ?? []).filter(i => i.id !== img.id),
+    if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+    this.pendingAttachments.update(all => ({
+      ...all, [sid]: (all[sid] ?? []).filter(i => i.id !== att.id),
     }));
+  }
+
+  // ── Anhänge anzeigen und öffnen ───────────────────────────────────
+  //
+  // Die Upload-Endpunkte verlangen einen Bearer-Token. Ein <img src> und ein normaler
+  // Download-Link schicken den aber nicht mit — sie bekämen 401. Deshalb werden
+  // Anhänge per fetch MIT Token geholt und als Blob-URL eingesetzt. Ohne das zeigten
+  // die Vorschauen im Verlauf nach einem Neuladen nur leere Rahmen.
+
+  /** Aufgelöste Blob-URLs je Anhang-URL (Signal, damit das Template nachzieht). */
+  private readonly resolvedUrls = signal<Record<string, string>>({});
+  private readonly resolving = new Set<string>();
+
+  /** Blob-URL für ein Bild, oder '' solange es lädt. Stößt das Laden beim ersten
+   *  Aufruf an; die Antwort kommt asynchron über das Signal. */
+  imageSrc(url: string): string {
+    const known = this.resolvedUrls()[url];
+    if (known) return known;
+    if (!this.resolving.has(url)) {
+      this.resolving.add(url);
+      void this.fetchAuthed(url)
+        .then(blob => {
+          const obj = URL.createObjectURL(blob);
+          this.resolvedUrls.update(all => ({ ...all, [url]: obj }));
+        })
+        .catch(err => console.debug('Anhang nicht ladbar:', url, err))
+        .finally(() => this.resolving.delete(url));
+    }
+    return '';
+  }
+
+  private async fetchAuthed(url: string): Promise<Blob> {
+    const token = this.auth.getAccessToken();
+    const r = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.blob();
+  }
+
+  /** Bild in neuem Tab ansehen, Datei herunterladen — beides mit Token. */
+  async openAttachment(a: MessageAttachment): Promise<void> {
+    try {
+      const blob = await this.fetchAuthed(a.url);
+      const obj = URL.createObjectURL(blob);
+      if (a.kind === 'image') {
+        window.open(obj, '_blank', 'noopener');
+      } else {
+        const link = document.createElement('a');
+        link.href = obj;
+        link.download = a.name;
+        link.click();
+      }
+      // Kurz warten, damit Tab bzw. Download die URL noch öffnen können.
+      setTimeout(() => URL.revokeObjectURL(obj), 60_000);
+    } catch {
+      this.snackBar.open(`„${a.name}" ist nicht mehr verfügbar`, '', { duration: 4000 });
+    }
+  }
+
+  /** Material-Icon je Kategorie, für die Chips. */
+  attachmentIcon(label: string): string {
+    switch (label) {
+      case 'Tabelle': return 'table_chart';
+      case 'PDF': return 'picture_as_pdf';
+      case 'Dokument': return 'description';
+      case 'Präsentation': return 'slideshow';
+      case 'Archiv': return 'folder_zip';
+      case 'Skript': return 'code';
+      case 'Log': return 'receipt_long';
+      default: return 'insert_drive_file';
+    }
   }
 
   formatBytes(n: number): string {
@@ -1627,10 +1815,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
   async send(): Promise<boolean> {
     const text = this.inputText.trim();
     const sid = this.activeTabId();
-    const images = sid ? this.pendingImages()[sid] ?? [] : [];
-    // Ein Bild allein genügt — so verhalten sich Claude und Google auch. Solange ein
-    // Upload läuft, wird nicht gesendet: sonst ginge das Bild still verloren.
-    if ((!text && !images.length) || this.loading() || this.uploadingImages() > 0) return false;
+    const attachments = sid ? this.pendingAttachments()[sid] ?? [] : [];
+    // Ein Anhang allein genügt — so verhalten sich Claude und Google auch. Solange ein
+    // Upload läuft, wird nicht gesendet: sonst ginge die Datei still verloren.
+    if ((!text && !attachments.length) || this.loading() || this.uploadingCount() > 0) return false;
 
     const context = sid ? this.pendingContext()[sid] ?? null : null;
     this.inputText = '';
@@ -1639,17 +1827,23 @@ export class ComputerComponent implements OnInit, OnDestroy {
     // Der Kontext geht der eigenen Nachricht voran; gesendet wird beides, angezeigt
     // die eigene Nachricht mit dem Kontext als aufklappbarem Anhang.
     let payload = context ? `${context.text}\n\n---\n\n${text}` : text;
-    if (images.length) {
-      // Der Marker ist Nutzlast und Anzeige zugleich: der Agent liest die Pfade,
-      // und beim Nachladen der Historie werden daraus wieder Miniaturbilder.
-      const marker = `[Bilder: ${images.map(i => i.agentPath).join(' ')}]`;
-      payload = payload ? `${payload}\n\n${marker}` : marker;
-      this.pendingImages.update(all => {
+    if (attachments.length) {
+      // Die Marker sind Nutzlast und Anzeige zugleich: der Agent liest die Pfade, und
+      // beim Nachladen der Historie werden daraus wieder Vorschauen und Chips. Bilder
+      // und Dateien getrennt, weil die Agenten sie unterschiedlich behandeln.
+      const markers: string[] = [];
+      const imgs = attachments.filter(a => a.kind === 'image');
+      const docs = attachments.filter(a => a.kind === 'file');
+      if (imgs.length) markers.push(`[Bilder: ${imgs.map(a => a.agentPath).join(' ')}]`);
+      if (docs.length) markers.push(`[Dateien: ${docs.map(a => a.agentPath).join(' ')}]`);
+      const block = markers.join('\n');
+      payload = payload ? `${payload}\n\n${block}` : block;
+      this.pendingAttachments.update(all => {
         const { [sid!]: _used, ...rest } = all;
         return rest;
       });
     }
-    const sent = await this.sendContent(payload, undefined, images);
+    const sent = await this.sendContent(payload, undefined, attachments);
     if (sent && sid && context) {
       this.pendingContext.update(all => {
         const { [sid]: _used, ...rest } = all;
@@ -1663,7 +1857,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   }
 
   private async sendContent(
-    text: string, targetSid?: string, images: PastedImage[] = [],
+    text: string, targetSid?: string, attachments: PendingAttachment[] = [],
   ): Promise<boolean> {
     if (!text.trim() || this.loading()) return false;
 
@@ -1690,7 +1884,8 @@ export class ComputerComponent implements OnInit, OnDestroy {
     // und keine gekürzte Fassung — nach einem Neuladen liefert der Agent dieselbe
     // eine Nachricht zurück, und beide Ansichten müssen übereinstimmen.
     this._addMessage(sid, 'user', text,
-                     images.map(i => ({ url: i.url, agentPath: i.agentPath })));
+                     attachments.map(a => ({ kind: a.kind, url: a.url,
+                                             agentPath: a.agentPath, name: a.name })));
     this._addMessage(sid, 'assistant', '');
     this._updateMsgCount(sid);
     this.scrollToBottom();
@@ -1710,7 +1905,11 @@ export class ComputerComponent implements OnInit, OnDestroy {
         },
         body: JSON.stringify({
           content: text,
-          ...(images.length ? { image_paths: images.map(i => i.agentPath) } : {}),
+          // Nur Bilder: Codex bekommt sie als -i, Hermes als Bildblock. Dateien stehen
+          // im Text-Marker, den Rest erledigt der Agent selbst.
+          ...(attachments.some(a => a.kind === 'image')
+            ? { image_paths: attachments.filter(a => a.kind === 'image').map(a => a.agentPath) }
+            : {}),
         }),
         signal: this._abortController.signal,
       });
@@ -1920,9 +2119,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   private _addMessage(
     sid: string, role: 'user' | 'assistant', text: string,
-    images: { url: string; agentPath: string }[] = [],
+    attachments: MessageAttachment[] = [],
   ): void {
-    const msg: HermesMessage = images.length ? { role, text, images } : { role, text };
+    const msg: HermesMessage = attachments.length ? { role, text, attachments } : { role, text };
     this.sessions.update(ss => ss.map(s =>
       s.session_id === sid ? { ...s, messages: [...s.messages, msg] } : s
     ));
