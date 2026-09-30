@@ -39,6 +39,11 @@ _PLAYWRIGHT_MCP_ARGS = [
     "--headless", "--no-sandbox", "--isolated",
 ]
 
+#: Wie lange ein Agent auf EIN MCP-Werkzeug wartet (Hermes, Codex; Claude in
+#: userenv/main.py). Muss über der längsten Werkzeuglaufzeit liegen — der Tiefensuche,
+#: aikb.DEEPSEARCH_TIMEOUT_S = 900 s —, damit deren eigene, klare Meldung zuerst kommt.
+MCP_TOOL_TIMEOUT_S = 930
+
 _last_used: dict[str, float] = {}
 # Names of containers that ensure_container freshly `run`-created (as opposed to
 # started an existing one). The per-container ~/.ssh (config + user.key) is NOT on a
@@ -98,10 +103,9 @@ def write_hermes_config(user_id: str, extra_servers: dict) -> str:
             # Nutzerkennung, damit der Backend-MCP-Server die Schreibfreigabe
             # dieses Nutzers prüfen kann (mcp_server._require_write).
             "headers": {"X-CS-User-ID": user_id},
-            # Deepsearch (search_knowledge_base deepsearch=True) can run up to ~300s.
-            # Give the per-tool-call timeout headroom above that so Hermes doesn't
-            # abort a legitimate long-running deepsearch.
-            "timeout": 330,
+            # Per-tool-call timeout. A deepsearch can run up to 900s; this sits above
+            # it so Hermes never cuts one off (see MCP_TOOL_TIMEOUT_S).
+            "timeout": MCP_TOOL_TIMEOUT_S,
         },
         # Browser automation — stdio command server (no transport/url).
         "playwright": {
@@ -799,11 +803,14 @@ So fragst du gut:
 - Den Fehlertext wörtlich, wenn es einen gibt
 - Kurz halten — die Suche erweitert die Anfrage selbst. Lange Sätze verwässern sie.
 
-`deepsearch=True` liefert eine ausformulierte Antwort mit Quellen, braucht aber deutlich
-länger. Nimm es, wenn die schnelle Suche nur Bruchstücke liefert.
+`deepsearch=True` liefert eine ausformulierte Antwort mit Quellen und liest dafür
+selbst in den Seiten nach. Sie ist aufwendig: **mehrere Minuten**, gemessen rund fünf,
+erlaubt sind bis zu 15. Nimm sie, wenn die schnelle Suche nur Bruchstücke liefert oder
+du den Inhalt einer Seite im Zusammenhang brauchst.
 
-Die Suche kann **10–20 Sekunden** dauern. Das ist kein Fehler — warte das Ergebnis ab,
-statt sie abzubrechen oder mehrfach parallel zu starten.
+Die schnelle Suche dauert **10–20 Sekunden**, die Tiefensuche Minuten. Beides ist kein
+Fehler — warte das Ergebnis ab, statt abzubrechen oder dieselbe Suche mehrfach parallel
+zu starten. Sag dem Nutzer vorher kurz, dass eine Tiefensuche läuft und dauern kann.
 
 Findest du nichts, sag es so: „In der Wissensdatenbank ist dazu nichts dokumentiert."
 Liefert das Werkzeug einen Fehler, ist das etwas anderes — dann ist die Datenbank nicht
@@ -1056,8 +1063,8 @@ def _codex_config_toml(mcp_servers: dict | None, cs_user_id: str = "") -> str:
         # Nutzerkennung für die Schreibfreigabe-Prüfung im Backend.
         f'http_headers = {{ "X-CS-User-ID" = "{cs_user_id}" }}',
         'default_tools_approval_mode = "approve"',
-        # search_knowledge_base(deepsearch=True) can run up to ~300s — give headroom.
-        'tool_timeout_sec = 330',
+        # A deepsearch can run up to 900s — this sits above it (MCP_TOOL_TIMEOUT_S).
+        f'tool_timeout_sec = {MCP_TOOL_TIMEOUT_S}',
         '',
         # Playwright — stdio command server (browser automation).
         '[mcp_servers.playwright]',

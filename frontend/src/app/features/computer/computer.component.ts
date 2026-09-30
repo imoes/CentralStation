@@ -1879,14 +1879,25 @@ export class ComputerComponent implements OnInit, OnDestroy {
         return rest;
       });
     }
-    const sent = await this.sendContent(payload, undefined, attachments);
-    if (sent && sid && context) {
-      this.pendingContext.update(all => {
-        const { [sid]: _used, ...rest } = all;
-        return rest;
-      });
-      this.computerService.clearContextAttached(sid);
+    // Der angehängte Kontext verschwindet, sobald der Server die Nachricht ANGENOMMEN
+    // hat — nicht erst, wenn die Antwort erfolgreich zu Ende ist. Vorher blieb die
+    // Leiste während der ganzen Antwort stehen (mit einer Tiefensuche bis zu fünf
+    // Minuten) und nach einer gescheiterten Runde für immer, obwohl der Kontext längst
+    // in der Nachricht stand. Er geht auch nicht verloren: er ist Teil der Nachricht im
+    // Verlauf und im Gedächtnis des Agenten, ein "Probiere es nochmal" hat ihn also.
+    let accepted = false;
+    const sent = await this.sendContent(payload, undefined, attachments, () => {
+      accepted = true;
+      if (sid && context) {
+        this.pendingContext.update(all => {
+          const { [sid]: _used, ...rest } = all;
+          return rest;
+        });
+        this.computerService.clearContextAttached(sid);
+      }
       this.taskStaged.set(false);
+    });
+    if (accepted && sid && context) {
       await this.resolveSentContext(sid, context);
     }
     return sent;
@@ -1894,6 +1905,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
 
   private async sendContent(
     text: string, targetSid?: string, attachments: PendingAttachment[] = [],
+    onAccepted?: () => void,
   ): Promise<boolean> {
     if (!text.trim() || this.loading()) return false;
 
@@ -1955,6 +1967,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
         streamFailed = true;
         return false;
       }
+      // Ab hier liegt die Nachricht beim Agenten — auch wenn die Antwort noch Minuten
+      // braucht oder später scheitert. Was an ihr hing, gilt damit als übergeben.
+      onAccepted?.();
 
       const reader = resp.body!.getReader();
       const dec = new TextDecoder();

@@ -147,6 +147,26 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **A deepsearch was cut off after 300 s.** Measured on one query: about 120 LLM
+  calls, ~160 embeddings and ~50 reranks, finishing after 279 s — so close to the
+  old 300 s limit that any variance broke it, and the agent reported "the deepsearch
+  aborted after 300 s". It is not caused by load: the website crawl was idle and
+  llm-host03 nearly unused; a deepsearch is simply that heavy.
+
+  The limit is now **900 s**, and the whole chain is staggered so the innermost limit
+  always fires first with a clear message, instead of an outer one cutting silently:
+  aikb deepsearch 900 s < MCP tool limit 930 s (Hermes, Claude, Codex) < nginx
+  `/api/` 1000 s. The nginx value matters because a console reply that waits on a
+  deepsearch sends no bytes for that long, and at 600 s nginx would have closed the
+  browser's stream while the agent kept working. The ordering is pinned by a test.
+
+- **The attached ticket context stayed after sending.** The bar was only removed
+  once the agent's whole reply had finished *successfully* — so it stood for the
+  full reply (minutes, with a deepsearch) and forever after a failed one, although
+  the context was already in the sent message. It now disappears as soon as the
+  server has accepted the message. The context is not lost: it is part of the
+  message in the transcript and in the agent's history, so a retry still has it.
+
 - **A comment stayed "new" after Später or attaching.** On JCUE-5604 one foreign
   comment reappeared after every message, although it had been attached and
   dismissed repeatedly; the session's stored Jira state was from 18 September. Two

@@ -51,3 +51,26 @@ def test_flag_is_keyword_only_all_the_way_down():
         p = inspect.signature(fn).parameters["kb_available"]
         assert p.kind is inspect.Parameter.KEYWORD_ONLY, fn.__name__
         assert p.default is False, fn.__name__
+
+
+def test_timeout_chain_is_ordered():
+    """Die innere Grenze muss zuerst greifen, sonst schneidet eine äußere still ab.
+
+    aikb-Tiefensuche < MCP-Werkzeuggrenze < nginx. Eine Tiefensuche macht rund 120
+    LLM-Aufrufe und brauchte gemessen 279 s — die frühere Grenze von 300 s lag so knapp
+    darüber, dass jede Schwankung sie riss.
+    """
+    import re
+    from pathlib import Path
+
+    from app.services.connectors.aikb import DEEPSEARCH_TIMEOUT_S
+    from app.services.userenv_manager import MCP_TOOL_TIMEOUT_S
+
+    assert DEEPSEARCH_TIMEOUT_S >= 900
+    assert MCP_TOOL_TIMEOUT_S > DEEPSEARCH_TIMEOUT_S
+
+    conf = Path(__file__).resolve().parents[2] / "nginx" / "nginx.conf.example"
+    if conf.is_file():   # im Backend-Image gibt es kein nginx/-Verzeichnis
+        api = conf.read_text(encoding="utf-8").split("location /api/ {", 1)[1].split("}", 1)[0]
+        read = int(re.search(r"proxy_read_timeout\s+(\d+)s", api).group(1))
+        assert read > MCP_TOOL_TIMEOUT_S, "nginx würde den Antwortstrom vor dem Werkzeug kappen"

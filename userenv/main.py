@@ -589,9 +589,10 @@ async def _run_cli_agent(
     # CLAUDE_CONFIG_DIR (npm/node cache dirs etc.), which corrupted .credentials.json
     # mid-run (emptied accessToken) rather than just erroring cleanly.
     env = {**os.environ, "HOME": "/home/yolo"}
-    # MCP tool-call timeout (ms). search_knowledge_base(deepsearch=True) can run up to
-    # ~300s; the Claude CLI default (60s) would abort it. Give headroom above 300s.
-    env.setdefault("MCP_TOOL_TIMEOUT", "330000")
+    # MCP tool-call timeout (ms). A deepsearch can run up to 900s (aikb
+    # DEEPSEARCH_TIMEOUT_S); the Claude CLI default (60s) would abort it. 930s sits above
+    # it — same value as MCP_TOOL_TIMEOUT_S for Hermes and Codex in userenv_manager.
+    env.setdefault("MCP_TOOL_TIMEOUT", "930000")
     env.setdefault("MCP_TIMEOUT", "60000")
 
     if agent_type == "claude_cli":

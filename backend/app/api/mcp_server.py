@@ -835,7 +835,9 @@ async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
     - query: Suchbegriff, z.B. 'HAProxy Konfiguration', '[KB] docker50 Abhängigkeiten',
              'Graylog Filebeat Setup', 'cue-integrations Schnittstellen'
     - deepsearch: False (Standard) = schnelle OpenSearch-Treffer mit Textauszügen
-                  True = LLM-gestützte Antwort mit Quellenangaben (langsamer, ~20-60s)
+                  True = LLM-gestützte Antwort mit Quellenangaben. Aufwendig: rund
+                  120 LLM-Aufrufe je Anfrage, gemessen ~280 s, erlaubt bis 900 s.
+                  Warte das Ergebnis ab — ein Abbruch liefert nichts.
 
     Nützlich wenn:
     - Du die Dokumentation/Konfiguration eines Servers suchst

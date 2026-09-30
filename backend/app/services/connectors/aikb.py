@@ -20,6 +20,17 @@ from app.services.connectors.base import BaseConnector
 
 log = logging.getLogger(__name__)
 
+#: Obergrenze für eine Tiefensuche. Gemessen: eine einzige Tiefensuche macht rund 120
+#: LLM-Aufrufe (plus ~160 Embeddings und ~50 Reranks) und brauchte 279 s — also knapp
+#: unter der früheren Grenze von 300 s, und damit bei jeder Schwankung darüber.
+#:
+#: Die Grenzen der Kette sind gestaffelt, damit immer die INNERE zuerst greift und eine
+#: klare Meldung liefert, statt dass weiter außen still abgeschnitten wird:
+#:     aikb-Tiefensuche 900 s  <  MCP-Werkzeuggrenze 930 s  <  nginx /api/ 1000 s
+#: Die MCP-Grenze steht in userenv_manager.MCP_TOOL_TIMEOUT_S (Hermes, Codex) und in
+#: userenv/main.py (Claude, MCP_TOOL_TIMEOUT), nginx in nginx/nginx.conf.
+DEEPSEARCH_TIMEOUT_S = 900.0
+
 #: Connector-Typ, unter dem die Wissensdatenbank angebunden ist. Es gibt daneben einen
 #: zweiten Typ "it_aikb" — der gehört NICHT dazu: search_knowledge_base fragt genau
 #: diesen hier ab, und nur er entscheidet, ob das Werkzeug funktioniert.
@@ -121,10 +132,8 @@ class AIKBConnector(BaseConnector):
             # 900s. The endpoint needs ~5-18s when healthy, but it stalls for minutes
             # at a time while the rest of the service stays responsive (/health and
             # /auth/me answer in 0.0s throughout), so a short cap turned a slow search
-            # into no search. Note the ceiling this cannot exceed: agents reach this
-            # through MCP, whose per-tool timeout is 330s (hermes config, codex
-            # tool_timeout_sec, MCP_TOOL_TIMEOUT) — only direct backend callers such as
-            # topology_builder can actually use the full 900.
+            # into no search. Agents reach this through MCP, whose per-tool timeout is
+            # 930s (see DEEPSEARCH_TIMEOUT_S for the whole chain), so they can use it.
             async with self._client(timeout=900.0) as client:
                 token = await self._bearer(client)
                 r = await client.post(
@@ -159,9 +168,9 @@ class AIKBConnector(BaseConnector):
         }
         if deepsearch:
             payload["deepsearch_mode"] = True
-        # Deepsearch is LLM-driven and can legitimately run up to ~300s; the plain
-        # OpenSearch-backed RAG answer stays fast. Size the HTTP timeout accordingly.
-        _timeout = 300.0 if deepsearch else 90.0
+        # Deepsearch is LLM-driven and heavy (measured: ~120 LLM calls, 279s for one
+        # query); the plain OpenSearch-backed RAG answer stays fast.
+        _timeout = DEEPSEARCH_TIMEOUT_S if deepsearch else 90.0
         try:
             async with self._client(timeout=_timeout) as client:
                 token = await self._bearer(client)

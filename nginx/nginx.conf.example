@@ -48,10 +48,12 @@ http {
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
-            # AI endpoints can run long (generative dashboard ~35s, it-aikb
-            # DeepSearch up to 300s). Default 60s caused 504s on those.
-            proxy_read_timeout 600s;
-            proxy_send_timeout 600s;
+            # AI endpoints can run long. A console reply that waits on a deepsearch
+            # sends no bytes for up to 900s, and this is the gap nginx measures — below
+            # that it cuts the browser's stream while the agent keeps working. Chain:
+            # aikb 900s < MCP tool 930s < nginx 1000s. Default 60s caused 504s.
+            proxy_read_timeout 1000s;
+            proxy_send_timeout 1000s;
             # Pasted screenshots go through here. nginx defaults to 1m, which a
             # full-screen PNG exceeds — the upload then fails with 413 before it
             # ever reaches the backend's own size check.
