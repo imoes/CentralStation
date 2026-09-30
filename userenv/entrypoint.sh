@@ -158,18 +158,20 @@ unset _ext_dir _ext _js
 # Includes a PreToolUse hook that enforces read-only: system-modifying Bash
 # commands are denied so the headless Claude CLI (--permission-mode dontAsk,
 # which cannot ask interactively) never performs writes without the user first
-# approving them. Rewritten on every start so the hook survives updates.
+# approving them. File tools (Write/Edit/…) go through the same hook, which lets
+# them write inside the workspace and /tmp and nowhere else without approval.
+# Rewritten on EVERY start: a check for "guard already present" kept an old file
+# with the Bash-only matcher, so a changed matcher never reached a running volume.
 _managed="$HOME/.claude/managed-settings.json"
-if ! grep -q 'cs-readonly-guard' "$_managed" 2>/dev/null; then
-    mkdir -p "$HOME/.claude"
-    cat > "$_managed" <<'JSON'
+mkdir -p "$HOME/.claude"
+cat > "$_managed" <<'JSON'
 {
   "disableRemoteControl": true,
   "autoUploadSessions": false,
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
           { "type": "command", "command": "python3 /opt/cs-readonly-guard.py" }
         ]
@@ -178,8 +180,7 @@ if ! grep -q 'cs-readonly-guard' "$_managed" 2>/dev/null; then
   }
 }
 JSON
-    echo "cs-entrypoint: wrote Claude Code managed-settings.json (read-only guard)"
-fi
+echo "cs-entrypoint: wrote Claude Code managed-settings.json (read-only guard)"
 unset _managed
 
 # ── VS Code user settings ─────────────────────────────────────────────

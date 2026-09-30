@@ -19,9 +19,16 @@ ssh '<read cmd>'), local file writes inside the workspace (/home/yolo/workspaces
 into the agent's own venv (/home/yolo/pip/venv) — but not over ssh, not via sudo and
 not into the system Python.
 
-Wired via managed-settings.json → hooks.PreToolUse (matcher "Bash"), admin-scoped.
+File tools (Write/Edit/MultiEdit/NotebookEdit) are checked by target path: inside
+the workspace or /tmp they are free — the same line the Bash rules draw for local
+writes — anywhere else (the agent's own CLAUDE.md, ~/.ssh/config, /etc, …) they need
+the write window like any other change.
+
+Wired via managed-settings.json → hooks.PreToolUse (matcher "Bash|Write|Edit|…"),
+admin-scoped.
 """
 import json
+import os
 import re
 import sys
 import time
@@ -139,26 +146,88 @@ def _approval() -> dict | None:
     return None
 
 
+#: Claude's own file tools. They write without a shell, so the Bash rules never see
+#: them; each names its target in one of these input keys.
+FILE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path",
+              "NotebookEdit": "notebook_path"}
+
+#: Where a file tool may write without approval. Same line as the Bash rules: the
+#: shared workspace (reports, scripts, uploads) and scratch space.
+FREE_WRITE_ROOTS = ("/home/yolo/workspaces", "/tmp")
+
+
+def _file_write_outside(path: str, cwd: str = "") -> bool:
+    """True when a file tool would write outside FREE_WRITE_ROOTS.
+
+    realpath first, so neither `..` nor a symlink inside the workspace that points at
+    ~/.claude or /etc slips through. An empty path is treated as outside — a tool
+    call whose target cannot be named is not one to wave through.
+    """
+    if not path:
+        return True
+    if not os.path.isabs(path):
+        path = os.path.join(cwd or "/home/yolo/workspaces", path)
+    real = os.path.realpath(path)
+    return not any(real == root or real.startswith(root + "/") for root in FREE_WRITE_ROOTS)
+
+
+def _deny(reason: str) -> None:
+    # Block via BOTH mechanisms for cross-version compatibility:
+    #  - JSON permissionDecision "deny" (newer Claude Code), and
+    #  - exit code 2 with the reason on stderr (classic PreToolUse block).
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }))
+    sys.stderr.write(reason + "\n")
+    sys.exit(2)
+
+
+def _allow_if_approved() -> None:
+    granted = _approval()
+    if granted:
+        # The user opened a write window in the CentralStation console. Let the
+        # call through and leave a trace of whose approval was used.
+        sys.stderr.write(
+            "cs-readonly-guard: Schreibfreigabe aktiv (erteilt von "
+            f"{granted.get('granted_by', '?')}, gültig bis "
+            f"{granted.get('expires_at_iso', '?')}) — zugelassen.\n"
+        )
+        sys.exit(0)
+
+
 def main() -> None:
     try:
         data = json.load(sys.stdin)
     except Exception:
         sys.exit(0)  # unreadable input → do not interfere
-    if data.get("tool_name") != "Bash":
-        sys.exit(0)
-    cmd = (data.get("tool_input") or {}).get("command", "") or ""
-    if _is_write(cmd):
-        granted = _approval()
-        if granted:
-            # The user opened a write window in the CentralStation console. Let the
-            # command through and leave a trace of whose approval was used.
-            sys.stderr.write(
-                "cs-readonly-guard: Schreibfreigabe aktiv (erteilt von "
-                f"{granted.get('granted_by', '?')}, gültig bis "
-                f"{granted.get('expires_at_iso', '?')}) — Befehl zugelassen.\n"
+    tool = data.get("tool_name")
+    tool_input = data.get("tool_input") or {}
+
+    if tool in FILE_TOOLS:
+        path = tool_input.get(FILE_TOOLS[tool], "") or ""
+        if _file_write_outside(path, data.get("cwd", "")):
+            _allow_if_approved()
+            _deny(
+                f"READ-ONLY-MODUS: {tool} auf {path or '(ohne Pfad)'} liegt außerhalb "
+                "des Workspace und wurde BLOCKIERT. Frei beschreibbar sind "
+                "/home/yolo/workspaces und /tmp — lege Berichte, Skripte und Notizen "
+                "dort an. Soll wirklich eine Datei außerhalb geändert werden, beschreibe "
+                "dem Nutzer Pfad und Änderung und bitte ihn, in der CentralStation-"
+                "Konsole \"Schreibzugriff freigeben\" zu klicken; eine Zustimmung im "
+                "Chat hebt die Sperre nicht auf."
             )
-            sys.exit(0)
-        reason = (
+        sys.exit(0)
+
+    if tool != "Bash":
+        sys.exit(0)
+    cmd = tool_input.get("command", "") or ""
+    if _is_write(cmd):
+        _allow_if_approved()
+        _deny(
             "READ-ONLY-MODUS: Dieser Befehl verändert ein System "
             "(Schreiboperation, evtl. auf einem Produktionssystem via SSH) und wurde "
             "BLOCKIERT. Wichtig: eine Zustimmung im Chat hebt diese Sperre NICHT auf "
@@ -169,18 +238,6 @@ def main() -> None:
             "Dauer des Zeitfensters erlaubt und du kannst ihn erneut ausführen. "
             "Reine Lese-Diagnose und lokale Workspace-Dateien sind immer erlaubt."
         )
-        # Block via BOTH mechanisms for cross-version compatibility:
-        #  - JSON permissionDecision "deny" (newer Claude Code), and
-        #  - exit code 2 with the reason on stderr (classic PreToolUse block).
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
-            }
-        }))
-        sys.stderr.write(reason + "\n")
-        sys.exit(2)
     sys.exit(0)
 
 

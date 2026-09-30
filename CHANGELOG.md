@@ -147,6 +147,28 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **The console's Claude could not save a file with its own file tools.** The
+  console granted only `Bash`, `WebFetch`, `WebSearch` and the MCP servers. In
+  `dontAsk` mode an unlisted tool is simply denied, so `Write` and `Edit` failed even
+  inside the workspace, and a write window did not help either, because it only reaches
+  the hook. This was not caused by a CLI update. The session logs show 34 denied
+  `Write` and 4 denied `Edit` calls since 2026-08-31. Most of the time the agent
+  quietly fell back to `cat > file` over Bash. On 2026-09-30 it fell back to
+  claude.ai Claude Docs instead, which was also denied.
+
+  `Read`, `Glob`, `Grep`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit` and `TodoWrite`
+  are now granted. The read-only guard now also checks the file tools by target path.
+  Inside `/home/yolo/workspaces` and `/tmp` they write freely, the same line the Bash
+  rules draw. Anywhere else they need the write window. That covers the agent's own
+  `CLAUDE.md`, `managed-settings.json` (its own hook), `~/.ssh/config` and `/etc`. The
+  path is checked after `realpath`, so neither `..` nor a symlink leads out of the
+  workspace. `entrypoint.sh` now rewrites `managed-settings.json` on every start.
+  Before, it kept an existing file as soon as the guard appeared in it, so a changed
+  matcher would never have reached an existing volume. Verified: tests in
+  `test_readonly_guard.py` (inside/outside, `..`, symlink, relative path, matcher
+  covers every file tool); the hook run with JSON on stdin (Write in the workspace →
+  exit 0, Edit on `~/.claude/CLAUDE.md` → deny).
+
 - **A deepsearch was cut off after 300 s.** Measured on one query: about 120 LLM
   calls, ~160 embeddings and ~50 reranks, finishing after 279 s — so close to the
   old 300 s limit that any variance broke it, and the agent reported "the deepsearch

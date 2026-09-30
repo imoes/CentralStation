@@ -67,6 +67,12 @@ _YOLO_HOME = "/home/yolo"
 #: für die Werkbank und beim nächsten Neuaufbau verloren.
 AGENT_CWD = os.environ.get("CS_AGENT_CWD", "/home/yolo/workspaces")
 
+#: Claude CLI built-ins the Console grants. Write/Edit/MultiEdit/NotebookEdit are
+#: path-checked by the PreToolUse hook (cs-readonly-guard.py) — free inside the
+#: workspace and /tmp, behind the write window everywhere else.
+CLAUDE_BUILTIN_TOOLS = ("Bash,Read,Glob,Grep,Write,Edit,MultiEdit,NotebookEdit,"
+                        "TodoWrite,WebFetch,WebSearch")
+
 
 def _agent_cwd() -> str:
     """AGENT_CWD, angelegt falls nötig; fällt auf das aktuelle Verzeichnis zurück."""
@@ -687,7 +693,12 @@ async def _run_cli_agent(
         # Build --allowedTools dynamically: built-ins + every MCP server in .claude.json.
         # configure_claude_credentials writes all personal MCP connectors (centralstation,
         # VibeMK, AWX-NG, …) into .claude.json at session-create time.
-        _allowed_tools = "Bash,WebFetch,WebSearch"
+        # File tools are listed explicitly: in dontAsk mode an unlisted tool is simply
+        # denied, so without Write/Edit the agent could not save a report to the
+        # workspace at all — not even inside a write window, which only reaches the
+        # hook. Where they may write is the hook's call (cs-readonly-guard.py:
+        # workspace + /tmp free, everything else behind the write window).
+        _allowed_tools = CLAUDE_BUILTIN_TOOLS
         try:
             import json as _jcfg
             _claude_cfg = os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude"))
@@ -696,7 +707,7 @@ async def _run_cli_agent(
             if _mcp_names:
                 _allowed_tools += "," + ",".join(f"mcp__{n}" for n in _mcp_names)
         except Exception:
-            _allowed_tools = "Bash,WebFetch,WebSearch,mcp__centralstation"
+            _allowed_tools = CLAUDE_BUILTIN_TOOLS + ",mcp__centralstation"
 
         if claude_started:
             # Session file exists — resume it.

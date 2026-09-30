@@ -114,3 +114,56 @@ def test_approval_file_is_root_owned_path() -> None:
     would be decorative.
     """
     assert guard.APPROVAL_FILE.startswith("/opt/")
+
+
+# ── Claude's file tools (Write/Edit/…) ───────────────────────────────────────
+# They write without a shell, so the Bash rules above never see them. The line is
+# the same one the Bash rules draw: the workspace and /tmp are the agent's own,
+# everything else — its own instructions, ssh config, system paths — is a change.
+
+@pytest.mark.parametrize("path", [
+    "/home/yolo/workspaces/reports/KTLNXTM-70_Migration.md",   # der gemeldete Fall
+    "/home/yolo/workspaces/skript.py",
+    "/tmp/notiz.txt",
+])
+def test_file_tool_inside_workspace_is_free(path: str) -> None:
+    assert guard._file_write_outside(path) is False, path
+
+
+@pytest.mark.parametrize("path", [
+    "/home/yolo/.claude/CLAUDE.md",          # die eigene Anleitung umschreiben
+    "/home/yolo/.claude/managed-settings.json",  # den eigenen Hook abschalten
+    "/home/yolo/.ssh/config",
+    "/etc/hosts",
+    "/home/yolo/workspaces/../.bashrc",      # .. aus dem Workspace heraus
+    "/home/yolo/workspaces-evil/x",          # Präfix ist kein Verzeichnis
+    "",                                      # ohne Ziel wird nicht durchgewinkt
+])
+def test_file_tool_outside_workspace_needs_approval(path: str) -> None:
+    assert guard._file_write_outside(path) is True, path
+
+
+def test_file_tool_symlink_out_of_workspace_is_caught(tmp_path, monkeypatch) -> None:
+    """Ein Symlink im Workspace, der nach draußen zeigt, zählt als draußen."""
+    ws = tmp_path / "ws"
+    outside = tmp_path / "outside"
+    ws.mkdir()
+    outside.mkdir()
+    (ws / "link").symlink_to(outside)
+    monkeypatch.setattr(guard, "FREE_WRITE_ROOTS", (str(ws),))
+    assert guard._file_write_outside(str(ws / "ok.md")) is False
+    assert guard._file_write_outside(str(ws / "link" / "evil.md")) is True
+
+
+def test_relative_path_resolves_against_cwd() -> None:
+    assert guard._file_write_outside("reports/x.md", "/home/yolo/workspaces") is False
+    assert guard._file_write_outside("x.md", "/home/yolo/.claude") is True
+
+
+def test_every_file_tool_is_in_the_hook_matcher() -> None:
+    """Ein Datei-Werkzeug, das der Hook prüft, aber der Matcher nicht zu ihm schickt,
+    ist ungeschützt — der Matcher steht in entrypoint.sh, die Liste hier."""
+    entry = (_GUARD.parent / "entrypoint.sh").read_text()
+    matcher = next(l for l in entry.splitlines() if '"matcher"' in l)
+    for tool in guard.FILE_TOOLS:
+        assert tool in matcher, tool
