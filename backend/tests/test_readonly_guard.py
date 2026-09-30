@@ -162,8 +162,20 @@ def test_relative_path_resolves_against_cwd() -> None:
 
 def test_every_file_tool_is_in_the_hook_matcher() -> None:
     """Ein Datei-Werkzeug, das der Hook prüft, aber der Matcher nicht zu ihm schickt,
-    ist ungeschützt — der Matcher steht in entrypoint.sh, die Liste hier."""
-    entry = (_GUARD.parent / "entrypoint.sh").read_text()
-    matcher = next(l for l in entry.splitlines() if '"matcher"' in l)
-    for tool in guard.FILE_TOOLS:
-        assert tool in matcher, tool
+    ist ungeschützt — der Matcher steht in claude-managed-settings.json, die Liste hier."""
+    import json
+    import re
+    cfg = json.loads((_GUARD.parent / "claude-managed-settings.json").read_text())
+    (entry,) = cfg["hooks"]["PreToolUse"]
+    assert entry["hooks"][0]["command"] == "python3 /opt/cs-readonly-guard.py"
+    for tool in ("Bash", *guard.FILE_TOOLS):
+        assert re.fullmatch(entry["matcher"], tool), tool
+
+
+def test_managed_settings_land_where_claude_reads_them() -> None:
+    """Claude Code liest verwaltete Einstellungen unter Linux nur aus /etc/claude-code/.
+    Der alte Ort ~/.claude/managed-settings.json wurde nie gelesen — der Hook hing
+    unbemerkt an einer Nutzerdatei auf einem Volume, das der Agent selbst beschreibt."""
+    dockerfile = (_GUARD.parent / "Dockerfile").read_text()
+    assert ("COPY userenv/claude-managed-settings.json "
+            "/etc/claude-code/managed-settings.json") in dockerfile

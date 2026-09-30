@@ -162,12 +162,28 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   rules draw. Anywhere else they need the write window. That covers the agent's own
   `CLAUDE.md`, `managed-settings.json` (its own hook), `~/.ssh/config` and `/etc`. The
   path is checked after `realpath`, so neither `..` nor a symlink leads out of the
-  workspace. `entrypoint.sh` now rewrites `managed-settings.json` on every start.
-  Before, it kept an existing file as soon as the guard appeared in it, so a changed
-  matcher would never have reached an existing volume. Verified: tests in
-  `test_readonly_guard.py` (inside/outside, `..`, symlink, relative path, matcher
-  covers every file tool); the hook run with JSON on stdin (Write in the workspace →
-  exit 0, Edit on `~/.claude/CLAUDE.md` → deny).
+  workspace.
+
+  **The guard was also wired in the wrong place, and it was fixed while testing.**
+  `entrypoint.sh` wrote `~/.claude/managed-settings.json`, a path Claude Code never
+  reads as managed settings. On Linux it reads them only from
+  `/etc/claude-code/`. The hook really worked only through a leftover
+  `~/.claude/settings.json` with a Bash-only matcher. That file sits on a volume the
+  agent owns, so the agent could have switched its own guard off. The settings are now
+  baked into the image at `/etc/claude-code/managed-settings.json`, root-owned. On
+  start the entrypoint removes the dead file and our leftover hook from
+  `settings.json`, and the user's model choice stays. A first run with the new matcher
+  in the old place showed the problem: `Write` to `/home/yolo/` went through with no
+  write window open.
+
+  Verified in the recreated container, by running the Claude CLI with the console's
+  exact flags: Write to `/home/yolo/workspaces/…` → written. Write to `/home/yolo/…`
+  → "READ-ONLY-MODUS", no file. `crontab -l` over Bash → still blocked. As `yolo`,
+  writing to or deleting `/etc/claude-code/managed-settings.json` → Permission denied.
+  Also verified: `test_readonly_guard.py` (inside/outside, `..`, symlink, relative
+  path, the matcher covers every file tool, the settings land in `/etc/claude-code/`).
+  Side effect: Claude in the Werkbank uses the same managed settings. There too, file
+  changes outside the workspace and `/tmp` need the write window.
 
 - **A deepsearch was cut off after 300 s.** Measured on one query: about 120 LLM
   calls, ~160 embeddings and ~50 reranks, finishing after 279 s — so close to the

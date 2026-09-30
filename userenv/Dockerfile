@@ -223,9 +223,14 @@ RUN apt-get update \
 WORKDIR /app
 COPY userenv/main.py ./main.py
 COPY userenv/hermes_config.yaml ./hermes_config.yaml
-# Read-only guard for Claude CLI (PreToolUse hook — blocks system-modifying Bash).
+# Read-only guard for Claude CLI (PreToolUse hook — blocks system-modifying Bash,
+# path-checks Write/Edit). Wired through MANAGED settings, which Claude Code reads on
+# Linux from /etc/claude-code/ only. Root-owned there, so the agent (yolo) can neither
+# edit nor delete the hook — a hook in ~/.claude/ (a volume yolo owns) could be
+# switched off by the very agent it is meant to restrain.
 COPY userenv/cs-readonly-guard.py /opt/cs-readonly-guard.py
-RUN chmod a+rx /opt/cs-readonly-guard.py
+COPY userenv/claude-managed-settings.json /etc/claude-code/managed-settings.json
+RUN chmod a+rx /opt/cs-readonly-guard.py && chmod 644 /etc/claude-code/managed-settings.json
 
 COPY userenv/entrypoint.sh /usr/local/bin/cs-entrypoint.sh
 RUN chmod +x /usr/local/bin/cs-entrypoint.sh

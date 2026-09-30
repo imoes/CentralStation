@@ -154,34 +154,36 @@ unset _ext_dir _ext _js
 
 
 # ── Claude Code managed-settings ──────────────────────────────────────
-# Admin-scoped (highest precedence, cannot be overridden by the model/user).
-# Includes a PreToolUse hook that enforces read-only: system-modifying Bash
-# commands are denied so the headless Claude CLI (--permission-mode dontAsk,
-# which cannot ask interactively) never performs writes without the user first
-# approving them. File tools (Write/Edit/…) go through the same hook, which lets
-# them write inside the workspace and /tmp and nowhere else without approval.
-# Rewritten on EVERY start: a check for "guard already present" kept an old file
-# with the Bash-only matcher, so a changed matcher never reached a running volume.
-_managed="$HOME/.claude/managed-settings.json"
-mkdir -p "$HOME/.claude"
-cat > "$_managed" <<'JSON'
-{
-  "disableRemoteControl": true,
-  "autoUploadSessions": false,
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
-        "hooks": [
-          { "type": "command", "command": "python3 /opt/cs-readonly-guard.py" }
-        ]
-      }
-    ]
-  }
-}
-JSON
-echo "cs-entrypoint: wrote Claude Code managed-settings.json (read-only guard)"
-unset _managed
+# The read-only guard is wired in /etc/claude-code/managed-settings.json, baked into
+# the image (root-owned, see Dockerfile). Earlier versions wrote the file to
+# ~/.claude/managed-settings.json — a path Claude Code never reads as managed
+# settings; what actually carried the hook was a leftover ~/.claude/settings.json
+# with a Bash-only matcher. Remove the dead file so nobody mistakes it for the
+# real one. From settings.json only OUR hook entry is removed — one place for the
+# rule; the rest of the file is the user's own (model choice etc.) and stays.
+rm -f "$HOME/.claude/managed-settings.json"
+python3 - "$HOME/.claude/settings.json" <<'PY' || true
+import json, sys
+p = sys.argv[1]
+try:
+    s = json.load(open(p))
+except Exception:
+    sys.exit(0)
+pre = (s.get("hooks") or {}).get("PreToolUse")
+if not isinstance(pre, list):
+    sys.exit(0)
+keep = [e for e in pre if "cs-readonly-guard" not in json.dumps(e)]
+if len(keep) == len(pre):
+    sys.exit(0)
+if keep:
+    s["hooks"]["PreToolUse"] = keep
+else:
+    s["hooks"].pop("PreToolUse")
+    if not s["hooks"]:
+        s.pop("hooks")
+json.dump(s, open(p, "w"), indent=2)
+print("cs-entrypoint: removed stale guard hook from ~/.claude/settings.json")
+PY
 
 # ── VS Code user settings ─────────────────────────────────────────────
 # Merge required settings on every start so they survive user edits and updates.
