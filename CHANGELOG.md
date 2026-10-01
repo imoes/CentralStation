@@ -110,15 +110,31 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 - Verified: e2e test mail to an opted-in user, with triage from qwen35b after 49 s. The
   cluster panel showed in the browser (fleet incident). 302 backend tests.
 
+- **Hour-of-week baseline** (migration 0049, `log_template_hourly`, 28 days). It
+  applies after 14 days of runtime, from the same hour of up to 4 previous weeks; the
+  higher of median and hour-of-week counts. Without it, a weekly job (Monday 09:00) would
+  be a spike every week, because it is active on only 2 days in 14 and so is not
+  "recurring". Existing 5-min values were rolled up immediately: 4 136 hourly values,
+  611 patterns. Verified: test `test_weekly_job_is_normal_in_its_hour_of_week`. While
+  writing it, the test caught an error: at 09:05 the start of the 15-min window (08:55)
+  had determined the hour, not the window being evaluated.
+- **Exact recount** of windows that stay capped after splitting (> 80 000 lines in
+  5 min). Graylog counts the 10 largest patterns of such a window (pivot); the larger
+  value wins.
+- **Self-test of the incident lifecycle against the real Postgres**
+  (`python -m app.scripts.error_cluster_selftest`, everything is rolled back):
+  **12/12**. Covered: single alert, host incident, merge into the cluster, members,
+  context, further pattern, closing, reopening, nothing left behind.
+- The 72 h backtest is unchanged after the engine changes: 4 immediate mails, both
+  waves in the first run. 304 tests.
+
 ### What is still missing (error clusters)
 
-- Windows with more than 80 000 lines in 5 min only count a lower bound. Exact
-  recounting by Graylog for this case is missing.
-- The hour-of-week baseline only becomes possible after 14 days of runtime. Until
-  then, the median over all windows applies.
-- Wazuh is not included yet (v1: Graylog + CheckMK).
-- The triage prompt is shared by log and fleet clusters. It is not tailored to fleet
-  causes (hypervisor, piggyback source).
+- **LLM calls per day.** They replace the budget as the point of observation and will
+  be counted after the first full day.
+- **Wazuh.** Planned as the next extension, with the rule ID as the pattern and spread
+  across agents plus source IP across agents (scans / lateral movement).
+- The triage prompt is shared by log and fleet clusters.
 
 ### What changed
 

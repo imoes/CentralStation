@@ -62,6 +62,7 @@ def _now() -> datetime:
 async def _hydrate(db) -> _Runtime:
     from app.models.error_cluster import (
         EntityBucket, ErrorCluster, ErrorClusterState, LogTemplate, LogTemplateBucket,
+        LogTemplateHourly,
     )
     now = _now()
     state = (await db.execute(select(ErrorClusterState).where(ErrorClusterState.id == 1))
@@ -87,6 +88,11 @@ async def _hydrate(db) -> _Runtime:
     for key, b, count, n_ent, ents in rows:
         store.buckets.setdefault(key, {})[b] = BucketRec(
             count, n_ent or 0, Counter(ents or {}) if b >= recent else None)
+    from app.services.error_clusters.engine import HOURLY_HISTORY
+    for key, h, count in await db.execute(
+            select(LogTemplateHourly.key, LogTemplateHourly.hour_start, LogTemplateHourly.count)
+            .where(LogTemplateHourly.hour_start >= now - HOURLY_HISTORY - timedelta(hours=1))):
+        store.hourly.setdefault(key, {})[h] = count
     for ent, b, count in await db.execute(
             select(EntityBucket.entity, EntityBucket.bucket_start, EntityBucket.count)
             .where(EntityBucket.bucket_start >= now - ENTITY_HISTORY)):
@@ -145,6 +151,12 @@ async def _persist(db, rt: _Runtime, t) -> None:
                      "complete": t.complete})
     if rows:
         await db.execute(pg_insert(LogTemplateBucket).values(rows).on_conflict_do_nothing())
+    hourly = [{"key": k, "hour_start": h, "count": store.hourly[k][h]} for k, h in store.new_hourly]
+    if hourly:
+        from app.models.error_cluster import LogTemplateHourly
+        stmt = pg_insert(LogTemplateHourly).values(hourly)
+        await db.execute(stmt.on_conflict_do_update(
+            index_elements=["key", "hour_start"], set_={"count": stmt.excluded.count}))
     ents = [{"entity": e[:255], "bucket_start": t.bucket_start, "count": n}
             for e, n in t.entities.most_common(1000) if e]
     if ents:
@@ -171,12 +183,16 @@ async def _persist(db, rt: _Runtime, t) -> None:
 
 
 async def prune(db) -> None:
-    """Täglich: alte Zählungen löschen (14 Tage Muster, 48 h Container)."""
+    """Täglich: alte Zählungen löschen (14 Tage 5-min, 28 Tage Stunden, 48 h Container)."""
     from app.models.error_cluster import EntityBucket, LogTemplateBucket
     now = _now()
     await db.execute(delete(LogTemplateBucket).where(
         LogTemplateBucket.bucket_start < now - HISTORY - timedelta(days=1)))
     await db.execute(delete(EntityBucket).where(EntityBucket.bucket_start < now - ENTITY_HISTORY))
+    from app.models.error_cluster import LogTemplateHourly
+    from app.services.error_clusters.engine import HOURLY_HISTORY
+    await db.execute(delete(LogTemplateHourly).where(
+        LogTemplateHourly.hour_start < now - HOURLY_HISTORY - timedelta(days=1)))
     await db.commit()
 
 

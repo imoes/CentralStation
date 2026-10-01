@@ -119,3 +119,28 @@ def test_capped_window_is_recounted_exactly():
     assert t.templates[LOG401].count == 90_000
     assert set(t.templates[LOG401].entities) == {"c1", "c2"}
     assert any('message:"' in s["query"] and "level:<=4" in s["query"] for s in seen["specs"])
+
+
+
+def test_weekly_job_is_normal_in_its_hour_of_week():
+    """Batchlauf jeden Montag 09:00–09:15 mit 3 000 Zeilen: an 2–3 Tagen in 14 aktiv, also
+    kein "wiederkehrendes" Muster nach Tagen — erst die Grundlast derselben Wochenstunde
+    macht ihn normal. Ohne sie wäre er jeden Montag eine Spitze."""
+    from app.services.error_clusters.collector import BucketTally, TemplateTally
+    from app.services.error_clusters.engine import BUCKET, MemoryStore, process
+    start = datetime(2026, 9, 7, 0, 0, tzinfo=timezone.utc)          # ein Montag
+    store = MemoryStore(start)
+    mails = []
+    b = start
+    while b < start + timedelta(days=22):
+        templates = {}
+        if b.weekday() == 0 and b.hour == 9 and b.minute < 15:
+            templates["weekly"] = TemplateTally("nightly batch <*> failed rows", 1_000,
+                                                Counter({"batch-runner": 1_000}), {"batchhost"},
+                                                ["x"])
+        ev = process(store, BucketTally(b, templates, Counter(), 0, True))
+        mails += [(e.bucket_start, e.action) for e in ev if e.mail and e.template.key == "weekly"]
+        b += BUCKET
+    third_monday = start + timedelta(days=21)
+    assert not [m for m in mails if m[0] >= third_monday], mails
+    assert store.hourly["weekly"][start.replace(hour=9)] == 3_000

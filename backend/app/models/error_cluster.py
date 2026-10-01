@@ -46,6 +46,16 @@ class LogTemplateBucket(Base):
     complete: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class LogTemplateHourly(Base):
+    """Stundensumme eines Musters, 28 Tage — Grundlast je Wochenstunde (wöchentliche Jobs)."""
+    __tablename__ = "log_template_hourly"
+
+    key: Mapped[str] = mapped_column(String(16), primary_key=True)
+    hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True,
+                                                 index=True)
+    count: Mapped[int] = mapped_column(Integer)
+
+
 class EntityBucket(Base):
     """Fehler je Container/Quelle und 5-min-Fenster — für "gleichzeitig auffällig"."""
     __tablename__ = "entity_buckets"

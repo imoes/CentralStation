@@ -8,6 +8,7 @@ Mails, Feed-Einträge und KI-Einschätzungen macht. Dieselbe Funktion treibt den
 """
 from __future__ import annotations
 
+import statistics
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -29,6 +30,9 @@ from app.services.error_clusters.rules import (
 
 BUCKET = timedelta(minutes=5)
 HISTORY = timedelta(days=14)
+#: Stundensummen für die Grundlast je Wochenstunde: 4 Vorwochen.
+HOURLY_HISTORY = timedelta(days=28)
+SEASON_WEEKS = 4
 MAX_BUCKET_ENTITIES = 50
 
 
@@ -98,12 +102,15 @@ class MemoryStore:
         self.templates: dict[str, TemplateInfo] = {}
         self.buckets: dict[str, dict[datetime, BucketRec]] = {}
         self.entity_buckets: dict[str, dict[datetime, int]] = {}
+        #: key → {Stundenbeginn: Summe} — Grundlast je Wochenstunde (rules.baseline).
+        self.hourly: dict[str, dict[datetime, int]] = {}
         self.open: dict[str, Episode] = {}
         self.closed: list[Episode] = []
         self.last_closed: dict[str, Episode] = {}
         #: Was dieser Lauf geändert hat — der DB-Store schreibt genau das (runner.persist).
         self.dirty_templates: set[str] = set()
         self.new_buckets: list[tuple[str, datetime]] = []
+        self.new_hourly: list[tuple[str, datetime]] = []
         self.dirty_episodes: dict[str, Episode] = {}
 
     def next_episode_id(self) -> str:
@@ -121,11 +128,16 @@ class MemoryStore:
         for series in self.entity_buckets.values():
             for b in [b for b in series if b < cut]:
                 del series[b]
+        hcut = now - HOURLY_HISTORY - timedelta(hours=1)
+        for series in self.hourly.values():
+            for h in [h for h in series if h < hcut]:
+                del series[h]
 
 
 def _record(store: MemoryStore, t: BucketTally) -> None:
     store.dirty_templates.clear()
     store.new_buckets.clear()
+    store.new_hourly.clear()
     store.dirty_episodes.clear()
     b = t.bucket_start
     for key, tt in t.templates.items():
@@ -144,6 +156,36 @@ def _record(store: MemoryStore, t: BucketTally) -> None:
         store.new_buckets.append((key, b))
     for ent, n in t.entities.items():
         store.entity_buckets.setdefault(ent, {})[b] = n
+
+
+def _rollup_hour(store: MemoryStore, b: datetime) -> None:
+    """Mit dem letzten Fenster einer Stunde (…:55) deren Summen je Muster festschreiben."""
+    if (b + BUCKET).minute != 0:
+        return
+    h = b.replace(minute=0, second=0, microsecond=0)
+    starts = [h + BUCKET * i for i in range(12)]       # nur die 12 Fenster dieser Stunde
+    for key, series in store.buckets.items():
+        total = sum(series[t].count for t in starts if t in series)
+        if total:
+            store.hourly.setdefault(key, {})[h] = total
+            store.new_hourly.append((key, h))
+
+
+def seasonal_values(store: MemoryStore, key: str, b: datetime) -> list[int]:
+    """Summen derselben Wochenstunde der Vorwochen (seit Erkennungsstart, höchstens 4).
+
+    Maßgeblich ist das gerade bewertete Fenster `b`, nicht der Beginn des 15-min-Fensters:
+    um 9:05 läge der bei 8:55 — verglichen würde die falsche Stunde.
+    """
+    h = b.replace(minute=0, second=0, microsecond=0)
+    series = store.hourly.get(key, {})
+    out = []
+    for k in range(1, SEASON_WEEKS + 1):
+        prev = h - timedelta(days=7 * k)
+        if prev < store.detector_started_at:
+            break
+        out.append(series.get(prev, 0))
+    return out
 
 
 def _series_stats(series: dict[datetime, BucketRec], window_start: datetime,
@@ -202,6 +244,7 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
     """Ein abgeschlossenes Fenster einarbeiten und die Ereignisse dieses Laufs liefern."""
     _record(store, t)
     b = t.bucket_start
+    _rollup_hour(store, b)
     now = b + BUCKET                       # Bewertung zum Ende des Fensters
     window_start = b - BUCKET * (WINDOW_BUCKETS - 1)
     history_start = max(store.detector_started_at, window_start - HISTORY)
@@ -221,8 +264,17 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
             srcs15 |= t.templates[key].sources
         n, nonzero, peak, usual, active_days = _series_stats(series, window_start, history_start, th)
         # Lernphase: noch keine Grundlast, nichts melden (rules.baseline, dünn besetzt).
-        lam = (None if detector_age < timedelta(hours=th.warmup_hours)
-               else max(median_with_zeros(nonzero, n), th.lam_floor))
+        if detector_age < timedelta(hours=th.warmup_hours):
+            lam = None
+        else:
+            lam = max(median_with_zeros(nonzero, n), th.lam_floor)
+            # Ab 14 Tagen: Grundlast der gleichen Wochenstunde (wöchentlicher Batchlauf
+            # Mo 9 Uhr ist an 2 Tagen in 14 aktiv — kein "wiederkehrendes" Muster nach
+            # active_days, aber in seiner Wochenstunde normal). Gilt die höhere der beiden.
+            if detector_age >= timedelta(days=th.seasonal_days):
+                vals = seasonal_values(store, key, b)
+                if len(vals) >= 2:
+                    lam = max(lam, statistics.median(vals) / 12)
         window = Window(counts=counts, entities=len(ents15), sources=len(srcs15) or 1,
                         usual_entities=usual, seen_before=bool(nonzero), active_days=active_days)
         verdict = evaluate(window, lam, th=th, history_peak=peak)
