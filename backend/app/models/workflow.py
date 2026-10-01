@@ -315,6 +315,12 @@ class Incident(Base):
     causal_context: Mapped[list | None] = mapped_column(
         postgresql.JSONB, nullable=True
     )
+    #: Art des Clusters, aus dem der Incident entstand (services/error_clusters):
+    #: "host" (mehrere Signale auf einem Host — auch alle Alt-Incidents),
+    #: "log_cluster" (ein Log-Muster über viele Container), "fleet" (ein CheckMK-Service
+    #: auf vielen Hosts).
+    kind: Mapped[str] = mapped_column(String(20), default="host", server_default="host",
+                                      index=True)
 
 
 class IncidentMember(Base):

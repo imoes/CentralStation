@@ -143,7 +143,7 @@ async def enrich_incident_causal_context(
 ) -> None:
     """Ergänzt causal_context für einen Incident (best-effort, nicht-blockierend).
 
-    Wird nach Incident-Erstellung aus correlate_docs aufgerufen.
+    Wird nach Incident-Erstellung aus error_clusters.incident.process_alerts aufgerufen.
     Fehler werden geloggt aber nicht weitergeworfen.
     """
     from app.models.workflow import Incident
@@ -159,7 +159,11 @@ async def enrich_incident_causal_context(
         )
         incident = result.scalar_one_or_none()
         if incident:
-            incident.causal_context = causal
+            # Ergänzen statt überschreiben: der Eintrag der Fehler-Cluster-Erkennung
+            # ({"type": "error_cluster"}) und Zusammenführungs-Vermerke bleiben stehen.
+            keep = [e for e in (incident.causal_context or [])
+                    if isinstance(e, dict) and e.get("type") in ("error_cluster", "merged_into")]
+            incident.causal_context = keep + list(causal)
             log.info(
                 "causal_correlator: causal_context gesetzt für incident %s → %s",
                 incident_id[:8], [c["service"] for c in causal],

@@ -349,6 +349,21 @@ async def get_prometheus_config(db: AsyncSession) -> PrometheusConfig:
     )
 
 
+@dataclass
+class ErrorClusterConfig:
+    """Fehler-Cluster-Erkennung (services/error_clusters). Beide Schalter sind Not-Aus."""
+    enabled: bool = False
+    mail_enabled: bool = False
+
+
+async def get_error_cluster_config(db: AsyncSession) -> ErrorClusterConfig:
+    s = await get_all_settings(db)
+    return ErrorClusterConfig(
+        enabled=(s.get("error_clusters.enabled") or "false").lower() == "true",
+        mail_enabled=(s.get("error_clusters.mail_enabled") or "false").lower() == "true",
+    )
+
+
 def _csv_list(s: dict, key: str) -> list[str]:
     return [v.strip() for v in (s.get(key) or "").split(",") if v.strip()]
 

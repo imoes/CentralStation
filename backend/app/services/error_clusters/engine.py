@@ -8,7 +8,7 @@ Mails, Feed-Einträge und KI-Einschätzungen macht. Dieselbe Funktion treibt den
 """
 from __future__ import annotations
 
-import itertools
+import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -44,8 +44,17 @@ class TemplateInfo:
 
 
 @dataclass
+class BucketRec:
+    count: int
+    n_entities: int
+    #: Container-Aufteilung — nur für die letzten drei Fenster gehalten (Ausbreitung,
+    #: Mail); ältere Fenster brauchen nur die Anzahl, für die übliche Breite.
+    entities: Counter | None = None
+
+
+@dataclass
 class Episode:
-    id: int
+    id: str
     key: str
     started_at: datetime
     last_active_at: datetime
@@ -82,28 +91,37 @@ class MemoryStore:
     def __init__(self, detector_started_at: datetime) -> None:
         self.detector_started_at = detector_started_at
         self.templates: dict[str, TemplateInfo] = {}
-        # key → {bucket_start: (count, Counter(entity → n))}
-        self.buckets: dict[str, dict[datetime, tuple[int, Counter]]] = {}
+        self.buckets: dict[str, dict[datetime, BucketRec]] = {}
         self.entity_buckets: dict[str, dict[datetime, int]] = {}
         self.open: dict[str, Episode] = {}
         self.closed: list[Episode] = []
         self.last_closed: dict[str, Episode] = {}
-        self._ids = itertools.count(1)
+        #: Was dieser Lauf geändert hat — der DB-Store schreibt genau das (runner.persist).
+        self.dirty_templates: set[str] = set()
+        self.new_buckets: list[tuple[str, datetime]] = []
+        self.dirty_episodes: dict[str, Episode] = {}
 
-    def next_episode_id(self) -> int:
-        return next(self._ids)
+    def next_episode_id(self) -> str:
+        return str(uuid.uuid4())
 
     def prune(self, now: datetime) -> None:
         cut = now - HISTORY - BUCKET * WINDOW_BUCKETS
+        keep_entities = now - BUCKET * WINDOW_BUCKETS
         for series in self.buckets.values():
             for b in [b for b in series if b < cut]:
                 del series[b]
+            for b, rec in series.items():
+                if rec.entities is not None and b < keep_entities:
+                    rec.entities = None
         for series in self.entity_buckets.values():
             for b in [b for b in series if b < cut]:
                 del series[b]
 
 
 def _record(store: MemoryStore, t: BucketTally) -> None:
+    store.dirty_templates.clear()
+    store.new_buckets.clear()
+    store.dirty_episodes.clear()
     b = t.bucket_start
     for key, tt in t.templates.items():
         info = store.templates.get(key)
@@ -116,23 +134,26 @@ def _record(store: MemoryStore, t: BucketTally) -> None:
                 info.examples.extend(e for e in tt.examples if e not in info.examples)
                 del info.examples[5:]
         ents = Counter(dict(tt.entities.most_common(MAX_BUCKET_ENTITIES)))
-        store.buckets.setdefault(key, {})[b] = (tt.count, ents)
+        store.buckets.setdefault(key, {})[b] = BucketRec(tt.count, len(tt.entities), ents)
+        store.dirty_templates.add(key)
+        store.new_buckets.append((key, b))
     for ent, n in t.entities.items():
         store.entity_buckets.setdefault(ent, {})[b] = n
 
 
-def _series_stats(series: dict[datetime, tuple[int, Counter]], window_start: datetime,
+def _series_stats(series: dict[datetime, BucketRec], window_start: datetime,
                   history_start: datetime, th: Thresholds):
     """Grundlast-Eingaben aus einer dünn besetzten Reihe: λ-Median, Perzentil, Container."""
     n = max(0, int((window_start - history_start) / BUCKET))
     nonzero_counts: list[int] = []
     nonzero_entities: list[int] = []
     sums: dict[int, int] = {}
-    for b, (count, ents) in series.items():
+    for b, rec in series.items():
+        count = rec.count
         if not (history_start <= b < window_start) or count <= 0:
             continue
         nonzero_counts.append(count)
-        nonzero_entities.append(len(ents))
+        nonzero_entities.append(rec.n_entities)
         idx = int((b - history_start) / BUCKET)
         for w in range(idx - WINDOW_BUCKETS + 1, idx + 1):   # alle 15-min-Fenster mit b
             if 0 <= w <= n - WINDOW_BUCKETS:
@@ -155,12 +176,13 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
 
     for key in set(t.templates) | set(store.open):
         series = store.buckets.get(key, {})
-        counts = tuple(series.get(window_start + BUCKET * i, (0, Counter()))[0]
-                       for i in range(WINDOW_BUCKETS))
+        recs = [series.get(window_start + BUCKET * i) for i in range(WINDOW_BUCKETS)]
+        counts = tuple(r.count if r else 0 for r in recs)
         ents15: Counter = Counter()
         srcs15: set = set()
-        for i in range(WINDOW_BUCKETS):
-            ents15.update(series.get(window_start + BUCKET * i, (0, Counter()))[1])
+        for r in recs:
+            if r and r.entities:
+                ents15.update(r.entities)
         if key in t.templates:
             srcs15 |= t.templates[key].sources
         n, nonzero, q, usual = _series_stats(series, window_start, history_start, th)
@@ -201,7 +223,9 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
         episode.rules |= set(verdict.rules)
         episode.peak15 = max(episode.peak15, verdict.count15)
         episode.total += counts[-1]
-        episode.entities.update(series.get(b, (0, Counter()))[1])
+        cur = series.get(b)
+        if cur and cur.entities:
+            episode.entities.update(cur.entities)
         episode.sources |= srcs15
 
         mail = action in ("open", "renotify") or (
@@ -218,6 +242,7 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
             store.closed.append(store.open.pop(key))
             store.last_closed[key] = episode
 
+        store.dirty_episodes[episode.id] = episode
         if action != "update":
             events.append(Event(action, episode, info, verdict, b, len(ents15), mail))
 

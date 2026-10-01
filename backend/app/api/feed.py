@@ -929,7 +929,16 @@ async def incident_timeline(
             "status": inc.status,
             "created_at": inc.created_at.isoformat(),
             "member_count": len(ext_ids),
-            "causal_context": inc.causal_context or [],
+            # Nur echte Ursachen (AIKB-Abhängigkeiten) — das Frontend zeigt jeden Eintrag
+            # als "Wahrscheinliche Ursache". Cluster-Kontext und Zusammenführung kommen
+            # getrennt, damit sie dort nicht als leere Ursache erscheinen.
+            "causal_context": [e for e in (inc.causal_context or [])
+                               if not (isinstance(e, dict) and e.get("type"))],
+            "kind": getattr(inc, "kind", "host"),
+            "error_cluster": next((e for e in (inc.causal_context or [])
+                                   if isinstance(e, dict) and e.get("type") == "error_cluster"), None),
+            "merged_into": next((e.get("incident_id") for e in (inc.causal_context or [])
+                                 if isinstance(e, dict) and e.get("type") == "merged_into"), None),
         },
         "timeline": timeline,
     }

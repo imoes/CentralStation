@@ -155,3 +155,12 @@ def containers_from_pivot(rows: list[dict]) -> list[dict]:
             out.append({"name": str(key[0]), "count": int(value)})
     out.sort(key=lambda c: (-c["count"], c["name"]))
     return out[:MAX_CONTAINERS]
+
+
+_PLACEHOLDER = re.compile(r"<[^<>\s]*>")
+
+
+def template_phrase(template: str) -> str | None:
+    """Suchphrase für ein Drain-Muster: Platzhalter (<*>, <NUM>, <IP> …) gelten als
+    veränderliche Teile, wie Zahlen in count_phrase."""
+    return count_phrase(_PLACEHOLDER.sub("0", template or ""))

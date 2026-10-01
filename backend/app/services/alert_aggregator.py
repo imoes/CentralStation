@@ -880,15 +880,15 @@ async def run_aggregation(db: AsyncSession) -> int:
         except Exception as exc:
             log.warning("OpenSearch indexing failed (non-fatal): %s", exc)
 
-        # Correlate new alerts into Incidents (best-effort, non-blocking)
+        # Incidents: die Fehler-Cluster-Erkennung ordnet neue Alerts ein — in einen
+        # laufenden übergreifenden Cluster oder einen host-Incident (best-effort).
         try:
-            import asyncio as _asyncio
             from app.core.database import AsyncSessionLocal as _ASL
-            from app.services.incident.correlator import correlate_docs
+            from app.services.error_clusters.incident import process_alerts
 
             async def _do_correlate(d: list[dict]) -> None:
                 async with _ASL() as s:
-                    await correlate_docs(d, s)
+                    await process_alerts(d, s)
 
             from app.core.tasks import run_background
             run_background(_do_correlate(docs), name="incident_correlation")
@@ -939,8 +939,8 @@ async def run_aggregation(db: AsyncSession) -> int:
                 checkmk_active_ext_ids,
                 db,
             )
-            from app.services.incident.correlator import resolve_inactive_checkmk_incidents
-            resolved_incidents, recovered_incident_hosts = await resolve_inactive_checkmk_incidents(
+            from app.services.error_clusters.incident import close_recovered
+            resolved_incidents, recovered_incident_hosts = await close_recovered(
                 checkmk_active_ext_ids,
                 db,
             )

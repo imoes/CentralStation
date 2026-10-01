@@ -314,14 +314,27 @@ async def run_feed_housekeeping() -> None:
         )
 
 
-async def run_incident_housekeeping() -> None:
-    """Auto-resolve incidents whose alerts are resolved or stale (> 2h idle)."""
+async def run_error_cluster_prune() -> None:
     from app.core.database import AsyncSessionLocal
-    from app.services.incident.correlator import resolve_stale_incidents
+    from app.services.error_clusters.runner import prune
+    async with AsyncSessionLocal() as db:
+        try:
+            await prune(db)
+        except Exception as e:
+            logger.warning("error_clusters prune failed: %s", e)
+
+
+async def run_incident_housekeeping() -> None:
+    """host-Incidents schließen, deren Mitglieder alle erledigt sind (Sicherheitsnetz).
+
+    Übergreifende Cluster-Incidents schließt ihre Episode in der Fehler-Cluster-Erkennung.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.services.error_clusters.incident import resolve_inactive_host_incidents
 
     async with AsyncSessionLocal() as db:
         try:
-            n = await resolve_stale_incidents(db)
+            n = await resolve_inactive_host_incidents(db)
             if n:
                 logger.info("Incident housekeeping: resolved %d incidents", n)
         except Exception as e:
@@ -408,6 +421,15 @@ async def start_scheduler() -> None:
     _scheduler.add_job(run_generative_refresh, "interval",
                        minutes=config.generative_interval_minutes, id="generative_refresh",
                        replace_existing=True, next_run_time=datetime.now(timezone.utc) + timedelta(seconds=45))
+    # Fehler-Cluster-Erkennung: alle 5 min ein abgeschlossenes Fenster; schaltet sich
+    # über error_clusters.enabled selbst ab. Erster Lauf holt 24 h still nach.
+    from app.services.error_clusters.runner import run_error_cluster_detection
+    _scheduler.add_job(run_error_cluster_detection, "interval", minutes=5,
+                       id="error_clusters", replace_existing=True, max_instances=1,
+                       coalesce=True,
+                       next_run_time=datetime.now(timezone.utc) + timedelta(seconds=60))
+    _scheduler.add_job(run_error_cluster_prune, "cron", hour=3, minute=15,
+                       id="error_clusters_prune", replace_existing=True)
     _scheduler.add_job(run_score_housekeeping, "cron", hour=2, minute=0,
                        id="score_housekeeping", replace_existing=True)
     _scheduler.add_job(run_feed_housekeeping, "cron", hour=3, minute=0,

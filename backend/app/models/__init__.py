@@ -8,6 +8,9 @@ from app.models.audit import AuditLog
 from app.models.settings import GlobalSetting
 from app.models.workflow import UserPreference, UserJiraQuery, WorkSession
 from app.models.remediation import RemediationProposal, PlaybookDraft
+from app.models.error_cluster import (
+    LogTemplate, LogTemplateBucket, EntityBucket, ErrorCluster, ErrorClusterState,
+)
 
 __all__ = [
     "User", "RefreshToken",
@@ -21,4 +24,5 @@ __all__ = [
     "UserPreference", "UserJiraQuery", "WorkSession",
     "RemediationProposal",
     "PlaybookDraft",
+    "LogTemplate", "LogTemplateBucket", "EntityBucket", "ErrorCluster", "ErrorClusterState",
 ]
