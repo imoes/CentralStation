@@ -5,7 +5,10 @@ in the alerts table.
 
 Dedup strategy (per source):
   - CheckMK:  status-based — re-use existing open alert for same host:service
-  - Graylog:  cooldown-based — suppress if same dedup_key seen within COOLDOWN window
+  - Graylog:  cooldown-based — suppress if same dedup_key OR the same count query is
+              already open within the COOLDOWN window. Each entry carries an exact
+              occurrence count from Graylog for its window [since, until], and an ongoing
+              error is continued into the next window (graylog_occurrences).
   - Wazuh:    cooldown-based — suppress if same agent:rule_id seen within COOLDOWN window
 """
 import logging
@@ -186,6 +189,7 @@ async def _resolve_stale_checkmk_alerts(
 
 async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 60) -> list[dict]:
     from app.services.connectors.graylog import GraylogConnector
+    from app.services.graylog_occurrences import count_query
     creds = decrypt_credentials(connector.encrypted_credentials)
     svc = GraylogConnector(base_url=connector.base_url, credentials=creds)
     try:
@@ -307,6 +311,12 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
                     "hyde_relevant": m.get("hyde_relevant", False),
                     "level": level,
                     "http_response_code": http_code,
+                    # Zählung: Abfrage + Connector stehen hier, gezählt wird erst in
+                    # run_aggregation, weil das Zeitfenster vom Vorgänger-Eintrag abhängt.
+                    "occurrences": {
+                        "query": count_query(m.get("query", ""), src_host, msg_text),
+                        "connector_id": str(connector.id),
+                    },
                 },
             })
         return results
@@ -546,6 +556,121 @@ async def _filter_enrichable_docs(docs: list[dict], db: AsyncSession) -> list[di
     return relevant_checkmk + relevant_others
 
 
+async def _open_graylog_queries(db: AsyncSession, cutoff: datetime) -> set[str]:
+    """Zählabfragen der Graylog-Einträge, deren Fenster noch offen ist."""
+    rows = (await db.execute(
+        select(Alert.metadata_).where(Alert.source == "graylog", Alert.created_at >= cutoff)
+    )).scalars().all()
+    return {q for m in rows if (q := ((m or {}).get("occurrences") or {}).get("query"))}
+
+
+async def _count_graylog_occurrences(
+    db: AsyncSession,
+    connectors: dict[str, ConnectorConfig],
+    now: datetime,
+    window_minutes: int,
+    cutoff: datetime,
+) -> tuple[list[Alert], list[Alert]]:
+    """Zählt die Graylog-Einträge des laufenden Fensters und setzt Dauerfehler fort.
+
+    Rückgabe: (nachgezählte Einträge, neue Fortsetzungs-Einträge).
+
+    * Einträge, deren Fenster noch offen ist (created_at >= cutoff), werden über
+      [since, jetzt] neu gezählt — exakt, von Graylog.
+    * Ein Eintrag, dessen Fenster gerade abgelaufen ist und der noch keinen Nachfolger
+      hat, wird über [until, jetzt] weitergezählt. Gab es dort Meldungen, entsteht ein
+      Nachfolger mit genau diesem Fenster — auch wenn der Fehler in der Stichprobe des
+      Laufs fehlte. Ohne das tauchte ein Dauerfehler nur auf, wenn er zufällig unter den
+      neuesten Meldungen war (zweimal in 48 h bei 85 000 Zeilen in 6 h).
+    """
+    from app.services.connectors.graylog import GraylogConnector
+    from app.services.graylog_occurrences import iso
+
+    await db.flush()   # neue Einträge dieses Laufs bekommen id + created_at
+    until = iso(now)
+
+    def _occ(a: Alert) -> dict:
+        return dict((a.metadata_ or {}).get("occurrences") or {})
+
+    open_rows = (await db.execute(
+        select(Alert).where(Alert.source == "graylog", Alert.created_at >= cutoff)
+    )).scalars().all()
+    targets = [a for a in open_rows if _occ(a).get("query") and _occ(a).get("since")]
+    open_ext = {a.external_id for a in open_rows}
+    open_queries = {_occ(a).get("query") for a in open_rows} - {None}
+
+    expired_rows = (await db.execute(
+        select(Alert).where(
+            Alert.source == "graylog",
+            Alert.created_at >= cutoff - timedelta(minutes=window_minutes),
+            Alert.created_at < cutoff,
+        ).order_by(Alert.created_at.desc())
+    )).scalars().all()
+    # Ein Vorgänger je Zählabfrage, nicht je dedup_key: mehrere abgelaufene Einträge
+    # mit derselben Abfrage sind derselbe Fehler und bekommen EINEN Nachfolger.
+    predecessors: dict[str, Alert] = {}
+    for a in expired_rows:
+        q = _occ(a).get("query")
+        if (q and _occ(a).get("until") and q not in open_queries
+                and a.external_id not in open_ext and q not in predecessors):
+            predecessors[q] = a
+
+    by_connector: dict[str, list[dict]] = {}
+    for a in targets:
+        o = _occ(a)
+        by_connector.setdefault(o.get("connector_id", ""), []).append(
+            {"id": f"open:{a.id}", "query": o["query"], "since": o["since"], "until": until})
+    for a in predecessors.values():
+        o = _occ(a)
+        if o["until"] >= until:
+            continue
+        by_connector.setdefault(o.get("connector_id", ""), []).append(
+            {"id": f"next:{a.id}", "query": o["query"], "since": o["until"], "until": until})
+
+    counts: dict[str, dict] = {}
+    for connector_id, specs in by_connector.items():
+        connector = connectors.get(connector_id)
+        if not connector:
+            continue
+        svc = GraylogConnector(
+            base_url=connector.base_url,
+            credentials=decrypt_credentials(connector.encrypted_credentials),
+        )
+        counts.update(await svc.count_occurrences(specs))
+
+    recounted: list[Alert] = []
+    for a in targets:
+        c = counts.get(f"open:{a.id}")
+        if c is None:
+            continue   # nicht gezählt — alter Stand bleibt, statt 0 zu behaupten
+        a.metadata_ = {**(a.metadata_ or {}),
+                       "occurrences": {**_occ(a), **c, "until": until}}
+        recounted.append(a)
+
+    continued: list[Alert] = []
+    for a in predecessors.values():
+        c = counts.get(f"next:{a.id}")
+        if not c or c["count"] <= 0:
+            continue
+        o = _occ(a)
+        nxt = Alert(
+            source=a.source,
+            severity=a.severity,
+            title=a.title,
+            body=a.body,
+            external_id=a.external_id,
+            status="new",
+            metadata_={**(a.metadata_ or {}), "occurrences": {
+                "query": o["query"], "connector_id": o.get("connector_id"),
+                "since": o["until"], "until": until, **c,
+                "continuation_of": str(a.id),
+            }},
+        )
+        db.add(nxt)
+        continued.append(nxt)
+    return recounted, continued
+
+
 async def run_aggregation(db: AsyncSession) -> int:
     """Poll all enabled connectors, persist new alerts, return count of new alerts."""
     result = await db.execute(
@@ -565,10 +690,12 @@ async def run_aggregation(db: AsyncSession) -> int:
         cooldown_minutes = agent_cfg.interval_minutes
     except Exception:
         cooldown_minutes = _DEDUP_COOLDOWN_FALLBACK
-    cooldown_cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
+    now = datetime.now(timezone.utc)
+    cooldown_cutoff = now - timedelta(minutes=cooldown_minutes)
     _COOLDOWN_SOURCES = {"graylog", "wazuh"}
 
     new_count = 0
+    open_graylog_queries: set[str] | None = None   # lazily loaded, see main loop
     new_alerts: list[Alert] = []
     new_ext_urls: list[str | None] = []  # parallel list: external_url per new alert
     checkmk_active_ext_ids: set[str] = set()
@@ -655,6 +782,28 @@ async def run_aggregation(db: AsyncSession) -> int:
             meta = dict(item.get("metadata") or {})
             if item.get("external_url"):
                 meta["external_url"] = item["external_url"]
+            occ = meta.get("occurrences") or {}
+            if item.get("source") == "graylog" and occ.get("query"):
+                # Dieselbe Zählabfrage = derselbe Fehler, auch wenn der dedup_key
+                # abweicht (etwa weil ein Zeitstempel mitten in der Zeile ihn jede
+                # Sekunde ändert). Er wird im offenen Eintrag gezählt, nicht doppelt.
+                if open_graylog_queries is None:
+                    open_graylog_queries = await _open_graylog_queries(db, cooldown_cutoff)
+                if occ["query"] in open_graylog_queries:
+                    continue
+                open_graylog_queries.add(occ["query"])
+            if item.get("source") == "graylog" and occ.get("query") and ext_id:
+                # Zählfenster: schließt an den Vorgänger desselben Fehlers an.
+                from app.services.graylog_occurrences import window_since
+                prev = (await db.execute(
+                    select(Alert).where(Alert.external_id == ext_id)
+                    .order_by(Alert.created_at.desc()).limit(1)
+                )).scalar_one_or_none()
+                prev_until = (((prev.metadata_ or {}).get("occurrences") or {}).get("until")
+                              if prev else None)
+                meta["occurrences"] = {
+                    **occ, "since": window_since(now, cooldown_minutes, prev_until),
+                }
             alert = Alert(
                 source=item["source"],
                 severity=item["severity"],
@@ -668,6 +817,37 @@ async def run_aggregation(db: AsyncSession) -> int:
             new_alerts.append(alert)
             new_ext_urls.append(item.get("external_url"))
             new_count += 1
+
+    # Graylog zählen lassen, wie oft jeder Fehler im Fenster seines Eintrags auftrat,
+    # und Dauerfehler im nächsten Fenster fortschreiben (graylog_occurrences).
+    recounted: list[Alert] = []
+    graylog_connectors = {str(c.id): c for c in connectors if c.type == "graylog"}
+    if graylog_connectors:
+        try:
+            recounted, continued = await _count_graylog_occurrences(
+                db, graylog_connectors, now, cooldown_minutes, cooldown_cutoff,
+            )
+        except Exception as exc:
+            log.warning("Graylog occurrence count failed (non-fatal): %s", exc)
+        else:
+            for alert in continued:
+                new_alerts.append(alert)
+                new_ext_urls.append((alert.metadata_ or {}).get("external_url"))
+                new_count += 1
+            new_ids = {id(a) for a in new_alerts}
+            recounted = [a for a in recounted if id(a) not in new_ids]
+            if not new_count and recounted:
+                await db.commit()
+
+    if recounted:
+        # Bereits indizierte Einträge: nur die Metadaten nachziehen. Ein vollständiges
+        # Neuindizieren würde die KI-Analyse im Dokument überschreiben.
+        try:
+            from app.services.feed_index import update_metadata
+            for a in recounted:
+                await update_metadata(a.source, str(a.id), a.metadata_ or {})
+        except Exception as exc:
+            log.warning("OpenSearch occurrence update failed (non-fatal): %s", exc)
 
     if new_count > 0:
         # flush to get auto-generated IDs and timestamps before commit
@@ -730,7 +910,12 @@ async def run_aggregation(db: AsyncSession) -> int:
                     llm_cfg = await get_active_llm_config(s)
                     searxng = await get_searxng_config(s)
                     searxng_url = searxng.base_url if (agent_cfg.workflow_web_search and searxng.is_configured) else ""
-                    relevant = await _filter_enrichable_docs(docs_to_enrich, s)
+                    # Fortsetzungen eines Dauerfehlers nicht erneut analysieren — es ist
+                    # derselbe Fehler wie im Vorgänger, nur im nächsten Zeitfenster.
+                    fresh = [d for d in docs_to_enrich
+                             if not (((d.get("metadata") or {}).get("occurrences") or {})
+                                     .get("continuation_of"))]
+                    relevant = await _filter_enrichable_docs(fresh, s)
                 if relevant:
                     from app.core.tasks import run_background
                     run_background(enrich_batch(

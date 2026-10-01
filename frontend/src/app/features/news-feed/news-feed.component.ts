@@ -479,6 +479,10 @@ const SEVERITY_COLOR: Record<string, string> = {
                 <span class="lh-dot">·</span>
                 <span class="lh-loc">{{ item.location_name }}</span>
               }
+              @if (occurrences(item); as occ) {
+                <span class="lh-dot">·</span>
+                <span class="lh-occ" [title]="occ.detail">{{ occ.label }}</span>
+              }
               <span class="lh-spacer"></span>
               <span class="lh-time" [title]="absTime(item.created_at)">{{ relTime(item.created_at) }}</span>
               @if (item.status === 'acknowledged') {
@@ -540,6 +544,12 @@ const SEVERITY_COLOR: Record<string, string> = {
                     <span class="host-tag host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Server Cockpit öffnen'">
                       <mat-icon style="font-size:12px;height:12px;width:12px">dns</mat-icon>
                       {{ itemHostLabel(item) }}
+                    </span>
+                  }
+                  @if (occurrences(item); as occ) {
+                    <span class="occ-tag" [title]="occ.detail">
+                      <mat-icon style="font-size:12px;height:12px;width:12px">repeat</mat-icon>
+                      {{ occ.label }}
                     </span>
                   }
                 </div>
@@ -1032,6 +1042,13 @@ const SEVERITY_COLOR: Record<string, string> = {
       font-size: 11px; color: var(--mat-sys-on-surface-variant);
       display: flex; align-items: center; gap: 2px;
     }
+    .occ-tag {
+      font-size: 12px; color: var(--mat-sys-on-surface-variant);
+      display: flex; align-items: center; gap: 2px;
+      padding: 0 6px; border-radius: 8px;
+      background: color-mix(in srgb, currentColor 10%, transparent);
+      cursor: help;
+    }
     .host-tag {
       font-size: 13px; color: var(--mat-sys-on-surface-variant);
       display: flex; align-items: center; gap: 2px;
@@ -1205,6 +1222,7 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .lh-sev    { font-size: 10px; padding: 1px 6px; border-radius: 2px; background: rgba(0,0,0,.18); }
     :host-context(html.cs-theme-lcars) .lh-host   { font-family: 'Fira Code',monospace; font-size: 11px; opacity: .85; text-transform: none; }
     :host-context(html.cs-theme-lcars) .lh-loc    { opacity: .7; font-size: 10px; }
+    :host-context(html.cs-theme-lcars) .lh-occ    { font-size: 11px; font-weight: 700; text-transform: none; cursor: help; }
     :host-context(html.cs-theme-lcars) .lh-spacer { flex: 1; }
     :host-context(html.cs-theme-lcars) .lh-time   { opacity: .55; font-size: 10px; }
     :host-context(html.cs-theme-lcars) .lh-ack    { opacity: .8; font-size: 12px; }
@@ -2157,6 +2175,30 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       day: '2-digit', month: '2-digit', year: 'numeric',
       hour: '2-digit', minute: '2-digit',
     });
+  }
+
+  /**
+   * Wie oft ein zusammengefasster Graylog-Fehler im Fenster dieses Eintrags auftrat —
+   * von Graylog gezählt (metadata.occurrences). Ohne diese Angabe sah ein Eintrag aus,
+   * als sei der Fehler einmal passiert, auch wenn es Tausende waren.
+   */
+  occurrences(item: FeedItem): { label: string; detail: string } | null {
+    const o = item.metadata?.['occurrences'] as {
+      count?: number; since?: string; until?: string;
+      containers?: { name: string; count: number }[];
+    } | undefined;
+    if (!o || typeof o.count !== 'number' || !o.since || !o.until) return null;
+    const minutes = Math.max(1, Math.round(
+      (new Date(o.until).getTime() - new Date(o.since).getTime()) / 60000));
+    const containers = o.containers ?? [];
+    const label = `${o.count.toLocaleString('de-DE')}× in ${minutes} min`
+      + (containers.length > 1 ? ` · ${containers.length} Container` : '');
+    const lines = [
+      `Von Graylog gezählt: ${this.absTime(o.since)} – ${this.absTime(o.until)}`,
+      ...containers.slice(0, 15).map(c => `${c.count.toLocaleString('de-DE')}× ${c.name}`),
+    ];
+    if (containers.length > 15) lines.push(`… und ${containers.length - 15} weitere`);
+    return { label, detail: lines.join('\n') };
   }
 
   absTime(iso: string): string {

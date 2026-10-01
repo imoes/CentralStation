@@ -5,12 +5,15 @@ Ref: llm-graylog-analyse/graylog_analyzer.py (Views Search API + HyDE multi-quer
 """
 import base64
 import hashlib
+import logging
 import re
 
 import httpx
 
 from app.schemas.connector import ConnectorTestResult
 from app.services.connectors.base import BaseConnector
+
+log = logging.getLogger(__name__)
 
 # Timestamp prefix patterns to strip before dedup key generation
 # (ref: llm-graylog-analyse/graylog_analyzer.py:_TS_PATTERNS)
@@ -253,6 +256,9 @@ class GraylogConnector(BaseConnector):
                     "dedup_key": dk,
                     "vendor": detect_vendor(source, raw_message),
                     "hyde_relevant": bool(m.get("hyde_relevant")),
+                    # Die Abfrage, aus der die Meldung kam — die Zählung pro Feed-
+                    # Eintrag (graylog_occurrences) wendet dieselben Filter an.
+                    "query": queries[i],
                 })
         return messages
 
@@ -273,3 +279,68 @@ class GraylogConnector(BaseConnector):
             switch_type = switch_name[:3].lower() if switch_name else "nsa"
             result.append({**msg, "switch_name": switch_name, "switch_type": switch_type})
         return result
+
+    async def count_occurrences(
+        self,
+        specs: list[dict],
+        chunk_size: int = 20,
+    ) -> dict[str, dict]:
+        """Exakte Anzahl je Zählabfrage, aufgeteilt nach Container.
+
+        specs: [{"id", "query", "since", "until"}] mit ISO-Zeitstempeln (absolutes
+        Fenster). Ergebnis: {id: {"count": int, "containers": [{"name", "count"}]}}.
+        Graylog zählt serverseitig (Pivot) — es werden keine Meldungen übertragen, egal
+        wie viele es sind. Eine Abfrage, die Graylog ablehnt, fehlt im Ergebnis, statt
+        mit 0 zu erscheinen: "nicht gezählt" ist etwas anderes als "nicht aufgetreten".
+        """
+        from app.services.graylog_occurrences import containers_from_pivot
+
+        out: dict[str, dict] = {}
+        for start in range(0, len(specs), chunk_size):
+            chunk = specs[start:start + chunk_size]
+            payload = {"queries": [
+                {
+                    "id": f"c{i}",
+                    "timerange": {"type": "absolute", "from": s["since"], "to": s["until"]},
+                    "query": {"type": "elasticsearch", "query_string": s["query"]},
+                    "search_types": [{
+                        "id": f"p{i}",
+                        "type": "pivot",
+                        "row_groups": [{"type": "values", "fields": ["container_name"],
+                                        "limit": 100}],
+                        "column_groups": [],
+                        "series": [{"type": "count", "id": "count()"}],
+                        "rollup": True,
+                        "sort": [],
+                        "streams": [],
+                    }],
+                }
+                for i, s in enumerate(chunk)
+            ]}
+            try:
+                async with self._client(timeout=60.0) as client:
+                    r = await client.post(
+                        f"{self.base_url}/api/views/search/sync",
+                        headers=self._headers(),
+                        json=payload,
+                    )
+                    r.raise_for_status()
+                results = r.json().get("results", {})
+            except Exception as exc:
+                log.warning("Graylog occurrence count failed for %d queries: %s",
+                            len(chunk), exc)
+                continue
+            for i, s in enumerate(chunk):
+                res = results.get(f"c{i}", {})
+                if res.get("errors"):
+                    log.debug("Graylog count query rejected (%s): %s",
+                              s["id"], res["errors"])
+                    continue
+                st = res.get("search_types", {}).get(f"p{i}")
+                if not st or not isinstance(st.get("total"), int):
+                    continue
+                out[s["id"]] = {
+                    "count": st["total"],
+                    "containers": containers_from_pivot(st.get("rows", [])),
+                }
+        return out

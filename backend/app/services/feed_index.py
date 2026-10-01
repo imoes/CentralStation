@@ -274,6 +274,26 @@ async def index_item(item: dict) -> None:
         log.warning("OpenSearch index failed for %s: %s", doc_id, e)
 
 
+async def update_metadata(source: str, doc_id: str, metadata: dict) -> None:
+    """Ersetzt nur das metadata-Objekt eines indizierten Eintrags.
+
+    Teilaktualisierung statt Neuindizieren: das Dokument trägt Felder, die nach dem
+    Indizieren dazukamen (ai_insight, ai_resolution), und die blieben sonst nicht stehen.
+    Das metadata-Objekt wird als Ganzes übergeben; Listen darin (containers) ersetzt
+    OpenSearch beim Zusammenführen vollständig.
+    """
+    os_client = get_opensearch()
+    try:
+        await os_client.update(
+            index=_index(source),
+            id=str(doc_id),
+            body={"doc": {"metadata": metadata}},
+            refresh=False,
+        )
+    except Exception as e:
+        log.warning("OpenSearch metadata update failed for %s: %s", doc_id, e)
+
+
 async def index_items(items: list[dict]) -> None:
     """Bulk index a list of feed items."""
     if not items:

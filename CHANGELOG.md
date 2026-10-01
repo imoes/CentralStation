@@ -147,6 +147,42 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **A Graylog error in the feed showed up as if it had happened once, even when it
+  happened thousands of times.** Example: `Failed to read change-log: HTTP Status '401
+  Unauthorized'` from the CUE Zipline containers. A search found 2 entries in 48 h.
+  Graylog had 85,960 error lines in 6 h from 24 containers. Three causes:
+  every 2 minutes the collector took only the **50 newest** messages from all of
+  Graylog (out of ~47,000 in 10 minutes), so the error got into the feed only by
+  chance. Identical errors were merged per window, but silently, and no count was
+  shown. The merge key ignored the container, and for some log formats it changed every
+  second, because a timestamp in the middle of the line was not removed.
+
+  Now **Graylog counts**. Every Graylog entry carries a count query: the source query,
+  restricted to the same host and the fixed part of the message text. That query is
+  counted server-side and split by container (pivot), so no messages are transferred.
+  Each entry covers a window `[since, until]` that is recounted every run. An ongoing
+  error is continued into the next window even if it is missing from the sample, and
+  windows join without gaps or overlap. Entries with the same count query count as one
+  error, so the timestamp-in-the-line case no longer gives a dozen identical entries
+  per window. Continuations are not analysed by the AI again (same error, next window).
+  The feed card shows `1,334× in 60 min · 22 containers`, and the tooltip shows the
+  window and the containers. In the LCARS theme it appears in the header bar. Open
+  entries update their metadata in the feed index by partial update, so the AI analysis
+  in the document stays.
+
+  Verified: the generated count query for the Zipline line returns exactly the 85,960
+  from the hand query (24 containers). After deploying, one run produced 11 instead of
+  35 Graylog entries, no duplicate count queries, all with a count. The feed API and
+  the card in the browser (LCARS) show the count. 16 tests in
+  `test_graylog_occurrences.py`.
+
+  Still missing: messages without at least two fixed words (only numbers, times, IDs)
+  get no count query, so they show no count. **The continuation into the next window is
+  not yet observed live**, because the window here is 60 min (the agent interval) and
+  the first one expires after deployment. Container names come only from the
+  `container_name` field. Host logs without it are counted in the total, but no
+  container is listed.
+
 - **A new console session was placed at the bottom of the list.** The list is ordered
   "most recently active first": the backend sorts by `last_activity_at`, and creating
   a session sets it to now. The frontend appended the new session to the end, though.
