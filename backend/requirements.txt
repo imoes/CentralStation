@@ -48,7 +48,10 @@ opensearch-py==2.7.1
 # used by codex/claude CLI native MCP clients). 2.13.3 is the LAST 2.x release that
 # still exposes sse_app() — 2.14+ removed it. 3.x rebuilt the API entirely. Pin to
 # the 2.13 line so the SSE endpoint Hermes relies on keeps working unchanged.
-fastmcp>=2.13,<2.14
+# Exakt die laufende Version: fastmcp >= 2.13.1 verlangt uvicorn >= 0.35, oben ist
+# uvicorn 0.32.1 gepinnt. Mit dem Bereich >=2.13,<2.14 scheiterte jeder Neubau dieser
+# Schicht an der Auflösung — es fiel nur nicht auf, solange sie aus dem Cache kam.
+fastmcp==2.13.0.2
 
 # Email dispatch
 aiosmtplib>=3.0,<4
@@ -72,3 +75,7 @@ scipy>=1.11,<2
 # Testing
 pytest>=8.0
 pytest-asyncio>=0.24
+
+# Fehler-Cluster-Erkennung: Laufzeit-Abhängigkeit von drain3 (das selbst im Dockerfile
+# mit --no-deps installiert wird, siehe dort). cachetools kommt bereits über fastmcp.
+jsonpickle>=3,<5

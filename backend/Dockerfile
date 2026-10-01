@@ -16,6 +16,11 @@ WORKDIR /app
 
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# drain3 0.9.11 pinnt cachetools==4.2.1 und jsonpickle==1.5.1 — beide längst überholt und
+# unvereinbar mit fastmcp (cachetools >= 5). Es läuft mit den aktuellen Versionen
+# (geprüft: tests/test_template_miner.py inkl. Zustand speichern/laden), daher ohne
+# seine starren Pins installieren.
+RUN pip install --no-cache-dir --no-deps drain3==0.9.11
 
 # Copy application code and documentation
 COPY backend/ .
