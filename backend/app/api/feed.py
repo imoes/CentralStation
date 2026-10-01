@@ -1203,6 +1203,49 @@ async def alert_hermes_context(
     return {"prompt": "\n".join(lines), "host": host}
 
 
+def _cluster_prompt_section(c: dict, kind: str, severity: str, created_str: str) -> list[str]:
+    """Konsolen-Briefing für einen Fehler-Cluster-Incident (services/error_clusters)."""
+    containers = c.get("containers") or []
+    out = [
+        "# Untersuchung: Fehlerausbruch" if kind == "log_cluster" else "# Untersuchung: Flotten-Ausfall",
+        "",
+        f"Automatisch erkannt (Severity: {severity}, seit {created_str} UTC): ein Fehlermuster "
+        f"auf {len(containers)} Containern/Hosts gleichzeitig.",
+        "Arbeite read-only, bis die Ursache belegt ist.",
+        "",
+        "## Muster",
+        f"```\n{c.get('template', '')}\n```",
+        f"Warum gemeldet: {'; '.join(c.get('reasons') or [])}",
+        f"Zeilen in 15 min: {c.get('count15')} (erwartet {c.get('expected15') or 0:.1f}), "
+        f"gesamt {c.get('total')}",
+    ]
+    if c.get("examples"):
+        out += ["", "Beispiele:"] + [f"- `{e[:300]}`" for e in c["examples"][:3]]
+    if containers:
+        out += ["", "## Betroffen"] + [f"- {x['name']} ({x['count']})" for x in containers[:20]]
+        if len(containers) > 20:
+            out.append(f"- … und {len(containers) - 20} weitere")
+    if c.get("docker_hosts"):
+        out.append(f"Docker-Hosts: {', '.join(c['docker_hosts'])}")
+    if c.get("correlated"):
+        out += ["", "## Gleichzeitig auffällig"] + [
+            f"- {x.get('container')}: {x.get('zeilen_15min')} Zeilen in 15 min ({x.get('faktor')}× üblich)"
+            for x in c["correlated"][:10]]
+    for p in c.get("patterns") or []:
+        out += ["", "## Weiteres Muster desselben Ausbruchs",
+                f"```\n{p.get('template', '')}\n```",
+                f"{p.get('total')} Zeilen, {len(p.get('containers') or [])} Container"]
+    t = c.get("triage") or {}
+    if t:
+        out += ["", "## KI-Einschätzung (automatisch, ungeprüft)",
+                t.get("zusammenfassung") or "", f"Vermutete Ursache: {t.get('vermutete_ursache')}"]
+        out += [f"- {s}" for s in t.get("pruefschritte") or []]
+    if c.get("graylog_url"):
+        out += ["", f"Graylog: {c['graylog_url']}"]
+    out.append("")
+    return out
+
+
 @router.get("/incidents/{incident_id}/claude-prompt")
 async def incident_claude_prompt(
     incident_id: str,
@@ -1236,15 +1279,23 @@ async def incident_claude_prompt(
     host = inc.primary_host
     severity = inc.severity
     created_str = inc.created_at.strftime('%Y-%m-%d %H:%M')
+    kind = getattr(inc, "kind", "host") or "host"
+    cluster = next((e for e in (inc.causal_context or [])
+                    if isinstance(e, dict) and e.get("type") == "error_cluster"), None)
 
     lines: list[str] = []
-    lines.append(f"# Incident-Untersuchung: {host}")
-    lines.append("")
-    lines.append(f"Auf dem Host **{host}** ist ein Incident aufgetreten "
-                 f"(Severity: {severity}, seit {created_str} UTC).")
-    lines.append("Bitte untersuche die Ursache und schlage einen konkreten Fix vor. "
-                 "Du hast Shell-Zugriff auf den Host. Arbeite read-only bis der Fix klar ist.")
-    lines.append("")
+    if cluster and kind in ("log_cluster", "fleet"):
+        # Fehler-Cluster: am MUSTER ansetzen, nicht an einem Host — ein Ausbruch über
+        # viele Container/Hosts hat seine Ursache meist woanders (Abhängigkeit, Zugang).
+        lines.extend(_cluster_prompt_section(cluster, kind, severity, created_str))
+    else:
+        lines.append(f"# Incident-Untersuchung: {host}")
+        lines.append("")
+        lines.append(f"Auf dem Host **{host}** ist ein Incident aufgetreten "
+                     f"(Severity: {severity}, seit {created_str} UTC).")
+        lines.append("Bitte untersuche die Ursache und schlage einen konkreten Fix vor. "
+                     "Du hast Shell-Zugriff auf den Host. Arbeite read-only bis der Fix klar ist.")
+        lines.append("")
 
     # ── Member alerts (from OpenSearch) ────────────────────────────────────
     mem_r = await db.execute(
@@ -1297,7 +1348,11 @@ async def incident_claude_prompt(
         log.debug("claude-prompt: past_incidents failed: %s", e)
 
     lines.append("## Auftrag")
-    lines.append(f"1. Verifiziere die Belege oben auf {host} (Logs, Service-Status, Metriken).")
+    if cluster and kind in ("log_cluster", "fleet"):
+        lines.append("1. Prüfe, was alle betroffenen Container/Hosts gemeinsam haben "
+                     "(gemeinsame Abhängigkeit, Zugangsdaten, Deployment zur Startzeit).")
+    else:
+        lines.append(f"1. Verifiziere die Belege oben auf {host} (Logs, Service-Status, Metriken).")
     lines.append("2. Nenne die wahrscheinlichste Ursache MIT Beleg — keine Spekulation ohne Daten.")
     lines.append("3. Schlage einen konkreten, reversiblen Fix vor und warte auf Freigabe, bevor du ihn ausführst.")
 

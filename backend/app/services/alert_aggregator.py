@@ -190,6 +190,7 @@ async def _resolve_stale_checkmk_alerts(
 async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 60) -> list[dict]:
     from app.services.connectors.graylog import GraylogConnector
     from app.services.graylog_occurrences import count_query
+    from app.services.error_clusters.runner import pattern_key
     creds = decrypt_credentials(connector.encrypted_credentials)
     svc = GraylogConnector(base_url=connector.base_url, credentials=creds)
     try:
@@ -317,6 +318,9 @@ async def collect_graylog(connector: ConnectorConfig, time_range_minutes: int = 
                         "query": count_query(m.get("query", ""), src_host, msg_text),
                         "connector_id": str(connector.id),
                     },
+                    # Muster der Fehler-Cluster-Erkennung: verbindet den Feed-Eintrag mit
+                    # seinem Cluster (nur Kennzeichnung — nichts wird unterdrückt).
+                    "error_cluster_key": pattern_key(msg_text),
                 },
             })
         return results

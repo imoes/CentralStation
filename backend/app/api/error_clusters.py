@@ -46,7 +46,8 @@ async def cluster_detail(cluster_id: uuid.UUID, user: CurrentUser,
     if row is None:
         raise HTTPException(404, "Cluster nicht gefunden")
     ec, t = row
-    if not await queries.in_scope(db, str(user.id), ec.sources or []):
+    from app.services.error_clusters.runner import affected_hosts
+    if not await queries.in_scope(db, str(user.id), affected_hosts(ec.sources, ec.entities)):
         raise HTTPException(403, "Nicht in deinem Host-Bereich")
     end = ec.closed_at or datetime.now(timezone.utc)
     return {**queries.summary(ec, t),

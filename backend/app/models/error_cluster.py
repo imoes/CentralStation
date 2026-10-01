@@ -78,6 +78,9 @@ class ErrorCluster(Base):
     notified_rate: Mapped[int] = mapped_column(Integer, default=0)
     notified_entities: Mapped[int] = mapped_column(Integer, default=0)
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Wann die Mail tatsächlich raus ist. notified_at ohne mailed_at = beschlossen,
+    #: aber (z. B. durch einen Neustart) nicht zugestellt — der Runner holt das nach.
+    mailed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     triage: Mapped[dict | None] = mapped_column(postgresql.JSONB, nullable=True)
     triage_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     incident_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)

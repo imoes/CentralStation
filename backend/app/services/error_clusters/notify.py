@@ -222,12 +222,24 @@ async def _notify_one(ev, rt, cfg, base_url: str) -> None:
     from app.services.error_clusters.runner import cluster_context, short_title
 
     ctx = cluster_context(ev, base_url)
+    incident_id = rt.incident_ids.get(ev.episode.id)
     async with AsyncSessionLocal() as db:
         correlated = await _correlated(rt, ev)
         checkmk = await _checkmk(db, ctx["hosts"], ev.episode.started_at - timedelta(minutes=15))
+        if incident_id and correlated:
+            # Für Timeline und Konsolen-Übergabe: was gleichzeitig auffiel.
+            from app.models.workflow import Incident
+            from app.services.error_clusters.incident import cluster_context as _cc, set_cluster_context
+            inc = (await db.execute(select(Incident).where(Incident.id == uuid.UUID(incident_id)))
+                   ).scalar_one_or_none()
+            if inc is not None:
+                cur = _cc(inc) or {}
+                set_cluster_context(inc, {**{k: v for k, v in cur.items() if k != "type"},
+                                          "correlated": correlated})
+                await db.commit()
     ctx["correlated"] = correlated
     await deliver(ctx, f"Fehlerausbruch: {short_title(ev.template.template)}", ev.episode.id,
-                  rt.incident_ids.get(ev.episode.id), cfg, correlated, checkmk)
+                  incident_id, cfg, correlated, checkmk)
 
 
 async def deliver(ctx: dict, title: str, cluster_id: str, incident_id: str | None, cfg,
@@ -262,6 +274,7 @@ async def deliver(ctx: dict, title: str, cluster_id: str, incident_id: str | Non
         sent = await _send(db, to, subject(ctx, title),
                            render_html(ctx, result, incident_url,
                                        pending=task is not None and result is None))
+        await _mark_mailed(db, cluster_id)
         await db.commit()
     log.info("error_clusters: notify %s → %d mail(s), triage=%s", cluster_id[:8], sent,
              "ok" if result else ("pending" if task else "none"))
@@ -314,8 +327,10 @@ async def build_digest_html(db, user_id: str, since: datetime) -> str | None:
                LogTemplate.muted.is_(False))
         .order_by(ErrorCluster.total.desc()))).all()
     scope = await get_user_checkmk_host_scope(db, user_id)
+    from app.services.error_clusters.runner import affected_hosts
     items = [(ec, t) for ec, t in rows
-             if not scope or any(host_matches(s, ec.sources or []) for s in scope)]
+             if not scope or any(host_matches(s, affected_hosts(ec.sources, ec.entities))
+                                 for s in scope)]
     if not items:
         return None
     trs = "".join(
@@ -348,3 +363,55 @@ async def on_fleet(items: list[dict], cfg) -> None:
     if items:
         from app.services.ai_agent.scheduler import run_generative_refresh
         run_background(run_generative_refresh(), name="error_cluster_generative_refresh")
+
+
+async def _mark_mailed(db, cluster_id: str) -> None:
+    from app.models.error_cluster import ErrorCluster
+    from sqlalchemy import update
+    try:
+        cid = uuid.UUID(cluster_id)
+    except ValueError:
+        return                     # Test-Zustellung ohne echte Episode
+    await db.execute(update(ErrorCluster).where(ErrorCluster.id == cid)
+                     .values(mailed_at=datetime.now(timezone.utc)))
+
+
+def ctx_from_row(ec, t) -> dict:
+    """Mail-Kontext aus einer gespeicherten Episode — für das Nachholen nach Neustart."""
+    from app.services.error_clusters.runner import affected_hosts
+    entities = ec.entities or {}
+    return {
+        "template": t.template if t else "",
+        "examples": (t.examples or [])[:5] if t else [],
+        "rules": ec.rules or [], "reasons": ec.reasons or [],
+        "count15": ec.peak15, "expected15": None, "total": ec.total,
+        "started_at": ec.started_at.isoformat(), "until": ec.last_active_at.isoformat(),
+        "containers": [{"name": k, "count": v} for k, v in
+                       sorted(entities.items(), key=lambda kv: -kv[1])[:50]],
+        "hosts": affected_hosts(ec.sources, entities), "docker_hosts": sorted(ec.sources or []),
+        "graylog_url": None,
+    }
+
+
+async def resend_pending(cfg) -> int:
+    """Beschlossene, aber nicht zugestellte Mails der letzten 2 h nachholen (nach Neustart)."""
+    from app.core.database import AsyncSessionLocal
+    from app.core.tasks import run_background
+    from app.models.error_cluster import ErrorCluster, LogTemplate
+    from app.services.error_clusters.runner import short_title
+    since = datetime.now(timezone.utc) - timedelta(hours=2)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(ErrorCluster, LogTemplate)
+            .join(LogTemplate, LogTemplate.key == ErrorCluster.key, isouter=True)
+            .where(ErrorCluster.notify_class == "immediate", ErrorCluster.notified_at >= since,
+                   ErrorCluster.mailed_at.is_(None)))).all()
+    for ec, t in rows:
+        ctx = ctx_from_row(ec, t)
+        title = (f"Flotten-Ausfall: {ctx['template']}" if ec.source == "checkmk_fleet"
+                 else f"Fehlerausbruch: {short_title(ctx['template'])}")
+        log.info("error_clusters: resending undelivered notification %s", str(ec.id)[:8])
+        run_background(deliver(ctx, title, str(ec.id),
+                               str(ec.incident_id) if ec.incident_id else None, cfg),
+                       name=f"error_cluster_resend_{str(ec.id)[:8]}")
+    return len(rows)

@@ -94,7 +94,10 @@ async def _hydrate(db) -> _Runtime:
 
     incident_ids: dict[str, str] = {}
     cool = now - timedelta(hours=6)
+    # Nur Log-Episoden: Flotten-Episoden (source="checkmk_fleet") führt fleet.py selbst.
+    # Geladen in den Log-Store suchte die Engine ihr Muster und brach mit KeyError ab.
     for ec in (await db.execute(select(ErrorCluster).where(
+            ErrorCluster.source == "log",
             (ErrorCluster.status == "open") | (ErrorCluster.closed_at >= cool)))).scalars():
         ep = Episode(id=str(ec.id), key=ec.key, started_at=ec.started_at,
                      last_active_at=ec.last_active_at, rules=set(ec.rules or []),
@@ -200,6 +203,17 @@ def graylog_link(base: str, template: str, since: datetime, until: datetime) -> 
             f"&from={quote(iso(since))}&to={quote(iso(until))}")
 
 
+def affected_hosts(sources, entities) -> list[str]:
+    """Docker-Hosts UND Container mit vollem Namen.
+
+    CheckMK führt Container oft als eigene Hosts (piggyback): im Scope steht
+    "cue-zipline-product-tz.cue.example.com", nicht der Docker-Host "cueservices". Nur
+    die Docker-Hosts zu prüfen hätte den 401-Ausbruch an jedem vorbeigeleitet, dessen
+    Filter die Zipline-Container enthält.
+    """
+    return sorted(set(sources or []) | {e for e in (entities or {}) if "." in e})
+
+
 def cluster_context(ev: Event, base_url: str) -> dict:
     ep = ev.episode
     until = ev.bucket_start + BUCKET
@@ -217,7 +231,8 @@ def cluster_context(ev: Event, base_url: str) -> dict:
         "started_at": ep.started_at.isoformat(),
         "until": until.isoformat(),
         "containers": [{"name": n, "count": c} for n, c in ep.entities.most_common(50)],
-        "hosts": sorted(ep.sources),
+        "hosts": affected_hosts(ep.sources, ep.entities),
+        "docker_hosts": sorted(ep.sources),
         "graylog_url": graylog_link(base_url, ev.template.template, ep.started_at, until),
     }
 
@@ -239,7 +254,7 @@ async def _handle(db, rt: _Runtime, events: list[Event], base_url: str) -> None:
         title = f"Fehlerausbruch: {short_title(ev.template.template)} · {n_cont} Container" \
             if ep.notify_class == "immediate" else f"Neues Fehlermuster: {short_title(ev.template.template)}"
         meta = {
-            "kind": "error_cluster", "cluster_id": ep.id, "host": (ctx["hosts"] or [""])[0],
+            "kind": "error_cluster", "cluster_id": ep.id, "host": (ctx["docker_hosts"] or ctx["hosts"] or [""])[0],
             "host_candidates": ctx["hosts"], "rules": ctx["rules"],
             # Gleiches Format wie die Graylog-Zählung → dieselbe Anzeige im Feed
             # ("1 334× in 60 min · 22 Container").
@@ -284,7 +299,7 @@ async def _handle(db, rt: _Runtime, events: list[Event], base_url: str) -> None:
         if ev.mail or (ev.action == "reopen" and ep.id in rt.incident_ids):
             inc = await open_cluster_incident(
                 db, kind="log_cluster", title=title, severity=severity,
-                primary_host=(ctx["hosts"] or [""])[0], context=ctx,
+                primary_host=(ctx["docker_hosts"] or ctx["hosts"] or [""])[0], context=ctx,
                 member_docs=[{"external_id": ext_id, "source": "graylog"}],
                 existing_id=rt.incident_ids.get(ep.id))
             rt.incident_ids[ep.id] = str(inc.id)
@@ -331,6 +346,9 @@ async def _run() -> None:
         if _rt is None:
             async with AsyncSessionLocal() as db:
                 _rt = await _hydrate(db)
+            # Neustart: was beschlossen, aber nicht zugestellt war, jetzt zustellen.
+            from app.services.error_clusters import notify as _notify
+            await _notify.resend_pending(cfg)
         rt = _rt
         now = _now()
         target = bucket_floor(now - INGEST_LAG) - BUCKET          # letztes fertiges Fenster
@@ -419,3 +437,18 @@ async def _graylog(db):
         return None, ""
     return (GraylogConnector(base_url=c.base_url, credentials=decrypt_credentials(c.encrypted_credentials)),
             c.base_url or "")
+
+
+def pattern_key(message: str) -> str | None:
+    """Schlüssel des Musters einer Meldung — nur nachschlagen, nichts lernen.
+
+    Für den Feed: Graylog-Einträge tragen so das Muster, zu dem ihr Cluster gehört.
+    None, solange die Erkennung im Prozess noch nicht geladen ist.
+    """
+    if _rt is None:
+        return None
+    try:
+        mined = _rt.miner.match(message)
+    except Exception:
+        return None
+    return mined.key if mined else None

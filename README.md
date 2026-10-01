@@ -22,7 +22,7 @@ assists with the entire ITIL-compliant work documentation using AI.
 7. [News Feed](#news-feed)
 8. [OpenSearch Searches (FeedSearches)](#opensearch-searches-feedsearches)
 9. [Alert Aggregation and Enrichment](#alert-aggregation-and-enrichment)
-10. [Incident Correlation](#incident-correlation)
+10. [Error Clusters & Incidents](#error-clusters--incidents)
 11. [Kanban and Jira](#kanban-and-jira)
 12. [AI Features](#ai-features)
 13. [Computer Console (Hermes AI Panel)](#computer-console-hermes-ai-panel)
@@ -244,7 +244,7 @@ Since OS/location/VE/criticality are CheckMK-native concepts, the filter accesse
 | **Server Cockpit** | Klick auf Hostnamen im News Feed öffnet `/cockpit/:hostname` in neuem Fenster; LCARS-Design; Hero-Gauges (CPU/RAM/Disk) + Sparklines; **Voll-Service-Liste** aller CheckMK-Checks mit Status + Summary; hierarchische Filter-Chips (FEHLER/WARN/CRIT/UNKNOWN); Klick auf Service → on-demand 24h-Graph; Font Roboto; Navbar wird ausgeblendet |
 | **Brücke (Bridge)** | Star-Trek-LCARS-Cockpit unter `/bridge`; drei Themes (Classic/Holo/LCARS); Prioritäten-Worklist, Fleet-Vitals, Forecasts, Sektoren, Live-Logs; Primärer-Incident-Panel; Font Roboto |
 | **Adaptives Alert-Scoring** | Deterministisches Basis-Scoring (Severity/Novelty/Alter/Flapping/Cross-Source); adaptiver Lern-Feedback-Loop (Jira-Tickets, Acks, Ignorieren → `alert_score_adjustments`); Score-Delta-Verfall |
-| **Incident-Korrelation** | Automatische Gruppierung zusammengehöriger Alerts zu Incidents; nur FQDNs als Hosts (Docker-Container-IDs werden abgelehnt); 30-Minuten-Zeitfenster für Incident-Wiederverwendung; Minimum 2 Alerts oder Cross-Source für neuen Incident |
+| **Fehler-Cluster & Incidents** | Erkennt Ausbrüche selbständig: jede Graylog-Fehlerzeile zählt, Drain3-Muster mit eigener Grundlast, Regeln für neu/Spitze/Ausbreitung, CheckMK-Flotten-Ausfälle; ein Vorfall = ein Incident = eine Mail mit KI-Einschätzung; Widget im KI-Lagebild |
 | **Alert-Aggregation** | CheckMK, Graylog, Wazuh — zentrale Timeline, Acknowledge, Severity-Filter; Graylog: Python-Loglevel-Erkennung (INFO→low, ERROR→high, verhindert Docker-GELF-Fehleinstufung) |
 | **News Feed** | Unified OpenSearch Feed, gespeicherte Suchen (Lucene), Last-Seen-Divider, KI-Anreicherung, KI-Ignorieren; Hostname anklickbar → Feed-Filter; Severity-Filter ignoriert aktive Saved-Searches korrekt |
 | **KI-Insights** | Befunde + zugehörige Empfehlungen direkt zusammen (kein getrenntes Panel); Datenquelle-Badge je Befund; Hostname/Feed-Links; Empfehlungen fließen in generatives Dashboard ein |
@@ -665,47 +665,83 @@ After indexing, new alerts with severity `critical`, `high` or `warning` are enr
 
 ---
 
-## Incident Correlation
+## Error Clusters & Incidents
 
-CentralStation gruppiert zusammengehörige Alerts automatisch zu **Incidents** (`incidents` + `incident_members`-Tabellen).
+CentralStation erkennt **Fehlerausbrüche** selbständig, bündelt sie zu **Incidents** und
+meldet sie per **Mail** — ohne Dauerrauschen. Code: `backend/app/services/error_clusters/`.
+Die frühere Host-Korrelation (`incident/correlator.py`) ist darin aufgegangen; Incidents
+entstehen nur noch hier.
 
-### Correlation Rules
-
-Ein neuer Incident wird nur angelegt wenn **alle** Bedingungen erfüllt sind:
-
-1. **Severity-Schwelle**: Nur `critical`/`high` Alerts können einen Incident auslösen oder erweitern — `low`/`info` werden ignoriert
-2. **Mindestgröße**: Neuer Incident erfordert ≥ 2 korrelierte Alerts (gleicher Host, 30-Min-Fenster) **oder** Cross-Source-Evidenz (gleicher Host, ≥ 2 Quellen)
-3. **Host-Validierung**: Nur FQDNs werden als Hosts akzeptiert (muss mindestens einen Punkt enthalten). Docker-Container-Short-IDs (z.B. `5086bbde056b`) und Container-Namen werden abgelehnt
-
-### Time Window
-
-Offene Incidents werden nur wiederverwendet, wenn `updated_at >= jetzt - 30 Minuten`. Ein älterer Incident wird **nicht** verlängert — stattdessen wird ein neuer Incident angelegt. Das verhindert, dass zeitlich weit auseinanderliegende Alerts fälschlicherweise in denselben Incident gepackt werden.
-
-### Incident Lifecycle
+### Ablauf (alle 5 Minuten)
 
 ```
-Neuer Alert (critical/high) mit FQDN
-    │
-    ├── Offener Incident für diesen Host? (updated_at < 30 Min alt)
-    │       → Ja: Incident erweitern (Member hinzufügen, Severity eskalieren, updated_at aktualisieren)
-    │       → Nein: neuen Incident anlegen (wenn ≥ 2 Alerts oder Cross-Source)
-    │
-    └── Housekeeping-Job (alle 2h): Incidents ohne neue Member → resolved
+Graylog (level:<=4, ohne Switches) ── jede Zeile, KEINE Deduplizierung
+   │   Fenster > 10 000 Treffer werden geteilt (OpenSearch-Grenze)
+   ▼
+Drain3-Muster (Zahlen/IDs/IPs maskiert, HTTP-Codes bleiben: 401 ≠ 500)
+   ▼
+Zählwerte je Muster und 5-min-Fenster (Postgres)  →  Grundlast = Median (Nullen inklusive)
+   ▼
+Regeln (fest, kein LLM):  NEU · SPITZE · AUSBREITUNG     CheckMK: FLOTTE
+   ▼
+Episode (bis 60 min Ruhe) → Incident → KI-Einschätzung → Sofort-Mail / Tagesübersicht
 ```
 
-### Data Model
+| Regel | Bedingung |
+|---|---|
+| **NEU** | 14 Tage nicht gesehen und ≥ 20 Zeilen in 15 min oder ≥ 2 Quellen. Sofort bei Ausbreitung oder ≥ 500 Zeilen, sonst Tagesübersicht |
+| **SPITZE** | ≥ 200 Zeilen in 15 min, ≥ 5 × Grundlast, Poisson p < 1e-6, 2 von 3 Fenstern erhöht. Wiederkehrende Muster (≥ 3 aktive Tage) müssen ihren bisherigen Höchstwert verdoppeln. Sofort ab 1 000 Zeilen, sonst Tagesübersicht |
+| **AUSBREITUNG** | ≥ 8 Container/Quellen, ≥ 100 Zeilen, ≥ 3 × üblich — immer sofort |
+| **FLOTTE** (CheckMK) | derselbe Service auf ≥ 5 Hosts in 15 min neu nicht OK, ≥ 3 × dem 7-Tage-Median |
+| Erneut melden | nur bei Verdopplung der 5-min-Rate oder der Container, höchstens stündlich |
+| Ein Vorfall | ein Muster, das ≤ 30 min nach einem gemeldeten Ausbruch auf denselben Containern/Hosts beginnt, wird Teil davon (eine Mail, ein Incident) |
 
-| Tabelle | Felder |
-|---------|--------|
-| `incidents` | `id`, `title` (z.B. „host.example.com: 4 Alerts [checkmk/graylog]"), `primary_host`, `severity`, `status` (open/investigating/resolved), `created_at`, `updated_at`, `resolved_at` |
-| `incident_members` | `incident_id`, `external_id`, `source`, `added_at` |
+### Incidents
 
-### API Endpoints
+`incidents.kind`: **`host`** (mehrere critical/high-Alerts eines Hosts; ≥ 2 Alerts oder
+≥ 2 Quellen; offen solange in 30 min neue kommen), **`log_cluster`** (Log-Muster über viele
+Container), **`fleet`** (CheckMK-Service auf vielen Hosts). Alerts eines Hosts, der zu einem
+offenen übergreifenden Cluster gehört, werden dort Mitglied; offene host-Incidents seiner
+Hosts gehen darin auf („aufgegangen in …"). Reine CheckMK-host-Incidents schließen im selben
+Aggregationslauf, in dem der letzte Check wieder OK ist.
+
+Die Incident-Ansicht im Feed zeigt bei Clustern Muster, Begründung, KI-Einschätzung,
+gleichzeitig auffällige Dienste, weitere Muster desselben Ausbruchs und den Graylog-Link;
+„An Konsole übergeben" setzt am Muster an, nicht nur am Host. Admins können ein Muster dort
+**stummschalten** (protokolliert, umkehrbar).
+
+### Mails, Dashboard, Einstellungen
+
+- **Nutzer** (Einstellungen → E-Mail-Berichte): „Sofort-Mail bei einem Ausbruch" und „Neue,
+  ruhige Fehlermuster im täglichen Bericht" — nur für Hosts aus dem eigenen CheckMK-Filter
+  (Docker-Hosts **und** Container, die CheckMK als Hosts führt).
+- **Admin** (Einstellungen → KI → Fehler-Cluster): `error_clusters.enabled`,
+  `error_clusters.mail_enabled` (Not-Aus). Erster Start holt 24 h still nach.
+- **KI-Einschätzung**: je Episode ein Aufruf, kein Budget, kein Token-Limit. Die Mail wartet
+  höchstens 90 s; danach „KI-Einschätzung folgt" + zweite Mail. Nicht zugestellte Mails
+  (Neustart) holt der Runner nach (`mailed_at`).
+- **KI-Lagebild**: Widget `error_clusters` erscheint bei jedem offenen Ausbruch ganz oben;
+  ein neuer Ausbruch stößt die Neuberechnung sofort an.
+
+### API
 
 | Endpunkt | Beschreibung |
-|----------|-------------|
-| `GET /api/feed/incidents` | Offene Incidents (status: open/investigating) |
-| `GET /api/feed/incidents/{id}/timeline` | Chronologische Timeline (Alerts + Kommentare + KI-Diagnosen) |
+|---|---|
+| `GET /api/error-clusters?status=open\|closed\|all&hours=24&kind=immediate\|digest\|all` | Cluster im eigenen Host-Scope |
+| `GET /api/error-clusters/{id}` | Detail mit 5-min-Verlauf |
+| `POST/DELETE /api/error-clusters/templates/{key}/mute` | Muster stumm/frei (Admin, Audit-Log) |
+| `GET /api/feed/incidents` · `…/{id}/timeline` · `…/{id}/claude-prompt` | Incidents, Timeline (mit `kind`, `error_cluster`, `merged_into`), Konsolen-Briefing |
+
+### Backtest
+
+```bash
+docker compose run --rm --no-deps -v /pfad/cache:/bt backend \
+  python -m app.scripts.error_cluster_backtest --until 2026-10-01T12:00Z --hours 72
+```
+
+Spielt echte Graylog-Fenster durch dieselbe Engine (ohne Mail/LLM/DB), Rohdaten im Cache.
+Stand 01.10.2026: 864 Fenster, 3 991 137 Zeilen — der 401-Ausbruch wird in beiden Wellen im
+ersten 5-min-Lauf gemeldet, das Dauerrauschen nie; 4 Sofort-Mails in 48 h.
 
 ---
 

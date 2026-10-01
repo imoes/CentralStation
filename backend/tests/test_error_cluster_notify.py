@@ -96,3 +96,15 @@ def test_graylog_link_searches_the_fixed_part_of_the_pattern():
 def test_scope_matching_for_recipients():
     assert host_matches("cueservices", CTX["hosts"])
     assert not host_matches("cuedb.cue.example.com", CTX["hosts"])
+
+
+def test_affected_hosts_include_container_hosts():
+    """CheckMK kennt die Zipline-Container als Hosts, nicht den Docker-Host cueservices.
+    Ohne die Container hätte der 401-Ausbruch niemanden mit Zipline-Filter erreicht."""
+    from app.services.error_clusters.runner import affected_hosts
+    hosts = affected_hosts({"cueservices.cue.example.com"},
+                           {"cue-zipline-product-tz.cue.example.com": 3700, "2c51e08bb9c9": 1})
+    assert "cue-zipline-product-tz.cue.example.com" in hosts
+    assert "cueservices.cue.example.com" in hosts
+    assert "2c51e08bb9c9" not in hosts          # Container-Kurz-IDs sind keine Hosts
+    assert host_matches("cue-zipline-product-tz.cue.example.com", hosts)

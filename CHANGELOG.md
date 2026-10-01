@@ -75,120 +75,50 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   installed with `--no-deps`, because its pins (`cachetools==4.2.1`) conflict with
   fastmcp. Verified with current versions.
 
+### Error clusters: added since then (2026-10-01, live)
+
+- **Live since 2026-10-01 16:34 UTC.** Backfill of 259 windows took 202 s and learned
+  608 patterns. Admin LLM switched to `qwen35b` (`Qwen3.6-35B-A3B`); LLM test is green.
+- **Generative dashboard:** widget `error_clusters`. It appears at the top whenever an
+  outbreak is open, even if the LLM leaves it out. A new outbreak starts the dashboard
+  refresh immediately.
+- **CheckMK fleet clusters.** For each service, newly started problems in 15 min are
+  compared with the 7-day median. First find: "Check_MK" on 14 hosts within minutes.
+  Every output pointed to the same piggyback source, `vpp0252` (Proxmox). The triage
+  now gets these outputs. Before, it only got alert IDs and guessed "communication
+  problem".
+- **Incident view:** for clusters it shows pattern, reasoning, triage, services that
+  were noticeable at the same time, further patterns, and a Graylog link. Admins can
+  mute a pattern (`POST /api/error-clusters/templates/{key}/mute`, audited).
+  "An Konsole übergeben" starts from the pattern.
+- **Found and fixed during verification:**
+  - **The host scope took only the Docker host into account.** CheckMK lists the
+    Zipline containers as separate hosts, not `cueservices`. The 401 outbreak would
+    have reached nobody whose filter contains the Zipline containers. Containers with
+    full names now count as affected hosts.
+  - **Mails could be lost on a restart.** They were lost if the restart happened in
+    the up to 90 s between detection and sending. New `mailed_at` (migration 0048);
+    the runner sends undelivered mails after the restart.
+  - **Restart broke the run:** the runner loaded open fleet episodes into the log
+    store, and every run then aborted with a KeyError. A single faulty episode no
+    longer stops the run.
+  - **Silent failures:** APScheduler logs nothing for this job. The runner now logs
+    every run and every exception itself.
+- **Feed:** Graylog entries carry `metadata.error_cluster_key`, which links them to
+  their pattern. They are only tagged, nothing is suppressed. The miner is
+  thread-safe, because the runner learns in a thread while the aggregation looks up.
+- Verified: e2e test mail to an opted-in user, with triage from qwen35b after 49 s. The
+  cluster panel showed in the browser (fleet incident). 302 backend tests.
+
 ### What is still missing (error clusters)
 
-- **Switched off until an admin turns it on:** Admin → KI → Fehler-Cluster:
-  `error_clusters.enabled` and `error_clusters.mail_enabled`. On the first start, the
-  last 24 h are backfilled silently (about 10 min), so there is no day-long learning
-  phase.
-- Widget in the generative dashboard (KI-Lagebild), CheckMK fleet clusters, a mute
-  button for patterns, the cluster context in the incident drawer and in "An Konsole
-  übergeben": not built yet.
 - Windows with more than 80 000 lines in 5 min only count a lower bound. Exact
   recounting by Graylog for this case is missing.
 - The hour-of-week baseline only becomes possible after 14 days of runtime. Until
   then, the median over all windows applies.
-
-- **Write operations now require consent that the AI cannot give itself.**
-  Nine MCP tools that act outward — `jira_add_comment`, `jira_update_issue`,
-  `jira_transition_issue`, `jira_close_issue`, `create_jira_ticket`,
-  `acknowledge_alert`, `run_remediation`, `gitlab_create_branch`,
-  `gitlab_create_merge_request` — refuse to run unless the user has opened a
-  write window via **"Schreibzugriff freigeben"** in the Computer Console.
-
-  This is the same consent channel that already governed shell commands
-  (`userenv/cs-readonly-guard.py`): one approval, one storage location, a
-  root-owned file inside the user's container that the agent cannot write.
-  Agreement typed into the chat does not count, because the agent controls the
-  chat.
-
-  *Verified on the running instance:* a `jira_add_comment` call over
-  `/api/mcp-http/` without a user header is refused with "Aufrufer ist nicht
-  identifizierbar"; the same call carrying `X-CS-User-ID` is refused with "kein
-  Schreib-Zeitfenster geöffnet"; after `set_write_approval` the gate opens and
-  closes again on revoke. Read tools (`get_bridge_status`) were unaffected
-  throughout.
-
-- **MCP calls now carry the calling user.** Hermes, Claude CLI and Codex all send
-  `X-CS-User-ID` to the CentralStation MCP server, so a per-user permission check
-  is possible at all. *Verified:* the header appears in the live
-  `~/.hermes/config.yaml` and changes the server's refusal reason.
-
-- **The Console agent may install Python packages.** `pip install` into its own
-  virtualenv (`/home/yolo/pip/venv`, persistent on the `cs-pip-{uid}` volume) no
-  longer needs approval — the agent sometimes needs a library to evaluate anything
-  at all, and that venv touches no system. `sudo pip`, `/usr/bin/pip`,
-  `--break-system-packages`, `--target` into a system directory and any `pip
-  install` over ssh stay blocked, as do `npm`, `gem`, `cargo` and `apt`.
-  *Verified:* `backend/tests/test_readonly_guard.py` pins 40 decisions, allowed and
-  refused, and passes.
-
-- **Codex gets the same briefing as Claude.** Codex previously had no environment
-  instructions at all — it knew nothing about SSH, the workspace or the read-only
-  rule. One text now feeds both: `~/.claude/CLAUDE.md` for Claude,
-  `$CODEX_HOME/AGENTS.md` for Codex.
-
-- **The agent can attach files to Jira and ServiceDesk tickets.** Two new MCP
-  tools, `jira_add_attachment` and `jira_list_attachments`, plus the connector
-  methods they need — none of this existed before. The agent writes a file into its
-  workspace and names the path; the content never travels through the chat, because
-  the workspace is mounted into the agent's container and the backend alike.
-
-  Only that workspace is reachable: paths are resolved with `realpath`, so `..`,
-  foreign absolute paths and symlinks pointing outside are refused. Uploads are
-  capped at 25 MB and require a write window like every other outward action.
-
-  *Verified:* the tools are registered on the live MCP endpoint (51 tools);
-  `jira_add_attachment` without an open window is refused with "kein
-  Schreib-Zeitfenster geöffnet"; `jira_list_attachments` answers from the real Jira
-  instance. `backend/tests/test_mcp_attachment_paths.py` pins 8 path decisions,
-  including the symlink escape and reaching into another user's workspace.
-  **Not yet exercised: the upload itself** — that writes to a real ticket and is
-  waiting for the go-ahead.
-
-- **The Console agents work in the Werkbank's workspace.** They ran in `/app`
-  before, so anything they wrote landed in the container layer: invisible in the
-  Werkbank and gone on the next rebuild. All three now start in
-  `/home/yolo/workspaces`, the folder code-server opens — create a file in the
-  Console, keep editing it in the browser IDE. *Verified:* a `claude_cli` session
-  driven through the Console API answers `pwd` with `/home/yolo/workspaces`.
-
-  No history was migrated, and none needed to be: Claude resolves `--resume` by
-  session id regardless of the working directory. Checked before changing anything —
-  a session recorded under `/app` resumed from the new directory with its full
-  context (375k cached tokens read).
-
-- **`rsync` is installed**, next to the `scp`/`sftp` that came with the SSH client.
-  Fetching from a host stays free; pushing to one needs a write window.
-
-- **Images can be pasted into the Console with Ctrl+V.** A screenshot goes into
-  the shared workspace and the message carries only its path, so nothing large
-  travels through the chat protocol. The same marker line is what the agent reads
-  and what the frontend turns back into thumbnails after a reload. Sending with no
-  text is allowed.
-
-  *Verified end to end:* a generated red PNG was uploaded through
-  `POST /api/computer/images` (stored as uid 1000 so the agent owns it), and a
-  `claude_cli` session asked "which colour is this image" answered **"Rot"**. A
-  PHP payload named `.png` is refused, and `../../../etc/passwd` as an image id
-  returns 404.
-
-- **Files can be uploaded into the Console — spreadsheets, PDFs, documents, logs.**
-  Via a paperclip button, drag-and-drop onto the conversation, or Ctrl+V. The
-  image paste from earlier and this share one endpoint (`POST /api/computer/uploads`)
-  instead of two parallel paths. What is accepted is decided from the extension and
-  the content together, so a renamed executable is refused with a stated reason. The
-  agent has `pandas`, `openpyxl`, `xlrd` and `pypdf` ready, so the first spreadsheet
-  does not start with a minute-long pip install.
-
-  *Verified end to end:* a real `.xlsx` with known values (two sheets) was uploaded;
-  asked for revenue per site, a `claude_cli` session answered München 4.000,
-  Kassel 2.800, total 6.800, two sheets — all correct, and it also read the note
-  on the second sheet. Through nginx with a real login: upload 201, download with
-  token bit-identical, a 3 MB file accepted. A `.xlsx` that is really an executable
-  was refused. `backend/tests/test_upload_policy.py` pins 33 decisions.
-
-- **`CHANGELOG.md` exists and is linked from the README.**
+- Wazuh is not included yet (v1: Graylog + CheckMK).
+- The triage prompt is shared by log and fleet clusters. It is not tailored to fleet
+  causes (hypervisor, piggyback source).
 
 ### What changed
 

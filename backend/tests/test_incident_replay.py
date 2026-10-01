@@ -89,3 +89,11 @@ def test_no_mail_storm_during_a_wave():
     _, events = _replay()
     in_wave1 = [e for e in events if e.mail and WAVE1[0] <= e.bucket_start < WAVE1[1] + timedelta(hours=1)]
     assert len(in_wave1) == 1
+
+
+def test_episode_without_known_template_does_not_break_the_run():
+    """Ein Lauf darf nicht an einer einzelnen fehlerhaften Episode scheitern."""
+    from app.services.error_clusters.engine import Episode
+    store = MemoryStore(START)
+    store.open["unknown"] = Episode(id="x", key="unknown", started_at=START, last_active_at=START)
+    process(store, _bucket(START))          # darf keinen KeyError werfen

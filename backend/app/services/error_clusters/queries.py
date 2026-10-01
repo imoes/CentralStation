@@ -38,7 +38,7 @@ def summary(ec, t) -> dict:
         "containers": [{"name": k, "count": v} for k, v in
                        sorted(entities.items(), key=lambda kv: -kv[1])[:50]],
         "container_count": len(entities),
-        "hosts": ec.sources or [],
+        "hosts": ec.sources or [],          # Docker-Hosts (Graylog source)
         "triage": ec.triage,
         "incident_id": str(ec.incident_id) if ec.incident_id else None,
         "muted": bool(t.muted) if t else False,
@@ -62,7 +62,8 @@ async def list_for_user(db, user_id: str, *, status: str = "open", hours: int = 
     for ec, t in rows:
         if t is not None and t.muted:
             continue
-        if await in_scope(db, user_id, ec.sources or []):
+        from app.services.error_clusters.runner import affected_hosts
+        if await in_scope(db, user_id, affected_hosts(ec.sources, ec.entities)):
             out.append(summary(ec, t))
         if len(out) >= limit:
             break

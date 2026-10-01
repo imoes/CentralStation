@@ -21,6 +21,7 @@ import base64
 import hashlib
 import json
 import re
+import threading
 from dataclasses import dataclass
 
 from drain3 import TemplateMiner
@@ -125,6 +126,9 @@ class Miner:
     def __init__(self, state: bytes | None = None) -> None:
         self._tm = TemplateMiner(None, _config())
         self._keys: dict[int, str] = {}
+        # Drain3 ist nicht threadsicher: der Runner lernt in einem Thread (to_thread),
+        # die Aggregation schlägt im Event-Loop nach (match) — beides über diese Sperre.
+        self._lock = threading.Lock()
         if state:
             packed = json.loads(state.decode("utf-8"))
             self._keys = {int(k): v for k, v in packed.get("keys", {}).items()}
@@ -147,7 +151,8 @@ class Miner:
         line = normalize(message)
         if not line.strip():
             return None
-        r = self._tm.add_log_message(line)
+        with self._lock:
+            r = self._tm.add_log_message(line)
         cid = int(r["cluster_id"])
         template = r["template_mined"]
         return Mined(cluster_id=cid, template=template,
@@ -156,7 +161,8 @@ class Miner:
     def match(self, message: str) -> Mined | None:
         """Nur zuordnen, nichts lernen — für das Markieren bestehender Feed-Einträge."""
         line = normalize(message)
-        cluster = self._tm.match(line) if line.strip() else None
+        with self._lock:
+            cluster = self._tm.match(line) if line.strip() else None
         if cluster is None:
             return None
         template = cluster.get_template()
@@ -165,11 +171,12 @@ class Miner:
 
     def state(self) -> bytes:
         handler = _BytesHandler()
-        self._tm.persistence_handler = handler
-        try:
-            self._tm.save_state("run")
-        finally:
-            self._tm.persistence_handler = None
+        with self._lock:
+            self._tm.persistence_handler = handler
+            try:
+                self._tm.save_state("run")
+            finally:
+                self._tm.persistence_handler = None
         # Drain3s Zustand ist zlib-Bytes; die Schlüsselzuordnung gehört dazu.
         alive = {c.cluster_id for c in self._tm.drain.clusters}
         return json.dumps({

@@ -68,6 +68,7 @@ async def _collect(db, now: datetime):
         Alert.status != "resolved"))).scalars().all()
     now_hosts: dict[str, set[str]] = {}
     alerts: dict[str, list[tuple[str, str]]] = {}
+    outputs: dict[str, list[str]] = {}
     for a in rows:
         meta = a.metadata_ or {}
         svc, host = meta.get("service") or "", meta.get("host") or ""
@@ -75,6 +76,11 @@ async def _collect(db, now: datetime):
             continue
         now_hosts.setdefault(svc, set()).add(host)
         alerts.setdefault(svc, []).append((a.external_id or str(a.id), a.severity))
+        # Die CheckMK-Ausgabe trägt die gemeinsame Ursache ("from source 'vpp0252'") —
+        # ohne sie riet die KI-Einschätzung nur auf "Kommunikationsstörung".
+        out = (a.body or "").strip().split("\n", 1)[0][:300]
+        if out and out not in outputs.setdefault(svc, []) and len(outputs[svc]) < 5:
+            outputs[svc].append(f"{host}: {out}")
     big = [s for s, h in now_hosts.items() if len(h) >= DEFAULT.fleet_min_hosts]
     history: dict[str, list[int]] = {}
     if big:
@@ -89,7 +95,7 @@ async def _collect(db, now: datetime):
         for svc, _w, n in res.all():
             history.setdefault(svc, []).append(int(n))
     n_windows = int(BASELINE / WINDOW)
-    return now_hosts, history, n_windows, alerts
+    return now_hosts, history, n_windows, alerts, outputs
 
 
 async def run(db, cfg, base_url: str) -> list[dict]:
@@ -101,7 +107,7 @@ async def run(db, cfg, base_url: str) -> list[dict]:
     from app.services.error_clusters.incident import close_cluster_incident, open_cluster_incident
 
     now = datetime.now(timezone.utc)
-    now_hosts, history, n_windows, alerts = await _collect(db, now)
+    now_hosts, history, n_windows, alerts, outputs = await _collect(db, now)
     hits = {h.service: h for h in evaluate(now_hosts, history, n_windows, alerts)}
     open_eps = {ec.key: ec for ec in (await db.execute(select(ErrorCluster).where(
         ErrorCluster.source == "checkmk_fleet", ErrorCluster.status == "open"))).scalars()}
@@ -112,7 +118,7 @@ async def run(db, cfg, base_url: str) -> list[dict]:
         ep = open_eps.pop(key, None)
         ctx = {
             "template": f"CheckMK-Service „{service}“ auf {len(hit.hosts)} Hosts zugleich nicht OK",
-            "examples": [f"{e} ({s})" for e, s in hit.alerts[:3]],
+            "examples": outputs.get(service) or [f"{e} ({s})" for e, s in hit.alerts[:3]],
             "rules": ["fleet"],
             "reasons": [f"{len(hit.hosts)} Hosts in 15 min, üblich {max(hit.usual, 1):.0f}"],
             "count15": len(hit.hosts), "expected15": hit.usual, "total": len(hit.alerts),
@@ -124,6 +130,16 @@ async def run(db, cfg, base_url: str) -> list[dict]:
             "service": service,
         }
         members = [{"external_id": e, "source": "checkmk"} for e, _ in hit.alerts]
+        # Musterzeile wie bei Log-Clustern — für Titel, Stummschalten und Tagesübersicht.
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from app.models.error_cluster import LogTemplate
+        await db.execute(pg_insert(LogTemplate).values(
+            key=key, template=f"CheckMK-Service {service}", examples=ctx["examples"],
+            first_seen=now, last_seen=now, muted=False,
+        ).on_conflict_do_update(index_elements=["key"], set_={"last_seen": now}))
+        muted = (await db.execute(select(LogTemplate.muted).where(LogTemplate.key == key))).scalar()
+        if muted:
+            continue
         if ep is None:
             ep = ErrorCluster(id=uuid.uuid4(), key=key, source="checkmk_fleet", status="open",
                               rules=["fleet"], reasons=ctx["reasons"], notify_class="immediate",

@@ -227,7 +227,11 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
                         usual_entities=usual, seen_before=bool(nonzero), active_days=active_days)
         verdict = evaluate(window, lam, th=th, history_peak=peak)
 
-        info = store.templates[key]
+        info = store.templates.get(key)
+        if info is None:
+            # Episode ohne bekanntes Muster (z. B. falsch geladen): überspringen statt den
+            # ganzen Lauf abzubrechen — sonst stünde die Erkennung für ALLE Muster.
+            continue
         episode = store.open.get(key)
         action = next_action(verdict=verdict, episode=episode.state() if episode else None,
                              muted=info.muted,

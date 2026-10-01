@@ -43,6 +43,25 @@ interface CausalEntry {
   host: string;
 }
 
+/** Kontext eines Fehler-Cluster-Incidents (causal_context-Eintrag "error_cluster"). */
+interface ClusterContext {
+  template_key?: string;
+  template?: string;
+  reasons?: string[];
+  rules?: string[];
+  total?: number;
+  count15?: number;
+  started_at?: string;
+  containers?: { name: string; count: number }[];
+  docker_hosts?: string[];
+  graylog_url?: string | null;
+  triage?: { titel?: string; zusammenfassung?: string; vermutete_ursache?: string;
+             konfidenz?: string; pruefschritte?: string[] } | null;
+  patterns?: { template?: string; total?: number; containers?: unknown[] }[];
+  correlated?: { container?: string; zeilen_15min?: number; faktor?: number }[];
+  resolved_reason?: string;
+}
+
 interface IncidentTimeline {
   incident: {
     id: string;
@@ -53,6 +72,10 @@ interface IncidentTimeline {
     created_at: string;
     member_count: number;
     causal_context?: CausalEntry[] | null;
+    /** "host" | "log_cluster" | "fleet" (Backend services/error_clusters) */
+    kind?: string;
+    error_cluster?: ClusterContext | null;
+    merged_into?: string | null;
   };
   timeline: {
     at: string;
@@ -810,6 +833,72 @@ const SEVERITY_COLOR: Record<string, string> = {
         @if (loadingIncident()) {
           <div class="incident-drawer-loading"><mat-spinner diameter="32"></mat-spinner></div>
         } @else if (incidentTimeline()) {
+          @if (incidentTimeline()!.incident.merged_into; as into) {
+            <div class="cluster-merged" (click)="openIncidentTimeline(into)">
+              <mat-icon>call_merge</mat-icon> Aufgegangen in einem übergreifenden Fehlerausbruch — öffnen
+            </div>
+          }
+          @if (incidentTimeline()!.incident.error_cluster; as ec) {
+            <div class="cluster-panel">
+              <div class="cluster-panel-header">
+                <mat-icon>{{ incidentTimeline()!.incident.kind === 'fleet' ? 'dns' : 'bubble_chart' }}</mat-icon>
+                <span>{{ incidentTimeline()!.incident.kind === 'fleet' ? 'Flotten-Ausfall' : 'Fehlerausbruch' }}</span>
+                <span class="cluster-spacer"></span>
+                @if (isAdmin() && ec.template_key && incidentTimeline()!.incident.kind === 'log_cluster') {
+                  <button mat-stroked-button class="cluster-mute" (click)="muteTemplate(ec.template_key!)"
+                          matTooltip="Dieses Muster meldet nie mehr (protokolliert, jederzeit umkehrbar)">
+                    <mat-icon>notifications_off</mat-icon> Muster stummschalten
+                  </button>
+                }
+              </div>
+              <pre class="cluster-template">{{ ec.template }}</pre>
+              <div class="cluster-meta">
+                @if (incidentTimeline()!.incident.kind === 'fleet') {
+                  {{ (ec.containers?.length ?? 0) }} Hosts · {{ (ec.total ?? 0).toLocaleString('de-DE') }} Alerts
+                } @else {
+                  {{ (ec.containers?.length ?? 0) }} Container/Hosts · {{ (ec.total ?? 0).toLocaleString('de-DE') }} Zeilen
+                }
+                @if (ec.started_at) { · seit {{ ec.started_at | date:'dd.MM. HH:mm' }} }
+              </div>
+              @if (ec.reasons?.length) {
+                <ul class="cluster-reasons">@for (r of ec.reasons!; track r) { <li>{{ r }}</li> }</ul>
+              }
+              @if (ec.triage?.zusammenfassung) {
+                <div class="cluster-ai">
+                  <b>KI-Einschätzung:</b> {{ ec.triage!.zusammenfassung }}
+                  @if (ec.triage!.vermutete_ursache) {
+                    <div><b>Vermutete Ursache:</b> {{ ec.triage!.vermutete_ursache }}
+                      <span class="cluster-dim">(Konfidenz {{ ec.triage!.konfidenz }})</span></div>
+                  }
+                  @if (ec.triage!.pruefschritte?.length) {
+                    <ol>@for (st of ec.triage!.pruefschritte!; track st) { <li>{{ st }}</li> }</ol>
+                  }
+                </div>
+              }
+              @if (ec.correlated?.length) {
+                <div class="cluster-sub">Gleichzeitig auffällig:
+                  @for (c of ec.correlated!; track c.container) {
+                    <span class="cluster-chip">{{ c.container }} {{ c.faktor }}×</span>
+                  }
+                </div>
+              }
+              @if (ec.patterns?.length) {
+                <div class="cluster-sub">Weitere Muster desselben Ausbruchs:</div>
+                @for (p of ec.patterns!; track p.template) {
+                  <pre class="cluster-template small">{{ p.template }}</pre>
+                }
+              }
+              <div class="cluster-containers">
+                @for (c of (ec.containers || []).slice(0, 12); track c.name) {
+                  <span class="cluster-chip">{{ c.name.split('.')[0] }}</span>
+                }
+                @if ((ec.containers?.length ?? 0) > 12) { <span class="cluster-dim">… +{{ ec.containers!.length - 12 }}</span> }
+              </div>
+              @if (ec.graylog_url) {
+                <a class="cluster-link" [href]="ec.graylog_url" target="_blank" rel="noopener">In Graylog ansehen</a>
+              }
+            </div>
+          }
           @if (incidentTimeline()!.incident.causal_context?.length) {
             <div class="causal-panel">
               <div class="causal-panel-header">
@@ -1459,6 +1548,27 @@ const SEVERITY_COLOR: Record<string, string> = {
     .incident-drawer-loading { display: flex; justify-content: center; padding: 40px; }
 
     /* ── Causal Panel ── */
+    .cluster-merged { margin: 10px 16px 0; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+      display: flex; gap: 6px; align-items: center; font-size: 13px;
+      background: color-mix(in srgb, var(--mat-sys-primary) 10%, transparent); }
+    .cluster-panel { margin: 10px 16px 4px; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid color-mix(in srgb, #e65100 45%, transparent);
+      background: color-mix(in srgb, #e65100 6%, transparent); font-size: 13px; }
+    .cluster-panel-header { display: flex; align-items: center; gap: 6px; font-weight: 700; margin-bottom: 6px; }
+    .cluster-spacer { flex: 1; }
+    .cluster-mute { font-size: 12px; }
+    .cluster-template { white-space: pre-wrap; word-break: break-word; font-size: 12px; margin: 4px 0;
+      padding: 6px 8px; border-radius: 6px; background: var(--mat-sys-surface-container); }
+    .cluster-template.small { font-size: 11px; opacity: .85; }
+    .cluster-meta, .cluster-dim { opacity: .75; font-size: 12px; }
+    .cluster-reasons { margin: 4px 0 6px 18px; padding: 0; font-size: 12px; }
+    .cluster-ai { margin: 6px 0; padding: 6px 8px; border-radius: 6px; background: var(--mat-sys-surface-container); }
+    .cluster-ai ol { margin: 4px 0 0 18px; padding: 0; }
+    .cluster-sub { margin-top: 6px; font-size: 12px; font-weight: 600; }
+    .cluster-containers { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .cluster-chip { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--mat-sys-surface-variant);
+      font-family: 'Fira Code', monospace; font-weight: 400; }
+    .cluster-link { display: inline-block; margin-top: 6px; font-size: 12px; }
     .causal-panel {
       margin: 10px 16px 4px;
       border: 1px solid color-mix(in srgb, var(--mat-sys-error) 40%, transparent);
@@ -2491,6 +2601,19 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
           this.loadingIncident.set(false);
           this.snackBar.open('Timeline konnte nicht geladen werden', 'OK', { duration: 3000 });
         },
+      });
+  }
+
+  readonly isAdmin = computed(() => this.auth.userRole() === 'admin');
+
+  /** Muster stummschalten (Admin): meldet nie mehr; im Audit-Log, jederzeit umkehrbar. */
+  muteTemplate(key: string) {
+    const reason = prompt('Warum stummschalten? (wird protokolliert)');
+    if (reason === null) return;          // abgebrochen → nichts tun
+    this.http.post(`${environment.apiUrl}/error-clusters/templates/${key}/mute`, { reason })
+      .subscribe({
+        next: () => this.snackBar.open('Muster stummgeschaltet — es meldet nicht mehr', 'OK', { duration: 3000 }),
+        error: () => this.snackBar.open('Stummschalten fehlgeschlagen', 'OK', { duration: 3000 }),
       });
   }
 
