@@ -97,3 +97,25 @@ def test_episode_without_known_template_does_not_break_the_run():
     store = MemoryStore(START)
     store.open["unknown"] = Episode(id="x", key="unknown", started_at=START, last_active_at=START)
     process(store, _bucket(START))          # darf keinen KeyError werfen
+
+
+def test_capped_window_is_recounted_exactly():
+    """> 80 000 Zeilen in 5 min: die Stichprobe zählt zu wenig — Graylog zählt nach."""
+    import asyncio
+    from app.services.error_clusters.runner import _recount_exact
+
+    seen = {}
+
+    class FakeGraylog:
+        async def count_occurrences(self, specs):
+            seen["specs"] = specs
+            return {s["id"]: {"count": 90_000, "containers": [{"name": "c1", "count": 50_000},
+                                                              {"name": "c2", "count": 40_000}]}
+                    for s in specs}
+
+    t = _bucket(WAVE1[0])
+    t.templates[LOG401].count = 9_000                 # Stichprobe
+    asyncio.run(_recount_exact(FakeGraylog(), t, WAVE1[0]))
+    assert t.templates[LOG401].count == 90_000
+    assert set(t.templates[LOG401].entities) == {"c1", "c2"}
+    assert any('message:"' in s["query"] and "level:<=4" in s["query"] for s in seen["specs"])

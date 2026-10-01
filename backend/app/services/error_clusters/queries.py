@@ -21,10 +21,18 @@ def summary(ec, t) -> dict:
     from app.services.error_clusters.runner import short_title
     template = t.template if t else ""
     entities = ec.entities or {}
+    if ec.source == "checkmk_fleet":
+        # Flotten-Cluster: "CheckMK-Service X" → "Flotten-Ausfall: X"; ältere Episoden ohne
+        # Musterzeile bekommen den Titel aus der Begründung statt des rohen Schlüssels.
+        service = template.removeprefix("CheckMK-Service ").strip() if template else ""
+        title = (f"Flotten-Ausfall: {service}" if service
+                 else f"Flotten-Ausfall: {(ec.reasons or ['CheckMK'])[0]}")
+    else:
+        title = short_title(template) if template else ec.key
     return {
         "id": str(ec.id),
         "key": ec.key,
-        "title": short_title(template) if template else ec.key,
+        "title": title,
         "template": template,
         "status": ec.status,
         "rules": ec.rules or [],

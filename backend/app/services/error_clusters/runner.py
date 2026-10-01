@@ -375,6 +375,8 @@ async def _run() -> None:
                 return
             t = await asyncio.to_thread(tally, fetched.lines, rt.miner, b,
                                         fetched.total, fetched.complete)
+            if not fetched.complete:
+                await _recount_exact(svc, t, b)
             events = process(rt.store, t)
             report = now - (b + BUCKET) <= REPORT_HORIZON
             if not report:
@@ -416,6 +418,41 @@ async def _run() -> None:
         log.info("error_clusters: done in %.0fs — %d templates, %d open episodes, "
                  "%d event(s), %d mail event(s)", (_now() - t_start).total_seconds(),
                  len(rt.store.templates), len(rt.store.open), n_events, n_mails)
+
+
+#: So viele der größten Muster eines gekappten Fensters zählt Graylog exakt nach.
+RECOUNT_TOP = 10
+
+
+async def _recount_exact(svc, t, b: datetime) -> None:
+    """Gekapptes Fenster (> 80 000 Zeilen in 5 min): die größten Muster exakt zählen.
+
+    Die Stichprobe unterschätzt genau die Muster, um die es bei einer Flut geht. Graylog
+    zählt serverseitig (Pivot nach Container) über die feste Phrase des Musters; der
+    größere der beiden Werte gilt, die Container-Aufteilung kommt aus der Zählung.
+    """
+    from app.services.error_clusters.collector import BASE_QUERY
+    from app.services.graylog_occurrences import _quote, iso, template_phrase
+    specs = []
+    for key, tt in sorted(t.templates.items(), key=lambda kv: -kv[1].count)[:RECOUNT_TOP]:
+        phrase = template_phrase(tt.template)
+        if phrase:
+            q = f"({BASE_QUERY}) AND message:{_quote(phrase)}"
+            specs.append({"id": key, "query": q, "since": iso(b), "until": iso(b + BUCKET)})
+    if not specs:
+        return
+    try:
+        counts = await svc.count_occurrences(specs)
+    except Exception as exc:
+        log.warning("error_clusters: exact recount failed: %s", exc)
+        return
+    for key, c in counts.items():
+        tt = t.templates[key]
+        if c["count"] > tt.count:
+            tt.count = c["count"]
+            if c.get("containers"):
+                tt.entities = Counter({x["name"]: x["count"] for x in c["containers"]})
+    log.info("error_clusters: window %s capped — %d pattern(s) recounted exactly", b, len(counts))
 
 
 async def _persist_episodes_only(db, rt: _Runtime) -> None:

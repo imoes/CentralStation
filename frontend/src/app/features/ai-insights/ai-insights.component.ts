@@ -548,6 +548,7 @@ export class AiInsightsComponent implements OnInit, OnDestroy {
       sysadmin: 'SYSADMIN',
       network: 'NETWORK',
       hostgroup_pattern: 'PERF-MUSTER',
+      error_cluster: 'FEHLER-CLUSTER',
     };
     return map[agent] ?? (agent || '').toUpperCase();
   }
