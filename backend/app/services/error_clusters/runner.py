@@ -266,6 +266,19 @@ async def _handle(db, rt: _Runtime, events: list[Event], base_url: str) -> None:
         if alert_id:
             rt.alert_ids[ep.id] = alert_id
 
+        if ep.group_id is not None and ev.action in ("open", "reopen", "renotify"):
+            leader_inc = rt.incident_ids.get(ep.group_id)
+            if leader_inc:
+                from app.services.error_clusters.incident import add_pattern
+                await add_pattern(db, leader_inc, {
+                    "template_key": ep.key, "template": ev.template.template,
+                    "count15": ev.verdict.count15, "total": ep.total,
+                    "rules": sorted(ep.rules), "started_at": ep.started_at.isoformat(),
+                    "containers": ctx["containers"][:15], "hosts": ctx["hosts"],
+                    "examples": ctx["examples"][:2],
+                }, [{"external_id": ext_id, "source": "graylog"}])
+                rt.incident_ids[ep.id] = leader_inc
+            continue
         if ev.mail or (ev.action == "reopen" and ep.id in rt.incident_ids):
             inc = await open_cluster_incident(
                 db, kind="log_cluster", title=title, severity=severity,
@@ -274,8 +287,14 @@ async def _handle(db, rt: _Runtime, events: list[Event], base_url: str) -> None:
                 existing_id=rt.incident_ids.get(ep.id))
             rt.incident_ids[ep.id] = str(inc.id)
         elif ev.action == "close" and ep.id in rt.incident_ids:
-            await close_cluster_incident(db, rt.incident_ids[ep.id],
-                                         "Muster seit 60 min unter der doppelten Grundlast")
+            # Erst schließen, wenn ALLE Muster des Ausbruchs ruhig sind — nicht schon,
+            # wenn das erste endet, während ein zugehöriges noch läuft.
+            group = ep.group_id or ep.id
+            still = [o for o in rt.store.open.values()
+                     if o.id != ep.id and (o.id == group or o.group_id == group)]
+            if not still:
+                await close_cluster_incident(db, rt.incident_ids[ep.id],
+                                             "alle Muster seit 60 min unter der doppelten Grundlast")
     if docs:
         await index_items(docs)
 

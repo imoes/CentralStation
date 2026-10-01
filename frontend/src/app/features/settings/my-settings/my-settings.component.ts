@@ -295,6 +295,22 @@ import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
             }
           </div>
 
+          <div class="digest-section-title">Fehler-Cluster (automatisch erkannte Ausbrüche)</div>
+          <p style="margin:0 0 4px;font-size:13px;color:var(--mat-sys-on-surface-variant);">
+            Ein Fehlermuster tritt plötzlich auf vielen Containern oder weit über seiner üblichen
+            Menge auf. Gemeldet wird nur, was deine Hosts aus dem CheckMK-Filter betrifft
+            (ohne Filter: alles).
+          </p>
+          <div class="digest-row">
+            <mat-slide-toggle [(ngModel)]="errorClusterImmediate">Sofort-Mail bei einem Ausbruch</mat-slide-toggle>
+          </div>
+          <div class="digest-row">
+            <mat-slide-toggle [(ngModel)]="errorClusterDigest">Neue, ruhige Fehlermuster im täglichen Bericht</mat-slide-toggle>
+            @if (errorClusterDigest && !digestDaily) {
+              <span class="digest-hint">zur Stunde des täglichen Berichts ({{ digestDailyHour }}:00 UTC)</span>
+            }
+          </div>
+
           <div style="margin-top:12px;">
             <button mat-flat-button color="primary" [disabled]="digestSaving()" (click)="saveDigestSettings()">
               @if (digestSaving()) { <mat-spinner diameter="18"></mat-spinner> }
@@ -328,6 +344,7 @@ import { AppLanguage, I18nService } from '../../../core/services/i18n.service';
     .no-filter-hint { font-size: 13px; color: var(--mat-sys-on-surface-variant); margin: 4px 0 0; display: flex; align-items: center; gap: 4px; }
     @media (max-width: 820px) { .age-field { width: 100%; } }
     .pw-field { width: 100%; max-width: 380px; }
+    .digest-section-title { margin-top: 14px; font-weight: 600; font-size: 14px; }
     .pw-actions { display: flex; align-items: center; gap: 16px; padding-top: 4px; }
     .pw-hint { font-size: 12px; color: var(--mat-sys-on-surface-variant); }
     .pw-error { display: flex; align-items: center; gap: 6px; color: var(--mat-sys-error); font-size: 13px; margin: 0 0 8px; }
@@ -369,6 +386,8 @@ export class MySettingsComponent implements OnInit {
   digestWeekly     = false;
   digestWeeklyDay  = 0;
   digestWeeklyHour = 7;
+  errorClusterImmediate = false;
+  errorClusterDigest = false;
   digestSaving     = signal(false);
 
   sshUsername = '';
@@ -419,6 +438,8 @@ export class MySettingsComponent implements OnInit {
         this.digestWeekly     = !!ns.digest_weekly;
         this.digestWeeklyDay  = ns.digest_weekly_day  ?? 0;
         this.digestWeeklyHour = ns.digest_weekly_hour ?? 7;
+        this.errorClusterImmediate = !!ns.error_cluster_immediate;
+        this.errorClusterDigest    = !!ns.error_cluster_digest;
 
         const merge = (saved: string[], avail: string[]) =>
           [...new Set([...saved, ...avail])].sort();
@@ -469,6 +490,9 @@ export class MySettingsComponent implements OnInit {
         digest_weekly:      this.digestWeekly,
         digest_weekly_day:  this.digestWeeklyDay,
         digest_weekly_hour: this.digestWeeklyHour,
+        // Das Backend ersetzt das ganze Dict — jeder Schlüssel muss hier mitgehen.
+        error_cluster_immediate: this.errorClusterImmediate,
+        error_cluster_digest:    this.errorClusterDigest,
       },
     }).subscribe({
       next: () => {

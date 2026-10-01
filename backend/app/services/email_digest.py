@@ -462,5 +462,17 @@ async def run_digest_for_hour(db: AsyncSession, now: datetime) -> None:
                     )
                     log.info("digest: weekly sent to %s", user.email)
 
+            # Neue, ruhige Fehlermuster — zur Stunde des täglichen Berichts, auch wenn
+            # der KI-Insight-Bericht selbst aus ist.
+            if (ns.get("error_cluster_digest")
+                    and int(ns.get("digest_daily_hour", 7)) == current_hour):
+                from datetime import timedelta
+                from app.services.error_clusters.notify import build_digest_html
+                html = await build_digest_html(db, str(user.id), now - timedelta(hours=24))
+                if html:
+                    await smtp.send(user.email,
+                                    "CentralStation — Neue Fehlermuster (24 h)", html)
+                    log.info("digest: error clusters sent to %s", user.email)
+
         except Exception as exc:
             log.warning("digest: send failed for %s: %s", user.email, exc)

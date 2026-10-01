@@ -277,3 +277,44 @@ async def on_events(events, rt, cfg, base_url: str) -> None:
     for ev in events:
         if ev.mail:
             run_background(_notify_one(ev, rt, cfg, base_url), name=f"error_cluster_notify_{ev.episode.id[:8]}")
+
+
+async def build_digest_html(db, user_id: str, since: datetime) -> str | None:
+    """Tagesübersicht: neue, ruhige Fehlermuster (keine Sofort-Mail) seit `since`.
+
+    Gefiltert auf den Host-Scope des Nutzers wie die Sofort-Mails. None = nichts Neues.
+    """
+    from app.models.error_cluster import ErrorCluster, LogTemplate
+    from app.services.error_clusters.incident import host_matches
+    from app.services.error_clusters.runner import short_title
+    from app.services.feed_index import get_user_checkmk_host_scope
+
+    rows = (await db.execute(
+        select(ErrorCluster, LogTemplate)
+        .join(LogTemplate, LogTemplate.key == ErrorCluster.key)
+        .where(ErrorCluster.notify_class == "digest", ErrorCluster.started_at >= since,
+               LogTemplate.muted.is_(False))
+        .order_by(ErrorCluster.total.desc()))).all()
+    scope = await get_user_checkmk_host_scope(db, user_id)
+    items = [(ec, t) for ec, t in rows
+             if not scope or any(host_matches(s, ec.sources or []) for s in scope)]
+    if not items:
+        return None
+    trs = "".join(
+        f"<tr><td style='padding:4px 8px'>{_esc(short_title(t.template))}</td>"
+        f"<td style='padding:4px 8px;white-space:nowrap'>{_esc(ec.started_at.strftime('%d.%m. %H:%M'))}</td>"
+        f"<td style='padding:4px 8px;text-align:right'>{fmt_int(ec.total)}</td>"
+        f"<td style='padding:4px 8px'>{_esc(', '.join(list((ec.entities or {}).keys())[:3]))}</td>"
+        f"<td style='padding:4px 8px'>{_esc(((ec.triage or {}).get('zusammenfassung') or '')[:160])}</td></tr>"
+        for ec, t in items[:40])
+    return f"""<div style="font-family:Arial,sans-serif;font-size:14px;max-width:900px">
+    <h3>Neue Fehlermuster (letzte 24 Stunden)</h3>
+    <p style="color:#555">Muster, die es 14 Tage nicht gab, aber ohne Ausbruch — zum Durchsehen,
+       nicht zum sofortigen Handeln. {len(items)} Muster{'' if len(items) <= 40 else ', die 40 größten gezeigt'}.</p>
+    <table style="border-collapse:collapse;font-size:13px">
+      <tr style="background:#eee"><th style="padding:4px 8px;text-align:left">Muster</th>
+      <th style="padding:4px 8px">Erstmals</th><th style="padding:4px 8px">Zeilen</th>
+      <th style="padding:4px 8px;text-align:left">Container</th><th style="padding:4px 8px;text-align:left">KI-Kurzfazit</th></tr>
+      {trs}</table>
+    <p style="color:#888;font-size:12px;margin-top:18px">Automatisch erkannt – keine Aktion ausgeführt.
+       Abbestellen: Einstellungen → E-Mail-Berichte.</p></div>"""

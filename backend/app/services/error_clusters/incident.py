@@ -241,6 +241,29 @@ async def open_cluster_incident(db: AsyncSession, *, kind: str, title: str, seve
     return inc
 
 
+async def add_pattern(db: AsyncSession, incident_id: str, pattern: dict,
+                      member_docs: list[dict]) -> None:
+    """Weiteres Muster desselben Ausbruchs: Mitglied werden, im Kontext auflisten.
+
+    Beispiel 30.09.: zum 401 kamen HealthCheck-Fehler auf denselben Containern und
+    HttpClient-Fehler — ein Vorfall, ein Incident, mehrere Muster.
+    """
+    inc = (await db.execute(select(Incident).where(Incident.id == uuid.UUID(incident_id)))
+           ).scalar_one_or_none()
+    if inc is None:
+        return
+    now = datetime.now(timezone.utc)
+    await _add_members(db, inc, member_docs, now)
+    ctx = cluster_context(inc) or {}
+    patterns = [p for p in (ctx.get("patterns") or [])
+                if p.get("template_key") != pattern.get("template_key")]
+    patterns.append(pattern)
+    hosts = sorted(set(ctx.get("hosts") or []) | set(pattern.get("hosts") or []))
+    set_cluster_context(inc, {**{k: v for k, v in ctx.items() if k != "type"},
+                              "patterns": patterns, "hosts": hosts})
+    inc.updated_at = now
+
+
 def set_cluster_context(inc: Incident, context: dict) -> None:
     entries = [e for e in (inc.causal_context or [])
                if not (isinstance(e, dict) and e.get("type") == "error_cluster")]

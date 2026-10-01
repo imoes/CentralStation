@@ -14,6 +14,81 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What is new
 
+- **Error-cluster detection: CentralStation detects outbreaks in the logs by itself
+  and reports them by e-mail.** Trigger was a 401 outbreak that nobody noticed:
+  `Failed to read change-log: HTTP Status '401 Unauthorized'`, 30.09. 11:30–12:20 UTC
+  (103 835 lines, 26 Zipline containers) and again 01.10. 08:00–08:40 (85 960 lines,
+  24 containers). The feed only ever saw a sample of 50 messages per run, merged
+  silently, and grouped per host.
+
+  How it works (`backend/app/services/error_clusters/`, the same funnel as in
+  Datadog Watchdog, Elastic and Grafana Sift):
+  1. **Every error line counts.** Every 5 min every `level:<=4` line of the window is
+     fetched from Graylog. Unlike the feed path, nothing is deduplicated: 10 000
+     identical lines count as 10 000. Windows above the 10 000-hit cap are split.
+  2. **Patterns with Drain3.** Numbers, IDs, IPs and timestamps are masked. HTTP status
+     codes stay part of the pattern, so 401 and 500 are separate patterns. The key is
+     the first key of a Drain cluster and survives the pattern being generalized, a
+     restart, or a lost state.
+  3. **Baseline per pattern** is the median, not a moving average. A moving average
+     would still have carried wave 1 about 20 h later and missed wave 2.
+  4. **Rules:** NEW (not seen for 14 days), SPIKE (≥ 200 lines, ≥ 5× baseline, Poisson
+     p < 1e-6, 2 of 3 windows), SPREAD (≥ 8 containers, ≥ 100 lines, 3× the usual).
+     Recurring patterns must exceed twice their previous peak. Fixed rules decide
+     whether a mail goes out. The LLM only writes the text.
+  5. **One outbreak, one incident, one mail.** A pattern that starts within 30 min of
+     a reported outbreak on the same containers or hosts joins it as a further
+     pattern.
+  6. **AI assessment** per episode, with no budget and no token limit: summary,
+     suspected cause, read-only checks. The mail goes out immediately anyway. If the
+     LLM is slow, the mail says "KI-Einschätzung folgt" and a second mail follows.
+  7. **Mail** to users who opted in (Einstellungen → E-Mail-Berichte → "Sofort-Mail
+     bei einem Ausbruch"), only for their own CheckMK hosts. New quiet patterns go
+     into a separate daily mail at the hour of the daily report.
+
+  Verified: backtest over the real Graylog data of 72 h (864 windows, 3 991 137 lines,
+  `python -m app.scripts.error_cluster_backtest`): **passed**. Wave 1 was reported at
+  11:35 (new + spread, 24 containers) and wave 2 at 08:00 (spread). The noise of
+  `cue-zipline-dam.cue.stage` (~5 400 errors/3 h) sent no mail. After tuning on that
+  data there were 4 immediate mails in 48 h instead of 183 with the first values.
+  56 tests across rules, miner, the synthetic incident replay and mail rendering.
+
+### What changed
+
+- **Incident detection is now part of the error-cluster detection.** It replaces the
+  host correlator (`services/incident/correlator.py`, removed). Incidents come from one
+  place, in three kinds (`incidents.kind`):
+  - `host`: the previous rule, unchanged.
+  - `log_cluster`: a log pattern across many containers.
+  - `fleet`: planned.
+
+  If a host belongs to an open cross-host cluster, its alerts join that cluster
+  instead of opening a second incident. Open host incidents of its hosts are merged
+  into it. The AIKB cause search appends to the incident context instead of
+  overwriting it. The timeline API returns the cluster context separately, so it does
+  not show up as an empty "cause". Verified: the correlator's tests apply unchanged to
+  the new place (`test_host_clusters.py`). In production, `close_recovered` closed a
+  host incident after the CheckMK recovery in the same aggregation run.
+- **Backend build:** `fastmcp` is pinned to the running 2.13.0.2. With the range
+  `>=2.13,<2.14`, every rebuild of the dependency layer failed against `uvicorn
+  0.32.1`; this went unnoticed only because the layer came from the cache. `drain3` is
+  installed with `--no-deps`, because its pins (`cachetools==4.2.1`) conflict with
+  fastmcp. Verified with current versions.
+
+### What is still missing (error clusters)
+
+- **Switched off until an admin turns it on:** Admin → KI → Fehler-Cluster:
+  `error_clusters.enabled` and `error_clusters.mail_enabled`. On the first start, the
+  last 24 h are backfilled silently (about 10 min), so there is no day-long learning
+  phase.
+- Widget in the generative dashboard (KI-Lagebild), CheckMK fleet clusters, a mute
+  button for patterns, the cluster context in the incident drawer and in "An Konsole
+  übergeben": not built yet.
+- Windows with more than 80 000 lines in 5 min only count a lower bound. Exact
+  recounting by Graylog for this case is missing.
+- The hour-of-week baseline only becomes possible after 14 days of runtime. Until
+  then, the median over all windows applies.
+
 - **Write operations now require consent that the AI cannot give itself.**
   Nine MCP tools that act outward — `jira_add_comment`, `jira_update_issue`,
   `jira_transition_issue`, `jira_close_issue`, `create_jira_ticket`,

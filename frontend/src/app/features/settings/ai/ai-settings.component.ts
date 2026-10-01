@@ -63,6 +63,12 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showO
     keys: ['jira.ticket_project'],
   },
   {
+    // Fehler-Cluster-Erkennung (backend services/error_clusters): Log-Muster mit
+    // Grundlast, Ausbrüche → Incident + Sofort-Mail. Beide Schalter sind Not-Aus.
+    title: 'Fehler-Cluster',
+    keys: ['error_clusters.enabled', 'error_clusters.mail_enabled'],
+  },
+  {
     title: 'Agent Settings',
     keys: [
       'agent.interval_minutes',
@@ -89,6 +95,7 @@ const BOOLEAN_KEYS = new Set([
   'searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled',
   'llm.thinking_mode', 'workflow.web_search',
   'computer.show_reasoning', 'coroot.enrichment_enabled',
+  'error_clusters.enabled', 'error_clusters.mail_enabled',
 ]);
 // Boolean settings that default to ON when no DB row exists yet.
 const DEFAULT_ON_KEYS = new Set(['computer.show_reasoning', 'coroot.enrichment_enabled']);
@@ -796,6 +803,8 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       'agent.interval_minutes':              'AI Agent interval (minutes)',
       'agent.aggregation_interval_minutes':  'Alert fetch interval (minutes)',
       'agent.auto_jira':                     'Create Jira tickets automatically',
+      'error_clusters.enabled':              'Fehler-Cluster erkennen (Graylog-Muster, alle 5 min)',
+      'error_clusters.mail_enabled':         'Sofort-Mails an angemeldete Nutzer versenden',
       'agent.auto_enrich':                   'AI enrichment automatic (off = on demand)',
       'agent.rag_enabled':                   'Knowledge base search (RAG) in AI agent',
       'workflow.web_search':                 'Web search during AI analysis',
