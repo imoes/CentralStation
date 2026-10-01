@@ -55,8 +55,11 @@ MASKS: list[tuple[str, str]] = [
     (r"(?<![A-Za-z0-9_])[-+]?\d+(?:\.\d+)?(?![A-Za-z0-9_])", "NUM"),
 ]
 
-#: Drain3-Parameter (Recherche: sim_th 0.4–0.5, depth 4; Grenze gegen Speicherwachstum).
-SIM_TH = 0.45
+#: Drain3-Parameter. sim_th aus dem Backtest (72 h, 4 Mio. Zeilen): bei 0.45 verschmolz
+#: der 401 mit anderen Zipline-Fehlern zu "ERROR - <*> - Failed to <*> <*> <*> <*>" —
+#: als Mail unbrauchbar. 0.6 trennt sie ("…ChangelogReader - Failed to read change-log:
+#: HTTP401…"), 0.7 zerlegt nur weiter (1 231 statt 953 Muster) ohne Gewinn.
+SIM_TH = 0.6
 DEPTH = 4
 MAX_CHILDREN = 100
 MAX_CLUSTERS = 10_000

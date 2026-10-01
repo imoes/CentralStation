@@ -24,7 +24,6 @@ from app.services.error_clusters.rules import (
     evaluate,
     median_with_zeros,
     next_action,
-    quantile_with_zeros,
     should_renotify,
 )
 
@@ -68,10 +67,14 @@ class Episode:
     entities: Counter = field(default_factory=Counter)
     sources: set = field(default_factory=set)
     closed_at: datetime | None = None
+    #: Gehört zu einem anderen, schon gemeldeten Ausbruch (dessen Episoden-ID): selbe
+    #: Zeit, gemeinsame Container/Hosts. Dann EIN Incident, EINE Mail — dieses Muster
+    #: erscheint dort als weiteres.
+    group_id: str | None = None
 
     def state(self) -> EpisodeState:
         return EpisodeState(self.started_at, self.last_active_at,
-                            self.notified_rate, self.notified_entities)
+                            self.notified_rate, self.notified_entities, self.notified_at)
 
 
 @dataclass
@@ -147,6 +150,7 @@ def _series_stats(series: dict[datetime, BucketRec], window_start: datetime,
     n = max(0, int((window_start - history_start) / BUCKET))
     nonzero_counts: list[int] = []
     nonzero_entities: list[int] = []
+    days: set = set()
     sums: dict[int, int] = {}
     for b, rec in series.items():
         count = rec.count
@@ -154,14 +158,42 @@ def _series_stats(series: dict[datetime, BucketRec], window_start: datetime,
             continue
         nonzero_counts.append(count)
         nonzero_entities.append(rec.n_entities)
+        days.add(b.date())
         idx = int((b - history_start) / BUCKET)
         for w in range(idx - WINDOW_BUCKETS + 1, idx + 1):   # alle 15-min-Fenster mit b
             if 0 <= w <= n - WINDOW_BUCKETS:
                 sums[w] = sums.get(w, 0) + count
-    n_windows = max(0, n - WINDOW_BUCKETS + 1)
-    q = quantile_with_zeros(list(sums.values()), n_windows, th.spike_quantile) if n_windows else None
+    peak = float(max(sums.values())) if sums else 0.0
     usual_entities = median_with_zeros(nonzero_entities, n)
-    return n, nonzero_counts, q, usual_entities
+    return n, nonzero_counts, peak, usual_entities, len(days)
+
+
+def _group_leader(store: MemoryStore, episode: Episode, b: datetime,
+                  th: Thresholds) -> Episode | None:
+    """Ein gemeldeter Ausbruch, zu dem dieses Muster gehört — oder None.
+
+    Kriterien: der andere wurde gemeldet, begann höchstens group_minutes vorher und teilt
+    Container (Jaccard ≥ group_overlap) oder Hosts. Beispiel 30.09.: der 401 auf 24
+    Zipline-Containern, 25 min später der HealthCheck-Fehler auf denselben Containern —
+    ein Vorfall, nicht zwei Mails.
+    """
+    mine = set(episode.entities)
+    best, best_score = None, 0.0
+    for other in store.open.values():
+        if other.key == episode.key or other.notified_at is None and other.group_id is None:
+            continue
+        if other.notify_class != "immediate":
+            continue
+        if b - other.started_at > timedelta(minutes=th.group_minutes) or other.started_at > b:
+            continue
+        theirs = set(other.entities)
+        union = mine | theirs
+        jaccard = len(mine & theirs) / len(union) if union else 0.0
+        shared_hosts = bool(episode.sources & other.sources)
+        score = jaccard + (0.5 if shared_hosts else 0.0)
+        if (jaccard >= th.group_overlap or shared_hosts) and score > best_score:
+            best, best_score = other, score
+    return best
 
 
 def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> list[Event]:
@@ -185,13 +217,13 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
                 ents15.update(r.entities)
         if key in t.templates:
             srcs15 |= t.templates[key].sources
-        n, nonzero, q, usual = _series_stats(series, window_start, history_start, th)
+        n, nonzero, peak, usual, active_days = _series_stats(series, window_start, history_start, th)
         # Lernphase: noch keine Grundlast, nichts melden (rules.baseline, dünn besetzt).
         lam = (None if detector_age < timedelta(hours=th.warmup_hours)
                else max(median_with_zeros(nonzero, n), th.lam_floor))
         window = Window(counts=counts, entities=len(ents15), sources=len(srcs15) or 1,
-                        usual_entities=usual, seen_before=bool(nonzero))
-        verdict = evaluate(window, lam, th=th, history_q=q)
+                        usual_entities=usual, seen_before=bool(nonzero), active_days=active_days)
+        verdict = evaluate(window, lam, th=th, history_peak=peak)
 
         info = store.templates[key]
         episode = store.open.get(key)
@@ -231,6 +263,15 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
         mail = action in ("open", "renotify") or (
             action == "reopen" and verdict.notify == "immediate"
             and should_renotify(counts[-1], len(ents15), episode.state(), th))
+        if mail and action in ("open", "reopen") and episode.group_id is None:
+            leader = _group_leader(store, episode, b, th)
+            if leader is not None:
+                episode.group_id = leader.group_id or leader.id
+        if episode.group_id is not None and mail:
+            # Teil eines schon gemeldeten Ausbruchs: keine eigene Mail. notify_class
+            # trotzdem "immediate" — für Feed, Incident und Widget ist es ein Ausbruch.
+            episode.notify_class = "immediate"
+            mail = False
         if mail:
             episode.notify_class = "immediate"
             episode.notified_rate = max(counts)

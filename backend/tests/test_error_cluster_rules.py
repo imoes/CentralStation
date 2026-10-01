@@ -143,8 +143,44 @@ def test_single_burst_bucket_is_not_a_spike():
 def test_spread_needs_many_more_containers_than_usual():
     history = [10] * (2 * DAY_BUCKETS)
     lam = baseline(history, 2 * DAY)
-    assert "spread" not in evaluate(_w([10, 10, 10], entities=6, usual=5.0), lam, history).rules
-    assert "spread" in evaluate(_w([10, 10, 10], entities=15, usual=5.0), lam, history).rules
+    assert "spread" not in evaluate(_w([40, 40, 40], entities=10, usual=5.0), lam, history).rules
+    assert "spread" in evaluate(_w([40, 40, 40], entities=16, usual=5.0), lam, history).rules
+
+
+def test_spread_needs_volume():
+    """Backtest: 8–24 Zeilen auf 5 Quellen (systemd-Meldungen) waren eine Sofort-Mail."""
+    history = [0] * (2 * DAY_BUCKETS)
+    lam = baseline(history, 2 * DAY)
+    assert "spread" not in evaluate(_w([3, 3, 4], entities=10), lam, history).rules
+
+
+def test_recurring_pattern_must_beat_its_own_peak():
+    """Täglich wiederkehrend (systemd/GnuPG): so laut wie an den Vortagen → keine Spitze."""
+    history = [0] * (5 * DAY_BUCKETS)
+    for d in range(5):
+        history[d * DAY_BUCKETS + 100: d * DAY_BUCKETS + 103] = [150, 150, 150]
+    lam = baseline(history, 5 * DAY)
+    w = Window((150, 150, 150), 1, 1, 1.0, True, active_days=5)
+    assert "spike" not in evaluate(w, lam, history).rules
+    louder = Window((900, 900, 900), 1, 1, 1.0, True, active_days=5)   # 2 700 ≥ 2 × 450
+    assert "spike" in evaluate(louder, lam, history).rules
+
+
+def test_repeated_outbreak_is_still_a_spike():
+    """Der 401 kam an zwei Tagen. Nur zwei aktive Tage → kein "wiederkehrendes" Muster;
+    die erste Welle in der Historie darf die zweite nicht verdecken."""
+    history = [0] * (3 * DAY_BUCKETS)
+    history[-240:-230] = [7_500] * 10
+    lam = baseline(history, 3 * DAY)
+    w = Window((0, 5_990, 14_578), 1, 1, 1.0, True, active_days=1)
+    assert "spike" in evaluate(w, lam, history).rules
+
+
+def test_single_container_spike_goes_to_digest_unless_huge():
+    history = [2] * (2 * DAY_BUCKETS)
+    lam = baseline(history, 2 * DAY)
+    assert evaluate(_w([100, 100, 100]), lam, history).notify == "digest"
+    assert evaluate(_w([400, 400, 400]), lam, history).notify == "immediate"
 
 
 def test_reasons_are_readable():

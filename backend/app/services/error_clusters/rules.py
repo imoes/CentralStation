@@ -34,19 +34,31 @@ class Thresholds:
     new_min_count: int = 20           # NEU: mindestens so viele Zeilen in 15 min …
     new_min_sources: int = 2          # … oder auf so vielen Quellen
     new_immediate_count: int = 500    # NEU ohne Ausbreitung, aber so laut → sofort
-    spike_min_count: int = 50
+    # Schwellen aus dem Backtest (72 h): mit 50 Zeilen und "Faktor ODER Perzentil" kamen
+    # 183 Sofort-Mails in 48 h — kleine Spitzen eines Containers, täglich wiederkehrende
+    # Muster (systemd/GnuPG), wenige Zeilen auf 5 Quellen.
+    spike_min_count: int = 200
     spike_factor: float = 5.0         # × erwartete Menge in 15 min
-    spike_quantile: float = 0.995     # oder über diesem Perzentil der 15-min-Summen
+    spike_immediate_count: int = 1000 # Spitze ohne Ausbreitung: erst ab hier sofort
     spike_p: float = 1e-6             # Poisson-Wahrscheinlichkeit, dass es Zufall ist
     spike_bucket_factor: float = 3.0  # ein einzelnes Fenster gilt ab 3 λ als erhöht …
     spike_buckets_needed: int = 2     # … und so viele der drei Fenster müssen es sein
-    spread_min_entities: int = 5
+    spread_min_entities: int = 8
+    spread_min_count: int = 100
     spread_factor: float = 3.0
     episode_active_factor: float = 2.0
     episode_quiet_minutes: int = 60
     cooldown_hours: float = 3.0
     renotify_factor: float = 2.0
     renotify_min_new_entities: int = 5
+    renotify_min_minutes: int = 60    # höchstens eine erneute Mail je Stunde und Episode
+    recurring_days: int = 3           # ab so vielen aktiven Tagen gilt ein Muster als wiederkehrend …
+    #: … und muss dann seinen bisherigen 15-min-Höchstwert um diesen Faktor übertreffen.
+    #: Nicht das 99,5-Perzentil: ein täglicher Job erreicht seinen Höchstwert in ~0,35 %
+    #: der Fenster — das Perzentil läge darunter und jeder Lauf wäre wieder eine Spitze.
+    recurring_peak_factor: float = 2.0
+    group_minutes: int = 30           # Muster, die so nah beieinander beginnen …
+    group_overlap: float = 0.2        # … und Container teilen, sind EIN Vorfall
     fleet_min_hosts: int = 5
     fleet_factor: float = 3.0
 
@@ -168,6 +180,10 @@ class Window:
     sources: int                      # verschiedene Hosts (Graylog-source)
     usual_entities: float             # übliche Anzahl Container je 15 min (Median)
     seen_before: bool                 # in den 14 Tagen vor diesem Fenster aufgetreten
+    #: An wie vielen verschiedenen Tagen das Muster in der Historie aktiv war. Erst ein
+    #: WIEDERKEHRENDES Muster (täglicher Job) muss auch sein bisheriges Höchstniveau
+    #: übertreffen; ein wiederholter Ausbruch (ein, zwei Tage) nicht.
+    active_days: int = 0
 
 
 @dataclass(frozen=True)
@@ -181,11 +197,11 @@ class Verdict:
 
 
 def evaluate(window: Window, lam: float | None, history: Sequence[int] | None = None,
-             th: Thresholds = DEFAULT, *, history_q: float | None = None) -> Verdict:
+             th: Thresholds = DEFAULT, *, history_peak: float | None = None) -> Verdict:
     """Welche Regeln greifen und welche Art Meldung daraus folgt.
 
-    Das Perzentil der 15-min-Summen kommt entweder aus `history` (Tests, kurze Reihen)
-    oder vorberechnet als `history_q` (Engine, dünn besetzte lange Reihen).
+    Der bisherige 15-min-Höchstwert kommt entweder aus `history` (Tests, kurze Reihen)
+    oder vorberechnet als `history_peak` (Engine, dünn besetzte lange Reihen).
     """
     count15 = sum(window.counts)
     if lam is None:
@@ -202,12 +218,17 @@ def evaluate(window: Window, lam: float | None, history: Sequence[int] | None = 
         reasons.append("neues Muster (14 Tage nicht gesehen)")
 
     elevated = sum(1 for c in window.counts if c >= th.spike_bucket_factor * lam)
-    if history_q is None:
+    if history_peak is None:
         sums = sums15(history or [])
-        history_q = quantile(sums, th.spike_quantile) if sums else None
-    over_quantile = history_q is not None and count15 > history_q
+        history_peak = max(sums) if sums else 0.0
+    # Wiederkehrende Muster (täglicher Lauf, Job) müssen zusätzlich ihr bisheriges
+    # Höchstniveau übertreffen — sonst wäre jeder Lauf eine "Spitze", weil der Median
+    # eines selten aktiven Musters 0 ist. Ein wiederholter AUSBRUCH (der 401 kam an zwei
+    # Tagen) bleibt davon unberührt: seine erste Welle hebt das Perzentil, nicht die Regel.
+    recurring = window.active_days >= th.recurring_days
     if (count15 >= th.spike_min_count
-            and (count15 >= th.spike_factor * expected or over_quantile)
+            and count15 >= th.spike_factor * expected
+            and (not recurring or count15 >= th.recurring_peak_factor * history_peak)
             and p < th.spike_p
             and elevated >= th.spike_buckets_needed):
         rules.add("spike")
@@ -215,13 +236,16 @@ def evaluate(window: Window, lam: float | None, history: Sequence[int] | None = 
                        f"({count15 / expected:.0f}×)")
 
     if (window.entities >= th.spread_min_entities
+            and count15 >= th.spread_min_count
             and window.entities >= th.spread_factor * max(window.usual_entities, 1.0)):
         rules.add("spread")
         reasons.append(f"{window.entities} Container/Quellen, üblich "
                        f"{max(window.usual_entities, 1.0):.0f}")
 
-    if "spike" in rules or "spread" in rules:
+    if "spread" in rules or ("spike" in rules and count15 >= th.spike_immediate_count):
         notify = "immediate"
+    elif "spike" in rules:
+        notify = "digest"           # deutlich, aber ein Container und überschaubar
     elif "new" in rules:
         notify = "immediate" if count15 >= th.new_immediate_count else "digest"
     else:
@@ -245,6 +269,7 @@ class EpisodeState:
     #: (7 500 → 15 000), das sähe wie eine Verdopplung aus und gäbe eine zweite Mail.
     notified_rate: int
     notified_entities: int
+    notified_at: datetime | None = None
 
 
 def next_action(
@@ -270,8 +295,10 @@ def next_action(
     if episode is not None:
         active = lam is not None and last_count > 0 and last_count >= th.episode_active_factor * lam
         if active:
-            if verdict.notify == "immediate" and should_renotify(
-                    last_count, entities, episode, th):
+            recent_mail = (episode.notified_at is not None and
+                           now - episode.notified_at < timedelta(minutes=th.renotify_min_minutes))
+            if (verdict.notify == "immediate" and not recent_mail
+                    and should_renotify(last_count, entities, episode, th)):
                 return "renotify"
             return "update"
         if now - episode.last_active_at >= timedelta(minutes=th.episode_quiet_minutes):
