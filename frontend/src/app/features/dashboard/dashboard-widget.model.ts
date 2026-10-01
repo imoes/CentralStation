@@ -2,7 +2,7 @@ export interface DashboardWidget {
   id: string;
   user_id: string;
   dashboard_id?: string | null;
-  widget_type: 'stat' | 'list' | 'donut' | 'bar' | 'ai_summary' | 'top_hosts' | 'timeseries' | 'grafana_panel' | 'forecast' | 'war_room' | 'incidents' | 'gauge';
+  widget_type: 'stat' | 'list' | 'donut' | 'bar' | 'ai_summary' | 'top_hosts' | 'timeseries' | 'grafana_panel' | 'forecast' | 'war_room' | 'incidents' | 'gauge' | 'error_clusters';
   title: string;
   gs_x: number;
   gs_y: number;
@@ -87,7 +87,25 @@ export interface IncidentsData {
   total: number;
 }
 
-export type WidgetData = (StatData | ListData | DonutData | BarData | AiSummaryData | TopHostsData | TimeseriesData | GrafanaPanelData | ForecastData | WarRoomData | IncidentsData | GaugeData) & {
+/** Laufende Fehlerausbrüche (Backend services/error_clusters). */
+export interface ErrorClustersData {
+  clusters: Array<{
+    id: string;
+    key: string;
+    title: string;
+    template: string;
+    rules: string[];
+    container_count: number;
+    total: number;
+    started_at: string;
+    incident_id: string | null;
+    triage?: { zusammenfassung?: string } | null;
+    series: { t: string; count: number }[];
+  }>;
+  total: number;
+}
+
+export type WidgetData = (StatData | ListData | DonutData | BarData | AiSummaryData | TopHostsData | TimeseriesData | GrafanaPanelData | ForecastData | WarRoomData | IncidentsData | GaugeData | ErrorClustersData) & {
   state?: 'available' | 'unavailable' | 'stale';
   error?: string;
 };

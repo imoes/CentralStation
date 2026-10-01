@@ -25,6 +25,7 @@ import {
   GaugeData,
   WarRoomData,
   IncidentsData,
+  ErrorClustersData,
   WidgetData,
 } from './dashboard-widget.model';
 
@@ -278,6 +279,37 @@ import {
             @case ('gauge') {
               <div echarts [options]="gaugeOptions()" class="chart"></div>
             }
+            @case ('error_clusters') {
+              @if (!errorClustersData()?.clusters?.length) {
+                <div class="empty">
+                  <mat-icon>check_circle_outline</mat-icon>
+                  <span>Keine laufenden Fehlerausbrüche</span>
+                </div>
+              } @else {
+                <div class="ecl-list">
+                  @for (c of errorClustersData()!.clusters; track c.id) {
+                    <div class="ecl-row" [attr.data-rules]="c.rules.join(' ')"
+                         [title]="c.template"
+                         (click)="c.incident_id && openIncidentTimeline(c.incident_id, $event)">
+                      <div class="ecl-main">
+                        <span class="ecl-title">{{ c.title }}</span>
+                        <span class="ecl-meta">
+                          {{ c.container_count }} Container · {{ fmtInt(c.total) }} Zeilen
+                          · seit {{ c.started_at | date:'HH:mm' }}
+                          @for (r of c.rules; track r) { <span class="ecl-rule">{{ ruleLabel(r) }}</span> }
+                        </span>
+                        @if (c.triage?.zusammenfassung) {
+                          <span class="ecl-ai">{{ c.triage?.zusammenfassung }}</span>
+                        }
+                      </div>
+                      <svg class="ecl-spark" viewBox="0 0 100 30" preserveAspectRatio="none">
+                        <polyline [attr.points]="sparkPoints(c.series)" fill="none" stroke="currentColor" stroke-width="1.5"></polyline>
+                      </svg>
+                    </div>
+                  }
+                </div>
+              }
+            }
           }
         }
       </div>
@@ -469,6 +501,17 @@ import {
     .inc-title { font-size: 11px; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .inc-badge { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: var(--mat-sys-surface-variant); white-space: nowrap; }
     .inc-time { font-size: 11px; opacity: .5; white-space: nowrap; font-family: monospace; }
+    .ecl-list { display: flex; flex-direction: column; gap: 6px; padding: 4px 6px; overflow: auto; height: 100%; }
+    .ecl-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer;
+      border-left: 4px solid #e65100; background: color-mix(in srgb, #e65100 7%, transparent); }
+    .ecl-row[data-rules~="spike"][data-rules~="spread"] { border-left-color: #b71c1c; background: color-mix(in srgb, #b71c1c 8%, transparent); }
+    .ecl-row:hover { filter: brightness(1.05); }
+    .ecl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .ecl-title { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ecl-meta { font-size: 11px; opacity: .75; display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+    .ecl-rule { font-size: 10px; padding: 0 5px; border-radius: 8px; background: var(--mat-sys-surface-variant); }
+    .ecl-ai { font-size: 11px; opacity: .85; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .ecl-spark { width: 110px; height: 34px; flex-shrink: 0; color: #e65100; }
     .source-unavailable { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; color:var(--mat-sys-error); text-align:center; }
     .source-unavailable span { color:var(--mat-sys-on-surface-variant); font-size:12px; }
   `],
@@ -743,6 +786,23 @@ export class DashboardWidgetComponent {
 
   readonly warRoomData = computed(() => this.data() as WarRoomData | undefined);
   readonly incidentsData = computed(() => this.data() as IncidentsData | undefined);
+  readonly errorClustersData = computed(() => this.data() as ErrorClustersData | undefined);
+
+  /** Verlauf als SVG-Polylinie (0–100 × 0–30), höchster Wert oben. */
+  sparkPoints(series: { t: string; count: number }[] | undefined): string {
+    const pts = series ?? [];
+    if (!pts.length) return '';
+    const max = Math.max(1, ...pts.map(p => p.count));
+    const step = pts.length > 1 ? 100 / (pts.length - 1) : 0;
+    return pts.map((p, i) => `${(i * step).toFixed(1)},${(30 - (p.count / max) * 28).toFixed(1)}`).join(' ');
+  }
+
+  /** Wie im Feed: toLocaleString statt number-Pipe — die de-DE-Locale ist nicht registriert. */
+  fmtInt(n: number): string { return (n ?? 0).toLocaleString('de-DE'); }
+
+  ruleLabel(rule: string): string {
+    return ({ new: 'neu', spike: 'Spitze', spread: 'Ausbreitung' } as Record<string, string>)[rule] ?? rule;
+  }
   readonly gaugeData = computed(() => this.data() as GaugeData | undefined);
   readonly gaugeOptions = computed(() => {
     const d = this.gaugeData();

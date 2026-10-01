@@ -101,7 +101,8 @@ async def _hydrate(db) -> _Runtime:
                      notify_class=ec.notify_class, notified_rate=ec.notified_rate,
                      notified_entities=ec.notified_entities, notified_at=ec.notified_at,
                      peak15=ec.peak15, total=ec.total, entities=Counter(ec.entities or {}),
-                     sources=set(ec.sources or []), closed_at=ec.closed_at)
+                     sources=set(ec.sources or []), closed_at=ec.closed_at,
+                     reasons=list(ec.reasons or []))
         if ec.incident_id:
             incident_ids[ep.id] = str(ec.incident_id)
         if ec.status == "open":
@@ -149,6 +150,7 @@ async def _persist(db, rt: _Runtime, t) -> None:
         values = dict(
             id=uuid.UUID(ep.id), key=ep.key, source="log",
             status="closed" if ep.closed_at else "open", rules=sorted(ep.rules),
+            reasons=list(ep.reasons),
             notify_class=ep.notify_class, started_at=ep.started_at,
             last_active_at=ep.last_active_at, closed_at=ep.closed_at, peak15=ep.peak15,
             total=ep.total, entities=dict(ep.entities.most_common(100)),
@@ -302,7 +304,16 @@ async def _handle(db, rt: _Runtime, events: list[Event], base_url: str) -> None:
 # ── Lauf ─────────────────────────────────────────────────────────────────────
 
 async def run_error_cluster_detection() -> None:
-    """Scheduler-Job: abgeschlossene Fenster seit dem letzten Lauf verarbeiten."""
+    """Scheduler-Job. APScheduler protokolliert hier nichts — eine Ausnahme verschwände
+    sonst still, und die Erkennung stünde, ohne dass es jemand merkt."""
+    try:
+        await _run()
+    except Exception:
+        log.exception("error_clusters: run failed")
+
+
+async def _run() -> None:
+    """Abgeschlossene Fenster seit dem letzten Lauf verarbeiten."""
     global _rt
     from app.core.database import AsyncSessionLocal
     from app.services.settings import get_error_cluster_config
@@ -331,6 +342,13 @@ async def run_error_cluster_detection() -> None:
         if target - b > allowed:
             log.warning("error_clusters: gap %s — skipping to %s", target - b, target - allowed)
             b = target - allowed
+        if b > target:
+            return
+        n_windows = int((target - b) / BUCKET) + 1
+        log.info("error_clusters: %d window(s) %s … %s%s", n_windows, b, target,
+                 " (backfill, silent)" if n_windows > 3 else "")
+        t_start = _now()
+        n_events = n_mails = 0
         while b <= target:
             try:
                 fetched = await fetch_window(svc, b, b + BUCKET)
@@ -363,7 +381,23 @@ async def run_error_cluster_detection() -> None:
                 from app.services.error_clusters import notify
                 await notify.on_events(events, rt, cfg, base_url)
             rt.last_bucket = b
+            n_events += len(events) if report else 0
+            n_mails += sum(1 for e in events if e.mail) if report else 0
             b += BUCKET
+        # CheckMK-Flotten-Cluster: einmal je Lauf, nur im Echtbetrieb (nicht beim Nachholen).
+        if now - target <= REPORT_HORIZON:
+            try:
+                from app.services.error_clusters import fleet, notify
+                async with AsyncSessionLocal() as db:
+                    fleet_items = await fleet.run(db, cfg, base_url)
+                    await db.commit()
+                await notify.on_fleet(fleet_items, cfg)
+                n_mails += len(fleet_items)
+            except Exception:
+                log.exception("error_clusters: fleet detection failed")
+        log.info("error_clusters: done in %.0fs — %d templates, %d open episodes, "
+                 "%d event(s), %d mail event(s)", (_now() - t_start).total_seconds(),
+                 len(rt.store.templates), len(rt.store.open), n_events, n_mails)
 
 
 async def _persist_episodes_only(db, rt: _Runtime) -> None:

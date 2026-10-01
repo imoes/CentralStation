@@ -46,6 +46,7 @@ logger = logging.getLogger("app.main")
 from app.api import auth, users, connectors, alerts, kanban, network, ai, ws, audit, preferences, jira_view, workflow, feed, feed_searches, dashboard_widgets, bridge, help as help_router, hosts, tickets, topology, skills as skills_router
 from app.api import settings as settings_router
 from app.api import oauth_providers, computer_proxy, remediation, ide, awx_ng, projects as projects_router
+from app.api import error_clusters as error_clusters_router
 from app.api.mcp_server import mcp
 from app.core.config import settings
 from app.core.opensearch import close_opensearch
@@ -137,6 +138,7 @@ app.include_router(awx_ng.router, prefix="/api")
 app.include_router(projects_router.router, prefix="/api")
 app.include_router(skills_router.router, prefix="/api")
 app.include_router(ws.router, prefix="/api")
+app.include_router(error_clusters_router.router, prefix="/api")
 
 # fastmcp sse_app() has no HEAD handler — Hermes probes with HEAD before
 # connecting, which causes a TypeError. Intercept it here first.

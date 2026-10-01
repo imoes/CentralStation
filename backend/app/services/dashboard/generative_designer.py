@@ -72,6 +72,7 @@ _ALLOWED_CONFIG_KEYS: dict[str, set[str]] = {
     "incidents":  {"limit"},
     "timeseries": {"data_source", "host", "hosts", "service", "metric_id", "graph_index", "hours", "unit"},
     "forecast":   {"host", "service", "metric_id", "graph_index", "history_hours", "horizon_hours", "unit"},
+    "error_clusters": {"status", "hours", "limit"},
 }
 
 # Default grid size per type (w, h)
@@ -87,6 +88,7 @@ _DEFAULT_SIZE: dict[str, tuple[int, int]] = {
     "incidents":  (6, 5),
     "timeseries": (6, 6),
     "forecast":   (6, 6),   # needs room for history + forecast line
+    "error_clusters": (12, 4),  # volle Breite, oben: ein Ausbruch ist die Hauptsache
 }
 
 # Map a bridge forecast/vital metric id to its CheckMK service description.
@@ -340,6 +342,24 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
         source_state["incidents"] = "unavailable"
         log.debug("gather_situation: open_incidents failed: %s", e)
 
+    # Offene Fehler-Cluster (Ausbrüche) im Host-Scope des Nutzers — sie stehen im
+    # Lagebild an erster Stelle (_ensure_error_cluster_widgets).
+    error_clusters: list[dict] = []
+    try:
+        if user_id:
+            from app.services.error_clusters.queries import list_for_user
+            for c in await list_for_user(db, str(user_id), status="open", hours=24,
+                                         kind="immediate", limit=5):
+                error_clusters.append({
+                    "id": c["id"], "title": c["title"], "containers": c["container_count"],
+                    "total": c["total"], "since": c["started_at"], "rules": c["rules"],
+                    "summary": ((c.get("triage") or {}).get("zusammenfassung") or "")[:200],
+                })
+            source_state["error_clusters"] = "available"
+    except Exception as e:
+        source_state["error_clusters"] = "unavailable"
+        log.debug("gather_situation: error_clusters failed: %s", e)
+
     return {
         "severity_counts": sev_counts,
         "severity_summary": severity_summary,
@@ -351,6 +371,7 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
         "cue_production_hosts": cue_production_hosts,
         "top_recommendations": top_recommendations,
         "open_incidents": open_incidents,
+        "error_clusters": error_clusters,
         "as_of": datetime.now(timezone.utc).isoformat(),
         "source_state": source_state,
     }
@@ -393,6 +414,7 @@ NUTZE NUR diese Widget-Typen mit exakt diesen config-Schlüsseln:
 - "war_room": {"agent_type":"sysadmin"}  — Blast-Radius (NUR bei critical/high)
 - "timeseries": {"data_source":"checkmk","host":"<host>","service":"<service>","metric_id":"<metric_id>","hours":4}
 - "forecast": {"host":"<host>","service":"<service>","metric_id":"<metric_id>","history_hours":72,"horizon_hours":24}
+- "error_clusters": {"status":"open","hours":24,"limit":3}  — laufende Fehlerausbrüche (Log-Muster über viele Container)
 
 DENKPROZESS — überlege VOR der JSON-Ausgabe (kein Output nötig, nur intern):
 1. Was ist das DRINGENDSTE Problem? Welcher Widget-Typ zeigt es am deutlichsten?
@@ -410,6 +432,7 @@ REGELN:
 - CUE-Produktionshosts: Wenn cue_production_hosts gefüllt, MÜSSEN diese prominent erscheinen.
 - Stabile Metriken ignorieren: KEINE timeseries/forecast für Disk/RAM außerhalb forecast_candidates.
 - top_recommendations: Empfehlungen auf spezifische Hosts → passende list/top_hosts priorisieren.
+- error_clusters: Wenn offene Fehler-Cluster vorhanden, MUSS ein Widget type="error_clusters" GANZ OBEN erscheinen
 - open_incidents: Wenn offene Incidents vorhanden, MUSS ein Widget type="incidents" oben erscheinen
   (gs_w=12, gs_h=3). Incidents sind cross-source-korrelierte Alert-Gruppen — höchste Priorität.
 
@@ -687,6 +710,10 @@ def _validate_widgets(raw_widgets: list, situation: dict, *, enforce_budget: boo
             cfg["agent_type"] = cfg.get("agent_type") or "sysadmin"
         elif wtype == "incidents":
             cfg["limit"] = min(max(int(cfg.get("limit") or 5), 1), 20)
+        elif wtype == "error_clusters":
+            cfg["status"] = cfg.get("status") if cfg.get("status") in ("open", "all") else "open"
+            cfg["hours"] = min(max(int(cfg.get("hours") or 24), 1), 24 * 14)
+            cfg["limit"] = min(max(int(cfg.get("limit") or 3), 1), 10)
         elif wtype == "forecast":
             key = (cfg.get("host"), cfg.get("service"), cfg.get("metric_id"))
             if key not in forecast_keys:
@@ -727,7 +754,7 @@ def _validate_widgets(raw_widgets: list, situation: dict, *, enforce_budget: boo
         enumerate(clean),
         key=lambda item: (
             {
-                "incidents": 0, "forecast": 1, "stat": 2, "gauge": 3,
+                "error_clusters": -1, "incidents": 0, "forecast": 1, "stat": 2, "gauge": 3,
                 "top_hosts": 4, "donut": 5, "bar": 6, "timeseries": 7,
                 "list": 8, "war_room": 9, "ai_summary": 10,
             }.get(item[1]["widget_type"], 20),
@@ -894,6 +921,7 @@ async def design_dashboard(db: Any, user_id: str) -> dict:
     # (it often just mentions it in prose), inject it — this is the whole
     # point of collecting the metrics in the first place.
     specs = _ensure_forecast_widgets(specs, situation, lang)
+    specs = _ensure_error_cluster_widgets(specs, situation, lang)
     specs = _validate_widgets(specs, situation, enforce_budget=True)
 
     # Expand short host mentions (e.g. "nsa242") in the rationale to their FQDN
@@ -945,6 +973,23 @@ def _expand_host_mentions(rationale: str, hosts: list[str]) -> str:
         # \b<short>\b but NOT already followed by a dot (i.e. not part of an FQDN).
         rationale = _re.sub(rf'\b{_re.escape(short)}\b(?!\.)', fqdn, rationale)
     return rationale
+
+
+def _ensure_error_cluster_widgets(specs: list[dict], situation: dict, lang: str) -> list[dict]:
+    """Läuft ein Fehlerausbruch, steht er im Lagebild — auch wenn das LLM ihn weglässt.
+
+    Vorne eingefügt; die Rangfolge in _validate_widgets hält ihn dort, und das
+    Flächenbudget verdrängt eher andere Widgets als dieses.
+    """
+    if not situation.get("error_clusters"):
+        return specs
+    if any(s.get("widget_type") == "error_clusters" for s in specs):
+        return specs
+    return [{
+        "widget_type": "error_clusters",
+        "title": "Laufende Fehlerausbrüche" if lang == "de" else "Ongoing error outbreaks",
+        "config": {"status": "open", "hours": 24, "limit": 3},
+    }] + specs
 
 
 def _ensure_forecast_widgets(specs: list[dict], situation: dict, lang: str) -> list[dict]:

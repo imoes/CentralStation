@@ -217,24 +217,33 @@ async def _send(db, to: list[str], subj: str, body: str) -> int:
 
 
 async def _notify_one(ev, rt, cfg, base_url: str) -> None:
+    """Log-Cluster: Kontext, gleichzeitig auffällige Container, CheckMK-Alerts → deliver."""
     from app.core.database import AsyncSessionLocal
-    from app.services.error_clusters.runner import cluster_context
-    from app.services.error_clusters.triage import triage
+    from app.services.error_clusters.runner import cluster_context, short_title
 
     ctx = cluster_context(ev, base_url)
-    incident_id = rt.incident_ids.get(ev.episode.id)
-    title = ev.template.template
     async with AsyncSessionLocal() as db:
         correlated = await _correlated(rt, ev)
         checkmk = await _checkmk(db, ctx["hosts"], ev.episode.started_at - timedelta(minutes=15))
-        ctx["correlated"] = correlated
+    ctx["correlated"] = correlated
+    await deliver(ctx, f"Fehlerausbruch: {short_title(ev.template.template)}", ev.episode.id,
+                  rt.incident_ids.get(ev.episode.id), cfg, correlated, checkmk)
+
+
+async def deliver(ctx: dict, title: str, cluster_id: str, incident_id: str | None, cfg,
+                  correlated: list[dict] | None = None, checkmk: list[dict] | None = None) -> None:
+    """EIN Zustellweg für alle Cluster-Arten: KI-Einschätzung (höchstens TRIAGE_WAIT
+    abwarten), Sofort-Mail an den Host-Scope, Einschätzung bei Verspätung nachreichen."""
+    from app.core.database import AsyncSessionLocal
+    from app.services.error_clusters.triage import triage
+
+    async with AsyncSessionLocal() as db:
         app_url = await _public_url(db)
-        to = await recipients(db, ctx["hosts"]) if cfg.mail_enabled else []
-        alert_title = f"Fehlerausbruch: {__import__('app.services.error_clusters.runner', fromlist=['short_title']).short_title(title)}"
+        to = await recipients(db, ctx.get("hosts") or []) if cfg.mail_enabled else []
 
     async def _run_triage():
         async with AsyncSessionLocal() as tdb:
-            return await triage(tdb, ctx, correlated, checkmk)
+            return await triage(tdb, ctx, correlated or [], checkmk or [])
 
     task = asyncio.create_task(_run_triage())
     result = None
@@ -249,12 +258,13 @@ async def _notify_one(ev, rt, cfg, base_url: str) -> None:
     incident_url = f"{app_url}/feed?incident={incident_id}" if incident_id else None
     async with AsyncSessionLocal() as db:
         if result:
-            await _store_triage(db, ev.episode.id, incident_id, result, ctx)
-        sent = await _send(db, to, subject(ctx, alert_title),
-                           render_html(ctx, result, incident_url, pending=task is not None and result is None))
+            await _store_triage(db, cluster_id, incident_id, result, ctx)
+        sent = await _send(db, to, subject(ctx, title),
+                           render_html(ctx, result, incident_url,
+                                       pending=task is not None and result is None))
         await db.commit()
-    log.info("error_clusters: %s %s → %d mail(s), triage=%s", ev.action, ev.episode.id[:8],
-             sent, "ok" if result else ("pending" if task else "none"))
+    log.info("error_clusters: notify %s → %d mail(s), triage=%s", cluster_id[:8], sent,
+             "ok" if result else ("pending" if task else "none"))
 
     if result is None and task is not None:
         try:
@@ -265,18 +275,26 @@ async def _notify_one(ev, rt, cfg, base_url: str) -> None:
         if not late:
             return
         async with AsyncSessionLocal() as db:
-            await _store_triage(db, ev.episode.id, incident_id, late, ctx)
-            await _send(db, to, subject(ctx, alert_title, followup=True),
+            await _store_triage(db, cluster_id, incident_id, late, ctx)
+            await _send(db, to, subject(ctx, title, followup=True),
                         render_html(ctx, late, incident_url, pending=False))
             await db.commit()
 
 
 async def on_events(events, rt, cfg, base_url: str) -> None:
-    """Je meldepflichtigem Ereignis im Hintergrund melden — der Runner wartet nicht."""
+    """Je meldepflichtigem Ereignis im Hintergrund melden — der Runner wartet nicht.
+
+    Ein neuer Ausbruch stößt außerdem das generative Lagebild an, statt bis zu 15 min
+    auf dessen Takt zu warten. Dessen eigene Grenzen (generative_enabled, nur kürzlich
+    angesehene Lagebilder) gelten weiter.
+    """
     from app.core.tasks import run_background
-    for ev in events:
-        if ev.mail:
-            run_background(_notify_one(ev, rt, cfg, base_url), name=f"error_cluster_notify_{ev.episode.id[:8]}")
+    mails = [ev for ev in events if ev.mail]
+    for ev in mails:
+        run_background(_notify_one(ev, rt, cfg, base_url), name=f"error_cluster_notify_{ev.episode.id[:8]}")
+    if any(ev.action in ("open", "reopen") for ev in mails):
+        from app.services.ai_agent.scheduler import run_generative_refresh
+        run_background(run_generative_refresh(), name="error_cluster_generative_refresh")
 
 
 async def build_digest_html(db, user_id: str, since: datetime) -> str | None:
@@ -318,3 +336,15 @@ async def build_digest_html(db, user_id: str, since: datetime) -> str | None:
       {trs}</table>
     <p style="color:#888;font-size:12px;margin-top:18px">Automatisch erkannt – keine Aktion ausgeführt.
        Abbestellen: Einstellungen → E-Mail-Berichte.</p></div>"""
+
+
+async def on_fleet(items: list[dict], cfg) -> None:
+    """Flotten-Cluster (fleet.run) über denselben Zustellweg melden."""
+    from app.core.tasks import run_background
+    for it in items:
+        run_background(deliver(it["ctx"], it["title"], it["cluster_id"], it["incident_id"], cfg,
+                               [], [{"host": h} for h in it["ctx"].get("hosts", [])][:15]),
+                       name=f"error_cluster_fleet_{it['cluster_id'][:8]}")
+    if items:
+        from app.services.ai_agent.scheduler import run_generative_refresh
+        run_background(run_generative_refresh(), name="error_cluster_generative_refresh")

@@ -1071,4 +1071,18 @@ async def get_widget_data(
                 break
         return {"incidents": incidents, "total": len(incidents)}
 
+    elif w.widget_type == "error_clusters":
+        # Laufende Fehlerausbrüche (services/error_clusters) im Host-Scope des Nutzers —
+        # dieselbe Abfrage wie die API, mit Verlauf der letzten 2 h für die Sparkline.
+        from app.services.error_clusters.queries import list_for_user, series
+        status = cfg.get("status") if cfg.get("status") in ("open", "all") else "open"
+        limit = min(max(int(cfg.get("limit") or 3), 1), 10)
+        clusters = await list_for_user(db, user_id_str, status=status,
+                                       hours=int(cfg.get("hours") or 24),
+                                       kind="immediate", limit=limit)
+        now = datetime.now(timezone.utc)
+        for c in clusters:
+            c["series"] = await series(db, c["key"], now - timedelta(hours=2), now)
+        return {"clusters": clusters, "total": len(clusters)}
+
     return {}

@@ -71,6 +71,8 @@ class Episode:
     #: Zeit, gemeinsame Container/Hosts. Dann EIN Incident, EINE Mail — dieses Muster
     #: erscheint dort als weiteres.
     group_id: str | None = None
+    #: Lesbare Begründung der letzten meldepflichtigen Bewertung (für API, Mail, Widget).
+    reasons: list = field(default_factory=list)
 
     def state(self) -> EpisodeState:
         return EpisodeState(self.started_at, self.last_active_at,
@@ -253,6 +255,8 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
         if lam is None or counts[-1] >= max(th.episode_active_factor * lam, 1):
             episode.last_active_at = b
         episode.rules |= set(verdict.rules)
+        if verdict.reasons and verdict.rules:
+            episode.reasons = list(verdict.reasons)
         episode.peak15 = max(episode.peak15, verdict.count15)
         episode.total += counts[-1]
         cur = series.get(b)
