@@ -147,6 +147,40 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **With Hermes as the agent, no new console session appeared.** Claude and Codex
+  were not affected. The new Hermes version gates *all 45* of its runtime dependencies
+  on `python_version >= '3.14'`, while it allows Python 3.11 to 3.14 itself. On the
+  image's Python 3.13, `pip install -e /opt/hermes` therefore installed Hermes with
+  none of them (openai, rich, tenacity, requests, Pillow, …). Every session start
+  failed with `No module named 'requests'`, and the console showed nothing. A separate
+  image layer (`userenv/hermes_deps.py`) now installs the dependencies as Python 3.14
+  would get them. All other conditions still apply, so the Windows-only packages stay
+  out. The build then checks `import run_agent` and fails instead of shipping an image
+  without Hermes. Once upstream fixes the markers, the layer installs nothing new.
+  Verified: in the recreated container, a Hermes session through the backend API →
+  created, answer "bereit". Image with Claude CLI 2.1.286, Codex 0.159.3.
+
+- **The Hermes LLM configuration had no test button.** There is now **Test** next
+  to **Save** (`POST /api/computer/hermes-llm/test`). It tests the values *in the
+  form*, so a change can be checked before saving. An empty key field means the stored
+  key, as on save. With "Global configuration" it tests the configuration Hermes then
+  gets. The result stays visible below the buttons with the model, response time and
+  reason, and is capped at 60 s. Verified in the browser: "'z-ai/glm-5.3-flash'
+  antwortet (1733 ms)".
+
+  Found along the way: `generate_text` always sends the llama.cpp fields
+  `enable_thinking`/`thinking_budget` with `chat_completions`. Strict
+  OpenAI-compatible providers (llmbase.ai) reject the whole request ("Unknown request
+  parameter: enable_thinking"). The test showed red although Hermes worked, and every
+  CentralStation call to such a provider would have failed. On exactly this
+  rejection, the request is now retried once without those fields. llama.cpp is
+  unaffected. Verified: 3 tests in `test_llm_client_strict_provider.py`, and the real
+  test against llmbase.ai is green. The admin LLM test no longer sets a token limit
+  (`max_output_tokens=20`), per the global rule.
+
+  Still missing: ten other places in the backend still set `max_output_tokens` (feed
+  analysis, generative dashboard, AI agent, project planning, …).
+
 - **A Graylog error in the feed showed up as if it had happened once, even when it
   happened thousands of times.** Example: `Failed to read change-log: HTTP Status '401
   Unauthorized'` from the CUE Zipline containers. A search found 2 entries in 48 h.

@@ -688,6 +688,86 @@ async def put_hermes_llm(
     return {"status": "saved"}
 
 
+#: Obergrenze für die Testanfrage. Das eingestellte Timeout gilt für echte Antworten
+#: (bis 600 s); ein "Antworte mit OK" darf nicht so lange warten lassen.
+_LLM_TEST_TIMEOUT_S = 60
+
+
+@router.post("/hermes-llm/test")
+async def test_hermes_llm(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    body: _ConsoleLLMBody,
+    _: None = _ConsoleEnabled,
+):
+    """Prüft die Hermes-LLM-Konfiguration mit einer kurzen Anfrage.
+
+    Getestet wird, was im Formular steht — so lässt sich eine Änderung vor dem
+    Speichern prüfen. Ein leeres Schlüsselfeld (None) heißt wie beim Speichern:
+    den gespeicherten Schlüssel verwenden. use_global=True testet die globale
+    Konfiguration, die Hermes dann bekäme.
+    """
+    import time as _time
+    from app.core.security import decrypt_credentials as _dec
+    from app.services.llm_client import generate_text
+    from app.services.settings import _llm_config_from_connector, get_active_llm_config
+
+    if body.use_global:
+        cfg = await get_active_llm_config(db)
+        source = "globale Konfiguration"
+    else:
+        api_key = body.api_key
+        if api_key is None:
+            conn = (await db.execute(
+                select(ConnectorConfig).where(
+                    ConnectorConfig.type == "console_llm",
+                    ConnectorConfig.owner_user_id == user.id,
+                ).limit(1)
+            )).scalar_one_or_none()
+            api_key = _dec(conn.encrypted_credentials).get("api_key") if conn else None
+        cfg = _llm_config_from_connector(
+            type("_Form", (), {"base_url": (body.base_url or "").rstrip("/")})(),
+            {"api_mode": body.api_mode, "model": (body.model or "").strip(),
+             "api_key": api_key, "timeout_seconds": body.timeout_seconds,
+             "thinking_mode": "false"},
+        )
+        source = "Formular"
+    # Dieselbe Regel wie needsBaseUrl() im Formular: nur Anthropic und Codex kennen
+    # ihren Endpunkt selbst.
+    needs_url = body.api_mode not in ("anthropic_messages", "codex_responses")
+    if not cfg.model or (needs_url and not body.use_global and not cfg.base_url):
+        return {"success": False,
+                "message": "Unvollständig: Modell und Base URL werden gebraucht."}
+    cfg.timeout_seconds = min(int(cfg.timeout_seconds or _LLM_TEST_TIMEOUT_S),
+                              _LLM_TEST_TIMEOUT_S)
+
+    started = _time.monotonic()
+    try:
+        # Kein Token-Limit (globale Regel): eine Begrenzung lässt Reasoning-Modelle
+        # mit leerer Antwort enden. Kurz wird die Antwort durch Reasoning "none".
+        text = await generate_text(
+            cfg, [{"role": "user", "content": "Antworte nur mit OK."}],
+            reasoning_effort="none",
+        )
+    except httpx.ConnectError as exc:
+        return {"success": False, "message": "Server nicht erreichbar", "detail": str(exc)[:300]}
+    except httpx.TimeoutException:
+        return {"success": False,
+                "message": f"Keine Antwort innerhalb von {cfg.timeout_seconds} s"}
+    except httpx.HTTPStatusError as exc:
+        return {"success": False, "message": f"HTTP {exc.response.status_code}",
+                "detail": exc.response.text[:300]}
+    except Exception as exc:
+        return {"success": False, "message": "Anfrage fehlgeschlagen", "detail": str(exc)[:300]}
+    ms = int((_time.monotonic() - started) * 1000)
+    if not (text or "").strip():
+        return {"success": False, "message": f"Leere Antwort von '{cfg.model}' ({ms} ms)",
+                "detail": f"Getestet: {source}"}
+    return {"success": True,
+            "message": f"'{cfg.model}' antwortet ({ms} ms)",
+            "detail": f"Getestet: {source} · Antwort: {text.strip()[:80]}"}
+
+
 # ── Session CRUD ───────────────────────────────────────────────────
 
 class _CreateSessionBody(BaseModel):

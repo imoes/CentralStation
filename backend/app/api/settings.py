@@ -171,7 +171,7 @@ async def test_setting_group(
             text = await generate_text(
                 llm_config,
                 [{"role": "user", "content": "Antworte nur mit OK."}],
-                max_output_tokens=20,
+                # Kein Token-Limit (globale Regel) — kurz hält die Antwort Reasoning "none".
                 reasoning_effort="none",
             )
             return TestResult(

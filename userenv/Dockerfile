@@ -102,6 +102,15 @@ RUN echo "agent-refresh=$(cat /etc/cs-agent-refresh)" \
     && git clone --depth=1 https://github.com/NousResearch/hermes-agent /opt/hermes \
     && pip install --no-cache-dir -e /opt/hermes \
     && chmod -R a+rX /opt/hermes
+# Hermes gates EVERY runtime dependency on python_version >= '3.14' while allowing
+# >=3.11 — on this image's 3.13 the line above installs Hermes with none of them, and
+# the first session dies on "No module named 'requests'". Install them as 3.14 would
+# get them (other markers still apply). A no-op once upstream fixes the markers.
+# Own layer, so a change here keeps the Hermes clone above cached.
+COPY userenv/hermes_deps.py /tmp/hermes_deps.py
+RUN python /tmp/hermes_deps.py \
+    && python -c "import sys; sys.path.insert(0, '/opt/hermes'); import run_agent" \
+    && rm /tmp/hermes_deps.py
 
 WORKDIR /app
 COPY userenv/requirements.txt ./requirements.txt

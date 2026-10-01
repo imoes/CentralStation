@@ -147,6 +147,12 @@ interface HermesLLM {
                       @else { <mat-icon>save</mat-icon> }
                       Speichern
                     </button>
+                    <button mat-stroked-button [disabled]="testingLLM()" (click)="testLLM(false)"
+                            matTooltip="Schickt eine kurze Anfrage mit den Werten im Formular — auch ungespeichert">
+                      @if (testingLLM()) { <mat-spinner diameter="18"></mat-spinner> }
+                      @else { <mat-icon>network_check</mat-icon> }
+                      Testen
+                    </button>
                   </div>
                 </div>
               } @else {
@@ -154,6 +160,22 @@ interface HermesLLM {
                   <mat-icon style="font-size:16px;height:16px;width:16px;vertical-align:middle">info</mat-icon>
                   Verwendet die globale LLM-Konfiguration aus den Admin-Einstellungen.
                 </p>
+                <div class="llm-actions">
+                  <button mat-stroked-button [disabled]="testingLLM()" (click)="testLLM(true)">
+                    @if (testingLLM()) { <mat-spinner diameter="18"></mat-spinner> }
+                    @else { <mat-icon>network_check</mat-icon> }
+                    Testen
+                  </button>
+                </div>
+              }
+              @if (llmTest(); as t) {
+                <div class="llm-test-result" [class.ok]="t.success" [class.fail]="!t.success">
+                  <mat-icon>{{ t.success ? 'check_circle' : 'error' }}</mat-icon>
+                  <div>
+                    <div>{{ t.message }}</div>
+                    @if (t.detail) { <div class="llm-test-detail">{{ t.detail }}</div> }
+                  </div>
+                </div>
               }
             </div>
           }
@@ -344,6 +366,15 @@ interface HermesLLM {
     .llm-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
     .toggle-row { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; }
     .llm-actions { display: flex; gap: 8px; margin-top: 4px; }
+    .llm-test-result {
+      display: flex; gap: 8px; align-items: flex-start; margin-top: 10px;
+      padding: 8px 10px; border-radius: 6px; font-size: 13px;
+      background: color-mix(in srgb, currentColor 8%, transparent);
+    }
+    .llm-test-result mat-icon { font-size: 18px; width: 18px; height: 18px; flex-shrink: 0; }
+    .llm-test-result.ok mat-icon { color: #4caf50; }
+    .llm-test-result.fail mat-icon { color: #f44336; }
+    .llm-test-detail { opacity: .7; font-size: 12px; margin-top: 2px; word-break: break-word; }
     .global-hint {
       font-size: 0.85rem; color: var(--mat-sys-on-surface-variant);
       display: flex; align-items: center; gap: 6px; margin: 4px 0 0;
@@ -369,6 +400,9 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
   currentAgent = signal<AgentType>('hermes');
   hermesLLM = signal<HermesLLM>({ configured: false });
   savingLLM = signal(false);
+  testingLLM = signal(false);
+  /** Ergebnis des letzten Tests — bleibt stehen, bis neu getestet oder umgeschaltet wird. */
+  llmTest = signal<{ success: boolean; message: string; detail?: string } | null>(null);
 
   readonly apiModes: ApiMode[] = ['chat_completions', 'anthropic_messages', 'codex_responses', 'bedrock_converse'];
 
@@ -475,6 +509,7 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
   }
 
   toggleGlobalLLM(useGlobal: boolean): void {
+    this.llmTest.set(null);   // das Ergebnis gehörte zur anderen Konfiguration
     if (useGlobal) {
       // Delete personal config → fall back to global
       this.http.put('/api/computer/hermes-llm', { use_global: true }).subscribe({
@@ -511,6 +546,29 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
       error: (e) => {
         this.savingLLM.set(false);
         this.snack.open(`Fehler: ${e.error?.detail || e.message}`, '', { duration: 4000 });
+      },
+    });
+  }
+
+  /** Testet die Werte im Formular (useGlobal=false) oder die globale Konfiguration. */
+  testLLM(useGlobal: boolean): void {
+    const model = (this.llmForm.model || '').trim() || this.modelPlaceholder(this.llmForm.api_mode);
+    this.testingLLM.set(true);
+    this.llmTest.set(null);
+    this.http.post<{ success: boolean; message: string; detail?: string }>(
+      '/api/computer/hermes-llm/test', {
+        api_mode: this.llmForm.api_mode,
+        model,
+        base_url: this.llmForm.base_url,
+        api_key: this.llmForm.api_key || null,
+        timeout_seconds: this.llmForm.timeout_seconds,
+        thinking_mode: this.llmForm.thinking_mode,
+        use_global: useGlobal,
+      }).subscribe({
+      next: (r) => { this.testingLLM.set(false); this.llmTest.set(r); },
+      error: (e) => {
+        this.testingLLM.set(false);
+        this.llmTest.set({ success: false, message: `Test nicht möglich: ${e.error?.detail || e.message}` });
       },
     });
   }

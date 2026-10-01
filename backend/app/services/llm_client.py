@@ -207,6 +207,10 @@ async def _collect_codex_stream(response: Any) -> str:
     return "".join(parts)
 
 
+#: llama.cpp-spezifische Felder im chat_completions-Payload (siehe generate_text).
+_THINKING_KEYS = frozenset({"enable_thinking", "thinking_budget"})
+
+
 async def generate_text(
     llm_config: Any,
     messages: list[dict[str, Any]],
@@ -342,6 +346,15 @@ async def generate_text(
 
     async with httpx.AsyncClient(timeout=llm_config.timeout_seconds, verify=False) as client:
         response = await client.post(url, headers=headers, json=payload)
+        # enable_thinking/thinking_budget sind llama.cpp-Erweiterungen. Strenge
+        # OpenAI-kompatible Anbieter lehnen die GANZE Anfrage ab ("Unknown request
+        # parameter: enable_thinking") — dann einmal ohne sie, statt zu scheitern.
+        if (response.status_code == 400 and _THINKING_KEYS & payload.keys()
+                and any(k in response.text for k in _THINKING_KEYS)):
+            log.info("LLM %s rejects thinking params — retrying without them",
+                     llm_config.model)
+            payload = {k: v for k, v in payload.items() if k not in _THINKING_KEYS}
+            response = await client.post(url, headers=headers, json=payload)
 
     if response.status_code >= 400:
         detail = response.text[:500].strip()
