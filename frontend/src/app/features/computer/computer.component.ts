@@ -1411,13 +1411,18 @@ export class ComputerComponent implements OnInit, OnDestroy {
       this.sessions.update(ss => {
         // Prevent duplicate entries if the session was somehow already added
         if (ss.some(s => s.session_id === session.session_id)) return ss;
-        return [...ss, {
+        // Oben einreihen: die Liste ist "zuletzt aktiv zuerst" (Backend sortiert nach
+        // last_activity_at, und das Anlegen setzt ihn auf jetzt). Hinten angehängt
+        // stand die neue Sitzung unten und sprang erst beim Senden oder Neuladen
+        // nach oben — dieselbe Sitzung an zwei Plätzen, je nach Zeitpunkt.
+        return [{
           ...session,
           label: displayLabel,
           msg_count: session.msg_count ?? 0,
           messages: session.messages ?? [],
           external_id: externalId,
-        }];
+          last_activity_at: session.last_activity_at ?? new Date().toISOString(),
+        }, ...ss];
       });
       this.activeTabId.set(session.session_id);
       this.open();

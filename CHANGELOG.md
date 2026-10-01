@@ -147,6 +147,14 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **A new console session was placed at the bottom of the list.** The list is ordered
+  "most recently active first": the backend sorts by `last_activity_at`, and creating
+  a session sets it to now. The frontend appended the new session to the end, though.
+  It only jumped to the top once the first message was sent or the page was reloaded,
+  so the same session sat in two places depending on the moment. It is now placed at
+  the top right when it is created. Verified: build only (`docker compose build
+  frontend`). A browser test did not run because the admin test login was refused.
+
 - **The console's Claude could not save a file with its own file tools.** The
   console granted only `Bash`, `WebFetch`, `WebSearch` and the MCP servers. In
   `dontAsk` mode an unlisted tool is simply denied, so `Write` and `Edit` failed even
