@@ -95,6 +95,44 @@ def sums15(history: Sequence[int]) -> list[int]:
             for i in range(0, max(0, len(history) - WINDOW_BUCKETS + 1))]
 
 
+def median_with_zeros(nonzero: Sequence[float], n: int) -> float:
+    """Median einer Reihe aus `n` Werten, von denen nur `nonzero` nicht 0 sind.
+
+    Fast alle Muster schweigen die meiste Zeit — ihre Historie ist überwiegend 0. Statt
+    4 032 Werte (14 Tage × 288) je Muster und Lauf zu sortieren, genügen die wenigen
+    Treffer: dasselbe Ergebnis wie statistics.median über die volle Reihe.
+    """
+    if n <= 0:
+        return 0.0
+    k = len(nonzero)
+    if k * 2 < n:
+        return 0.0
+    vals = sorted(nonzero)
+    zeros = n - k
+
+    def at(i: int) -> float:
+        return 0.0 if i < zeros else vals[i - zeros]
+
+    if n % 2:
+        return at(n // 2)
+    return (at(n // 2 - 1) + at(n // 2)) / 2
+
+
+def quantile_with_zeros(nonzero: Sequence[float], n: int, q: float) -> float:
+    """Wie quantile(), für eine Reihe aus n Werten mit nur `nonzero` ungleich 0."""
+    if n <= 0:
+        return 0.0
+    vals = sorted(nonzero)
+    zeros = n - len(vals)
+    pos = q * (n - 1)
+    lo, hi = math.floor(pos), math.ceil(pos)
+
+    def at(i: int) -> float:
+        return 0.0 if i < zeros else vals[i - zeros]
+
+    return at(lo) + (at(hi) - at(lo)) * (pos - lo)
+
+
 def baseline(
     history: Sequence[int],
     detector_age: timedelta,
@@ -142,9 +180,13 @@ class Verdict:
     reasons: tuple[str, ...] = field(default=())   # lesbare Begründung, für Mail und UI
 
 
-def evaluate(window: Window, lam: float | None, history: Sequence[int],
-             th: Thresholds = DEFAULT) -> Verdict:
-    """Welche Regeln greifen und welche Art Meldung daraus folgt."""
+def evaluate(window: Window, lam: float | None, history: Sequence[int] | None = None,
+             th: Thresholds = DEFAULT, *, history_q: float | None = None) -> Verdict:
+    """Welche Regeln greifen und welche Art Meldung daraus folgt.
+
+    Das Perzentil der 15-min-Summen kommt entweder aus `history` (Tests, kurze Reihen)
+    oder vorberechnet als `history_q` (Engine, dünn besetzte lange Reihen).
+    """
     count15 = sum(window.counts)
     if lam is None:
         return Verdict(frozenset(), "none", count15, None, None, ("Lernphase",))
@@ -160,8 +202,10 @@ def evaluate(window: Window, lam: float | None, history: Sequence[int],
         reasons.append("neues Muster (14 Tage nicht gesehen)")
 
     elevated = sum(1 for c in window.counts if c >= th.spike_bucket_factor * lam)
-    sums = sums15(history)
-    over_quantile = bool(sums) and count15 > quantile(sums, th.spike_quantile)
+    if history_q is None:
+        sums = sums15(history or [])
+        history_q = quantile(sums, th.spike_quantile) if sums else None
+    over_quantile = history_q is not None and count15 > history_q
     if (count15 >= th.spike_min_count
             and (count15 >= th.spike_factor * expected or over_quantile)
             and p < th.spike_p
@@ -196,7 +240,10 @@ def fleet_cluster(hosts_now: int, usual_hosts: float, th: Thresholds = DEFAULT) 
 class EpisodeState:
     started_at: datetime
     last_active_at: datetime
-    notified_count15: int             # Menge in 15 min bei der letzten Mail (0 = keine)
+    #: Höchste 5-min-Rate bei der letzten Mail (0 = noch keine). Bewusst die RATE, nicht
+    #: die 15-min-Summe: zu Beginn einer Welle füllt sich das 15-min-Fenster erst
+    #: (7 500 → 15 000), das sähe wie eine Verdopplung aus und gäbe eine zweite Mail.
+    notified_rate: int
     notified_entities: int
 
 
@@ -224,7 +271,7 @@ def next_action(
         active = lam is not None and last_count > 0 and last_count >= th.episode_active_factor * lam
         if active:
             if verdict.notify == "immediate" and should_renotify(
-                    verdict.count15, entities, episode, th):
+                    last_count, entities, episode, th):
                 return "renotify"
             return "update"
         if now - episode.last_active_at >= timedelta(minutes=th.episode_quiet_minutes):
@@ -237,12 +284,15 @@ def next_action(
     return "open" if verdict.notify == "immediate" else "open_digest"
 
 
-def should_renotify(count15: int, entities: int, episode: EpisodeState,
+def should_renotify(rate: int, entities: int, episode: EpisodeState,
                     th: Thresholds = DEFAULT) -> bool:
-    """Erneut melden nur, wenn sich die Lage verdoppelt hat — sonst wäre jeder Lauf eine Mail."""
-    if episode.notified_count15 <= 0:
+    """Erneut melden nur, wenn sich die Lage verdoppelt hat — sonst wäre jeder Lauf eine Mail.
+
+    rate: aktuelle 5-min-Menge; verglichen mit der höchsten 5-min-Menge bei der letzten Mail.
+    """
+    if episode.notified_rate <= 0:
         return True     # bisher nur in der Tagesübersicht → jetzt ist es ein Ausbruch
-    if count15 >= th.renotify_factor * episode.notified_count15:
+    if rate >= th.renotify_factor * episode.notified_rate:
         return True
     return (entities >= th.renotify_factor * max(episode.notified_entities, 1)
             and entities - episode.notified_entities >= th.renotify_min_new_entities)

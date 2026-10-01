@@ -280,6 +280,47 @@ class GraylogConnector(BaseConnector):
             result.append({**msg, "switch_name": switch_name, "switch_type": switch_type})
         return result
 
+    async def search_window(
+        self,
+        query: str,
+        since: str,
+        until: str,
+        *,
+        limit: int = 10_000,
+        offset: int = 0,
+        fields: list[str] | None = None,
+    ) -> tuple[list[dict], int]:
+        """Rohzeilen eines absoluten Zeitfensters, älteste zuerst — OHNE Deduplizierung.
+
+        Anders als search_messages_multi (eine Meldung je dedup_key) liefert das jede
+        Zeile; die Fehler-Cluster-Erkennung zählt sie einzeln. `fields` beschränkt die
+        übertragenen Felder (halbiert die Datenmenge). Rückgabe: (Meldungen, Gesamtzahl
+        im Fenster) — ist die Gesamtzahl größer als geliefert, war das Fenster gekappt.
+        OpenSearch erlaubt offset + limit höchstens 10 000.
+        """
+        st: dict = {
+            "id": "m", "type": "messages", "limit": limit, "offset": offset,
+            "sort": [{"field": "timestamp", "order": "ASC"}], "streams": [],
+        }
+        if fields:
+            st["fields"] = fields
+        payload = {"queries": [{
+            "id": "q",
+            "timerange": {"type": "absolute", "from": since, "to": until},
+            "query": {"type": "elasticsearch", "query_string": query},
+            "search_types": [st],
+        }]}
+        async with self._client(timeout=120.0) as client:
+            r = await client.post(f"{self.base_url}/api/views/search/sync",
+                                  headers=self._headers(), json=payload)
+            r.raise_for_status()
+        res = r.json().get("results", {}).get("q", {})
+        if res.get("errors"):
+            raise RuntimeError(f"Graylog search failed: {res['errors'][0].get('description', '')[:300]}")
+        mt = res.get("search_types", {}).get("m", {})
+        msgs = [m.get("message", {}) for m in mt.get("messages", [])]
+        return msgs, int(mt.get("total_results") or len(msgs))
+
     async def count_occurrences(
         self,
         specs: list[dict],

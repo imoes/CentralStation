@@ -12,8 +12,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+import statistics
+
 from app.services.error_clusters.rules import (
     DEFAULT,
+    median_with_zeros,
+    quantile_with_zeros,
     EpisodeState,
     Window,
     baseline,
@@ -169,13 +173,19 @@ def test_first_outbreak_opens_an_episode():
 
 
 def test_ongoing_outbreak_does_not_mail_every_run():
-    ep = EpisodeState(NOW - timedelta(minutes=10), NOW - timedelta(minutes=5), 15_000, 26)
-    assert _act(_immediate(15_000), ep) == "update"
+    ep = EpisodeState(NOW - timedelta(minutes=10), NOW - timedelta(minutes=5), 7_500, 26)
+    assert _act(_immediate(15_000), ep, last=7_500) == "update"
+
+
+def test_filling_window_is_not_a_doubling():
+    """Welle beginnt: 15-min-Summe 7 500 → 15 000, die Rate bleibt 7 500 je 5 min."""
+    ep = EpisodeState(NOW - timedelta(minutes=5), NOW - timedelta(minutes=5), 7_500, 26)
+    assert _act(_immediate(15_000), ep, last=7_500) == "update"
 
 
 def test_doubling_renotifies():
-    ep = EpisodeState(NOW - timedelta(minutes=30), NOW - timedelta(minutes=5), 7_000, 26)
-    assert _act(_immediate(15_000), ep) == "renotify"
+    ep = EpisodeState(NOW - timedelta(minutes=30), NOW - timedelta(minutes=5), 3_000, 26)
+    assert _act(_immediate(15_000), ep, last=7_500) == "renotify"
 
 
 def test_episode_closes_after_an_hour_of_quiet():
@@ -198,10 +208,20 @@ def test_muted_pattern_never_acts():
 def test_digest_episode_upgrades_to_mail_on_outbreak():
     """Bisher nur in der Tagesübersicht (keine Mail) → jetzt Ausbruch → melden."""
     ep = EpisodeState(NOW - timedelta(hours=1), NOW - timedelta(minutes=5), 0, 0)
-    assert should_renotify(15_000, 26, ep)
+    assert should_renotify(7_500, 26, ep)
 
 
 def test_fleet_rule():
     assert fleet_cluster(8, 1.0)
     assert not fleet_cluster(4, 0.0)
     assert not fleet_cluster(8, 4.0)
+
+
+@pytest.mark.parametrize("series", [
+    [0] * 10, [0] * 9 + [5], [0, 0, 3, 7, 9], [4, 4, 4, 4], [0, 1, 0, 1, 0, 1], [0, 2, 9, 3],
+])
+def test_sparse_median_and_quantile_equal_the_full_computation(series):
+    nonzero = [v for v in series if v]
+    assert median_with_zeros(nonzero, len(series)) == statistics.median(series)
+    for q in (0.5, 0.9, 0.995):
+        assert quantile_with_zeros(nonzero, len(series), q) == pytest.approx(quantile(series, q))

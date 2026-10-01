@@ -72,3 +72,15 @@ def test_ten_thousand_identical_lines_count_ten_thousand():
 
 def test_empty_lines_are_ignored():
     assert Miner().add("   ") is None
+
+
+def test_key_stays_when_drain_generalizes_the_template():
+    """Drain3 macht aus "job alpha failed" + "job beta failed" das Muster "job <*> failed".
+    Der Schlüssel bleibt der erste — sonst gälte das Muster mitten im Ausbruch als neu."""
+    m = Miner()
+    first = m.add("scheduler job alpha failed on retry")
+    second = m.add("scheduler job beta failed on retry")
+    assert "<*>" in second.template
+    assert second.key == first.key
+    m2 = Miner(m.state())
+    assert m2.add("scheduler job gamma failed on retry").key == first.key

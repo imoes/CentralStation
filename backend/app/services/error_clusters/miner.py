@@ -17,7 +17,9 @@ anderen Zahlen, IDs, Adressen und Zeitstempel werden maskiert.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 
@@ -109,12 +111,21 @@ def _config() -> TemplateMinerConfig:
 
 
 class Miner:
-    """Drain3 mit Laden/Speichern als Bytes und stabilen Musterschlüsseln."""
+    """Drain3 mit Laden/Speichern als Bytes und stabilen Musterschlüsseln.
+
+    Schlüssel je Drain-Cluster: beim ersten Auftreten md5(Muster), danach FEST — auch
+    wenn Drain3 das Muster später verallgemeinert ("id 4711 failed" → "id <*> failed").
+    Sonst bekäme dasselbe Muster mitten in einem Ausbruch einen neuen Schlüssel und
+    gälte als "neu". Die Zuordnung wird mit dem Drain-Zustand gespeichert.
+    """
 
     def __init__(self, state: bytes | None = None) -> None:
         self._tm = TemplateMiner(None, _config())
+        self._keys: dict[int, str] = {}
         if state:
-            handler = _BytesHandler(state)
+            packed = json.loads(state.decode("utf-8"))
+            self._keys = {int(k): v for k, v in packed.get("keys", {}).items()}
+            handler = _BytesHandler(base64.b64decode(packed["drain"]))
             self._tm.persistence_handler = handler
             try:
                 self._tm.load_state()
@@ -122,15 +133,22 @@ class Miner:
                 # Ohne Handler speichert Drain3 nicht bei jedem neuen Muster.
                 self._tm.persistence_handler = None
 
+    def _key(self, cluster_id: int, template: str) -> str:
+        key = self._keys.get(cluster_id)
+        if key is None:
+            key = self._keys[cluster_id] = template_key(template)
+        return key
+
     def add(self, message: str) -> Mined | None:
         """Ordnet eine Zeile einem Muster zu (und lernt). None für leere Zeilen."""
         line = normalize(message)
         if not line.strip():
             return None
         r = self._tm.add_log_message(line)
+        cid = int(r["cluster_id"])
         template = r["template_mined"]
-        return Mined(cluster_id=int(r["cluster_id"]), template=template,
-                     key=template_key(template), change=r["change_type"])
+        return Mined(cluster_id=cid, template=template,
+                     key=self._key(cid, template), change=r["change_type"])
 
     def match(self, message: str) -> Mined | None:
         """Nur zuordnen, nichts lernen — für das Markieren bestehender Feed-Einträge."""
@@ -139,7 +157,8 @@ class Miner:
         if cluster is None:
             return None
         template = cluster.get_template()
-        return Mined(cluster.cluster_id, template, template_key(template), "none")
+        return Mined(cluster.cluster_id, template,
+                     self._key(cluster.cluster_id, template), "none")
 
     def state(self) -> bytes:
         handler = _BytesHandler()
@@ -148,7 +167,12 @@ class Miner:
             self._tm.save_state("run")
         finally:
             self._tm.persistence_handler = None
-        return handler.state
+        # Drain3s Zustand ist zlib-Bytes; die Schlüsselzuordnung gehört dazu.
+        alive = {c.cluster_id for c in self._tm.drain.clusters}
+        return json.dumps({
+            "drain": base64.b64encode(handler.state).decode("ascii"),
+            "keys": {str(k): v for k, v in self._keys.items() if k in alive},
+        }).encode("utf-8")
 
     @property
     def cluster_count(self) -> int:
