@@ -52,7 +52,6 @@ async def ask_help(
         model=llm_cfg.model,
         api_key=llm_cfg.api_key or "none",
         temperature=0.3,
-        max_tokens=900,
     )
     messages = [
         SystemMessage(content=with_language(

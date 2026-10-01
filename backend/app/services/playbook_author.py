@@ -57,7 +57,6 @@ async def author_playbook(
             llm_cfg,
             [{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_output_tokens=2000,
         )
     except Exception as exc:
         log.warning("playbook_author: LLM failed: %s", exc)

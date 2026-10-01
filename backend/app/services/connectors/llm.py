@@ -2,6 +2,7 @@ import httpx
 
 from app.schemas.connector import ConnectorTestResult
 from app.services.connectors.base import BaseConnector
+from app.services.llm_client import ANTHROPIC_MAX_TOKENS
 
 
 class LLMConnector(BaseConnector):
@@ -63,7 +64,8 @@ class LLMConnector(BaseConnector):
                     headers=headers,
                     json={
                         "model": model or "claude-haiku-4-5-20251001",
-                        "max_tokens": 1,
+                        # Pflichtfeld der Messages-API; dieselbe Konstante wie überall.
+                        "max_tokens": ANTHROPIC_MAX_TOKENS,
                         "messages": [{"role": "user", "content": "ping"}],
                     },
                 )

@@ -166,7 +166,7 @@ async def run_planner_agent(
                 "content": "<system_note>Beende die Recherche und liefere jetzt den finalen Plan (action=plan).</system_note>",
             })
 
-        raw = await generate_text(llm_config, convo, max_output_tokens=4096, reasoning_effort="low")
+        raw = await generate_text(llm_config, convo, reasoning_effort="low")
         objs = _extract_json_objects(raw)
 
         plan_obj = next((o for o in objs if o.get("action") == "plan" or "steps" in o), None)

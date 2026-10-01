@@ -260,7 +260,6 @@ def _make_llm_callable(llm_config, timeout: int = 30):
         raw = await generate_text(
             cfg,
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            max_output_tokens=450,
         )
         return (raw or "").strip() or None
 

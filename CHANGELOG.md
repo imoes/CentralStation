@@ -147,6 +147,31 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **Hermes had no MCP tools.** The sessions started, but with "Unknown toolset:
+  mcp-centralstation / mcp-playwright / mcp-vibemk". The new Hermes version moved
+  `discover_mcp_tools` from `tools.mcp_tool` to `tools.mcp_tool_discovery`. The
+  discovery at container start failed on the import, and that showed only as a warning
+  in the log. As a result no server was registered. `userenv/main.py` now tries both
+  places and logs the result per server. A failure is logged as an ERROR ("Hermes
+  sessions get NO MCP tools"). Verified: on start "161 tool(s) from 3 server(s):
+  centralstation=55, playwright=25, vibemk=81". A Hermes session called
+  `mcp__centralstation__list_alerts` and returned 20 entries, with no "Unknown
+  toolset".
+
+- **No LLM call in CentralStation sets a token limit any more.** The global rule says
+  never `max_tokens`. A limit makes reasoning models end with `finish_reason=length`
+  and return nothing useful. It had been set in feed analysis (450), remediation
+  matching (300), playbook author (2000), project planning (4096/1024), generative
+  dashboard (3000), the AI agent (5000), the search, PromQL and dashboard assistants
+  (500/300/3000), the help assistant (900) and the LLM connector test (1). The
+  `max_output_tokens` parameter is gone from `generate_text`, so nobody can set it
+  again by accident. The only exception is the Anthropic Messages API, which requires
+  `max_tokens`. It now gets `ANTHROPIC_MAX_TOKENS = 32000`, which is at or above the
+  output limit of all current Claude models and so cuts nothing. It used to be 1024,
+  which cut answers off. Verified: `grep` over backend and userenv finds no
+  `max_output_tokens`/`n_predict` and no other `max_tokens`. 235 tests, and imports of
+  the touched modules in the running backend.
+
 - **With Hermes as the agent, no new console session appeared.** Claude and Codex
   were not affected. The new Hermes version gates *all 45* of its runtime dependencies
   on `python_version >= '3.14'`, while it allows Python 3.11 to 3.14 itself. On the
@@ -178,8 +203,7 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   test against llmbase.ai is green. The admin LLM test no longer sets a token limit
   (`max_output_tokens=20`), per the global rule.
 
-  Still missing: ten other places in the backend still set `max_output_tokens` (feed
-  analysis, generative dashboard, AI agent, project planning, …).
+  The ten other places with a token limit are removed too, see the next entry.
 
 - **A Graylog error in the feed showed up as if it had happened once, even when it
   happened thousands of times.** Example: `Failed to read change-log: HTTP Status '401

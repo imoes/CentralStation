@@ -153,7 +153,6 @@ async def propose_remediation(
             llm_cfg,
             [{"role": "user", "content": prompt}],
             temperature=0.0,
-            max_output_tokens=300,
         )
         raw = raw.strip()
         if raw.lower() in ("null", "none", ""):

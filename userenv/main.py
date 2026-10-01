@@ -375,15 +375,25 @@ async def _startup_mcp_discovery() -> None:
     """
     def _discover() -> None:
         try:
-            from tools.mcp_tool import discover_mcp_tools
-            log.info("Pre-discovering MCP tools (centralstation SSE)…")
+            # Hermes moved discovery out of tools.mcp_tool into tools.mcp_tool_discovery.
+            # The old import failed silently ("MCP pre-discovery failed" as a warning),
+            # no server was registered, and every session started with "Unknown
+            # toolset: mcp-…" — Hermes had no MCP tools at all. Try both locations.
+            try:
+                from tools.mcp_tool_discovery import discover_mcp_tools, get_mcp_status
+            except ImportError:
+                from tools.mcp_tool import discover_mcp_tools, get_mcp_status
+            log.info("Pre-discovering MCP tools…")
             discover_mcp_tools()
-            from tools.mcp_tool import get_mcp_status
             status = get_mcp_status()
-            total_tools = sum(s.get("tools", 0) for s in status)
-            log.info("MCP discovery done: %d tool(s) from %d server(s)", total_tools, len(status))
+            total_tools = sum(s.get("tools", 0) or 0 for s in status)
+            log.info("MCP discovery done: %d tool(s) from %d server(s): %s", total_tools,
+                     len(status),
+                     ", ".join(f"{s.get('name')}={s.get('tools', 0)}"
+                               f"{'' if s.get('connected') else ' (NOT connected)'}"
+                               for s in status))
         except Exception as exc:
-            log.warning("MCP pre-discovery failed: %s", exc)
+            log.error("MCP pre-discovery failed — Hermes sessions get NO MCP tools: %s", exc)
 
     import threading
     t = threading.Thread(target=_discover, daemon=True, name="mcp-prediscovery")

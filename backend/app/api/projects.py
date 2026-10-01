@@ -240,7 +240,7 @@ async def project_chat(project_id: str, body: ProjectChatRequest, db: DB, user: 
         {"role": "system", "content": PROJECT_AGENT_SYSTEM},
         {"role": "user", "content": f"<project>\n{context}\n</project>\n\n{body.message}"},
     ]
-    raw = await generate_text(llm, messages, max_output_tokens=1024, reasoning_effort="low")
+    raw = await generate_text(llm, messages, reasoning_effort="low")
 
     objs = _extract_json_objects(raw)
     result = objs[0] if objs else {}

@@ -115,7 +115,6 @@ async def _llm_search_assistant(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         reasoning_effort="none",
         temperature=0.1,
-        max_output_tokens=500,
     )
     try:
         data = json.loads(raw)
@@ -406,7 +405,6 @@ async def promql_assistant(
         [{"role": "system", "content": system}, {"role": "user", "content": body.message}],
         reasoning_effort="none",
         temperature=0.1,
-        max_output_tokens=300,
     )
     try:
         data = json.loads(raw)
@@ -524,7 +522,6 @@ async def dashboard_assistant(
         [{"role": "system", "content": system}, {"role": "user", "content": body.message}],
         reasoning_effort=reasoning_effort,
         temperature=0.1,
-        max_output_tokens=3000,
     )
 
     # Strip markdown fences if present

@@ -81,7 +81,6 @@ def _build_codex_payload(
     messages: list[dict[str, Any]],
     *,
     temperature: float | None = None,
-    max_output_tokens: int | None = None,
     reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """Build request body for chatgpt.com/backend-api/codex Responses API.
@@ -118,9 +117,9 @@ def _build_codex_payload(
         "input": input_items,
         "store": False,
     }
-    # NOTE: the Codex backend rejects `temperature` and `max_output_tokens`
-    # with HTTP 400 "Unsupported parameter". They are accepted as kwargs for
-    # call-site compatibility but deliberately NOT forwarded.
+    # NOTE: the Codex backend rejects `temperature` with HTTP 400 "Unsupported
+    # parameter". It is accepted as a kwarg for call-site compatibility but
+    # deliberately NOT forwarded.
     if reasoning_effort:
         payload["reasoning"] = {"effort": reasoning_effort}
     return payload
@@ -207,6 +206,11 @@ async def _collect_codex_stream(response: Any) -> str:
     return "".join(parts)
 
 
+#: Pflichtangabe für die Anthropic-Messages-API (siehe generate_text). Bewusst KEIN
+#: Parameter von generate_text: ein Ausgabe-Limit setzt in CentralStation niemand —
+#: das Modell begrenzt sich über seine Kontextgröße selbst (globale Regel).
+ANTHROPIC_MAX_TOKENS = 32000
+
 #: llama.cpp-spezifische Felder im chat_completions-Payload (siehe generate_text).
 _THINKING_KEYS = frozenset({"enable_thinking", "thinking_budget"})
 
@@ -217,7 +221,6 @@ async def generate_text(
     *,
     temperature: float | None = None,
     reasoning_effort: str | None = None,
-    max_output_tokens: int | None = None,
     json_prefill: str | None = None,
 ) -> str:
     """Call the configured LLM and return the answer text.
@@ -250,7 +253,11 @@ async def generate_text(
         })
         payload: dict[str, Any] = {
             "model": llm_config.model,
-            "max_tokens": max_output_tokens or 1024,
+            # Pflichtfeld der Messages-API — kein Limit im Sinne der Regel "nie ein
+            # Token-Cap": der Wert liegt bei/über der Ausgabegrenze aller aktuellen
+            # Claude-Modelle und schneidet daher nichts ab. Früher 1024 — das kappte
+            # Antworten (finish_reason=length) und ist genau der verbotene Fall.
+            "max_tokens": ANTHROPIC_MAX_TOKENS,
             "system": system_prompt,
             "messages": convo,
         }
@@ -284,7 +291,6 @@ async def generate_text(
         payload = _build_codex_payload(
             llm_config.model, messages,
             temperature=temperature,
-            max_output_tokens=max_output_tokens,
             reasoning_effort=effort,
         )
         payload["stream"] = True
@@ -311,8 +317,6 @@ async def generate_text(
             payload["temperature"] = temperature
         if reasoning_effort:
             payload["reasoning"] = {"effort": reasoning_effort}
-        if max_output_tokens is not None:
-            payload["max_output_tokens"] = max_output_tokens
         extract = _extract_responses_output
     else:
         url = _build_api_url(llm_config.base_url, "chat/completions")
@@ -327,8 +331,6 @@ async def generate_text(
         }
         if temperature is not None:
             payload["temperature"] = temperature
-        if max_output_tokens is not None:
-            payload["max_tokens"] = max_output_tokens
         # Qwen3 models always think by default (reasoning_content) and only
         # write the answer to content AFTER finishing the thinking phase.
         # Always send both flags so the model knows exactly what we want:

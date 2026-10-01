@@ -676,7 +676,6 @@ async def analyze(state: dict, llm_config: Any, db: Any = None) -> dict:
             json_prefill="```json\n{",
             # 5000 tokens for JSON output: 8 findings × ~400 chars + recs + clusters ≈ 4500 chars
             # ≈ 1170 tokens. Extra headroom for detailed descriptions. At 33 tok/s ≈ 152 s.
-            max_output_tokens=5000,
         )
         duration = time.time() - t0
 

@@ -502,7 +502,6 @@ async def _ask_llm(db: Any, situation: dict, lang: str) -> dict | None:
             # Assistant prefill: forces Qwen3 A3B to emit JSON immediately (no planning
             # monologue). Applied provider-aware inside generate_text.
             json_prefill="```json\n{",
-            max_output_tokens=3000,
         )
     except LLMInvocationError as e:
         log.warning("generative_designer: LLM call failed: %s", e)
