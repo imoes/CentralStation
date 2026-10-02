@@ -109,6 +109,16 @@ interface CreateResponse { ok: boolean; jira_key?: string; url?: string | null; 
           </div>
         </div>
 
+        <label class="tkt-label">Bearbeiter (optional)</label>
+        <input class="tkt-input" [ngModel]="assignee()" (ngModelChange)="onAssigneeInput($event)"
+               list="tkt-assignee-options" [disabled]="creating()"
+               placeholder="Nachname, Login oder E-Mail — nur im Projekt zuweisbare Personen" />
+        <datalist id="tkt-assignee-options">
+          @for (a of assigneeOptions(); track a.login) {
+            <option [value]="a.login">{{ a.name }}</option>
+          }
+        </datalist>
+
         <label class="tkt-label">{{ i18n.t('dialog.ticket.summary_label') }}</label>
         <input class="tkt-input" [(ngModel)]="summary" maxlength="200"
                [disabled]="creating()" [placeholder]="i18n.t('dialog.ticket.summary_placeholder')" />
@@ -239,6 +249,26 @@ export class TicketCreateDialogComponent implements OnInit {
     this.issueType.set(t?.default_issue_type || t?.issue_types?.[0] || '');
   }
 
+  /** Bearbeiter: Freitext; Vorschläge = im gewählten Projekt zuweisbare Personen. */
+  assignee = signal<string>('');
+  assigneeOptions = signal<{ login: string; name: string }[]>([]);
+  private _assigneeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  onAssigneeInput(value: string): void {
+    this.assignee.set(value);
+    if (this._assigneeTimer) clearTimeout(this._assigneeTimer);
+    const q = (value || '').trim();
+    if (q.length < 2 || !this.project()) { this.assigneeOptions.set([]); return; }
+    this._assigneeTimer = setTimeout(() => {
+      this.http.get<{ login: string; name: string }[]>(`${environment.apiUrl}/tickets/assignees`, {
+        params: { connector_type: this.connectorType(), project: this.project(), q },
+      }).subscribe({
+        next: list => this.assigneeOptions.set(list ?? []),
+        error: () => this.assigneeOptions.set([]),
+      });
+    }, 300);
+  }
+
   create(): void {
     this.creating.set(true);
     this.loadError.set('');
@@ -250,6 +280,7 @@ export class TicketCreateDialogComponent implements OnInit {
       priority: this.priority(),
       issue_type: this.issueType(),
       feed_external_id: this.data.feedExternalId,
+      assignee: this.assignee().trim() || null,
     };
     this.http.post<CreateResponse>(`${environment.apiUrl}/tickets/create`, body).subscribe({
       next: res => {
@@ -258,7 +289,11 @@ export class TicketCreateDialogComponent implements OnInit {
         if (res.ok && res.url) {
           window.open(res.url, '_blank', 'noopener');
         }
-        this.snack.open(`${this.i18n.t('messages.ticket_created')}: ${res.jira_key ?? ''}`, 'OK', { duration: 5000 });
+        // Hinweis des Backends (z. B. "Vorgangstyp … gibt es hier nicht — angelegt als …")
+        // mitzeigen: sonst wüsste niemand, dass ein anderer Typ gewählt wurde.
+        const note = (res as { note?: string }).note;
+        this.snack.open(`${this.i18n.t('messages.ticket_created')}: ${res.jira_key ?? ''}${note ? ' · ' + note : ''}`,
+                        'OK', { duration: note ? 9000 : 5000 });
         this.dialogRef.close(res);
       },
       error: err => {

@@ -214,6 +214,29 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **Creating tickets: project, assignee and target (Jira / ServiceDesk) can be chosen.**
+  The console AI's tool (`create_jira_ticket`) always created tickets in the
+  default project, with no assignee. It also took the first Jira connector it found,
+  if in doubt the ServiceDesk, which has no IMSP. The ticket dialog had no assignee
+  either.
+  - **Target:** "Jira" or "ServiceDesk" (also "Service Desk", "SD") is **binding**. If
+    the project does not exist there, the tool answers with that target's project list
+    (for example "IMSP gibt es im ServiceDesk nicht. Verfügbar: IMADVA, IMCUE, IMIT,
+    IMPM, IMSAFO") and does not fall back silently. Without a target, the tool finds the
+    instance that has the project.
+  - **Assignee** (surname, login or e-mail) is resolved only among the people who may
+    be assigned in that project. If the name is ambiguous, the tool returns the
+    candidates instead of guessing. The dialog has a "Bearbeiter" field with
+    suggestions (`GET /api/tickets/assignees`).
+  - **Issue type:** only one that exists in the project. IMSP has no "Serviceanfrage",
+    only "Projektticket " (with a trailing space). If the requested type is missing,
+    the ticket is created with an existing one and the dialog says so.
+  - One path for the dialog and the AI: `ticketing.create_jira_issue`.
+  - Verified against both instances, without creating a test ticket: ServiceDesk+IMIT
+    → SD, Scholtysik → `mujscholtysik`, type Serviceanfrage. Jira+IMSP → `jscholtysik`,
+    "Projektticket ". ServiceDesk+IMSP → refused with the project list. Dialog
+    suggestion `scholt` → Scholtysik. 16 tests (assignee, type, target aliases).
+
 - **Hermes had no MCP tools.** The sessions started, but with "Unknown toolset:
   mcp-centralstation / mcp-playwright / mcp-vibemk". The new Hermes version moved
   `discover_mcp_tools` from `tools.mcp_tool` to `tools.mcp_tool_discovery`. The

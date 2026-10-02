@@ -126,6 +126,51 @@ async def ai_ticket_draft(
     return {"summary": summary, "description": description, "priority": priority}
 
 
+def pick_assignee(candidates: list[dict], query: str) -> tuple[str | None, str]:
+    """Bearbeiter aus den zuweisbaren Personen wählen: (Login, Fehlergrund).
+
+    Exakter Treffer auf Login, E-Mail oder Anzeigename (ohne Groß/Klein) gewinnt; sonst
+    gilt nur ein EINZIGER Kandidat. Mehrere ohne exakten Treffer → kein Raten, sondern
+    die Kandidaten im Grund — "Scholtysik" darf nicht still beim falschen Joachim landen.
+    """
+    q = (query or "").strip().casefold()
+    if not q:
+        return None, ""
+    for c in candidates:
+        if q in {(c.get("name") or "").casefold(), (c.get("email") or "").casefold(),
+                 (c.get("display_name") or "").casefold()}:
+            return c["name"], ""
+    if len(candidates) == 1:
+        return candidates[0]["name"], ""
+    if not candidates:
+        return None, f"Kein zuweisbarer Bearbeiter für „{query}“ in diesem Projekt."
+    names = ", ".join(f"{c['display_name']} ({c['name']})" for c in candidates[:8])
+    return None, f"„{query}“ ist mehrdeutig: {names}. Bitte den Login angeben."
+
+
+def pick_issue_type(available: list[str], wanted: str | None,
+                    preferred: tuple[str, ...] = ("Aufgabe", "Task", "Serviceanfrage",
+                                                 "Projektticket")) -> tuple[str | None, str]:
+    """Vorgangstyp, den es im Projekt wirklich gibt: (exakter Jira-Name, Hinweis).
+
+    Verglichen wird ohne Groß/Klein und Leerzeichen am Rand — IMSP führt "Projektticket "
+    mit Leerzeichen —, gesendet wird der exakte Name. Fehlt der gewünschte Typ, wird
+    der erste bevorzugte genommen und das im Hinweis gesagt, statt still.
+    """
+    norm = {t.strip().casefold(): t for t in available}
+    if wanted and wanted.strip().casefold() in norm:
+        return norm[wanted.strip().casefold()], ""
+    for p in preferred:
+        if p.casefold() in norm:
+            hint = (f"Vorgangstyp „{wanted}“ gibt es hier nicht — angelegt als „{norm[p.casefold()].strip()}“."
+                    if wanted else "")
+            return norm[p.casefold()], hint
+    if available:
+        hint = f"Vorgangstyp „{wanted}“ gibt es hier nicht — angelegt als „{available[0].strip()}“." if wanted else ""
+        return available[0], hint
+    return wanted, ""
+
+
 async def create_jira_issue(
     db: AsyncSession,
     user,
@@ -136,6 +181,7 @@ async def create_jira_issue(
     priority: str = "Normal",
     issue_type: str = "Serviceanfrage",
     labels: list[str] | None = None,
+    assignee: str | None = None,
 ) -> dict:
     """Create a Jira/ServiceDesk issue in the chosen connector.
 
@@ -156,6 +202,31 @@ async def create_jira_issue(
     creds = decrypt_credentials(conn.encrypted_credentials)
     jira = JiraConnector(base_url=conn.base_url, credentials=creds)
 
+    # Vorgangstyp: nur einen nehmen, den es im Projekt gibt (IMSP kennt z. B. keine
+    # "Serviceanfrage", nur "Projektticket ").
+    notes: list[str] = []
+    try:
+        types = await jira.project_issue_types(project)
+    except Exception as e:
+        log.debug("create_jira_issue: issue types for %s unavailable: %s", project, e)
+        types = []
+    if types:
+        issue_type, hint = pick_issue_type(types, issue_type)
+        if hint:
+            notes.append(hint)
+
+    # Bearbeiter: nur unter den in diesem Projekt zuweisbaren Personen auflösen.
+    assignee_login: str | None = None
+    if assignee:
+        try:
+            candidates = await jira.search_assignable(project, assignee)
+        except Exception as e:
+            return {"ok": False, "error": f"Bearbeitersuche fehlgeschlagen: {str(e)[:150]}"}
+        assignee_login, err = pick_assignee(candidates, assignee)
+        if err:
+            return {"ok": False, "error": err,
+                    "candidates": [{"login": c["name"], "name": c["display_name"]} for c in candidates[:8]]}
+
     async def _create(prio: str, send_labels: bool = True) -> dict:
         return await jira.create_issue(
             project=project,
@@ -164,6 +235,7 @@ async def create_jira_issue(
             issue_type=issue_type,
             priority=prio,
             labels=(labels or ["centralstation"]) if send_labels else None,
+            assignee=assignee_login,
         )
 
     try:
@@ -180,4 +252,71 @@ async def create_jira_issue(
     jira_key = result.get("key", "")
     base = (conn.base_url or "").rstrip("/")
     url = f"{base}/browse/{jira_key}" if jira_key and base else None
-    return {"ok": True, "jira_key": jira_key, "url": url}
+    out = {"ok": True, "jira_key": jira_key, "url": url, "issue_type": (issue_type or "").strip()}
+    if assignee_login:
+        out["assignee"] = assignee_login
+    if notes:
+        out["note"] = " ".join(notes)
+    return out
+
+
+#: Wie Nutzer das Ziel nennen → Connector-Typ. "ServiceDesk" ist NICHT Jira, auch wenn
+#: beides Jira-Software ist — wer es sagt, meint die andere Instanz.
+TARGET_ALIASES = {
+    "jira": "jira",
+    "servicedesk": "jira_sd", "service desk": "jira_sd", "service-desk": "jira_sd",
+    "sd": "jira_sd", "jsd": "jira_sd", "jira_sd": "jira_sd",
+}
+
+
+def normalize_target(target: str | None) -> tuple[str | None, str]:
+    """Genanntes Ziel → ("jira" | "jira_sd" | None, Fehlergrund)."""
+    if not target or not target.strip():
+        return None, ""
+    t = TARGET_ALIASES.get(target.strip().casefold())
+    if t is None:
+        return None, f"Unbekanntes Ziel „{target}“ — erlaubt: Jira oder ServiceDesk."
+    return t, ""
+
+
+async def projects_on_target(db: AsyncSession, user, target: str) -> list[str]:
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+    conn = await resolve_jira_connector(db, user.id, target)
+    if not conn:
+        return []
+    jira = JiraConnector(base_url=conn.base_url, credentials=decrypt_credentials(conn.encrypted_credentials))
+    return sorted(p["key"] for p in await jira.list_projects())
+
+
+async def find_connector_for_project(db: AsyncSession, user, project: str,
+                                     preferred: str | None = None) -> tuple[str | None, str]:
+    """Auf welcher Instanz liegt `project`? ("jira" | "jira_sd", Grund bei None).
+
+    IMSP liegt nur auf Jira, IMIT im ServiceDesk — wer nur den Projektschlüssel nennt,
+    soll nicht wissen müssen, wo. `preferred` wird zuerst geprüft.
+    """
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+    # Ein GENANNTES Ziel ist bindend: "ServiceDesk" heißt ServiceDesk — kein stilles
+    # Ausweichen auf Jira, nur weil das Projekt dort existiert.
+    order = [preferred] if preferred in ("jira", "jira_sd") else ["jira", "jira_sd"]
+    for ctype in order:
+        conn = await resolve_jira_connector(db, user.id, ctype)
+        if not conn:
+            continue
+        jira = JiraConnector(base_url=conn.base_url, credentials=decrypt_credentials(conn.encrypted_credentials))
+        try:
+            if await jira.has_project(project):
+                return ctype, ""
+        except Exception as e:
+            log.debug("find_connector_for_project: %s on %s failed: %s", project, ctype, e)
+    if preferred in ("jira", "jira_sd"):
+        label = "im ServiceDesk" if preferred == "jira_sd" else "in Jira"
+        try:
+            keys = await projects_on_target(db, user, preferred)
+        except Exception:
+            keys = []
+        return None, (f"Projekt {project} gibt es {label} nicht."
+                      + (f" Verfügbar {label}: {', '.join(keys[:40])}." if keys else ""))
+    return None, f"Projekt {project} gibt es auf keiner verbundenen Jira-Instanz."

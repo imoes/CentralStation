@@ -505,13 +505,31 @@ async def analyze_hostgroup_patterns(group_name: str, correlate_logs: bool = Tru
 # ── Tool 6: Create Jira Ticket ─────────────────────────────────────
 
 @mcp.tool()
-async def create_jira_ticket(title: str, description: str, priority: str = "medium") -> dict:
-    """Erstellt ein Jira-Ticket im Standard-Projekt.
+async def create_jira_ticket(
+    title: str,
+    description: str,
+    priority: str = "medium",
+    project: str | None = None,
+    assignee: str | None = None,
+    issue_type: str | None = None,
+    target: str | None = None,
+) -> dict:
+    """Erstellt ein Jira- oder ServiceDesk-Ticket.
 
     Parameter:
-    - title: Kurze Zusammenfassung des Problems (max 200 Zeichen)
+    - title: Kurze Zusammenfassung (max 200 Zeichen)
     - description: Ausführliche Beschreibung
-    - priority: Priorität (critical/high/medium/low, Standard: medium)
+    - priority: critical/high/medium/low (Standard: medium)
+    - project: Projektschlüssel, z. B. "IMSP" oder "IMIT". Ohne Angabe: Standardprojekt.
+      Die Instanz (Jira oder ServiceDesk) wird anhand des Projekts selbst gefunden.
+    - assignee: Bearbeiter — Nachname, Login oder E-Mail (z. B. "Scholtysik"). Gesucht
+      wird nur unter den im Projekt zuweisbaren Personen; ist der Name mehrdeutig, kommt
+      die Kandidatenliste zurück statt eines Tickets.
+    - issue_type: Vorgangstyp; ohne Angabe ein passender, den es im Projekt gibt.
+    - target: "Jira" oder "ServiceDesk" (auch "SD"). Sagt der Nutzer, wo das Ticket hin
+      soll, IMMER setzen — das Ziel ist dann bindend, es wird nicht auf die andere Instanz
+      ausgewichen. Gibt es das Projekt dort nicht, kommt die Projektliste dieses Ziels
+      zurück: dann den Nutzer fragen, welches Projekt.
 
     Nutze dieses Tool wenn der Nutzer ein Ticket oder eine Aufgabe erstellen möchte."""
     denied = await _require_write("Jira-Ticket anlegen")
@@ -519,31 +537,37 @@ async def create_jira_ticket(title: str, description: str, priority: str = "medi
         return denied
     import json as _json
     from sqlalchemy import select
-    from app.models.connector import ConnectorConfig
-    from app.services.connectors.jira import JiraConnector
     from app.models.settings import GlobalSetting
-    from app.core.security import decrypt_credentials
+    from app.models.user import User
+    from app.services.ticketing import create_jira_issue, find_connector_for_project, normalize_target
 
+    user_id = _calling_user_id()
     async with (await _get_db_session()) as db:
-        cfg_result = await db.execute(
-            select(ConnectorConfig).where(
-                ConnectorConfig.type.in_(["jira", "jira_sd"]),
-                ConnectorConfig.enabled.is_(True),
-            ).limit(1)
-        )
-        cfg = cfg_result.scalar_one_or_none()
-        if not cfg:
-            return {"ok": False, "error": "Kein Jira-Connector konfiguriert"}
+        user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none() \
+            if user_id else None
+        if user is None:
+            return {"ok": False, "error": "Aufrufer nicht identifizierbar — Ticket nicht angelegt."}
 
-        # Default project from global settings
-        proj_row = (await db.execute(
-            select(GlobalSetting).where(GlobalSetting.key == "jira.default_project")
-        )).scalar_one_or_none()
-        project = proj_row.value_plain if proj_row else "IMIT"
+        if not project:
+            for key in ("jira.default_project", "jira.ticket_project"):
+                row = (await db.execute(select(GlobalSetting).where(GlobalSetting.key == key))
+                       ).scalar_one_or_none()
+                if row and row.value_plain:
+                    project = row.value_plain
+                    break
+            project = project or "IMIT"
+        project = project.strip().upper()
 
-        # Priority names are instance-specific. Default to the standard Jira
-        # priority names (Highest/High/Medium/Low); override per instance via the
-        # global setting jira.priority_map = {"critical": "Kritisch", ...}.
+        # Wo liegt das Projekt? Vorher nahm das Werkzeug den erstbesten Connector — im
+        # Zweifel den ServiceDesk, auf dem es IMSP gar nicht gibt.
+        wanted, why = normalize_target(target)
+        if why:
+            return {"ok": False, "error": why}
+        connector_type, why = await find_connector_for_project(db, user, project, wanted)
+        if not connector_type:
+            return {"ok": False, "error": why}
+
+        # Prioritätsnamen sind instanzabhängig; jira.priority_map überschreibt die Standardnamen.
         prio_map = {"critical": "Highest", "high": "High", "medium": "Medium", "low": "Low"}
         map_row = (await db.execute(
             select(GlobalSetting).where(GlobalSetting.key == "jira.priority_map")
@@ -553,34 +577,17 @@ async def create_jira_ticket(title: str, description: str, priority: str = "medi
                 prio_map.update(_json.loads(map_row.value_plain))
             except Exception:
                 log.warning("jira.priority_map is not valid JSON, using defaults")
-        jira_priority = prio_map.get(priority, prio_map.get("medium", ""))
 
-        creds = decrypt_credentials(cfg.encrypted_credentials)
-        connector = JiraConnector(base_url=cfg.base_url, credentials=creds)
-        try:
-            issue = await connector.create_issue(
-                project=project,
-                summary=title[:200],
-                description=description,
-                priority=jira_priority,
-            )
-            return {"ok": True, "jira_key": issue.get("key", ""), "url": issue.get("url", "")}
-        except Exception as exc:
-            # A wrong/unknown priority name rejects the whole create → retry once
-            # without priority so the ticket still gets created.
-            log.warning("create_jira_ticket failed (%s) — retrying without priority", exc)
-            try:
-                issue = await connector.create_issue(
-                    project=project,
-                    summary=title[:200],
-                    description=description,
-                    priority="",
-                )
-                return {"ok": True, "jira_key": issue.get("key", ""),
-                        "url": issue.get("url", ""), "note": "ohne Priorität erstellt"}
-            except Exception as exc2:
-                log.warning("create_jira_ticket retry failed: %s", exc2)
-                return {"ok": False, "error": str(exc2)}
+        result = await create_jira_issue(
+            db, user, connector_type=connector_type, project=project,
+            summary=title[:200], description=description,
+            priority=prio_map.get((priority or "medium").lower(), prio_map["medium"]),
+            issue_type=issue_type or "", assignee=assignee,
+        )
+        if result.get("ok"):
+            result["project"] = project
+            result["target"] = connector_type
+        return result
 
 
 # ── Tool 7: Get Alert Analysis ─────────────────────────────────────

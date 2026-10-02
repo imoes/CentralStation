@@ -310,6 +310,43 @@ class JiraConnector(BaseConnector):
                 out.append({"key": key, "name": p.get("name", key)})
         return out
 
+    async def has_project(self, key: str) -> bool:
+        """Gibt es das Projekt auf DIESER Instanz? (IMSP liegt z. B. nur auf Jira, nicht im SD.)"""
+        async with self._client(timeout=15.0) as client:
+            r = await client.get(self._api(f"/project/{key}"), headers=self._headers())
+        return r.status_code == 200
+
+    async def search_assignable(self, project: str, query: str) -> list[dict]:
+        """Personen, die in `project` Bearbeiter sein DÜRFEN, passend zu `query`.
+
+        Nur zuweisbare Nutzer — eine allgemeine Nutzersuche fände auch Leute ohne
+        Projektrecht, und Jira lehnte die Zuweisung dann beim Anlegen ab.
+        Rückgabe: [{name, display_name, email}] (Jira Server: `name` ist der Login).
+        """
+        async with self._client(timeout=15.0) as client:
+            r = await client.get(self._api("/user/assignable/search"), headers=self._headers(),
+                                 params={"project": project, "username": query, "maxResults": 20})
+            r.raise_for_status()
+        return [{"name": u.get("name") or u.get("accountId") or "",
+                 "display_name": u.get("displayName") or "",
+                 "email": u.get("emailAddress") or ""}
+                for u in r.json() if u.get("active", True)]
+
+    async def project_issue_types(self, project: str) -> list[str]:
+        """Vorgangstypen, die in `project` angelegt werden können (ohne Unteraufgaben)."""
+        async with self._client(timeout=15.0) as client:
+            # Jira ≥ 8.4: projektgenauer Endpunkt; ältere Instanzen: createmeta.
+            r = await client.get(self._api(f"/issue/createmeta/{project}/issuetypes"),
+                                 headers=self._headers())
+            if r.status_code == 200:
+                return [t["name"] for t in r.json().get("values", []) if not t.get("subtask")]
+            r = await client.get(self._api("/issue/createmeta"), headers=self._headers(),
+                                 params={"projectKeys": project})
+            r.raise_for_status()
+        for p in r.json().get("projects", []):
+            return [t["name"] for t in p.get("issuetypes", []) if not t.get("subtask")]
+        return []
+
     async def search_issues(self, jql: str, fields: list[str] | None = None) -> list[dict]:
         fields = fields or ["summary", "status", "priority", "assignee", "created", "updated"]
         payload = {"jql": jql, "maxResults": 50, "fields": fields}
@@ -336,6 +373,7 @@ class JiraConnector(BaseConnector):
         issue_type: str = "Bug",
         priority: str = "High",
         labels: list[str] | None = None,
+        assignee: str | None = None,
     ) -> dict:
         payload = {
             "fields": {
@@ -352,6 +390,9 @@ class JiraConnector(BaseConnector):
             payload["fields"]["priority"] = {"name": priority}
         if labels:
             payload["fields"]["labels"] = labels
+        if assignee:
+            # Jira Server/DC: Login-Name. Vorher geprüft über search_assignable.
+            payload["fields"]["assignee"] = {"name": assignee}
         async with self._client(timeout=30.0) as client:
             r = await client.post(self._api("/issue"), headers=self._headers(), json=payload)
             if r.is_error:

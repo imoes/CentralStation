@@ -194,6 +194,35 @@ class CreateBody(BaseModel):
     issue_type: str = "Serviceanfrage"
     labels: list[str] | None = None
     feed_external_id: str | None = None
+    #: Bearbeiter — Login, Nachname oder E-Mail; aufgelöst unter den im Projekt
+    #: zuweisbaren Personen (ticketing.pick_assignee).
+    assignee: str | None = None
+
+
+@router.get("/assignees")
+async def ticket_assignees(
+    connector_type: str,
+    project: str,
+    q: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Zuweisbare Personen in `project` passend zu `q` — für die Vorschläge im Dialog."""
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+    from app.services.ticketing import resolve_jira_connector
+    if len((q or "").strip()) < 2:
+        return []
+    conn = await resolve_jira_connector(db, user.id, connector_type)
+    if not conn:
+        raise HTTPException(404, "Kein Jira-Connector für dieses Ziel")
+    jira = JiraConnector(base_url=conn.base_url, credentials=decrypt_credentials(conn.encrypted_credentials))
+    try:
+        found = await jira.search_assignable(project, q.strip())
+    except Exception as e:
+        raise HTTPException(502, f"Bearbeitersuche fehlgeschlagen: {str(e)[:150]}")
+    return [{"login": u["name"], "name": u["display_name"] or u["name"], "email": u["email"]}
+            for u in found[:15]]
 
 
 @router.post("/create")
@@ -217,6 +246,7 @@ async def ticket_create(
         priority=(body.priority or "Normal").strip(),
         issue_type=(body.issue_type or "Serviceanfrage").strip(),
         labels=body.labels,
+        assignee=(body.assignee or "").strip() or None,
     )
     if not result.get("ok"):
         raise HTTPException(502, f"Ticket konnte nicht erstellt werden: {result.get('error', '')}")
