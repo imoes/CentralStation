@@ -231,6 +231,7 @@ RUN apt-get update \
 # extensions — a full rebuild for a two-line edit. Keep them at the bottom.
 WORKDIR /app
 COPY userenv/main.py ./main.py
+COPY userenv/claude_session.py ./claude_session.py
 COPY userenv/hermes_config.yaml ./hermes_config.yaml
 # Read-only guard for Claude CLI (PreToolUse hook — blocks system-modifying Bash,
 # path-checks Write/Edit). Wired through MANAGED settings, which Claude Code reads on

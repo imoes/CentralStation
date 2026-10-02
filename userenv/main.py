@@ -723,6 +723,18 @@ async def _run_cli_agent(
             _allowed_tools = CLAUDE_BUILTIN_TOOLS + ",mcp__centralstation"
 
         if claude_started:
+            # Veraltete Werkzeug-Momentaufnahmen entfernen: beim --resume nähme die CLI
+            # sonst die beim Sitzungsstart gespeicherte Werkzeugliste statt der aktuellen
+            # (claude_session.py). Ein erweitertes MCP-Werkzeug bliebe für immer unsichtbar.
+            try:
+                from claude_session import refresh_tool_snapshots
+                _n = refresh_tool_snapshots(
+                    os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude")), sid)
+                if _n:
+                    log.info("[cli:claude] %s: %d stale tool snapshot(s) dropped before resume",
+                             sid[:8], _n)
+            except Exception as _e:
+                log.warning("[cli:claude] tool snapshot refresh failed: %s", _e)
             # Session file exists — resume it.
             cmd = ["claude", "--print", "--resume", sid,
                    "--permission-mode", "dontAsk", "--allowedTools", _allowed_tools]

@@ -214,6 +214,17 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **Changed tools did not reach a running console session.** The Claude CLI keeps a
+  snapshot of all MCP tools in the session log (`deferred_tools_record`). On
+  `--resume` it uses that snapshot, not the current tool list. After the
+  `create_jira_ticket` extension, an existing session kept seeing only `title`,
+  `description` and `priority`, while a new one saw all 7 parameters. Restarting the
+  container would not have helped. Before every resume, the console now removes these
+  snapshots (`userenv/claude_session.py`), and the CLI rebuilds them from the live
+  list. When the tools are unchanged, the content is identical and the prompt cache
+  stays valid. Verified: a copy of the affected session without the snapshots saw all
+  7 parameters, and the AI corrected its earlier statement by itself. 3 tests.
+
 - **Creating tickets: project, assignee and target (Jira / ServiceDesk) can be chosen.**
   The console AI's tool (`create_jira_ticket`) always created tickets in the
   default project, with no assignee. It also took the first Jira connector it found,
