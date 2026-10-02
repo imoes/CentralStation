@@ -2575,7 +2575,9 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
 
   handoffToComputer(incidentId: string) {
     const incident = this.incidentTimeline()?.incident;
-    const label = incident?.primary_host || 'Incident-Analyse';
+    // Sitzungsname = Incident-Überschrift: "Fehlerausbruch: ChangelogReader – … · 24
+    // Container" sagt, worum es geht; der Host allein ("cueservices") sagt das nicht.
+    const label = incident?.title || incident?.primary_host || 'Incident-Analyse';
 
     this.copyingPrompt.set(true);
     this.promptCopied.set(false);
@@ -2585,7 +2587,9 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
           this.copyingPrompt.set(false);
           this.promptCopied.set(true);
           setTimeout(() => this.promptCopied.set(false), 2000);
-          this.computerService.openWithContext(data.prompt, label, incident?.primary_host);
+          // Eine Sitzung je INCIDENT, nicht je Host: Cluster-Incidents teilen sich oft
+          // den Docker-Host — zwei verschiedene Ausbrüche landeten sonst in einer Sitzung.
+          this.computerService.openWithContext(data.prompt, label, `incident:${incidentId}`);
         },
         error: () => {
           this.copyingPrompt.set(false);

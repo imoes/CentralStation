@@ -55,6 +55,18 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What changed
 
+- **Console: the session name of a handed-over incident is the incident title.**
+  It used to be only the host. It is now, for example, "Fehlerausbruch: ChangelogReader
+  – Failed to read change-log: HTTP401 Unauthorized · 24 Container". Each incident gets
+  its own session; before, the session was reused per host. Cluster incidents often
+  share the Docker host (`cueservices`), so two different outbreaks would have ended up
+  in the same session.
+- **Console wider, session names wrap.** The panel is up to 1 380 px instead of
+  1 180 px. The session rail is 250 px instead of 180 px. Names wrap instead of ending
+  in "…", up to 4 lines, with the full name in the tooltip. Verified in the browser:
+  rail 250 px, `white-space: normal`, line clamp 4. The longest existing name
+  "cuerouter.cue.stage.example.com" now shows in full on two lines.
+
 - **Frequency shown as a rate.** The feed, cluster widget, incident view and mail
   subject now show how often an error occurs as a rate, for example "16 msg/s" or
   "2,2 msg/min · 11× in 5 min". At low rates the unit switches to msg/min or msg/h,
