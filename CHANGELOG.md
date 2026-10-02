@@ -176,8 +176,34 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What is still missing (error clusters)
 
-- **LLM calls per day.** They replace the budget as the point of observation and will
-  be counted after the first full day.
+- **LLM calls per day — measured for the first full day** (2026-10-01 17:23 to
+  2026-10-02 17:23 UTC). The count replaces the budget as the point of observation.
+  - **LLM calls:** 15 successful assessments (`ai_analyses`, `agent_type =
+    'error_cluster'`, 18:52 to 10:08). One more call left no assessment: fleet episode
+    `497364b8` (Check_MK, 01.10. 22:06) was mailed without one. So 16 calls, all
+    triggered by an outbreak; there is no digest call.
+  - **Assessments per episode:** `error_clusters.triage_at` is set for 14 episodes.
+    The difference from 15 is the one renotify, for `6280a9e2` (Check_MK: started
+    23:41, renotified 01:06 on doubled hosts), which overwrote its `triage_at`.
+  - **Immediate mails** (one recipient):
+    - 15 episodes mailed: 14 fleet clusters and 1 log cluster (`f531c7e5`, SD-WAN
+      IDS/IPS queue at KOR).
+    - 4 late assessments, sent as a second mail (`triage_at > mailed_at`).
+    - So at least 19 mails. The renotify's first mail cannot be counted separately,
+      because `mailed_at` was overwritten.
+    - These are the duplicates reported on 02.10.; the fix (`421e7fb`: fleet cooldown,
+      grouping, 240 s triage wait) went live at 10:42. Since then there has been no
+      new fleet episode; `d844ac75` closed normally at 11:48.
+  - **Daily digest entries:** 7 new, quiet log patterns (`notify_class = 'digest'`),
+    no mail of their own.
+  - **Fleet clusters:** 14 episodes, all immediate. Check_MK came back 5 times (cause
+    vpp0252), ORD1/2/3 came together, and so did Storage Pool + /data/backup. All of
+    these cases are covered by the 02.10. fix.
+  - **Failures:** 0 × "error_clusters: run failed" and 0 × fetch, fleet or recount
+    warnings in 80 runs since the backend restart (02.10. 10:42). Backend logs before
+    that restart are gone; for that period the database is the only evidence (no
+    episode without a run). This is also why the "error_clusters: notify" log line
+    shows 0 hits for that period.
 - **Wazuh.** Planned as the next extension, with the rule ID as the pattern and spread
   across agents plus source IP across agents (scans / lateral movement).
 - The triage prompt is shared by log and fleet clusters.
