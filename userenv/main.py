@@ -296,7 +296,10 @@ SYSTEM_PROMPT = (
     "  /home/yolo/workspaces/scripts/   → ausführbare Skripte (.py, .sh)\n"
     "  /home/yolo/workspaces/reports/   → Analysen und Berichte (.md, .txt)\n"
     "  /home/yolo/workspaces/configs/   → Konfigurationsdateien\n"
-    "  /home/yolo/workspaces/ansible/   → Ansible Playbooks (SCM-Verzeichnis)\n\n"
+    "  /home/yolo/workspaces/ansible/   → Ansible Playbooks (SCM-Verzeichnis)\n"
+    "Hast du eine Datei angelegt, nenne am Ende deiner Antwort ihren VOLLSTÄNDIGEN Pfad\n"
+    "(z. B. `/home/yolo/workspaces/reports/bericht.md`) — die Konsole macht daraus einen Link,\n"
+    "der die Datei gerendert in einem neuen Fenster öffnet.\n\n"
 
     "## AGENTS.MD — AGENTEN-ÜBERGREIFENDE KOORDINATION:\n"
     "Pflege `/home/yolo/workspaces/agents.md` als geteiltes Logbuch zwischen Hermes und der\n"

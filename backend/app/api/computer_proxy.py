@@ -1724,6 +1724,48 @@ async def upload_file(
     }
 
 
+from app.services.workspace_view import workspace_view_kind  # noqa: E402
+
+
+@router.get("/workspace-file")
+async def get_workspace_file(
+    path: str,
+    user: CurrentUser,
+    _: None = _ConsoleEnabled,
+):
+    """Eine Datei aus dem Workspace DIESES Nutzers, zur Anzeige in der Konsole.
+
+    Der Agent schreibt Berichte nach /home/yolo/workspaces/…; die Konsole verlinkt sie
+    und zeigt sie in einem neuen Fenster. Die Grenze zieht resolve_workspace_file()
+    (realpath: weder `..` noch ein Symlink führen hinaus).
+    """
+    from app.services.userenv_manager import resolve_workspace_file, to_agent_path
+
+    full, err = resolve_workspace_file(str(user.id), path, must_exist=True)
+    if err or not full:
+        raise HTTPException(404, err or "Datei nicht gefunden")
+    if not os.path.isfile(full):
+        raise HTTPException(400, "Das ist keine Datei")
+    st = os.stat(full)
+    kind, reason = workspace_view_kind(full, st.st_size)
+    if kind is None:
+        raise HTTPException(415, reason)
+    with open(full, "rb") as fh:
+        raw = fh.read()
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        content = raw.decode("cp1252", errors="replace")   # Excel-CSV, alte Logs
+    return {
+        "path": to_agent_path(str(user.id), full),
+        "name": os.path.basename(full),
+        "kind": kind,
+        "size": st.st_size,
+        "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+        "content": content,
+    }
+
+
 @router.get("/uploads/{upload_id}")
 async def get_upload(
     upload_id: str,

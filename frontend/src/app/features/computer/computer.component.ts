@@ -1,6 +1,6 @@
 import {
   Component, OnInit, OnDestroy, signal, computed,
-  ViewChild, ElementRef, HostListener, inject, NgZone,
+  ViewChild, ElementRef, HostListener, inject, NgZone, SecurityContext,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
@@ -12,6 +12,7 @@ import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
+import { extractWorkspaceFiles, workspaceRelative } from '../../shared/workspace-files';
 import { marked } from 'marked';
 import { AuthService } from '../../core/auth/auth.service';
 import {
@@ -325,6 +326,21 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                     }
                   </div>
                 }
+                @if (msg.role === 'assistant' && workspaceFiles(msg).length) {
+                  <!-- Dateien, die die Antwort im Workspace nennt (Berichte): ein Klick
+                       öffnet sie gerendert in einem neuen Fenster. Im Template, nicht im
+                       Markdown-HTML (dort läuft kein Sanitizer). -->
+                  <div class="msg-ws-files">
+                    @for (f of workspaceFiles(msg); track f) {
+                      <button class="msg-ws-file" (click)="openWorkspaceFile(f)"
+                              [title]="f + ' — in neuem Fenster öffnen'">
+                        <mat-icon>description</mat-icon>
+                        <span>{{ wsRelative(f) }}</span>
+                        <mat-icon class="msg-ws-open">open_in_new</mat-icon>
+                      </button>
+                    }
+                  </div>
+                }
                 <!-- Tool calls of PAST turns are intentionally not rendered; only the
                      live streaming turn below shows tool activity. -->
               </div>
@@ -592,6 +608,79 @@ export class ComputerComponent implements OnInit, OnDestroy {
   // selection. Messages are replaced immutably on each update (new object key),
   // so a WeakMap auto-invalidates on text change and stays bounded to live messages.
   private _mdCache = new WeakMap<HermesMessage, SafeHtml>();
+
+  private _wsFileCache = new WeakMap<HermesMessage, string[]>();
+
+  /** Workspace-Dateien, die eine Antwort erwähnt (gecacht wie das Markdown). */
+  workspaceFiles(msg: HermesMessage): string[] {
+    let files = this._wsFileCache.get(msg);
+    if (!files) {
+      files = extractWorkspaceFiles(msg.text);
+      this._wsFileCache.set(msg, files);
+    }
+    return files;
+  }
+
+  wsRelative(path: string): string { return workspaceRelative(path); }
+
+  /**
+   * Datei aus dem Workspace in einem NEUEN Fenster zeigen, Markdown gerendert.
+   *
+   * Das Fenster wird sofort beim Klick geöffnet (sonst blockt der Browser das Popup)
+   * und dann befüllt. Es teilt den Ursprung mit CentralStation — ein Bericht mit
+   * eingeschleustem Skript käme sonst an den Token. Darum: HTML durch Angulars
+   * Sanitizer UND eine CSP, die jedes Skript verbietet.
+   */
+  openWorkspaceFile(path: string): void {
+    const w = window.open('', '_blank');
+    if (!w) {
+      this.snackBar.open('Popup blockiert — bitte Popups für CentralStation erlauben', 'OK', { duration: 4000 });
+      return;
+    }
+    w.document.title = workspaceRelative(path);
+    w.document.body.textContent = 'Lade …';
+    const token = this.auth.getAccessToken();
+    fetch(`${this.apiBase}/workspace-file?path=${encodeURIComponent(path)}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }).then(async r => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        w.document.body.textContent = `Nicht verfügbar: ${data?.detail || r.status}`;
+        return;
+      }
+      const esc = (t: string) => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+      const body = data.kind === 'markdown'
+        ? this.sanitizer.sanitize(SecurityContext.HTML, marked.parse(data.content) as string) ?? ''
+        : `<pre>${esc(data.content)}</pre>`;
+      const raw = URL.createObjectURL(new Blob([data.content], { type: 'text/plain;charset=utf-8' }));
+      const modified = new Date(data.modified).toLocaleString('de-DE');
+      w.document.open();
+      w.document.write(`<!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(data.name)}</title>
+<style>
+  :root { color-scheme: light dark; --fg:#1d1d1f; --bg:#fff; --muted:#666; --line:#ddd; --code:#f4f4f4; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e8e6e3; --bg:#16130f; --muted:#a09a90; --line:#3a332a; --code:#221d17; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { position:sticky; top:0; background:var(--bg); border-bottom:1px solid var(--line); padding:10px 24px;
+           display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header .path { font:13px/1.4 'Fira Code', monospace; color:var(--muted); flex:1; word-break:break-all; }
+  header a { color:inherit; font-size:13px; }
+  main { max-width:900px; margin:0 auto; padding:16px 24px 48px; }
+  pre, code { background:var(--code); border-radius:4px; font-family:'Fira Code', monospace; font-size:13px; }
+  pre { padding:10px 12px; overflow:auto; white-space:pre-wrap; }
+  code { padding:1px 4px; } pre code { padding:0; }
+  table { border-collapse:collapse; width:100%; } th, td { border:1px solid var(--line); padding:5px 8px; text-align:left; }
+  img { max-width:100%; } h1, h2, h3 { line-height:1.25; }
+  @media print { header { display:none; } }
+</style></head><body>
+<header><span class="path">${esc(data.path)} · ${esc(modified)}</span>
+<a href="${raw}" download="${esc(data.name)}">Herunterladen</a></header>
+<main>${body}</main></body></html>`);
+      w.document.close();
+    }).catch(() => { w.document.body.textContent = 'Datei konnte nicht geladen werden.'; });
+  }
 
   renderMarkdown(msg: HermesMessage): SafeHtml {
     const cached = this._mdCache.get(msg);

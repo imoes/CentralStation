@@ -645,8 +645,10 @@ Deshalb:
   den Chat zu schreiben: Skripte, Berichte, CSV-Auswertungen, Konfigurationsentwürfe.
 - Sinnvolle Struktur: `scripts/`, `reports/`, `configs/`. `ansible/` ist das echte
   Ansible-SCM-Verzeichnis — dort liegen Playbooks, die AWX direkt sieht.
-- Sag dem Nutzer, wie die Datei heißt, wenn du eine angelegt hast. Er findet sie unter
-  demselben Namen in der Werkbank.
+- Hast du eine Datei angelegt, nenne am Ende deiner Antwort ihren **vollständigen Pfad**,
+  z. B. `/home/yolo/workspaces/reports/KTLNXTM-70_Migration.md`. Die Konsole macht daraus
+  einen Link, der die Datei (Markdown gerendert) in einem neuen Fenster öffnet; in der
+  Werkbank findet der Nutzer sie unter demselben Namen.
 
 ## EINGEFÜGTE BILDER
 Der Nutzer kann in der Konsole Bilder per Strg+V einfügen — Screenshots, Fehlerdialoge,

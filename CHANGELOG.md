@@ -14,6 +14,24 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What is new
 
+- **Open reports from the console.** When an answer names a file in the workspace,
+  for example `/home/yolo/workspaces/reports/…md` or `reports/…md`, a link appears below
+  it. Clicking it opens the file in a new window. Markdown is rendered (headings,
+  tables, code); text files show as text; there is a download link.
+  - **Backend:** `GET /api/computer/workspace-file?path=…`. It uses the same boundary
+    as the uploads (`resolve_workspace_file`, realpath), so neither `..` nor a symlink
+    leads out. Only text formats up to 2 MB are allowed; anything else gets a stated
+    reason pointing to the Werkbank.
+  - **Security:** the window shares its origin with CentralStation. Markdown therefore
+    runs through Angular's sanitizer, and the window has a CSP `default-src 'none'`
+    with no scripts at all, so a report with an injected script cannot reach the token.
+  - **Agents** (Claude, Codex and Hermes) are told to name the full path after
+    writing a file, so the link appears.
+  - Verified: endpoint against a real report (markdown, 3 398 bytes). `/etc/passwd`,
+    `…/../.ssh/config` and `reports/../../.bashrc` → 404. In the browser: link below
+    the answer, new window renders the report, CSP set, 0 scripts. 6 tests for the type
+    and size rules.
+
 - **Error-cluster detection: CentralStation detects outbreaks in the logs by itself
   and reports them by e-mail.** Trigger was a 401 outbreak that nobody noticed:
   `Failed to read change-log: HTTP Status '401 Unauthorized'`, 30.09. 11:30–12:20 UTC
@@ -54,6 +72,11 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   56 tests across rules, miner, the synthetic incident replay and mail rendering.
 
 ### What changed
+
+- **The console is centered to the right of the main navigation** and is never wider
+  than that area. Widened to 96vw, it reached under the navigation at 1 280 px, and the
+  navigation covered the session rail; the browser test made this visible. Verified:
+  console from 234 px, navigation up to 220 px.
 
 - **Console: the session name of a handed-over incident is the incident title.**
   It used to be only the host. It is now, for example, "Fehlerausbruch: ChangelogReader
