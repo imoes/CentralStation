@@ -893,6 +893,7 @@ async def _run_cli_agent(
             cwd=_agent_cwd(),
         )
         pending_tool: str | None = None
+        tool_labels: dict = {}
         log.info("[cli:claude] subprocess started pid=%s cmd=%s", proc.pid, " ".join(cmd[:6]))
         async for raw in proc.stdout:
             line = raw.decode(errors="replace").strip()
@@ -914,6 +915,10 @@ async def _run_cli_agent(
                             log.info("[cli:claude] tool_done (implicit) tool=%s", pending_tool)
                             yield {"type": "tool_done", "tool": pending_tool}
                         pending_tool = block.get("name", "tool")
+                        _inp = block.get("input") or {}
+                        tool_labels[block.get("id")] = (
+                            f"{pending_tool}: "
+                            f"{str(_inp.get('command') or _inp.get('file_path') or '')[:160]}")
                         log.info("[cli:claude] tool_start tool=%s", pending_tool)
                         yield {"type": "tool_start", "tool": pending_tool}
                     elif btype == "text":
@@ -925,6 +930,20 @@ async def _run_cli_agent(
                                 pending_tool = None
                             log.debug("[cli:claude] delta len=%d", len(text))
                             yield {"type": "delta", "text": text}
+            elif ev_type == "user":
+                # Werkzeugergebnisse. Eine Sperre durch cs-readonly-guard sichtbar machen —
+                # sonst stünde in der Konsole nur "Bash", und was geschah, wüsste nur das
+                # Modell.
+                for block in ev.get("message", {}).get("content", []) or []:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    body = block.get("content")
+                    if isinstance(body, list):
+                        body = " ".join(str(b.get("text", "")) for b in body if isinstance(b, dict))
+                    if "READ-ONLY-MODUS" in str(body or ""):
+                        label = f"⛔ Schreibsperre: {tool_labels.get(block.get('tool_use_id'), 'tool')}"
+                        yield {"type": "tool_start", "tool": label}
+                        yield {"type": "tool_done", "tool": label, "error": True}
             elif ev_type == "result":
                 log.info("[cli:claude] result subtype=%s is_error=%s turns=%s",
                          ev.get("subtype"), ev.get("is_error"), ev.get("num_turns"))
@@ -978,7 +997,9 @@ async def _run_cli_agent(
     codex_home = "/home/yolo/.codex"
     codex_session_id = session.get("codex_session_id", "")
     if codex_session_id:
-        codex_cmd = f"exec resume {codex_session_id} --json"
+        # --skip-git-repo-check auch hier: ohne bricht resume im Workspace mit "Not inside
+        # a trusted directory" ab.
+        codex_cmd = f"exec resume {codex_session_id} --json --skip-git-repo-check"
         if model:
             codex_cmd += f' --model "$CODEX_MODEL"'
         sh_cmd = f'. "$CODEX_HOME/env"; exec codex {codex_cmd} "$MSG"'
@@ -1012,8 +1033,16 @@ async def _run_cli_agent(
     )
     emitted = False
     log.info("[cli:codex] subprocess started pid=%s", proc.pid)
+    started_items: set = set()
+    thread_id = codex_session_id
+    audit_pos = _guard_audit_size()
     async for raw in proc.stdout:
         line = raw.decode(errors="replace").strip()
+        # Sperren dieser Sitzung aus dem Guard-Protokoll nachtragen (siehe _guard_denials).
+        audit_pos, denied = _guard_denials(audit_pos, thread_id)
+        for label in denied:
+            yield {"type": "tool_start", "tool": label}
+            yield {"type": "tool_done", "tool": label, "error": True}
         if not line:
             continue
         try:
@@ -1024,14 +1053,40 @@ async def _run_cli_agent(
         # Capture codex internal session ID for resume on next turns.
         ev_type = ev.get("type", "")
         log.debug("[cli:codex] event type=%s", ev_type)
-        if ev_type in ("session.started", "session_started") and not codex_session_id:
-            captured = ev.get("session_id") or ev.get("id") or ev.get("session", {}).get("id", "")
+        # `codex exec --json` meldet die Sitzung als thread.started{thread_id} — nach
+        # session.started wurde bis 2026-10-02 vergeblich gesucht, jede Folgenachricht
+        # begann deshalb ohne Verlauf.
+        if ev_type == "thread.started":
+            thread_id = ev.get("thread_id") or thread_id
+        if ev_type in ("thread.started", "session.started", "session_started") and not codex_session_id:
+            captured = (ev.get("thread_id") or ev.get("session_id") or ev.get("id")
+                        or ev.get("session", {}).get("id", ""))
             if captured:
                 session["codex_session_id"] = captured
                 log.info("[cli:codex] captured codex session_id=%s for sid=%s", captured[:12], sid[:8])
+        item = ev.get("item") or {}
+        itype = item.get("type", "")
+        # `codex exec --json` meldet Werkzeuge als command_execution / mcp_tool_call /
+        # file_change. Bis 2026-10-02 erwartete die Konsole hier function_call — die
+        # gibt es nur im Sitzungsprotokoll, nicht im exec-Stream; bei Codex war deshalb
+        # nie ein Werkzeugschritt zu sehen, auch keine Sperre.
+        if itype in _CODEX_TOOL_ITEMS and ev_type == "item.started":
+            started_items.add(item.get("id"))
+            yield {"type": "tool_start", "tool": _codex_tool_label(item)}
+            continue
+        if itype in _CODEX_TOOL_ITEMS and ev_type == "item.completed":
+            label = _codex_tool_label(item)
+            if item.get("id") not in started_items:
+                yield {"type": "tool_start", "tool": label}
+            failed = item.get("status") not in ("completed", None) or (
+                item.get("exit_code") not in (0, None))
+            yield {"type": "tool_done", "tool": label, "error": failed}
+            if _codex_blocked(item):
+                blocked = f"⛔ Schreibsperre: {label}"
+                yield {"type": "tool_start", "tool": blocked}
+                yield {"type": "tool_done", "tool": blocked, "error": True}
+            continue
         if ev_type == "item.completed":
-            item = ev.get("item") or {}
-            itype = item.get("type", "")
             log.info("[cli:codex] item.completed type=%s name=%s", itype, item.get("name", ""))
             if itype == "function_call":
                 tool_name = item.get("name") or item.get("call_id") or "tool"
@@ -1051,6 +1106,10 @@ async def _run_cli_agent(
                     emitted = True
                     yield {"type": "delta", "text": text}
     await proc.wait()
+    audit_pos, denied = _guard_denials(audit_pos, thread_id)
+    for label in denied:
+        yield {"type": "tool_start", "tool": label}
+        yield {"type": "tool_done", "tool": label, "error": True}
     if proc.returncode not in (0, None):
         err = (await proc.stderr.read()).decode(errors="replace")
         if err.strip():
@@ -1058,6 +1117,76 @@ async def _run_cli_agent(
             if not emitted:
                 yield {"type": "error", "text": err[:500]}
     yield {"type": "done"}
+
+
+GUARD_AUDIT_LOG = "/tmp/cs-readonly-guard.log"
+
+
+def _guard_audit_size() -> int:
+    try:
+        return os.path.getsize(GUARD_AUDIT_LOG)
+    except OSError:
+        return 0
+
+
+def _guard_denials(pos: int, session_id: str) -> tuple[int, list[str]]:
+    """Neue Sperren einer Sitzung aus dem Guard-Protokoll ab Byte `pos`.
+
+    Codex reicht einen gesperrten Aufruf nur ans Modell weiter, im exec-Stream erscheint
+    nichts — die Konsole zeigte deshalb nur, was das Modell darüber erzählte.
+    """
+    if not session_id:
+        return pos, []
+    try:
+        with open(GUARD_AUDIT_LOG, encoding="utf-8") as fh:
+            fh.seek(pos)
+            chunk = fh.read()
+    except OSError:
+        return pos, []
+    # Nur vollständige Zeilen verbrauchen; eine halb geschriebene kommt beim nächsten Mal.
+    done, _, _rest = chunk.rpartition("\n")
+    out = []
+    for raw in done.splitlines():
+        try:
+            e = json.loads(raw)
+        except ValueError:
+            continue
+        if e.get("decision") != "deny" or e.get("session") != session_id:
+            continue
+        try:
+            inp = json.loads(e.get("input") or "{}")
+        except ValueError:
+            inp = {}
+        what = inp.get("command") or inp.get("file_path") or ""
+        out.append(f"⛔ Schreibsperre: {e.get('tool')}: {str(what)[:160]}")
+    return pos + len((done + "\n").encode("utf-8")) if done else pos, out
+
+
+_CODEX_TOOL_ITEMS = {"command_execution", "mcp_tool_call", "file_change", "web_search"}
+
+
+def _codex_tool_label(item: dict) -> str:
+    t = item.get("type")
+    if t == "command_execution":
+        cmd = str(item.get("command") or "")
+        for prefix in ("/bin/bash -lc ", "bash -lc ", "/bin/sh -c "):
+            if cmd.startswith(prefix):
+                cmd = cmd[len(prefix):].strip("'\"")
+        return f"Shell: {cmd[:160]}"
+    if t == "mcp_tool_call":
+        return f"{item.get('server', 'mcp')}: {item.get('tool', '')}"
+    if t == "file_change":
+        paths = [c.get("path", "") for c in item.get("changes") or []]
+        return f"Datei: {', '.join(paths)[:160]}"
+    if t == "web_search":
+        return f"Websuche: {str(item.get('query') or '')[:120]}"
+    return t or "tool"
+
+
+def _codex_blocked(item: dict) -> bool:
+    """Hat cs-readonly-guard diesen Aufruf gesperrt? Codex reicht die Hook-Meldung durch."""
+    text = " ".join(str(item.get(k) or "") for k in ("aggregated_output", "error", "result"))
+    return "READ-ONLY-MODUS" in text or "blocked by PreToolUse hook" in text
 
 
 @app.post("/sessions", status_code=201)

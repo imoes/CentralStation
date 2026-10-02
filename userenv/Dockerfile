@@ -240,7 +240,10 @@ COPY userenv/hermes_config.yaml ./hermes_config.yaml
 # switched off by the very agent it is meant to restrain.
 COPY userenv/cs-readonly-guard.py /opt/cs-readonly-guard.py
 COPY userenv/claude-managed-settings.json /etc/claude-code/managed-settings.json
-RUN chmod a+rx /opt/cs-readonly-guard.py && chmod 644 /etc/claude-code/managed-settings.json
+# Codex: derselbe Hook über die Admin-Vorgaben, die keine Nutzer-config aufheben kann.
+COPY userenv/codex-requirements.toml /etc/codex/requirements.toml
+RUN chmod a+rx /opt/cs-readonly-guard.py && chmod 644 /etc/claude-code/managed-settings.json \
+    /etc/codex/requirements.toml
 
 COPY userenv/entrypoint.sh /usr/local/bin/cs-entrypoint.sh
 RUN chmod +x /usr/local/bin/cs-entrypoint.sh

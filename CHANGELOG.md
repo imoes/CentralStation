@@ -214,6 +214,34 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **Codex could write without the write window.** It ran with
+  `approval_policy = "never"` and `sandbox_mode = "danger-full-access"` and had no hook.
+  The same guard now runs from `/etc/codex/requirements.toml`. Those are admin
+  requirements owned by root; the agent's own `config.toml` (owned by yolo) and CLI flags
+  cannot lift them, so a hook in the user config would have been worthless.
+  - The guard now also understands Codex' `apply_patch`: every target must lie in the
+    workspace or `/tmp`, and a move out of the workspace is caught.
+  - Shell writes to the agents' own configuration (`~/.codex`, `~/.claude`, `~/.hermes`,
+    `~/.ssh`, shell profiles) need the write window, so no agent can reconfigure itself.
+  - Verified live on docker-test.test.example.com with Codex (gpt-5.5) through the real
+    Console path. All blocked: approval only claimed in the chat (`ssh … touch`),
+    appending to `~/.codex/config.toml`, and `apply_patch` to `~/.ssh/`. With a real
+    approval the file was created. Claude CLI was rechecked the same way (chat approval,
+    own `settings.json`, `Write` to `~/.ssh`): all blocked. No probe file remained.
+  - Pitfall: the feature key is `hooks`; the old `codex_hooks` still works but makes
+    Codex emit `error` events, and the Console aborted every Codex run on them.
+- **Codex in the Console: tool steps, blocks and follow-up messages.**
+  - The Console expected `function_call` events, but `codex exec --json` sends
+    `command_execution` / `mcp_tool_call` / `file_change`. No Codex tool step had ever
+    been shown; now each one is.
+  - A blocked call does not appear in Codex' stream at all. The guard therefore logs
+    Codex' session ID, and the Console adds "⛔ Schreibsperre: …" from that log. Claude
+    blocks are read from the tool result.
+  - Follow-up messages to Codex started without the conversation: the session ID was
+    looked for in `session.started` (Codex sends `thread.started`), and `exec resume`
+    lacked `--skip-git-repo-check`. Verified: in turn 2 Codex remembered a word from
+    turn 1.
+
 - **Hermes could write without the write window.** Hermes had no technical block, only a
   sentence in its system prompt. The guard (`cs-readonly-guard.py`) existed only for the
   Claude CLI. It now runs before every Hermes tool call as well. It fails closed, and no
@@ -633,9 +661,6 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   reports `read=68 operational=9 config=75 | allow_write=False → 77 exposed`.
 
 ### What is still missing
-
-- **Codex CLI has no write guard.** It runs with `sandbox_mode = "danger-full-access"`
-  and `approval_policy = "never"`, the same gap Hermes had until 2026-10-02.
 
 - **The write guard reads command text; it is not a sandbox.** It is solid against an
   over-eager model (tested: chat approval, explicit bypass requests). An agent that

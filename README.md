@@ -980,10 +980,10 @@ two places that share **one** approval, stored in **one** location:
 
 | Layer | What it guards | Where |
 |---|---|---|
-| `userenv/cs-readonly-guard.py` | shell commands that modify a system (service control, package management, remote writes over SSH, …), input typed into a running process, MCP tools of personal connectors (VibeMK, AWX-NG, …) and Playwright interactions | Claude CLI: `PreToolUse` hook (`Bash`, file tools, `mcp__.*`); Hermes: Python `pre_tool_call` hook (`userenv/main.py`, `_write_guard_hook`) |
+| `userenv/cs-readonly-guard.py` | shell commands that modify a system (service control, package management, remote writes over SSH, …), input typed into a running process, MCP tools of personal connectors (VibeMK, AWX-NG, …) and Playwright interactions | Claude CLI: `PreToolUse` hook (`Bash`, file tools, `mcp__.*`); Codex CLI: `PreToolUse` hook from `/etc/codex/requirements.toml`; Hermes: Python `pre_tool_call` hook (`userenv/main.py`, `_write_guard_hook`) |
 | `_require_write()` in `backend/app/api/mcp_server.py` | MCP tools that act outward (see list below) | every guarded tool's first statement |
 
-**One rule file, both agents.** Hermes used to have no technical block at all, only a
+**One rule file, all three agents.** Hermes used to have no technical block at all, only a
 sentence in its prompt; since 2026-10-02 the same guard runs before every Hermes tool call.
 It fails closed (a crash, timeout or unreadable answer blocks the call), and no Hermes run
 starts while the hook is missing. What the guard looks at beyond plain commands:
@@ -1000,7 +1000,14 @@ starts while the hook is missing. What the guard looks at beyond plain commands:
 - **Visible in the Console:** a blocked call appears as a failed step "⛔ Schreibsperre: …",
   a call made under an approval as "🔓 Mit Schreibfreigabe ausgeführt — …". Every decision
   is logged with its command in `/tmp/cs-readonly-guard.log` inside the container.
-- **Not covered:** the Codex CLI runs with `sandbox_mode = "danger-full-access"` and no hook.
+- **Codex CLI:** the same guard runs as a `PreToolUse` hook from `/etc/codex/requirements.toml`
+  (`userenv/codex-requirements.toml`). Those are admin requirements, so neither the user's
+  `config.toml` nor a CLI flag can lift them. Codex sends Claude's dialect (`Bash`,
+  `mcp__srv__tool`) plus `apply_patch`, whose targets must lie in the workspace or `/tmp`.
+  Codex keeps `sandbox_mode = "danger-full-access"`, because bwrap does not work in the
+  container; the hook, not the sandbox, enforces read-only.
+- **Agents cannot reconfigure themselves:** shell writes to `~/.codex`, `~/.claude`,
+  `~/.hermes`, `~/.ssh` and the shell profiles need the write window.
 
 Guarded MCP tools: `jira_add_comment`, `jira_update_issue`, `jira_transition_issue`,
 `jira_close_issue`, `create_jira_ticket`, `acknowledge_alert`, `run_remediation`,

@@ -24,8 +24,11 @@ the workspace or /tmp they are free — the same line the Bash rules draw for lo
 writes — anywhere else (the agent's own CLAUDE.md, ~/.ssh/config, /etc, …) they need
 the write window like any other change.
 
-Wired via managed-settings.json → hooks.PreToolUse (matcher "Bash|Write|Edit|…"),
-admin-scoped.
+Wired for all three Console agents, always from a root-owned place the agent cannot edit:
+  * Claude CLI: /etc/claude-code/managed-settings.json → hooks.PreToolUse
+  * Codex CLI:  /etc/codex/requirements.toml → hooks.PreToolUse (tool names Bash,
+    apply_patch, mcp__srv__tool — same dialect as Claude)
+  * Hermes:     Python pre_tool_call hook in userenv/main.py (_write_guard_hook)
 """
 import json
 import os
@@ -183,6 +186,14 @@ def _script_is_write(cmd: str, cwd: str = "") -> bool:
     return False
 
 
+#: Die eigene Konfiguration der Agenten. Wer sie ändert, ändert, was der Agent darf
+#: (MCP-Server, Zugangsdaten, Anweisungen) — das ist eine Systemänderung, auch wenn der
+#: Pfad im Home liegt.
+_AGENT_CONFIG_PATH = re.compile(
+    r"(?:^|[\s'\":=])(?:~|\$HOME|\$\{HOME\}|/home/yolo)/"
+    r"\.(?:codex|claude|hermes|ssh|profile|bashrc|bash_profile|config/claude|npmrc|pip)(?:/|\b)")
+
+
 def _is_write(cmd: str, cwd: str = "", _depth: int = 0) -> bool:
     if _REMOTE_INDIRECT.search(cmd) or _bare_ssh(cmd) or _PY_SSH_LIB.search(cmd):
         return True
@@ -191,8 +202,8 @@ def _is_write(cmd: str, cwd: str = "", _depth: int = 0) -> bool:
     if _SYSTEM_OP.search(cmd):
         return True
     if _FILE_WRITE.search(cmd):
-        # Remote target (production) or a local system path → block.
-        if _REMOTE.search(cmd) or _SYSTEM_PATH.search(cmd):
+        # Remote target (production), a local system path or the agents' own config → block.
+        if _REMOTE.search(cmd) or _SYSTEM_PATH.search(cmd) or _AGENT_CONFIG_PATH.search(cmd):
             return True
     if _copies_to_remote(cmd):
         return True
@@ -229,6 +240,10 @@ def _approval() -> dict | None:
 #: them; each names its target in one of these input keys.
 FILE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path",
               "NotebookEdit": "notebook_path"}
+
+#: Ziele in einem Codex-Patch ("*** Add File: x", "*** Update File: x", "*** Delete
+#: File: x", "*** Move to: x").
+_PATCH_TARGET = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", re.M)
 
 #: Where a file tool may write without approval. Same line as the Bash rules: the
 #: shared workspace (reports, scripts, uploads) and scratch space.
@@ -306,6 +321,9 @@ def _audit(decision: str) -> None:
         with open(AUDIT_LOG, "a", encoding="utf-8") as fh:
             fh.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
                                  "decision": decision, "tool": _current.get("tool"),
+                                 # Codex meldet gesperrte Aufrufe nicht im exec-Stream; die
+                                 # Konsole findet sie über diese Sitzungs-ID (= thread_id).
+                                 "session": _current.get("session"),
                                  "input": json.dumps(_current.get("input"),
                                                      ensure_ascii=False)[:600]},
                                 ensure_ascii=False) + "\n")
@@ -354,7 +372,7 @@ def main() -> None:
         sys.exit(0)  # unreadable input → do not interfere
     tool = data.get("tool_name")
     tool_input = data.get("tool_input") or {}
-    _current.update(tool=tool, input=tool_input)
+    _current.update(tool=tool, input=tool_input, session=data.get("session_id"))
 
     if tool in FILE_TOOLS:
         path = tool_input.get(FILE_TOOLS[tool], "") or ""
@@ -371,6 +389,26 @@ def main() -> None:
             )
         sys.exit(0)
 
+    if tool == "apply_patch":
+        # Codex' Dateiwerkzeug: der Patch nennt seine Ziele selbst. Frei ist, was
+        # vollständig im Workspace oder /tmp liegt — wie bei Claudes Write/Edit.
+        patch = tool_input.get("command") or tool_input.get("input") or ""
+        if isinstance(patch, list):
+            patch = "\n".join(map(str, patch))
+        targets = _PATCH_TARGET.findall(str(patch))
+        outside = [t for t in targets if _file_write_outside(t.strip(), data.get("cwd", ""))]
+        if outside or not targets:
+            _allow_if_approved()
+            _deny(
+                "READ-ONLY-MODUS: apply_patch auf "
+                f"{', '.join(outside) or '(kein erkennbares Ziel)'} liegt außerhalb des "
+                "Workspace und wurde BLOCKIERT. Frei beschreibbar sind /home/yolo/workspaces "
+                "und /tmp. Bitte den Nutzer, in der CentralStation-Konsole "
+                "\"Schreibzugriff freigeben\" zu klicken; eine Zustimmung im Chat hebt die "
+                "Sperre nicht auf."
+            )
+        sys.exit(0)
+
     mcp = _mcp_parts(tool or "")
     if mcp is not None:
         if _mcp_is_write(*mcp):
@@ -383,6 +421,10 @@ def main() -> None:
                 "Zustimmung im Chat hebt die Sperre nicht auf."
             )
         sys.exit(0)
+
+    if tool == "write_stdin":            # Codex: Eingabe in eine laufende exec-Sitzung
+        tool_input = {"action": "write", "data": tool_input.get("chars") or tool_input.get("input") or ""}
+        tool = "process_manage"
 
     if tool == "process_manage":
         # Eingabe in einen laufenden Prozess (z. B. eine offene ssh-Sitzung): der Inhalt

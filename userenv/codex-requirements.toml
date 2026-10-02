@@ -1,0 +1,22 @@
+# Verbindliche Codex-Vorgaben (Admin-Ebene): /etc/codex/requirements.toml.
+# Gehört root, der Agent läuft als yolo — er kann diese Datei weder ändern noch per
+# eigener config.toml oder CLI-Flag aufheben. Dieselbe Schreibsperre wie für Claude
+# (/etc/claude-code/managed-settings.json) und Hermes (main.py, _write_guard_hook):
+# EINE Regelstelle, /opt/cs-readonly-guard.py.
+#
+# Ohne diese Datei lief Codex mit approval_policy="never" und
+# sandbox_mode="danger-full-access" völlig ohne Sperre (bis 2026-10-02).
+
+[features]
+hooks = true
+
+[hooks]
+managed_dir = "/opt"
+
+[[hooks.PreToolUse]]
+matcher = ".*"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "python3 /opt/cs-readonly-guard.py"
+timeout = 20

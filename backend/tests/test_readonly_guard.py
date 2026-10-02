@@ -285,3 +285,72 @@ def test_mcp_tools_reach_the_claude_hook() -> None:
     import re
     cfg = json.loads((_GUARD.parent / "claude-managed-settings.json").read_text())
     assert re.fullmatch(cfg["hooks"]["PreToolUse"][0]["matcher"], "mcp__vibemk__vibemk_add_comment")
+
+
+# ── Codex (2026-10-02): apply_patch, write_stdin, Hook aus /etc/codex ───────────
+
+def _run(monkeypatch, capsys, payload: dict) -> int:
+    import io
+    import json
+    monkeypatch.setattr(guard, "_approval", lambda: None)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    with pytest.raises(SystemExit) as exc:
+        guard.main()
+    capsys.readouterr()
+    return exc.value.code
+
+
+def _patch(*lines: str) -> dict:
+    return {"tool_name": "apply_patch", "cwd": "/home/yolo/workspaces",
+            "tool_input": {"command": "*** Begin Patch\n" + "\n".join(lines) + "\n*** End Patch\n"}}
+
+
+def test_codex_patch_inside_workspace_is_free(monkeypatch, capsys) -> None:
+    assert _run(monkeypatch, capsys, _patch("*** Add File: /home/yolo/workspaces/r.md", "+x")) == 0
+    assert _run(monkeypatch, capsys, _patch("*** Update File: reports/r.md", "@@", "+x")) == 0
+
+
+@pytest.mark.parametrize("target", [
+    "/home/yolo/.codex/config.toml", "/etc/hosts", "/home/yolo/.ssh/config",
+    "../.claude/CLAUDE.md",
+])
+def test_codex_patch_outside_workspace_needs_approval(monkeypatch, capsys, target) -> None:
+    assert _run(monkeypatch, capsys, _patch(f"*** Update File: {target}", "@@", "+x")) == 2
+
+
+def test_codex_patch_moving_a_file_out_is_caught(monkeypatch, capsys) -> None:
+    p = _patch("*** Update File: r.md", "*** Move to: /etc/cron.d/x", "@@", "+x")
+    assert _run(monkeypatch, capsys, p) == 2
+
+
+def test_codex_patch_without_target_is_refused(monkeypatch, capsys) -> None:
+    assert _run(monkeypatch, capsys, {"tool_name": "apply_patch", "tool_input": {"command": "?"}}) == 2
+
+
+def test_codex_stdin_into_a_session_is_checked(monkeypatch, capsys) -> None:
+    p = {"tool_name": "write_stdin", "tool_input": {"session_id": 1, "chars": "rm -rf /srv/x\n"}}
+    assert _run(monkeypatch, capsys, p) == 2
+
+
+@pytest.mark.parametrize("cmd", [
+    "sed -i 's/x/y/' ~/.codex/config.toml",
+    "echo 'default_tools_approval_mode = \"approve\"' >> /home/yolo/.codex/config.toml",
+    "rm $HOME/.claude/settings.json",
+    "cp evil /home/yolo/.ssh/config",
+])
+def test_agents_cannot_rewrite_their_own_config(cmd: str) -> None:
+    assert guard._is_write(cmd) is True, cmd
+
+
+def test_codex_hook_is_admin_enforced() -> None:
+    """Im Nutzer-config.toml wäre der Hook wirkungslos: CODEX_HOME gehört yolo, der Agent
+    könnte ihn entfernen. requirements.toml liegt in /etc und gehört root."""
+    import tomllib
+    req = tomllib.loads((_GUARD.parent / "codex-requirements.toml").read_text())
+    # "codex_hooks" ist veraltet: Codex meldet es als error-Ereignis, die Konsole bricht ab.
+    assert req["features"]["hooks"] is True and "codex_hooks" not in req["features"]
+    (group,) = req["hooks"]["PreToolUse"]
+    assert group["matcher"] == ".*"
+    assert group["hooks"][0]["command"] == "python3 /opt/cs-readonly-guard.py"
+    dockerfile = (_GUARD.parent / "Dockerfile").read_text()
+    assert "COPY userenv/codex-requirements.toml /etc/codex/requirements.toml" in dockerfile
