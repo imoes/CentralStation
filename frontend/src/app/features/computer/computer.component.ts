@@ -2101,6 +2101,10 @@ export class ComputerComponent implements OnInit, OnDestroy {
               if (data.type === 'reasoning') {
                 this._clearActiveTool(sid);
               }
+              if (data.type === 'notice') {
+                // Fehlversuch beim LLM-Anbieter (Hermes): sichtbar statt stummem "verarbeitet".
+                this._setActiveTool(sid, `⚠ ${data.text}`);
+              }
               if (data.type === 'error') {
                 streamFailed = true;
                 this._appendToLast(sid, `\n[Fehler: ${data.text}]`);

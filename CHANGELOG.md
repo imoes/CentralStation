@@ -214,6 +214,27 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **Hermes with GLM 5.3 Flash (llmbase.ai) hung on long answers.** The gateway buffers
+  a tool call completely and sends no byte until it is finished (measured: ~20
+  tokens/s; aborts itself after ~240 s with HTTP 504). With the 120 s timeout from the
+  console LLM settings, Hermes cut off every write call above ~2 400 tokens itself
+  and retried 3× per round over up to 6 rounds, so a session sat there for over an
+  hour without showing anything. Four changes:
+  - **Timeout of at least 300 s** for Hermes (API, stream read, stall watchdog), so
+    the gateway's own error appears instead of Hermes' abort. The log line shows both
+    values ("120s (wirksam 300s)").
+  - **Fewer retries:** `agent.api_max_retries: 2`, `auto_recovery_cycles: 0` in the
+    generated Hermes config. The same oversized call fails the same way the third
+    time.
+  - **Long files in parts:** Hermes is told to write long files in sections of at most
+    ~150 lines / ~1 500 words (`cat >> datei <<'EOF'`).
+  - **Visible provider errors:** a failed LLM call now shows in the console as
+    "⚠ LLM-Anbieter: HTTP 502 … — Versuch 1/2" instead of a silent spinner.
+  - Verified with the user's GLM 5.3 Flash access from the database: a report of
+    5 735 words was written in 5 parts in 382 s, 7 API calls, no failure, no retry.
+    The longest call took 154 s for 2 999 tokens; the old 120 s limit would have cut
+    it off.
+
 - **Changed tools did not reach a running console session.** The Claude CLI keeps a
   snapshot of all MCP tools in the session log (`deferred_tools_record`). On
   `--resume` it uses that snapshot, not the current tool list. After the

@@ -82,6 +82,11 @@ def hermes_config_path(user_id: str) -> str:
     return os.path.join(_user_base(user_id), "hermes_config.yaml")
 
 
+#: Hermes-Agent-Grenzen (config.yaml, Abschnitt `agent`): 2 Versuche, keine
+#: Wiederherstellungsrunden — siehe write_hermes_config.
+HERMES_AGENT_LIMITS = {"api_max_retries": 2, "auto_recovery_cycles": 0}
+
+
 def write_hermes_config(user_id: str, extra_servers: dict) -> str:
     """Generate per-user hermes_config.yaml from DB-loaded connectors.
 
@@ -117,7 +122,11 @@ def write_hermes_config(user_id: str, extra_servers: dict) -> str:
 
     config_path = hermes_config_path(user_id)
     os.makedirs(_user_base(user_id), exist_ok=True)
-    rendered = yaml.dump({"mcp_servers": servers}, default_flow_style=False,
+    # agent: Wiederholungen begrenzen. Hermes' Vorgabe (3 Versuche × bis zu 6 Runden)
+    # hielt eine Sitzung bei einem zu langen Werkzeugaufruf über eine Stunde fest —
+    # derselbe Aufruf scheitert beim dritten Mal genauso (Gateway-Abbruch nach ~240 s).
+    rendered = yaml.dump({"mcp_servers": servers, "agent": HERMES_AGENT_LIMITS},
+                         default_flow_style=False,
                          allow_unicode=True)
     with open(config_path, "w") as f:
         f.write(rendered)

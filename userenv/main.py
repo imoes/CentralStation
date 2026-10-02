@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import os
 import threading
 import uuid
@@ -66,6 +67,34 @@ _YOLO_HOME = "/home/yolo"
 #: wie früher in /app, landeten seine Dateien in der Container-Schicht — unsichtbar
 #: für die Werkbank und beim nächsten Neuaufbau verloren.
 AGENT_CWD = os.environ.get("CS_AGENT_CWD", "/home/yolo/workspaces")
+
+#: Untergrenze für Hermes' LLM-Timeouts (s) — siehe _make_agent. Liegt über dem
+#: ~240-s-Abbruch des llmbase-Gateways, damit dessen Fehler ankommt.
+HERMES_MIN_LLM_TIMEOUT = 300
+
+class _ProviderNoticeHandler(logging.Handler):
+    """Leitet Hermes' Fehlversuche beim LLM-Anbieter als Hinweis an die Konsole weiter.
+
+    Nur Einträge aus dem Thread DIESER Sitzung (Name hermes-<sid8>) — andere Sitzungen
+    laufen im selben Prozess.
+    """
+    _FAILED = re.compile(r"API call failed \(attempt (\d+)/(\d+)\).*?summary=(.*?)(?:\s+\w+=|$)")
+
+    def __init__(self, thread_name: str, emit_notice) -> None:
+        super().__init__(level=logging.WARNING)
+        self.thread_name = thread_name
+        self.emit_notice = emit_notice
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.threadName != self.thread_name:
+            return
+        try:
+            m = self._FAILED.search(record.getMessage())
+            if m:
+                self.emit_notice(f"LLM-Anbieter: {m.group(3).strip()[:160]} — Versuch {m.group(1)}/{m.group(2)}")
+        except Exception:
+            pass
+
 
 #: Claude CLI built-ins the Console grants. Write/Edit/MultiEdit/NotebookEdit are
 #: path-checked by the PreToolUse hook (cs-readonly-guard.py) — free inside the
@@ -297,6 +326,11 @@ SYSTEM_PROMPT = (
     "  /home/yolo/workspaces/reports/   → Analysen und Berichte (.md, .txt)\n"
     "  /home/yolo/workspaces/configs/   → Konfigurationsdateien\n"
     "  /home/yolo/workspaces/ansible/   → Ansible Playbooks (SCM-Verzeichnis)\n"
+    "LANGE DATEIEN IN TEILEN SCHREIBEN: Ein einzelner Werkzeugaufruf darf höchstens\n"
+    "~150 Zeilen bzw. ~1 500 Wörter Dateiinhalt enthalten. Lege längere Berichte und\n"
+    "Skripte in Abschnitten an: erst die Datei mit dem ersten Teil, dann jeden weiteren\n"
+    "Teil anhängen (z. B. `cat >> datei.md <<'EOF' … EOF`). Grund: manche LLM-Anbieter\n"
+    "brechen zu lange Werkzeugaufrufe ab, dann geht die ganze Antwort verloren.\n"
     "Hast du eine Datei angelegt, nenne am Ende deiner Antwort ihren VOLLSTÄNDIGEN Pfad\n"
     "(z. B. `/home/yolo/workspaces/reports/bericht.md`) — die Konsole macht daraus einen Link,\n"
     "der die Datei gerendert in einem neuen Fenster öffnet.\n\n"
@@ -495,13 +529,23 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
         #   HERMES_API_TIMEOUT:          total request timeout per LLM call
         #   HERMES_STREAM_READ_TIMEOUT:  max seconds to first/next byte on the stream
         #   HERMES_STREAM_STALE_TIMEOUT: Hermes' own no-progress watchdog
-        os.environ["HERMES_API_TIMEOUT"] = str(timeout_seconds)
-        os.environ["HERMES_STREAM_READ_TIMEOUT"] = str(timeout_seconds)
-        os.environ["HERMES_STREAM_STALE_TIMEOUT"] = str(timeout_seconds)
+        #
+        # Mindestens HERMES_MIN_LLM_TIMEOUT: manche Gateways (llmbase.ai, gemessen
+        # 2026-10-02) puffern einen Werkzeugaufruf komplett und schicken minutenlang KEIN
+        # Byte, bis er fertig ist — bei 120 s brach Hermes lange Aufrufe (ab ~2 400
+        # Tokens bei GLM 5.3 Flash, ~20 Tokens/s) selbst ab und probierte es endlos neu.
+        # Das Gateway selbst schneidet nach ~240 s; darüber zu warten zeigt dessen
+        # eindeutigen Fehler statt eines eigenen Abbruchs.
+        effective = max(int(timeout_seconds), HERMES_MIN_LLM_TIMEOUT)
+        os.environ["HERMES_API_TIMEOUT"] = str(effective)
+        os.environ["HERMES_STREAM_READ_TIMEOUT"] = str(effective)
+        os.environ["HERMES_STREAM_STALE_TIMEOUT"] = str(effective)
 
     log.info("[%s] creating AIAgent: model=%s base_url=%s mode=%s searxng=%s timeout=%s",
              sid[:8], model or "(default)", base_url or "(default)", api_mode,
-             searxng_url or "(none)", f"{timeout_seconds}s" if timeout_seconds else "(default)")
+             searxng_url or "(none)",
+             (f"{timeout_seconds}s (wirksam {max(int(timeout_seconds), HERMES_MIN_LLM_TIMEOUT)}s)"
+              if timeout_seconds else "(default)"))
 
     # The system prompt names no SSH user and no domain: ~/.ssh/config sets both, for
     # every host. (There used to be a replace() here meant to substitute the username,
@@ -1414,7 +1458,22 @@ async def send_message(sid: str, body: MessageBody):
             log.error("[%s] agent error: %s", sid[:8], exc, exc_info=True)
             loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "text": str(exc)})
 
-    threading.Thread(target=run_sync, daemon=True, name=f"hermes-{sid[:8]}").start()
+    # Fehlversuche beim LLM-Anbieter sichtbar machen. Hermes meldet sie nur ins Log
+    # ("API call failed (attempt 1/2) … summary=HTTP 504: …"); in der Konsole stand
+    # derweil minutenlang nur "verarbeitet" — es sah aus, als hinge die Sitzung.
+    thread_name = f"hermes-{sid[:8]}"
+    notice_handler = _ProviderNoticeHandler(
+        thread_name, lambda text: loop.call_soon_threadsafe(
+            q.put_nowait, {"type": "notice", "text": text}))
+    logging.getLogger("agent.conversation_loop").addHandler(notice_handler)
+
+    def run_and_detach() -> None:
+        try:
+            run_sync()
+        finally:
+            logging.getLogger("agent.conversation_loop").removeHandler(notice_handler)
+
+    threading.Thread(target=run_and_detach, daemon=True, name=thread_name).start()
 
     async def event_stream():
         while True:
