@@ -4,7 +4,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*",
         "hooks": [
           { "type": "command", "command": "python3 /opt/cs-readonly-guard.py" }
         ]

@@ -56,7 +56,7 @@ _SYSTEM_OP = re.compile(
 # File-modifying operations — dangerous only against remote hosts or system paths.
 _FILE_WRITE = re.compile(
     r"""(?ix)
-    \b(rm|rmdir|shred|unlink|truncate|mv|cp|chmod|chown|chgrp|ln|tee)\b
+    \b(rm|rmdir|shred|unlink|truncate|mv|cp|chmod|chown|chgrp|ln|tee|touch|mkdir|install|patch)\b
     | \bsed\s+-i | \bperl\s+-i | \bawk\s+-i\b
     | \b(nano|vim?|vi|emacs)\b
     | >>?\s*(?!(&\s*\d|/dev/null|/dev/stderr|/dev/stdout))\S
@@ -108,7 +108,86 @@ def _copies_to_remote(cmd: str) -> bool:
     return False
 
 
-def _is_write(cmd: str) -> bool:
+# Fernausführung, deren Inhalt der Hook nicht sieht: ein Skript per stdin/Pipe/Heredoc
+# an ssh, eine Shell auf der Gegenseite (`bash -s`), kodierte oder zusammengesetzte
+# Befehle. Ohne diese Regel wäre `ssh host 'bash -s' < x.sh` ein Freibrief — x.sh darf
+# lokal geschrieben werden, und der Hook sähe nur "ssh host bash -s".
+_SSH = r"(?<![-\w])(?:ssh|sshpass)(?![-\w])"
+_REMOTE_INDIRECT = re.compile(
+    rf"""(?ix)
+    \|\s*{_SSH}                                  # … | ssh host
+    | {_SSH}[^|;&]*\s<(?!<)\s*\S                  # ssh host … < datei
+    | {_SSH}[^|;&]*<<                             # ssh host <<EOF
+    | {_SSH}.*\b(bash|sh|zsh|dash|ksh)\s+-s\b
+    | {_SSH}.*(\$\(|`|\bbase64\b|\bxxd\b|\beval\b|\bpython3?\s+-c\b|\bperl\s+-e\b)
+    """,
+    re.VERBOSE,
+)
+#: Python-Bibliotheken, die selbst eine SSH-Verbindung aufbauen — damit sähe der Hook
+#: den entfernten Befehl nie als Shell-Text. Lesen geht über `ssh host 'befehl'`.
+_PY_SSH_LIB = re.compile(r"\b(paramiko|asyncssh|fabric|netmiko|pexpect)\b")
+# `ssh host` ohne entfernten Befehl ist eine interaktive Shell: was danach über stdin
+# hineingeht (process_manage submit), sieht kein Hook mehr.
+_SSH_OPTS_WITH_ARG = set("bcDEeFIiJLlmOopQRSWw")
+_CMD_WRAPPERS = {"sshpass", "timeout", "nohup", "exec", "command", "env", "stdbuf", "nice"}
+
+
+def _bare_ssh(cmd: str) -> bool:
+    for segment in re.split(r"[;&|]+", cmd):
+        toks = segment.split()
+        for i, t in enumerate(toks):
+            if t != "ssh" and not t.endswith("/ssh"):
+                continue
+            # Nur an Befehlsposition — `grep ssh /var/log/auth.log` ist keine Verbindung.
+            if i > 0 and toks[0] not in _CMD_WRAPPERS:
+                continue
+            rest = toks[i + 1:]
+            k = 0
+            while k < len(rest) and rest[k].startswith("-"):
+                flag = rest[k]
+                k += 2 if (len(flag) == 2 and flag[1] in _SSH_OPTS_WITH_ARG) else 1
+            if k >= len(rest) - 1:            # nur Ziel, kein Befehl
+                return True
+    return False
+
+
+# Lokale Skripte und Python-Bibliotheken, die selbst eine Verbindung aufbauen.
+_SCRIPT_RUN = re.compile(
+    r"(?:^|[;&|(]\s*|\bdo\s+|\bthen\s+)"
+    r"(?:(?:bash|sh|zsh|python3?|perl)\s+(?:-\w+\s+)*)?"
+    r"((?:\./|/|~/)?[\w./~-]+\.(?:sh|py|pl|bash))(?![\w.])")
+_SCRIPT_MAX = 256 * 1024
+
+
+def _script_is_write(cmd: str, cwd: str = "") -> bool:
+    """Ein ausgeführtes Skript wird mit denselben Regeln gelesen wie ein Befehl.
+
+    Ein unlesbares oder zu großes Skript gilt als Schreibzugriff: was der Hook nicht
+    prüfen kann, lässt er nicht durch.
+    """
+    for m in _SCRIPT_RUN.finditer(cmd):
+        path = os.path.expanduser(m.group(1))
+        if not os.path.isabs(path):
+            path = os.path.join(cwd or "/home/yolo/workspaces", path)
+        try:
+            if os.path.getsize(path) > _SCRIPT_MAX:
+                return True
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                body = fh.read()
+        except FileNotFoundError:
+            continue                          # kein Skript (z. B. Argument mit .py-Endung)
+        except OSError:
+            return True
+        if _is_write(body, cwd, _depth=1):
+            return True
+    return False
+
+
+def _is_write(cmd: str, cwd: str = "", _depth: int = 0) -> bool:
+    if _REMOTE_INDIRECT.search(cmd) or _bare_ssh(cmd) or _PY_SSH_LIB.search(cmd):
+        return True
+    if _depth == 0 and _script_is_write(cmd, cwd):
+        return True
     if _SYSTEM_OP.search(cmd):
         return True
     if _FILE_WRITE.search(cmd):
@@ -171,7 +250,71 @@ def _file_write_outside(path: str, cwd: str = "") -> bool:
     return not any(real == root or real.startswith(root + "/") for root in FREE_WRITE_ROOTS)
 
 
+#: MCP-Werkzeuge: zugelassen ist, was mit einem Lese-Verb beginnt; alles andere
+#: (quittieren, Downtime, Discovery, löschen …) braucht die Freigabe. Eine Liste der
+#: ERLAUBTEN Verben, nicht der verbotenen — ein neues Werkzeug ist damit gesperrt,
+#: bis jemand es bewusst als lesend einordnet.
+MCP_READ_VERBS = {"get", "list", "search", "show", "find", "describe", "query", "read",
+                  "check", "compare", "debug", "test", "validate", "wait", "baking",
+                  "checkmk", "download", "count", "status", "fetch", "lookup", "explain"}
+#: Playwright: lesen und blättern ja; klicken, texample, Formulare, Uploads, Skripte nein —
+#: damit ließe sich jede Weboberfläche bedienen (CheckMK, Proxmox, Jira …).
+BROWSER_READ = {"navigate", "navigate_back", "snapshot", "take_screenshot", "tabs",
+                "console_messages", "network_requests", "network_request", "wait_for",
+                "find", "hover", "resize", "close", "install"}
+#: Der CentralStation-MCP-Server prüft die Freigabe selbst (mcp_server._require_write);
+#: zweimal fragen hieße, dass eine Stelle die Regel nicht kennt.
+SELF_GUARDED_SERVERS = {"centralstation"}
+
+
+def _mcp_parts(tool: str) -> tuple[str, str] | None:
+    """(server, werkzeug) aus "mcp__srv__tool" (Claude) oder "mcp_srv_tool" (Hermes)."""
+    if tool.startswith("mcp__"):
+        parts = tool[5:].split("__", 1)
+        return (parts[0], parts[1]) if len(parts) == 2 else None
+    if tool.startswith("mcp_"):
+        rest = tool[4:]
+        for srv in sorted(SELF_GUARDED_SERVERS | {"playwright", "vibemk", "awx-ng", "awx_ng"},
+                          key=len, reverse=True):
+            if rest.startswith(srv + "_"):
+                return srv, rest[len(srv) + 1:]
+        parts = rest.split("_", 1)
+        return (parts[0], parts[1]) if len(parts) == 2 else None
+    return None
+
+
+def _mcp_is_write(server: str, name: str) -> bool:
+    if server in SELF_GUARDED_SERVERS:
+        return False
+    if server == "playwright":
+        return name.removeprefix("browser_") not in BROWSER_READ
+    verbs = name.split("_")
+    if verbs and verbs[0] == server.replace("-", "_").split("_")[0]:
+        verbs = verbs[1:]                     # vibemk_get_… → get_…
+    return not verbs or verbs[0] not in MCP_READ_VERBS
+
+
+#: Jede Sperre und jede Freigabe-Nutzung mit dem Befehl — sonst sieht man im Nachhinein
+#: nicht, WAS gesperrt wurde (Hermes fängt den Aufruf vor seiner eigenen Protokollzeile
+#: ab), und ein Fehlalarm bliebe unerkannt.
+AUDIT_LOG = "/tmp/cs-readonly-guard.log"
+_current: dict = {}
+
+
+def _audit(decision: str) -> None:
+    try:
+        with open(AUDIT_LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                 "decision": decision, "tool": _current.get("tool"),
+                                 "input": json.dumps(_current.get("input"),
+                                                     ensure_ascii=False)[:600]},
+                                ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def _deny(reason: str) -> None:
+    _audit("deny")
     # Block via BOTH mechanisms for cross-version compatibility:
     #  - JSON permissionDecision "deny" (newer Claude Code), and
     #  - exit code 2 with the reason on stderr (classic PreToolUse block).
@@ -180,7 +323,11 @@ def _deny(reason: str) -> None:
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
             "permissionDecisionReason": reason,
-        }
+        },
+        # Hermes (agent/shell_hooks.py) liest "decision"/"reason" — derselbe Hook dient
+        # beiden Agenten, eine Regelstelle.
+        "decision": "block",
+        "reason": reason,
     }))
     sys.stderr.write(reason + "\n")
     sys.exit(2)
@@ -189,6 +336,7 @@ def _deny(reason: str) -> None:
 def _allow_if_approved() -> None:
     granted = _approval()
     if granted:
+        _audit("approved")
         # The user opened a write window in the CentralStation console. Let the
         # call through and leave a trace of whose approval was used.
         sys.stderr.write(
@@ -206,6 +354,7 @@ def main() -> None:
         sys.exit(0)  # unreadable input → do not interfere
     tool = data.get("tool_name")
     tool_input = data.get("tool_input") or {}
+    _current.update(tool=tool, input=tool_input)
 
     if tool in FILE_TOOLS:
         path = tool_input.get(FILE_TOOLS[tool], "") or ""
@@ -222,10 +371,37 @@ def main() -> None:
             )
         sys.exit(0)
 
-    if tool != "Bash":
+    mcp = _mcp_parts(tool or "")
+    if mcp is not None:
+        if _mcp_is_write(*mcp):
+            _allow_if_approved()
+            _deny(
+                f"READ-ONLY-MODUS: Das Werkzeug {tool} verändert ein System und wurde "
+                "BLOCKIERT. Lesende Werkzeuge (get/list/search/…) sind frei. Beschreibe dem "
+                "Nutzer die geplante Aktion (Werkzeug, Ziel, Wirkung) und bitte ihn, in der "
+                "CentralStation-Konsole \"Schreibzugriff freigeben\" zu klicken; eine "
+                "Zustimmung im Chat hebt die Sperre nicht auf."
+            )
+        sys.exit(0)
+
+    if tool == "process_manage":
+        # Eingabe in einen laufenden Prozess (z. B. eine offene ssh-Sitzung): der Inhalt
+        # wird wie ein Befehl auf einem ENTFERNTEN Host behandelt — welcher Prozess es
+        # ist, sieht der Hook nicht.
+        if (tool_input.get("action") in ("write", "submit")):
+            data = tool_input.get("data", "") or ""
+            if _SYSTEM_OP.search(data) or _FILE_WRITE.search(data) or _is_write(data):
+                _allow_if_approved()
+                _deny("READ-ONLY-MODUS: Diese Eingabe in einen laufenden Prozess würde ein "
+                      "System verändern und wurde BLOCKIERT. Bitte den Nutzer, in der "
+                      "CentralStation-Konsole \"Schreibzugriff freigeben\" zu klicken.")
+        sys.exit(0)
+
+    # Claude: Bash{command}; Hermes: terminal{command}.
+    if tool not in ("Bash", "terminal"):
         sys.exit(0)
     cmd = tool_input.get("command", "") or ""
-    if _is_write(cmd):
+    if _is_write(cmd, data.get("cwd", "")):
         _allow_if_approved()
         _deny(
             "READ-ONLY-MODUS: Dieser Befehl verändert ein System "

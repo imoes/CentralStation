@@ -179,3 +179,109 @@ def test_managed_settings_land_where_claude_reads_them() -> None:
     dockerfile = (_GUARD.parent / "Dockerfile").read_text()
     assert ("COPY userenv/claude-managed-settings.json "
             "/etc/claude-code/managed-settings.json") in dockerfile
+
+
+# ── Umgehungen über ssh, Skripte und Bibliotheken (2026-10-02) ───────────────────
+
+#: Was nach einer Leseoperation aussieht, aber auf dem Zielhost beliebige Befehle ausführt.
+BYPASSES = [
+    "ssh docker-test 'bash -s' < /home/yolo/workspaces/fix.sh",
+    "cat fix.sh | ssh docker-test",
+    "ssh docker-test sh -s <<'EOF'\nsystemctl restart docker\nEOF",
+    "echo c3lzdGVtY3RsIHJlc3RhcnQgZG9ja2Vy | base64 -d | ssh docker-test sh",
+    "ssh docker-test \"$(cat /home/yolo/workspaces/cmd.txt)\"",
+    "ssh docker-test 'eval $CMD'",
+    "ssh docker-test python3 -c 'import os; os.remove(\"/x\")'",
+    "ssh docker-test",                                   # interaktive Shell → stdin ungeprüft
+    "sshpass -p x ssh -o StrictHostKeyChecking=no docker-test",
+    "ssh docker-test 'touch /tmp/probe'",               # fehlte bis 02.10. in _FILE_WRITE
+    "ssh docker-test 'mkdir -p /srv/x'",
+    "python3 - <<'EOF'\nimport paramiko\nEOF",
+]
+
+
+@pytest.mark.parametrize("cmd", BYPASSES)
+def test_indirect_remote_execution_needs_approval(cmd: str) -> None:
+    assert guard._is_write(cmd) is True, cmd
+
+
+#: Lesen bleibt frei — auch wenn "ssh" als Wort vorkommt.
+STILL_ALLOWED = [
+    "grep ssh /var/log/auth.log",
+    "ssh-keygen -lf ~/.ssh/known_hosts",
+    "ssh -o ConnectTimeout=5 docker-test 'docker ps'",
+    "ssh docker-test 'df -h | grep /data'",
+    "for h in a b; do ssh $h uptime; done",
+    "cat /home/yolo/workspaces/fix.sh",                 # ein Skript LESEN ist kein Ausführen
+]
+
+
+@pytest.mark.parametrize("cmd", STILL_ALLOWED)
+def test_reading_stays_free(cmd: str) -> None:
+    assert guard._is_write(cmd) is False, cmd
+
+
+def test_executed_script_is_checked_by_content(tmp_path) -> None:
+    """Ein lokal geschriebenes Skript (erlaubt) darf nicht zum Umweg werden."""
+    bad = tmp_path / "fix.sh"
+    bad.write_text("#!/bin/sh\nssh docker-test 'systemctl restart docker'\n")
+    good = tmp_path / "read.sh"
+    good.write_text("#!/bin/sh\nssh docker-test 'docker ps'\n")
+    assert guard._is_write(f"bash {bad}") is True
+    assert guard._is_write(f"sh {good}") is False
+    assert guard._is_write(f"cat {bad}") is False
+
+
+@pytest.mark.parametrize("tool", [
+    "mcp_vibemk_vibemk_acknowledge_problem", "mcp_vibemk_vibemk_schedule_downtime",
+    "mcp_vibemk_vibemk_start_service_discovery", "mcp_vibemk_vibemk_delete_comment",
+    "mcp__vibemk__vibemk_add_comment", "mcp_playwright_browser_click",
+    "mcp_playwright_browser_fill_form", "mcp__playwright__browser_run_code_unsafe",
+    "mcp_vibemk_vibemk_brand_new_tool",                # unbekannt → gesperrt
+])
+def test_writing_mcp_tools_need_approval(tool: str) -> None:
+    assert guard._mcp_is_write(*guard._mcp_parts(tool)) is True, tool
+
+
+@pytest.mark.parametrize("tool", [
+    "mcp_vibemk_vibemk_get_current_problems", "mcp__vibemk__vibemk_list_downtimes",
+    "mcp_vibemk_vibemk_search_metrics", "mcp_playwright_browser_navigate",
+    "mcp_playwright_browser_snapshot",
+    "mcp_centralstation_create_jira_ticket",           # prüft das Backend selbst
+])
+def test_reading_mcp_tools_are_free(tool: str) -> None:
+    assert guard._mcp_is_write(*guard._mcp_parts(tool)) is False, tool
+
+
+def test_hook_answers_in_both_dialects(capsys, monkeypatch) -> None:
+    """Claude liest hookSpecificOutput, Hermes liest decision/reason — ein Hook, beide."""
+    import io
+    import json
+    monkeypatch.setattr(guard, "_approval", lambda: None)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(
+        {"tool_name": "terminal", "tool_input": {"command": "ssh h 'systemctl restart x'"}})))
+    with pytest.raises(SystemExit) as exc:
+        guard.main()
+    assert exc.value.code == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["decision"] == "block" and "READ-ONLY" in out["reason"]
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_process_input_into_a_session_is_checked(capsys, monkeypatch) -> None:
+    import io
+    import json
+    monkeypatch.setattr(guard, "_approval", lambda: None)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(
+        {"tool_name": "process_manage",
+         "tool_input": {"action": "submit", "session_id": "p1", "data": "touch /tmp/x"}})))
+    with pytest.raises(SystemExit) as exc:
+        guard.main()
+    assert exc.value.code == 2
+
+
+def test_mcp_tools_reach_the_claude_hook() -> None:
+    import json
+    import re
+    cfg = json.loads((_GUARD.parent / "claude-managed-settings.json").read_text())
+    assert re.fullmatch(cfg["hooks"]["PreToolUse"][0]["matcher"], "mcp__vibemk__vibemk_add_comment")

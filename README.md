@@ -980,8 +980,27 @@ two places that share **one** approval, stored in **one** location:
 
 | Layer | What it guards | Where |
 |---|---|---|
-| `userenv/cs-readonly-guard.py` | shell commands that modify a system (service control, package management, remote writes over SSH, …) | `PreToolUse` hook on `Bash` |
+| `userenv/cs-readonly-guard.py` | shell commands that modify a system (service control, package management, remote writes over SSH, …), input typed into a running process, MCP tools of personal connectors (VibeMK, AWX-NG, …) and Playwright interactions | Claude CLI: `PreToolUse` hook (`Bash`, file tools, `mcp__.*`); Hermes: Python `pre_tool_call` hook (`userenv/main.py`, `_write_guard_hook`) |
 | `_require_write()` in `backend/app/api/mcp_server.py` | MCP tools that act outward (see list below) | every guarded tool's first statement |
+
+**One rule file, both agents.** Hermes used to have no technical block at all, only a
+sentence in its prompt; since 2026-10-02 the same guard runs before every Hermes tool call.
+It fails closed (a crash, timeout or unreadable answer blocks the call), and no Hermes run
+starts while the hook is missing. What the guard looks at beyond plain commands:
+
+- **Indirect remote execution:** a script fed to `ssh` via stdin, a pipe or a heredoc,
+  `bash -s`, `base64`/`eval`/`$(…)` inside the remote command, an interactive `ssh host`
+  without a command, Python SSH libraries (`paramiko`, `asyncssh`, `fabric`, …).
+- **Executed scripts are read:** `bash fix.sh` / `python3 x.py` is judged by the file's
+  content, so a local script (allowed to write) cannot become a detour.
+- **MCP tools of other servers:** allowed only when the tool starts with a read verb
+  (`get`, `list`, `search`, `show`, …); everything else, including tools nobody has
+  classified yet, needs the write window. Playwright: navigate, read and screenshot are free;
+  click, type, forms, uploads and scripts are not. The CentralStation server checks itself.
+- **Visible in the Console:** a blocked call appears as a failed step "⛔ Schreibsperre: …",
+  a call made under an approval as "🔓 Mit Schreibfreigabe ausgeführt — …". Every decision
+  is logged with its command in `/tmp/cs-readonly-guard.log` inside the container.
+- **Not covered:** the Codex CLI runs with `sandbox_mode = "danger-full-access"` and no hook.
 
 Guarded MCP tools: `jira_add_comment`, `jira_update_issue`, `jira_transition_issue`,
 `jira_close_issue`, `create_jira_ticket`, `acknowledge_alert`, `run_remediation`,

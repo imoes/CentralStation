@@ -494,7 +494,83 @@ def _read_mcp_toolsets_from_config() -> list:
     return ["mcp-centralstation"]
 
 
+#: Dieselbe Schreibsperre wie für die Claude CLI: cs-readonly-guard.py, EINE Regelstelle.
+#: Als Python-pre_tool_call-Hook statt als Hermes-Shell-Hook, weil Hermes einen
+#: gesperrten Aufruf abfängt, BEVOR er als Werkzeug erscheint — die Konsole zeigte ihn
+#: gar nicht, und das Modell durfte frei erzählen, was passiert sei ("Ausgeführt — aber
+#: blockiert"). Dieser Hook kennt die session_id und meldet jede Sperre sichtbar.
+WRITE_GUARD = "/opt/cs-readonly-guard.py"
+WRITE_GUARD_TIMEOUT = 20
+#: sid → Funktion, die ein Ereignis in den laufenden Konsolen-Stream legt.
+_stream_sinks: dict[str, Any] = {}
+
+
+def _guard_preview(tool: str, args: Any) -> str:
+    if isinstance(args, dict):
+        inner = args.get("command") or args.get("data") or ""
+        if inner:
+            return f"{tool}: {str(inner)[:160]}"
+    return tool
+
+
+def _write_guard_hook(**kw: Any) -> dict | None:
+    """Jeder Werkzeugaufruf geht durch den Guard. Fail closed: was nicht geprüft werden
+    konnte (Absturz, Zeitüberschreitung, unbekannte Antwort), wird gesperrt."""
+    import subprocess
+    tool, args = kw.get("tool_name") or "", kw.get("args")
+    sid = kw.get("session_id") or ""
+    payload = json.dumps({"hook_event_name": "pre_tool_call", "tool_name": tool,
+                          "tool_input": args if isinstance(args, dict) else None,
+                          "session_id": sid, "cwd": "/home/yolo/workspaces"}, default=str)
+    try:
+        r = subprocess.run(["python3", WRITE_GUARD], input=payload, capture_output=True,
+                           text=True, timeout=WRITE_GUARD_TIMEOUT)
+        code, out, err = r.returncode, r.stdout or "", (r.stderr or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        code, out, err = -1, "", f"Schreibsperre nicht prüfbar ({exc})"
+    sink = _stream_sinks.get(sid)
+    if code == 0:
+        if "Schreibfreigabe aktiv" in err and sink:
+            sink({"type": "notice",
+                  "text": f"🔓 Mit Schreibfreigabe ausgeführt — {_guard_preview(tool, args)}"})
+        return None
+    reason = ""
+    try:
+        reason = json.loads(out).get("reason", "")
+    except Exception:  # noqa: BLE001
+        pass
+    if code != 2:
+        reason = (f"{err or 'Schreibsperre lieferte keine gültige Antwort'} — der Aufruf "
+                  "wurde vorsichtshalber gesperrt.")
+    log.warning("[%s] write guard blocked %s", sid[:8], _guard_preview(tool, args))
+    if sink:
+        # Als Werkzeugschritt mit Fehler: bleibt im Verlauf stehen, statt nur kurz in
+        # der Statuszeile aufzublitzen.
+        label = f"⛔ Schreibsperre: {_guard_preview(tool, args)}"
+        sink({"type": "tool_start", "tool": label})
+        sink({"type": "tool_done", "tool": label, "error": True})
+    return {"action": "block", "message": reason or err or "Durch die Schreibsperre gesperrt."}
+
+
+def _ensure_write_guard() -> None:
+    """Hook registrieren — vor JEDEM Agentenlauf geprüft, nicht nur einmal.
+
+    Bis 2026-10-02 hatte Hermes KEINE technische Sperre, nur einen Satz im Prompt. Ein
+    Plugin-Neuladen (discover_and_load(force=True)) leert die Hook-Liste; ein einmal
+    gesetztes Flag hielte dann einen ungeschützten Agenten für geschützt.
+    """
+    from hermes_cli.plugins import get_plugin_manager
+    hooks = get_plugin_manager()._hooks.setdefault("pre_tool_call", [])
+    if _write_guard_hook not in hooks:
+        hooks.insert(0, _write_guard_hook)
+        log.info("write guard registered as Hermes pre_tool_call hook (fail closed)")
+    if _write_guard_hook not in get_plugin_manager()._hooks.get("pre_tool_call", []):
+        raise RuntimeError("Schreibsperre (cs-readonly-guard) nicht registriert — "
+                           "Hermes startet ohne sie nicht.")
+
+
 def _make_agent(sid: str, cfg: CreateSessionBody):
+    _ensure_write_guard()
     from run_agent import AIAgent
     from hermes_state import SessionDB
 
@@ -1466,12 +1542,20 @@ async def send_message(sid: str, body: MessageBody):
         thread_name, lambda text: loop.call_soon_threadsafe(
             q.put_nowait, {"type": "notice", "text": text}))
     logging.getLogger("agent.conversation_loop").addHandler(notice_handler)
+    _stream_sinks[sid] = lambda ev: loop.call_soon_threadsafe(q.put_nowait, ev)
 
     def run_and_detach() -> None:
         try:
+            try:
+                _ensure_write_guard()
+            except Exception as exc:  # noqa: BLE001 — ohne Sperre kein Lauf
+                log.error("[%s] %s", sid[:8], exc)
+                loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "text": str(exc)})
+                return
             run_sync()
         finally:
             logging.getLogger("agent.conversation_loop").removeHandler(notice_handler)
+            _stream_sinks.pop(sid, None)
 
     threading.Thread(target=run_and_detach, daemon=True, name=thread_name).start()
 
