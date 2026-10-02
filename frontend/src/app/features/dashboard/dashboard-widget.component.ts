@@ -1,4 +1,5 @@
 import { CommonModule } from '@angular/common';
+import { formatRate } from '../../shared/format-rate';
 import { Component, computed, inject, input, output, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
@@ -294,8 +295,8 @@ import {
                       <div class="ecl-main">
                         <span class="ecl-title">{{ c.title }}</span>
                         <span class="ecl-meta">
-                          {{ c.container_count }} Container · {{ fmtInt(c.total) }} Zeilen
-                          · seit {{ c.started_at | date:'HH:mm' }}
+                          <b>{{ currentRate(c.series) }}</b> · {{ c.container_count }} Container
+                          · {{ fmtInt(c.total) }} Zeilen · seit {{ c.started_at | date:'HH:mm' }}
                           @for (r of c.rules; track r) { <span class="ecl-rule">{{ ruleLabel(r) }}</span> }
                         </span>
                         @if (c.triage?.zusammenfassung) {
@@ -795,6 +796,12 @@ export class DashboardWidgetComponent {
     const max = Math.max(1, ...pts.map(p => p.count));
     const step = pts.length > 1 ? 100 / (pts.length - 1) : 0;
     return pts.map((p, i) => `${(i * step).toFixed(1)},${(30 - (p.count / max) * 28).toFixed(1)}`).join(' ');
+  }
+
+  /** Aktuelle Rate: das jüngste 5-min-Fenster des Verlaufs (dieselbe Formatierung wie im Feed). */
+  currentRate(series: { t: string; count: number }[] | undefined): string {
+    const last = (series ?? []).at(-1);
+    return last ? formatRate(last.count, 300) : formatRate(0, 300);
   }
 
   /** Wie im Feed: toLocaleString statt number-Pipe — die de-DE-Locale ist nicht registriert. */

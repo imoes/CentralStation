@@ -35,15 +35,31 @@ def fmt_int(n: int | float | None) -> str:
     return f"{int(n or 0):,}".replace(",", " ")
 
 
+def fmt_rate(count: float | None, seconds: float) -> str:
+    """Häufigkeit als Rate: "16 msg/s", "4,2 msg/min", "3 msg/h".
+
+    Dieselben Stufen wie im Frontend (shared/format-rate.ts) — eine Regel, überall gleich.
+    """
+    if not count or seconds <= 0:
+        return "0 msg/s"
+    per_sec = count / seconds
+
+    def f(v: float) -> str:
+        return (f"{v:.0f}" if v >= 10 else f"{v:.1f}".rstrip("0").rstrip(".")).replace(".", ",")
+
+    if per_sec >= 1:
+        return f"{f(per_sec)} msg/s"
+    if per_sec * 60 >= 1:
+        return f"{f(per_sec * 60)} msg/min"
+    return f"{f(per_sec * 3600)} msg/h"
+
+
 def subject(ctx: dict, title: str, followup: bool = False) -> str:
-    rate10 = 0
-    if ctx.get("count15"):
-        rate10 = round(ctx["count15"] * 10 / 15)
     n_cont = len(ctx.get("containers") or [])
     head = "KI-Einschätzung" if followup else "Fehlerausbruch"
     short = title.split(": ", 1)[-1].split(" · ")[0]
     return (f"[CentralStation] {head}: {short} · {n_cont} Container · "
-            f"{fmt_int(rate10)} Zeilen/10 min")
+            f"{fmt_rate(ctx.get('count15'), 900)}")
 
 
 def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
@@ -85,7 +101,8 @@ def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
     <h4 style="margin:12px 0 4px">Muster</h4>
     <pre style="white-space:pre-wrap;background:#f4f4f4;padding:6px;font-size:12px">{_esc(ctx.get('template'))}</pre>
     <p style="margin:4px 0">Seit {_esc(_hm(ctx.get('started_at')))} UTC · {fmt_int(ctx.get('total'))} Zeilen gesamt ·
-       {fmt_int(ctx.get('count15'))} in den letzten 15 min (erwartet {ctx.get('expected15') or 0:.1f})</p>
+       zuletzt <b>{fmt_rate(ctx.get('count15'), 900)}</b> ({fmt_int(ctx.get('count15'))} in 15 min,
+       erwartet {fmt_rate(ctx.get('expected15') or 0, 900)})</p>
     <h4 style="margin:12px 0 4px">Betroffen ({len(containers)} Container)</h4>
     <table style="border-collapse:collapse;font-size:13px">{cont_html}</table>{more}
     <h4 style="margin:12px 0 4px">Beispiele</h4>{examples}

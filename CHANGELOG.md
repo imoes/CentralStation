@@ -55,6 +55,17 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What changed
 
+- **Frequency shown as a rate.** The feed, cluster widget, incident view and mail
+  subject now show how often an error occurs as a rate, for example "16 msg/s" or
+  "2,2 msg/min · 11× in 5 min". At low rates the unit switches to msg/min or msg/h,
+  so "0,007 msg/s" does not appear. The rule exists once in the frontend
+  (`shared/format-rate.ts`) and once in the backend (`notify.fmt_rate`), with the
+  same steps; tests pin both to the same cases. The widget shows the current
+  rate, taken from the latest 5-min window. The feed still holds one entry per error
+  and window rather than every line; the rate makes the volume visible. Verified in
+  the browser (feed, LCARS): "2,2 msg/min · 11× in 5 min", tooltip "Durchschnitt: 2,2
+  msg/min". 312 tests.
+
 - **Incident detection is now part of the error-cluster detection.** It replaces the
   host correlator (`services/incident/correlator.py`, removed). Incidents come from one
   place, in three kinds (`incidents.kind`):

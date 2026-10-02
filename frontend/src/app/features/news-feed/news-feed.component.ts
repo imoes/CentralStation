@@ -25,6 +25,7 @@ import { TicketCreateDialogComponent } from '../../shared/ticket-dialog/ticket-c
 import { environment } from '../../../environments/environment';
 import { App } from '../../app';
 import { AuthService } from '../../core/auth/auth.service';
+import { formatRate } from '../../shared/format-rate';
 import { WebsocketService } from '../../core/services/websocket.service';
 
 interface FeedItemCollab {
@@ -857,6 +858,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                   {{ (ec.containers?.length ?? 0) }} Hosts · {{ (ec.total ?? 0).toLocaleString('de-DE') }} Alerts
                 } @else {
                   {{ (ec.containers?.length ?? 0) }} Container/Hosts · {{ (ec.total ?? 0).toLocaleString('de-DE') }} Zeilen
+                  @if (ec.count15) { · zuletzt {{ rate(ec.count15, 900) }} }
                 }
                 @if (ec.started_at) { · seit {{ ec.started_at | date:'dd.MM. HH:mm' }} }
               </div>
@@ -2298,18 +2300,22 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       containers?: { name: string; count: number }[];
     } | undefined;
     if (!o || typeof o.count !== 'number' || !o.since || !o.until) return null;
-    const minutes = Math.max(1, Math.round(
-      (new Date(o.until).getTime() - new Date(o.since).getTime()) / 60000));
+    const seconds = Math.max(60, (new Date(o.until).getTime() - new Date(o.since).getTime()) / 1000);
+    const minutes = Math.round(seconds / 60);
     const containers = o.containers ?? [];
-    const label = `${o.count.toLocaleString('de-DE')}× in ${minutes} min`
+    const label = `${formatRate(o.count, seconds)} · ${o.count.toLocaleString('de-DE')}× in ${minutes} min`
       + (containers.length > 1 ? ` · ${containers.length} Container` : '');
     const lines = [
       `Von Graylog gezählt: ${this.absTime(o.since)} – ${this.absTime(o.until)}`,
+      `Durchschnitt: ${formatRate(o.count, seconds)}`,
       ...containers.slice(0, 15).map(c => `${c.count.toLocaleString('de-DE')}× ${c.name}`),
     ];
     if (containers.length > 15) lines.push(`… und ${containers.length - 15} weitere`);
     return { label, detail: lines.join('\n') };
   }
+
+  /** Für das Template — dieselbe Formatierung wie im Feed-Chip. */
+  rate(count: number, seconds: number): string { return formatRate(count, seconds); }
 
   absTime(iso: string): string {
     if (!iso) return '';

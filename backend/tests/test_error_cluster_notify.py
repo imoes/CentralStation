@@ -33,7 +33,7 @@ def test_subject_names_pattern_spread_and_rate():
     s = subject(CTX, "Fehlerausbruch: ChangelogReader – Failed to read change-log · 24 Container")
     assert s.startswith("[CentralStation] Fehlerausbruch: ChangelogReader")
     assert "24 Container" in s
-    assert "9 728 Zeilen/10 min" in s          # 14 592 je 15 min → 9 728 je 10 min
+    assert s.endswith("16 msg/s")              # 14 592 Zeilen in 15 min = 16,2 msg/s
 
 
 def test_followup_subject_is_marked():
@@ -108,3 +108,23 @@ def test_affected_hosts_include_container_hosts():
     assert "cueservices.cue.example.com" in hosts
     assert "2c51e08bb9c9" not in hosts          # Container-Kurz-IDs sind keine Hosts
     assert host_matches("cue-zipline-product-tz.cue.example.com", hosts)
+
+
+import pytest  # noqa: E402
+
+from app.services.error_clusters.notify import fmt_rate  # noqa: E402
+
+
+@pytest.mark.parametrize("count,seconds,expected", [
+    (14_592, 900, "16 msg/s"),       # Welle des 401-Vorfalls
+    (900, 900, "1 msg/s"),
+    (4_500, 900, "5 msg/s"),
+    (1_334, 3600, "22 msg/min"),     # Feed-Beispiel "1 334× in 60 min" (ab 10 ohne Komma)
+    (252, 3600, "4,2 msg/min"),
+    (60, 3600, "1 msg/min"),
+    (3, 3600, "3 msg/h"),
+    (0, 900, "0 msg/s"),
+])
+def test_rate_format_switches_unit_for_readability(count, seconds, expected):
+    """Dieselben Stufen wie shared/format-rate.ts im Frontend."""
+    assert fmt_rate(count, seconds) == expected
