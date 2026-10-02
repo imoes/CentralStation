@@ -627,12 +627,17 @@ export class ComputerComponent implements OnInit, OnDestroy {
    * Datei aus dem Workspace in einem NEUEN Fenster zeigen, Markdown gerendert.
    *
    * Das Fenster wird sofort beim Klick geöffnet (sonst blockt der Browser das Popup)
-   * und dann befüllt. Es teilt den Ursprung mit CentralStation — ein Bericht mit
+   * und dann befüllt — als eigenes Fenster wie die Cockpit-Ansicht, nicht als Tab. Es teilt den Ursprung mit CentralStation — ein Bericht mit
    * eingeschleustem Skript käme sonst an den Token. Darum: HTML durch Angulars
    * Sanitizer UND eine CSP, die jedes Skript verbietet.
    */
   openWorkspaceFile(path: string): void {
-    const w = window.open('', '_blank');
+    // Eigenes Fenster wie die Cockpit-Ansicht (Fenstername + Maße), kein neuer Tab. Der
+    // Name je Datei holt beim zweiten Klick dasselbe Fenster nach vorn statt ein weiteres.
+    const name = 'report-' + workspaceRelative(path).replace(/[^\w-]+/g, '_').slice(0, 80);
+    const w = window.open('', name,
+      'width=1100,height=860,menubar=no,toolbar=no,location=no,status=no');
+    w?.focus();
     if (!w) {
       this.snackBar.open('Popup blockiert — bitte Popups für CentralStation erlauben', 'OK', { duration: 4000 });
       return;
