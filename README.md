@@ -718,8 +718,13 @@ gleichzeitig auffällige Dienste, weitere Muster desselben Ausbruchs und den Gra
 - **Admin** (Einstellungen → KI → Fehler-Cluster): `error_clusters.enabled`,
   `error_clusters.mail_enabled` (Not-Aus). Erster Start holt 24 h still nach.
 - **KI-Einschätzung**: je Episode ein Aufruf, kein Budget, kein Token-Limit. Die Mail wartet
-  höchstens 90 s; danach „KI-Einschätzung folgt" + zweite Mail. Nicht zugestellte Mails
+  höchstens 240 s; danach „KI-Einschätzung folgt" + zweite Mail. Nicht zugestellte Mails
   (Neustart) holt der Runner nach (`mailed_at`).
+- **Eine Mail je Vorfall**: Flotten-Ausfälle, die höchstens 30 min nacheinander beginnen und
+  sich Hosts teilen (Jaccard ≥ 0,2), sind ein Incident mit mehreren Mustern und eine Mail
+  (z. B. ORD1/ORD2/ORD3 auf denselben 5 Hosts). Kehrt ein Ausfall binnen 3 h nach dem
+  Schließen zurück, läuft die alte Episode weiter; neu gemeldet wird nur bei Verdopplung
+  der Hosts, höchstens stündlich — wie bei Log-Mustern.
 - **KI-Lagebild**: Widget `error_clusters` erscheint bei jedem offenen Ausbruch ganz oben;
   ein neuer Ausbruch stößt die Neuberechnung sofort an.
 

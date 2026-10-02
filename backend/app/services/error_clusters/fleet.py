@@ -61,6 +61,35 @@ def evaluate(now_hosts: dict[str, set[str]], history: dict[str, list[int]], n_wi
     return sorted(hits, key=lambda h: -len(h.hosts))
 
 
+def group_leader(hosts: set[str], candidates: list[tuple[str, datetime, set[str]]],
+                 now: datetime, th: Thresholds = DEFAULT) -> str | None:
+    """Incident eines schon gemeldeten Flotten-Ausfalls, zu dem dieser gehört — oder None.
+
+    candidates: (incident_id, Beginn, Hosts) offener, gemeldeter Flotten-Episoden.
+    Dieselbe Regel wie bei Log-Mustern (engine._group_leader): begann höchstens
+    group_minutes vorher und teilt Hosts (Jaccard ≥ group_overlap). Beispiel 01.10.
+    22:36: ORD1, ORD2 und ORD3 fielen auf denselben 5 Hosts aus — ein Vorfall, nicht
+    drei Mails mit drei Formulierungen derselben Einschätzung.
+    """
+    best, best_score = None, 0.0
+    for inc_id, started, theirs in candidates:
+        if not inc_id or now - started > timedelta(minutes=th.group_minutes):
+            continue
+        union = hosts | theirs
+        score = len(hosts & theirs) / len(union) if union else 0.0
+        if score >= th.group_overlap and score > best_score:
+            best, best_score = inc_id, score
+    return best
+
+
+def worth_renotify(hosts_now: int, notified_hosts: int, notified_at: datetime | None,
+                   now: datetime, th: Thresholds = DEFAULT) -> bool:
+    """Erneut melden nur bei Verdopplung der Hosts, höchstens einmal je renotify_min_minutes."""
+    return (hosts_now >= th.renotify_factor * max(notified_hosts, 1)
+            and (notified_at is None
+                 or now - notified_at >= timedelta(minutes=th.renotify_min_minutes)))
+
+
 async def _collect(db, now: datetime):
     from app.models.alert import Alert
     rows = (await db.execute(select(Alert).where(
@@ -104,7 +133,9 @@ async def run(db, cfg, base_url: str) -> list[dict]:
     Gibt die meldepflichtigen Kontexte zurück (der Runner meldet sie wie Log-Cluster).
     """
     from app.models.error_cluster import ErrorCluster
-    from app.services.error_clusters.incident import close_cluster_incident, open_cluster_incident
+    from app.services.error_clusters.incident import (
+        add_pattern, close_cluster_incident, open_cluster_incident, reopen_incident,
+    )
 
     now = datetime.now(timezone.utc)
     now_hosts, history, n_windows, alerts, outputs = await _collect(db, now)
@@ -113,9 +144,26 @@ async def run(db, cfg, base_url: str) -> list[dict]:
         ErrorCluster.source == "checkmk_fleet", ErrorCluster.status == "open"))).scalars()}
     to_notify: list[dict] = []
 
+    # Gemeldete offene Episoden als Gruppierungs-Kandidaten (Hits kommen nach Größe
+    # sortiert — der größte gleichzeitige Ausfall wird zum Leitvorfall).
+    candidates = [(str(e.incident_id) if e.incident_id else None, e.started_at,
+                   set(e.sources or [])) for e in open_eps.values()]
+
     for service, hit in hits.items():
         key = fleet_key(service)
         ep = open_eps.pop(key, None)
+        reopened = False
+        if ep is None:
+            # Innerhalb des Cooldowns geht die ALTE Episode weiter, wie bei Log-Mustern.
+            # Ohne das wurde "Check_MK" (Ursache vpp0252) am 01./02.10. sechsmal als neuer
+            # Vorfall gemeldet — jeweils 5–30 min nach dem Schließen.
+            ep = (await db.execute(select(ErrorCluster).where(
+                ErrorCluster.source == "checkmk_fleet", ErrorCluster.key == key,
+                ErrorCluster.status == "closed",
+                ErrorCluster.closed_at >= now - timedelta(hours=DEFAULT.cooldown_hours))
+                .order_by(ErrorCluster.closed_at.desc()).limit(1))).scalar_one_or_none()
+            if ep is not None:
+                ep.status, ep.closed_at, reopened = "open", None, True
         ctx = {
             "template": f"CheckMK-Service „{service}“ auf {len(hit.hosts)} Hosts zugleich nicht OK",
             "examples": outputs.get(service) or [f"{e} ({s})" for e, s in hit.alerts[:3]],
@@ -130,6 +178,10 @@ async def run(db, cfg, base_url: str) -> list[dict]:
             "service": service,
         }
         members = [{"external_id": e, "source": "checkmk"} for e, _ in hit.alerts]
+        pattern = {"template_key": key, "template": ctx["template"], "count15": len(hit.hosts),
+                   "total": len(hit.alerts), "rules": ["fleet"],
+                   "started_at": ctx["started_at"], "hosts": list(hit.hosts),
+                   "containers": ctx["containers"][:15], "examples": ctx["examples"][:2]}
         # Musterzeile wie bei Log-Clustern — für Titel, Stummschalten und Tagesübersicht.
         from sqlalchemy.dialects.postgresql import insert as pg_insert
         from app.models.error_cluster import LogTemplate
@@ -140,47 +192,73 @@ async def run(db, cfg, base_url: str) -> list[dict]:
         muted = (await db.execute(select(LogTemplate.muted).where(LogTemplate.key == key))).scalar()
         if muted:
             continue
+        title = f"Flotten-Ausfall: {service} · {len(hit.hosts)} Hosts"
         if ep is None:
             ep = ErrorCluster(id=uuid.uuid4(), key=key, source="checkmk_fleet", status="open",
                               rules=["fleet"], reasons=ctx["reasons"], notify_class="immediate",
                               started_at=now, last_active_at=now, peak15=len(hit.hosts),
                               total=len(hit.alerts), entities={h: 1 for h in hit.hosts},
-                              sources=list(hit.hosts), notified_rate=len(hit.hosts),
-                              notified_entities=len(hit.hosts), notified_at=now)
+                              sources=list(hit.hosts))
             db.add(ep)
             await db.flush()
-            title = f"Flotten-Ausfall: {service} · {len(hit.hosts)} Hosts"
+            leader_inc = group_leader(set(hit.hosts), candidates, now)
+            if leader_inc:
+                # Teil eines schon gemeldeten Ausfalls: Muster im Leit-Incident, keine Mail.
+                ep.incident_id = uuid.UUID(leader_inc)
+                await add_pattern(db, leader_inc, pattern, members)
+                continue
+            ep.notified_rate = ep.notified_entities = len(hit.hosts)
+            ep.notified_at = now
             sev = "critical" if any(s == "critical" for _, s in hit.alerts) else "high"
             inc = await open_cluster_incident(
                 db, kind="fleet", title=title, severity=sev,
                 primary_host=hit.hosts[0], context={"cluster_id": str(ep.id), **ctx},
                 member_docs=members)
             ep.incident_id = inc.id
+            candidates.append((str(inc.id), now, set(hit.hosts)))
             to_notify.append({"ctx": ctx, "title": title, "cluster_id": str(ep.id),
                               "incident_id": str(inc.id)})
-        else:
-            ep.last_active_at = now
-            ep.peak15 = max(ep.peak15, len(hit.hosts))
-            ep.entities = {**(ep.entities or {}), **{h: 1 for h in hit.hosts}}
-            ep.sources = sorted(set(ep.sources or []) | set(hit.hosts))
-            if ep.incident_id:
-                await open_cluster_incident(
-                    db, kind="fleet", title=f"Flotten-Ausfall: {service} · {len(ep.entities)} Hosts",
-                    severity="high", primary_host=hit.hosts[0],
-                    context={"cluster_id": str(ep.id), **ctx}, member_docs=members,
-                    existing_id=str(ep.incident_id))
-            # Verdopplung der Hosts → erneut melden (höchstens stündlich)
-            if (len(hit.hosts) >= 2 * max(ep.notified_entities, 1)
-                    and (ep.notified_at is None or now - ep.notified_at >= timedelta(hours=1))):
-                ep.notified_entities, ep.notified_at = len(hit.hosts), now
-                to_notify.append({"ctx": ctx, "title": f"Flotten-Ausfall: {service} · {len(hit.hosts)} Hosts",
-                                  "cluster_id": str(ep.id),
-                                  "incident_id": str(ep.incident_id) if ep.incident_id else None})
+            continue
+
+        ep.last_active_at = now
+        ep.peak15 = max(ep.peak15, len(hit.hosts))
+        ep.entities = {**(ep.entities or {}), **{h: 1 for h in hit.hosts}}
+        ep.sources = sorted(set(ep.sources or []) | set(hit.hosts))
+        leader = ep.incident_id is not None and await _leads_incident(db, ep)
+        if ep.incident_id and leader:
+            await open_cluster_incident(
+                db, kind="fleet", title=f"Flotten-Ausfall: {service} · {len(ep.entities)} Hosts",
+                severity="high", primary_host=hit.hosts[0],
+                context={"cluster_id": str(ep.id), **ctx}, member_docs=members,
+                existing_id=str(ep.incident_id))
+        elif ep.incident_id:
+            await add_pattern(db, str(ep.incident_id), pattern, members)
+            if reopened:
+                await reopen_incident(db, str(ep.incident_id))
+            continue                         # Teil eines Ausfalls meldet nie selbst
+        # Verdopplung der Hosts → erneut melden (höchstens stündlich)
+        if worth_renotify(len(hit.hosts), ep.notified_entities, ep.notified_at, now):
+            ep.notified_entities, ep.notified_at = len(hit.hosts), now
+            to_notify.append({"ctx": ctx, "title": title, "cluster_id": str(ep.id),
+                              "incident_id": str(ep.incident_id) if ep.incident_id else None})
 
     for ep in open_eps.values():          # aktuell nicht mehr auffällig
         if now - ep.last_active_at >= QUIET:
             ep.status, ep.closed_at = "closed", now
             if ep.incident_id:
-                await close_cluster_incident(db, str(ep.incident_id),
-                                             "Service auf weniger Hosts betroffen als üblich, seit 60 min")
+                others = (await db.execute(select(ErrorCluster.id).where(
+                    ErrorCluster.incident_id == ep.incident_id, ErrorCluster.id != ep.id,
+                    ErrorCluster.status == "open"))).first()
+                if others is None:
+                    await close_cluster_incident(db, str(ep.incident_id),
+                                                 "Service auf weniger Hosts betroffen als üblich, seit 60 min")
     return to_notify
+
+
+async def _leads_incident(db, ep) -> bool:
+    """Ist diese Episode der Leitvorfall ihres Incidents (oder nur ein weiteres Muster)?"""
+    from app.models.workflow import Incident
+    from app.services.error_clusters.incident import cluster_context
+    inc = (await db.execute(select(Incident).where(Incident.id == ep.incident_id))
+           ).scalar_one_or_none()
+    return inc is not None and (cluster_context(inc) or {}).get("cluster_id") == str(ep.id)

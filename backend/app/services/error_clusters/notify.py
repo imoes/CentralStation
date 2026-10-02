@@ -23,7 +23,10 @@ from sqlalchemy import select
 
 log = logging.getLogger(__name__)
 
-TRIAGE_WAIT = 90.0          # so lange wartet die Mail höchstens auf die KI
+TRIAGE_WAIT = 240.0         # so lange wartet die Mail höchstens auf die KI
+#: Gemessen 01./02.10.: die Einschätzung brauchte 40–105 s. Bei 90 s kam sie viermal
+#: knapp danach — und mit ihr eine zweite Mail, die denselben Vorfall nur anders
+#: formulierte. 240 s deckt das ab; der Vorfall bleibt trotzdem binnen Minuten gemeldet.
 APP_URL_SETTING = "app.public_url"
 
 

@@ -34,6 +34,54 @@ async def members(db, inc_id) -> set[str]:
     return {r[0] for r in rows}
 
 
+async def fleet_section(db, now) -> None:
+    from datetime import timedelta
+    from app.models.alert import Alert
+    from app.models.error_cluster import ErrorCluster
+    from app.services.error_clusters import fleet
+    tag = uuid.uuid4().hex[:6]
+    svcs = [f"Selftest ORD1 {tag}", f"Selftest ORD2 {tag}"]
+    hosts = [f"st{tag}-{i}.example.invalid" for i in range(6)]
+    for svc in svcs:
+        for h in hosts:
+            db.add(Alert(source="checkmk", severity="high", title=f"{h} {svc}",
+                         external_id=f"st:{tag}:{h}:{svc}", status="new",
+                         metadata_={"service": svc, "host": h}, created_at=now))
+    await db.flush()
+    keys = [fleet.fleet_key(s) for s in svcs]
+
+    async def eps():
+        return (await db.execute(select(ErrorCluster).where(ErrorCluster.key.in_(keys)))
+                ).scalars().all()
+
+    out = [n for n in await fleet.run(db, None, "") if n["ctx"].get("service") in svcs]
+    await db.flush()
+    first = await eps()
+    check("Flotte: zwei gleichzeitige Services auf denselben Hosts → eine Mail", len(out) == 1)
+    check("Flotte: beide Episoden im selben Incident",
+          len(first) == 2 and len({e.incident_id for e in first}) == 1
+          and first[0].incident_id is not None)
+    inc = (await db.execute(select(Incident).where(Incident.id == first[0].incident_id))).scalar_one()
+    check("Flotte: zweiter Service als weiteres Muster im Kontext",
+          len((cluster_context(inc) or {}).get("patterns", [])) == 1)
+
+    # Beide still → schließen; dann kehrt der Ausfall 30 min später zurück.
+    for e in first:
+        e.status, e.closed_at = "closed", now - timedelta(minutes=30)
+    await close_cluster_incident(db, str(first[0].incident_id), "selftest")
+    await db.flush()
+    again = [n for n in await fleet.run(db, None, "") if n["ctx"].get("service") in svcs]
+    await db.flush()
+    second = await eps()
+    await db.refresh(inc)
+    check("Flotte: Rückkehr binnen Cooldown → keine neue Mail", again == [])
+    check("Flotte: Rückkehr setzt die alten Episoden fort",
+          len(second) == 2 and {e.id for e in second} == {e.id for e in first}
+          and all(e.status == "open" for e in second))
+    check("Flotte: Incident wieder offen, Titel des Leitvorfalls erhalten",
+          inc.status == "open" and "ORD1" in inc.title)
+
+
 async def main() -> None:
     from datetime import datetime, timedelta, timezone
     now = datetime.now(timezone.utc)
@@ -89,6 +137,9 @@ async def main() -> None:
                                                 member_docs=[], existing_id=str(cl.id))
             await db.flush()
             check("wiederöffnen → derselbe Incident, open", again.id == cl.id and again.status == "open")
+            # 5. Flotte: zwei Services auf denselben Hosts → EIN Incident, EINE Mail;
+            #    Rückkehr binnen Cooldown → alte Episode, keine neue Mail.
+            await fleet_section(db, now)
         finally:
             await trans.rollback()
     leftover = None

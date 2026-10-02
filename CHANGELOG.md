@@ -214,6 +214,28 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **Error-cluster mails came twice, or several times for one incident.** On 01–02.10.
+  16 mails went out for about 8 real incidents. The SMTP connector and the recipient
+  list were fine (one recipient, one send each). There were three causes:
+  - **A second mail with the same content, worded differently (4×).** The mail waited
+    at most 90 s for the AI assessment, but the assessment took 40–105 s. When it was
+    late, it went out as a second mail. The wait is now 240 s.
+  - **The same outage reported again and again (6×).** "Check_MK" on ~30 hosts (cause:
+    vpp0252) was closed after 60 quiet minutes and came back 5–30 min later as a
+    *new* incident with a new mail. Fleet clusters now behave like log patterns:
+    within 3 h after closing, the old episode and incident continue. A new mail goes
+    out only when the number of hosts doubles, at most once an hour.
+  - **Simultaneous outages on the same hosts reported separately.** ORD1/ORD2/ORD3 on
+    the same 5 hosts gave 3 mails, and "Storage Pool data" + "Filesystem /data/backup"
+    (11 of 14 hosts shared) gave 2. Fleet outages that start within 30 min of each
+    other and share hosts (Jaccard ≥ 0.2) are now one incident with several patterns
+    and one mail. The incident closes only when all its patterns are quiet.
+  - Verified: unit tests for grouping and renotify (cases from the real 01.10.
+    incidents, including the unrelated 23:01 pair that stays separate). The database
+    self-test against the real Postgres (rolled back) checks that two services on the
+    same hosts give one mail and one incident, and that a return within the cooldown
+    gives no new mail, continues the old episodes and keeps the leading title (18/18).
+
 - **Hermes with GLM 5.3 Flash (llmbase.ai) hung on long answers.** The gateway buffers
   a tool call completely and sends no byte until it is finished (measured: ~20
   tokens/s; aborts itself after ~240 s with HTTP 504). With the 120 s timeout from the

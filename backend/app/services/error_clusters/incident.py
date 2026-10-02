@@ -282,6 +282,15 @@ async def close_cluster_incident(db: AsyncSession, incident_id: str, reason: str
                               "resolved_reason": reason})
 
 
+async def reopen_incident(db: AsyncSession, incident_id: str) -> None:
+    """Wieder offen, ohne Titel und Kontext des Leitvorfalls zu überschreiben."""
+    inc = (await db.execute(select(Incident).where(Incident.id == uuid.UUID(incident_id)))
+           ).scalar_one_or_none()
+    if inc is None or inc.status != "resolved":
+        return
+    inc.status, inc.resolved_at, inc.updated_at = "open", None, datetime.now(timezone.utc)
+
+
 # ── Auflösen: ersetzt resolve_inactive_checkmk_incidents / resolve_stale_incidents ──
 
 async def close_recovered(active_external_ids: set[str], db: AsyncSession) -> tuple[int, set[str]]:
