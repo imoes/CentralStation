@@ -2,7 +2,7 @@ import httpx
 
 from app.schemas.connector import ConnectorTestResult
 from app.services.connectors.base import BaseConnector
-from app.services.llm_client import ANTHROPIC_MAX_TOKENS
+from app.services.llm_client import ANTHROPIC_MAX_TOKENS, openai_base_url
 
 
 class LLMConnector(BaseConnector):
@@ -26,8 +26,9 @@ class LLMConnector(BaseConnector):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        base = self.base_url.rstrip("/")
-        models_url = f"{base}/models"
+        # Dieselbe URL-Regel wie bei den echten Aufrufen — sonst prüft der Test einen
+        # anderen Pfad (…/qwen35b/models) als den, der später benutzt wird.
+        models_url = f"{openai_base_url(self.base_url)}/models"
         if api_mode == "codex_responses" and "client_version" not in models_url:
             models_url += "?client_version=1.0.0"
 

@@ -195,7 +195,8 @@ async def test_setting_group(
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         try:
             async with httpx.AsyncClient(timeout=8, verify=False) as client:
-                r = await client.get(f"{url}/models", headers=headers)
+                from app.services.llm_client import openai_base_url
+                r = await client.get(f"{openai_base_url(url)}/models", headers=headers)
             if r.status_code >= 400:
                 return TestResult(
                     success=False,

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -45,13 +47,40 @@ def _extract_anthropic_output(data: dict[str, Any]) -> str:
     return "".join(parts).strip()
 
 
-def _build_api_url(base_url: str, path: str) -> str:
-    normalized = base_url.rstrip("/")
-    for suffix in ("/chat/completions", "/responses"):
+#: Ein Versionssegment im Pfad: /v1, /v2, /v1beta, /router/v1, /api/v1 …
+_VERSION_SEGMENT = re.compile(r"/v\d+[a-z0-9]*(?:/|$)", re.IGNORECASE)
+#: OpenAI-kompatible APIs, deren Pfad bewusst KEIN Versionssegment hat: das
+#: ChatGPT-Backend (Codex: …/backend-api/codex/responses) und Azure OpenAI
+#: (…/openai/deployments/<name>/…?api-version=).
+_UNVERSIONED_APIS = ("/backend-api/", "/openai/deployments/")
+
+
+def openai_base_url(base_url: str) -> str:
+    """Basis-URL einer OpenAI-kompatiblen API — immer mit Versionspfad.
+
+    Eine Regel für alle, die daraus eine URL bauen (LLM-Aufrufe, Verbindungstest,
+    Übergabe an Hermes). Fehlt das Versionssegment, wird /v1 ergänzt: eingetragen war
+    seit 22.05.2026 "https://llm-host03.example.com/qwen35b", und jeder Aufruf ging an
+    /qwen35b/chat/completions statt /qwen35b/v1/chat/completions. Das funktionierte
+    nur, weil llama-server beide Routen bedient — andere Server (vLLM, LiteLLM …)
+    tun das nicht, und in Logs sah es aus wie ein Fehlaufruf.
+    Ein eingetragener Endpunkt (…/chat/completions, …/responses) wird abgeschnitten.
+    """
+    normalized = (base_url or "").strip().rstrip("/")
+    if not normalized:
+        return normalized
+    for suffix in ("/chat/completions", "/responses", "/models"):
         if normalized.endswith(suffix):
             normalized = normalized[: -len(suffix)]
             break
-    return f"{normalized}/{path.lstrip('/')}"
+    path = urlparse(normalized).path + "/"
+    if _VERSION_SEGMENT.search(path) or any(m in path for m in _UNVERSIONED_APIS):
+        return normalized
+    return f"{normalized}/v1"
+
+
+def _build_api_url(base_url: str, path: str) -> str:
+    return f"{openai_base_url(base_url)}/{path.lstrip('/')}"
 
 
 def _normalize_chat_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

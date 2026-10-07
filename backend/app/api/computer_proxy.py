@@ -40,6 +40,18 @@ def _internal_client(**kwargs) -> httpx.AsyncClient:
     return httpx.AsyncClient(trust_env=False, **kwargs)
 
 
+def _hermes_base_url(llm) -> str | None:
+    """Basis-URL für Hermes. OpenAI-kompatible Modi mit Versionspfad (dieselbe Regel
+    wie llm_client); Anthropic und Codex bleiben, wie sie sind — deren SDKs setzen
+    den Pfad selbst."""
+    if not llm.base_url:
+        return None
+    if (llm.api_mode or "chat_completions") in ("chat_completions", "responses"):
+        from app.services.llm_client import openai_base_url
+        return openai_base_url(llm.base_url)
+    return llm.base_url
+
+
 def _target_url(user_id: str) -> str:
     """Return the per-user Hermes container URL (http://cs-userenv-{uid}:8001)."""
     from app.services.userenv_manager import hermes_url
@@ -848,7 +860,7 @@ async def create_session(
             llm = await get_active_llm_config(db, user_id=user.id)
         searxng = await get_searxng_config(db)
         llm_payload = {
-            "llm_base_url": llm.base_url or None,
+            "llm_base_url": _hermes_base_url(llm),
             "llm_model": llm.model or None,
             "llm_api_key": llm.api_key or None,
             "llm_api_mode": llm.api_mode or "chat_completions",
@@ -1548,7 +1560,7 @@ async def send_message(
             cli_model = (_cli_creds or {}).get("model") or None
 
         body_data.update({
-            "llm_base_url": llm.base_url or None,
+            "llm_base_url": _hermes_base_url(llm),
             # CLI agents: use stored CLI model preference; do NOT fall back to
             # Hermes model (claude-sonnet-4-6 would break codex, o3 would break
             # claude). Hermes must receive its own LLM model so an existing

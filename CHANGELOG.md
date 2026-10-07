@@ -240,6 +240,26 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **LLM calls went to `…/chat/completions` without `/v1`.** All calls from hal to
+  llm-host03 had this form: SysAdmin agent, Network agent, error-cluster triage and
+  connection test (`/qwen35b/models`). The base URL had been entered without `/v1`
+  since 22.05.2026 (`https://llm-host03.example.com/qwen79b`, later `/qwen35b`), and
+  no code added it. It only worked because llama-server serves both routes; in the
+  llm-host03 log the calls looked like misdirected requests, unlike aikb's
+  `/qwen27b/v1/…`.
+  - **One URL rule for every OpenAI-compatible URL:** `openai_base_url()` in
+    `llm_client.py`, used by the LLM calls, the connector test, the settings test and
+    the handoff to Hermes.
+  - **The rule:** if the path has no version segment, `/v1` is added. URLs that
+    already have one stay as they are (`/v1`, `/router/v1`, `/v1beta/openai`).
+    ChatGPT-Backend (Codex) and Azure deliberately have none and are left out.
+  - **Not touched:** the stored settings. They do not need to change.
+  - Verified: 17 URL tests (llama.cpp behind a prefix, OpenAI, Perplexity, OpenRouter,
+    Gemini, Codex, Azure, an endpoint entered with its path); backend suite 357
+    passed. Live in the llm-host03 nginx log after the deploy (07.10. 13:25 UTC):
+    the connector test now goes to `GET /qwen35b/v1/models` and the LLM test to
+    `POST /qwen35b/v1/chat/completions`, both 200.
+
 - **Codex could write without the write window.** It ran with
   `approval_policy = "never"` and `sandbox_mode = "danger-full-access"` and had no hook.
   The same guard now runs from `/etc/codex/requirements.toml`. Those are admin
