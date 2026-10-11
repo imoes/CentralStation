@@ -939,9 +939,44 @@ async def incident_timeline(
                                    if isinstance(e, dict) and e.get("type") == "error_cluster"), None),
             "merged_into": next((e.get("incident_id") for e in (inc.causal_context or [])
                                  if isinstance(e, dict) and e.get("type") == "merged_into"), None),
+            # Prüfschritte (experimentell, nur per Knopf): was geplant ist und was lief.
+            **_checks_payload(inc),
         },
         "timeline": timeline,
     }
+
+
+def _checks_payload(inc) -> dict:
+    from app.services.error_clusters.checks import check_runs, planned_steps
+    from app.services.error_clusters.incident import cluster_context
+    steps, origin = planned_steps(cluster_context(inc))
+    return {"planned_checks": steps, "planned_checks_origin": origin, "check_runs": check_runs(inc)}
+
+
+@router.post("/incidents/{incident_id}/run-checks")
+async def run_incident_checks(
+    incident_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Prüfschritte des Incidents ausführen (experimentell): nur Lese-Vorlagen über den
+    Prüf-Container, ausgelöst durch einen Klick — nie automatisch."""
+    import uuid as _uuid
+    from app.models.workflow import Incident
+    from app.services.error_clusters.checks import run_checks
+    from app.services.settings import get_setting
+    if (await get_setting(db, "error_clusters.checks_enabled") or "true").lower() != "true":
+        raise HTTPException(403, "Prüfschritte sind abgeschaltet (Admin → KI → Fehler-Cluster)")
+    try:
+        inc = await db.get(Incident, _uuid.UUID(incident_id))
+    except ValueError:
+        raise HTTPException(400, "Ungültige Incident-ID")
+    if not inc:
+        raise HTTPException(404, "Incident nicht gefunden")
+    run = await run_checks(db, inc, user)
+    if not run["results"]:
+        raise HTTPException(422, "Keine Prüfschritte für diesen Incident (keine Hosts bekannt)")
+    return run
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1246,6 +1281,11 @@ def _cluster_prompt_section(c: dict, kind: str, severity: str, created_str: str)
     return out
 
 
+def _check_prompt_lines(inc) -> list[str]:
+    from app.services.error_clusters.checks import prompt_lines
+    return prompt_lines(inc)
+
+
 @router.get("/incidents/{incident_id}/claude-prompt")
 async def incident_claude_prompt(
     incident_id: str,
@@ -1288,6 +1328,7 @@ async def incident_claude_prompt(
         # Fehler-Cluster: am MUSTER ansetzen, nicht an einem Host — ein Ausbruch über
         # viele Container/Hosts hat seine Ursache meist woanders (Abhängigkeit, Zugang).
         lines.extend(_cluster_prompt_section(cluster, kind, severity, created_str))
+        lines.extend(_check_prompt_lines(inc))
     else:
         lines.append(f"# Incident-Untersuchung: {host}")
         lines.append("")

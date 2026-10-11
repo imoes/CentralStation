@@ -66,7 +66,7 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showO
     // Fehler-Cluster-Erkennung (backend services/error_clusters): Log-Muster mit
     // Grundlast, Ausbrüche → Incident + Sofort-Mail. Beide Schalter sind Not-Aus.
     title: 'Fehler-Cluster',
-    keys: ['error_clusters.enabled', 'error_clusters.mail_enabled'],
+    keys: ['error_clusters.enabled', 'error_clusters.mail_enabled', 'error_clusters.checks_enabled'],
   },
   {
     // Prüf-Container (probe/): liest mit diesem System-SSH-Account NUR feste Vorlagen
@@ -106,10 +106,11 @@ const BOOLEAN_KEYS = new Set([
   'searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled',
   'llm.thinking_mode', 'workflow.web_search',
   'computer.show_reasoning', 'coroot.enrichment_enabled',
-  'error_clusters.enabled', 'error_clusters.mail_enabled',
+  'error_clusters.enabled', 'error_clusters.mail_enabled', 'error_clusters.checks_enabled',
 ]);
 // Boolean settings that default to ON when no DB row exists yet.
-const DEFAULT_ON_KEYS = new Set(['computer.show_reasoning', 'coroot.enrichment_enabled']);
+const DEFAULT_ON_KEYS = new Set(['computer.show_reasoning', 'coroot.enrichment_enabled',
+                                 'error_clusters.checks_enabled']);
 const SELECT_KEYS: Record<string, string[]> = {
   'llm.api_mode': ['chat_completions', 'anthropic_messages', 'codex_responses', 'bedrock_converse'],
   'llm.provider': ['custom', 'openai-codex', 'claude-oauth', 'perplexity'],
@@ -832,6 +833,7 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       'agent.auto_jira':                     'Create Jira tickets automatically',
       'error_clusters.enabled':              'Fehler-Cluster erkennen (Graylog-Muster, alle 5 min)',
       'error_clusters.mail_enabled':         'Sofort-Mails an angemeldete Nutzer versenden',
+      'error_clusters.checks_enabled':       'Knopf „Prüfschritte ausführen" im Incident (experimentell, nur lesend)',
       'probe.ssh_user':                      'SSH-Nutzer des Prüf-Containers',
       'probe.ssh_key':                       'Privater SSH-Schlüssel (nur für den Prüf-Container)',
       'probe.test_host':                     'Test-Host für den Verbindungstest',

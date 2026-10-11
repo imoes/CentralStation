@@ -63,6 +63,13 @@ interface ClusterContext {
   resolved_reason?: string;
 }
 
+interface CheckStep { host: string; template: string; params?: Record<string, string>; }
+interface CheckResult extends CheckStep {
+  exit_code?: number | null; error?: string | null; message?: string; output?: string;
+  stderr?: string; truncated?: boolean; duration_ms?: number;
+}
+interface CheckRun { at: string; by?: string; origin: string; results: CheckResult[]; }
+
 interface IncidentTimeline {
   incident: {
     id: string;
@@ -77,6 +84,10 @@ interface IncidentTimeline {
     kind?: string;
     error_cluster?: ClusterContext | null;
     merged_into?: string | null;
+    /** Prüfschritte (experimentell, nur per Knopf) — Backend error_clusters/checks.py */
+    planned_checks?: CheckStep[];
+    planned_checks_origin?: 'triage' | 'basis';
+    check_runs?: CheckRun[];
   };
   timeline: {
     at: string;
@@ -877,6 +888,36 @@ const SEVERITY_COLOR: Record<string, string> = {
                   }
                 </div>
               }
+              @if (incidentTimeline()!.incident.planned_checks?.length) {
+                @let inc = incidentTimeline()!.incident;
+                <div class="checks-box">
+                  <div class="checks-head">
+                    <span><b>Prüfschritte</b> <span class="cluster-dim">(experimentell · nur lesend ·
+                      {{ inc.planned_checks_origin === 'triage' ? 'aus der KI-Einschätzung' : 'Basisprüfung der Hosts' }})</span></span>
+                    <button mat-stroked-button class="checks-run-btn" [disabled]="checksRunning()"
+                            (click)="runIncidentChecks(inc.id)">
+                      <mat-icon>{{ checksRunning() ? 'hourglass_top' : 'play_arrow' }}</mat-icon>
+                      {{ checksRunning() ? 'läuft …' : 'Prüfschritte ausführen' }}
+                    </button>
+                  </div>
+                  <ul class="checks-plan">
+                    @for (st of inc.planned_checks!; track $index) {
+                      <li><code>{{ st.host }}</code> · {{ st.template }} {{ checkParams(st.params) }}</li>
+                    }
+                  </ul>
+                  @if (inc.check_runs?.length) {
+                    @let run = inc.check_runs![inc.check_runs!.length - 1];
+                    <div class="cluster-dim">Letzter Lauf {{ run.at | date:'dd.MM. HH:mm' }} · {{ run.by }}</div>
+                    @for (r of run.results; track $index) {
+                      <details class="checks-result" [class.err]="!!r.error || !!r.exit_code">
+                        <summary>{{ r.host }} · {{ r.template }} {{ checkParams(r.params) }} —
+                          {{ r.error ? 'Fehler: ' + r.error : 'exit ' + r.exit_code }}</summary>
+                        <pre>{{ r.output || r.message || r.stderr || '(keine Ausgabe)' }}</pre>
+                      </details>
+                    }
+                  }
+                </div>
+              }
               @if (ec.correlated?.length) {
                 <div class="cluster-sub">Gleichzeitig auffällig:
                   @for (c of ec.correlated!; track c.container) {
@@ -1565,6 +1606,14 @@ const SEVERITY_COLOR: Record<string, string> = {
     .cluster-meta, .cluster-dim { opacity: .75; font-size: 12px; }
     .cluster-reasons { margin: 4px 0 6px 18px; padding: 0; font-size: 12px; }
     .cluster-ai { margin: 6px 0; padding: 6px 8px; border-radius: 6px; background: var(--mat-sys-surface-container); }
+    .checks-box { margin: 8px 0; padding: 8px; border-radius: 6px; border: 1px dashed var(--mat-sys-outline-variant); }
+    .checks-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .checks-plan { margin: 6px 0; padding-left: 18px; font-size: 12px; }
+    .checks-result { margin: 4px 0; font-size: 12px; }
+    .checks-result summary { cursor: pointer; }
+    .checks-result.err summary { color: var(--mat-sys-error); }
+    .checks-result pre { white-space: pre-wrap; max-height: 260px; overflow: auto; font-size: 11px;
+                         background: var(--mat-sys-surface-container); padding: 6px; border-radius: 4px; }
     .cluster-ai ol { margin: 4px 0 0 18px; padding: 0; }
     .cluster-sub { margin-top: 6px; font-size: 12px; font-weight: 600; }
     .cluster-containers { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
@@ -2594,6 +2643,26 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
         error: () => {
           this.copyingPrompt.set(false);
           this.snackBar.open('Kontext konnte nicht geladen werden', 'OK', { duration: 3000 });
+        },
+      });
+  }
+
+  checksRunning = signal(false);
+
+  checkParams(p?: Record<string, string>): string {
+    const e = Object.entries(p || {});
+    return e.length ? '(' + e.map(([k, v]) => `${k}=${v}`).join(', ') + ')' : '';
+  }
+
+  /** Prüfschritte ausführen (experimentell): nur Lese-Vorlagen über den Prüf-Container. */
+  runIncidentChecks(incidentId: string) {
+    this.checksRunning.set(true);
+    this.http.post<CheckRun>(`${environment.apiUrl}/feed/incidents/${incidentId}/run-checks`, {})
+      .subscribe({
+        next: () => { this.checksRunning.set(false); this.openIncidentTimeline(incidentId); },
+        error: err => {
+          this.checksRunning.set(false);
+          this.snackBar.open(err?.error?.detail || 'Prüfschritte fehlgeschlagen', 'OK', { duration: 5000 });
         },
       });
   }

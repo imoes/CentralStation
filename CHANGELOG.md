@@ -14,6 +14,28 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What is new
 
+- **Check steps per button in the incident (experimental, read-only).** The incident
+  view, opened from the mail link, has a "Prüfschritte ausführen" button.
+  - It runs read-only templates through the probe runner. Nothing runs automatically,
+    and nothing goes out by mail.
+  - **Steps:** the AI assessment now also returns structured steps
+    (`pruefschritte_auto`: template id plus parameters). Only steps that are a
+    `cs_policy` template and concern a host of this outbreak survive validation;
+    anything else the model writes is never executed. Older assessments without steps
+    get a basic check instead: disk and memory/load of the first three hosts.
+  - **Results:** stored on the incident (last 3 runs), shown in the panel, and included
+    in the handoff to the Console. Every step is in `remote_exec_log` with the incident
+    id.
+  - **Switch:** Admin → KI → Fehler-Cluster, on by default.
+  - Verified live on "Storage Pool data · 14 Hosts":
+    - The button ran 6 steps on vpp0199, vpp0207 and vpp0210, all with exit 0.
+    - The output fits the alert: `/data/backup` on vpp0199 is 78 % full.
+    - The Console briefing contains the results.
+    - A fresh assessment by qwen35b on the same incident returned 4 valid template
+      steps (`disk_usage`, `process_top`) on hosts of the outbreak.
+  - Tests: 6 (only templates on the outbreak's own hosts, at most 6 steps, basic check,
+    briefing).
+
 - **The Console agent can look up man pages and capabilities on the server.**
   Three new MCP tools: `host_capabilities`, `search_manpages` and `read_manpage`
   (`focus` returns exactly the matching option).

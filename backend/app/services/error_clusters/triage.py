@@ -26,11 +26,53 @@ SYSTEM = (
     '{"titel": str (≤ 80 Zeichen), "zusammenfassung": str (2–3 Sätze), '
     '"vermutete_ursache": str, "betroffene_komponente": str, '
     '"schweregrad": "kritisch"|"hoch"|"mittel", "konfidenz": "hoch"|"mittel"|"niedrig", '
-    '"verwandte_signale": [str], "pruefschritte": [str]}'
+    '"verwandte_signale": [str], "pruefschritte": [str], '
+    '"pruefschritte_auto": [{"host": str, "vorlage": str, "parameter": {}}]}\n'
+    "pruefschritte_auto: höchstens 6 Schritte, die man gleich ausführen kann — NUR mit "
+    "einer Vorlage aus 'vorlagen' (id + deren Parameter) und NUR auf einem Host aus 'hosts'. "
+    "Gibt es keine passende Vorlage, lass den Schritt weg; erfinde keine Befehle."
 )
 
 KEYS = ("titel", "zusammenfassung", "vermutete_ursache", "betroffene_komponente",
         "schweregrad", "konfidenz", "verwandte_signale", "pruefschritte")
+MAX_AUTO_STEPS = 6
+
+
+def validate_steps(steps, hosts: list[str] | None) -> list[dict]:
+    """Strukturierte Prüfschritte gegen die Positivliste prüfen — Ungültiges fällt weg.
+
+    Gültig ist nur: eine bekannte Vorlage (cs_policy), Parameter nach deren Muster, und
+    ein Host, der zu diesem Ausbruch gehört (sonst könnte eine Einschätzung beliebige
+    Hosts prüfen lassen). Was das LLM sonst schreibt, wird nie ausgeführt.
+    """
+    from cs_policy.templates import PolicyError, render
+    from app.services.error_clusters.incident import host_matches
+    out: list[dict] = []
+    for st in steps if isinstance(steps, list) else []:
+        if not isinstance(st, dict):
+            continue
+        host = str(st.get("host") or "").strip()
+        tpl = str(st.get("vorlage") or st.get("template") or "").strip()
+        params = st.get("parameter") or st.get("params") or {}
+        if not host or not isinstance(params, dict):
+            continue
+        if hosts is not None and not host_matches(host, hosts):
+            continue
+        try:
+            render(tpl, params)
+        except PolicyError:
+            continue
+        out.append({"host": host, "template": tpl, "params": {k: str(v) for k, v in params.items()}})
+        if len(out) >= MAX_AUTO_STEPS:
+            break
+    return out
+
+
+def _templates_for_prompt() -> list[dict]:
+    from cs_policy.templates import describe
+    return [{"id": t["id"], "zweck": t["description"],
+             "parameter": {n: p["hint"] for n, p in t["params"].items()}}
+            for t in describe() if t["id"] not in ("man_search", "man_read")]
 
 
 def build_prompt(ctx: dict, correlated: list[dict], checkmk: list[dict]) -> str:
@@ -49,11 +91,12 @@ def build_prompt(ctx: dict, correlated: list[dict], checkmk: list[dict]) -> str:
         "hosts": ctx.get("hosts"),
         "gleichzeitig_auffaellig": correlated[:10],
         "checkmk_alerts_betroffene_hosts": checkmk[:15],
+        "vorlagen": _templates_for_prompt(),
     }
     return json.dumps(payload, ensure_ascii=False, default=str)
 
 
-def parse(raw: str) -> dict | None:
+def parse(raw: str, hosts: list[str] | None = None) -> dict | None:
     """JSON aus der Antwort holen; Denkblöcke und Code-Zäune werden ignoriert."""
     if not raw:
         return None
@@ -71,6 +114,7 @@ def parse(raw: str) -> dict | None:
     for k in ("verwandte_signale", "pruefschritte"):
         v = out.get(k)
         out[k] = [str(x) for x in v] if isinstance(v, list) else ([str(v)] if v else [])
+    out["pruefschritte_auto"] = validate_steps(data.get("pruefschritte_auto"), hosts)
     return out
 
 
@@ -88,7 +132,7 @@ async def triage(db, ctx: dict, correlated: list[dict], checkmk: list[dict]) -> 
         temperature=0.1,
         reasoning_effort="low",
     )
-    result = parse(raw)
+    result = parse(raw, ctx.get("hosts") or [])
     if result is None:
         log.warning("error_clusters triage: unparseable answer (%d chars)", len(raw or ""))
     return result
