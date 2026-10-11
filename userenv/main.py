@@ -251,6 +251,17 @@ SYSTEM_PROMPT = (
     "Befunde zusammengeführt), frage den Nutzer ob du die Analyse mit post_alert_comment speichern sollen.\n"
     "Beispiel: 'Soll ich diese Analyse an dem Alert speichern, damit sie für spätere Incidents verfügbar ist?'\n\n"
 
+    "## SERVER-DOKU: Manpages und Fähigkeiten (MCP, nur lesend):\n"
+    "- host_capabilities(host): OS/Version, vorhandene Werkzeuge (docker? journalctl? zfs?) und "
+    "sudo-Rechte — rufe es ZUERST auf, wenn du einen unbekannten Host untersuchst, statt Befehle "
+    "auszuprobieren.\n"
+    "- search_manpages(host, query): welche Befehle es zu einem Thema auf DIESEM Host gibt.\n"
+    "- read_manpage(host, command, focus): Optionen in der dort installierten Version, z. B. "
+    "read_manpage('web01', 'rsync', '--delete'). Prüfe so jede Option, bei der du unsicher bist, "
+    "bevor du einen Befehl vorschlägst.\n"
+    "Nur Hosts aus dem CheckMK-Inventar. Fehler sind benannt (host_unknown, no_manpage, ssh_failed) — "
+    "ein Fehler heißt NICHT, dass es den Befehl nicht gibt.\n\n"
+
     "## SSH-ZUGRIFF (Serverdiagnose und Fehlerbehebung):\n"
     "Nutze SSH wenn du einen Server direkt untersuchen oder reparieren sollst.\n"
     "Befehl: ssh <hostname> '<befehl>' — nutze den Hostnamen so, wie er dir genannt\n"

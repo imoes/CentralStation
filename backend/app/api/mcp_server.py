@@ -934,6 +934,76 @@ async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
         }
 
 
+# ── Server-Dokumentation: Manpages und Fähigkeiten (Prüf-Container) ──────────
+# Lesend per Konstruktion: es laufen nur die Vorlagen man_search / man_read /
+# host_capabilities aus cs_policy, über den System-Prüfaccount, nur für Hosts aus dem
+# CheckMK-Inventar, jeder Aufruf in remote_exec_log. Ohne ausgewiesenen Aufrufer
+# (Agent-Token) nichts — sonst nutzte jeder, der /api/mcp erreicht, den System-Account.
+
+def _unidentified() -> dict:
+    return {"ok": False, "error": "unidentified",
+            "message": "Aufrufer nicht ausgewiesen (Agent-Token fehlt) — nur aus der Konsole nutzbar."}
+
+
+@mcp.tool()
+async def search_manpages(host: str, query: str) -> dict:
+    """Manpages auf einem SERVER nach einem Stichwort durchsuchen (apropos, Abschnitte 1 und 8).
+
+    Zeigt, welche Befehle es auf genau diesem Host gibt und wozu sie dienen — in der dort
+    installierten Version, nicht aus dem Internet. Nutze das, bevor du einen Befehl
+    vorschlägst, bei dem du unsicher bist, ob er auf dem Host existiert.
+
+    Parameter:
+    - host: Hostname aus dem CheckMK-Inventar (FQDN oder eindeutiger Kurzname)
+    - query: EIN Stichwort, z. B. 'rsync', 'firewall', 'zfs'
+    """
+    user_id = _calling_user_id()
+    if not user_id:
+        return _unidentified()
+    from app.services.manpages import search_manpages as _search
+    return await _search(host, query, user_id)
+
+
+@mcp.tool()
+async def read_manpage(host: str, command: str, focus: str = "", section: str = "") -> dict:
+    """Die Manpage eines Befehls auf einem SERVER lesen — gekürzt auf das Wesentliche.
+
+    Liefert NAME, SYNOPSIS und, mit `focus`, genau die passenden Optionen/Absätze (z. B.
+    focus='--delete' bei rsync). Ohne focus: Anfang der Beschreibung und die Liste der
+    Abschnitte. So prüfst du Optionen in der Version, die auf dem Host läuft.
+
+    Parameter:
+    - host: Hostname aus dem CheckMK-Inventar
+    - command: Befehl/Manpage, z. B. 'rsync', 'systemctl'
+    - focus: optional, Option oder Stichwort, z. B. '--delete', 'timeout'
+    - section: optional, Manpage-Abschnitt, z. B. '8'
+    """
+    user_id = _calling_user_id()
+    if not user_id:
+        return _unidentified()
+    from app.services.manpages import read_manpage as _read
+    return await _read(host, command, focus, section, user_id)
+
+
+@mcp.tool()
+async def host_capabilities(host: str) -> dict:
+    """Was auf einem SERVER vorhanden ist: OS und Version, Kernel, vorhandene Werkzeuge
+    (systemctl, docker, podman, kubectl, nginx, mysql, …) und die sudo-Rechte des
+    Prüfaccounts.
+
+    Rufe das zuerst auf, wenn du einen unbekannten Host untersuchst — dann weißt du z. B.,
+    ob docker überhaupt läuft oder ob journalctl verfügbar ist, statt es auszuprobieren.
+
+    Parameter:
+    - host: Hostname aus dem CheckMK-Inventar
+    """
+    user_id = _calling_user_id()
+    if not user_id:
+        return _unidentified()
+    from app.services.manpages import host_capabilities as _caps
+    return await _caps(host, user_id)
+
+
 # ── Remediation / AWX tools ──────────────────────────────────────
 
 @mcp.tool()

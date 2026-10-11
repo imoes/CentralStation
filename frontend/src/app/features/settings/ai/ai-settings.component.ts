@@ -69,6 +69,13 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showO
     keys: ['error_clusters.enabled', 'error_clusters.mail_enabled'],
   },
   {
+    // Prüf-Container (probe/): liest mit diesem System-SSH-Account NUR feste Vorlagen
+    // (Manpages, Fähigkeiten, Prüfschritte). Das Backend übergibt ihn dem Container.
+    title: 'Prüf-Container (System-SSH)',
+    keys: ['probe.ssh_user', 'probe.ssh_key', 'probe.test_host'],
+    testGroup: 'probe',
+  },
+  {
     title: 'Agent Settings',
     keys: [
       'agent.interval_minutes',
@@ -90,6 +97,10 @@ const SETTING_GROUPS: { title: string; keys: string[]; testGroup?: string; showO
     ],
   },
 ];
+
+// Mehrzeilige Geheimnisse (privater Schlüssel) — ein einzeiliges Passwortfeld würde die
+// Zeilenumbrüche des PEM-Blocks zerstören.
+const TEXTAREA_KEYS = new Set(['probe.ssh_key']);
 
 const BOOLEAN_KEYS = new Set([
   'searxng.enabled', 'agent.auto_jira', 'agent.auto_enrich', 'agent.rag_enabled',
@@ -349,6 +360,16 @@ const SECRET_MASK = '••••••••';
                       </mat-select>
                       <mat-hint>{{ jiraProjects().length ? 'Target project for created tickets' : 'No projects loaded — check Jira/ServiceDesk connector' }}</mat-hint>
                     </mat-form-field>
+                  } @else if (isTextareaKey(key)) {
+                    <mat-form-field appearance="outline" class="setting-field">
+                      <mat-label>{{ keyLabel(key) }}</mat-label>
+                      <textarea matInput [formControlName]="key" rows="4" spellcheck="false"
+                                class="secret-textarea"
+                                [placeholder]="isSecret(key) ? 'Leer lassen = unverändert. -----BEGIN OPENSSH PRIVATE KEY----- …' : ''"></textarea>
+                      @if (hasStoredSecret(key)) {
+                        <mat-hint>Hinterlegt (verschlüsselt). Neu eintragen ersetzt ihn.</mat-hint>
+                      }
+                    </mat-form-field>
                   } @else if (isBooleanKey(key)) {
                     <div class="toggle-row">
                       <span class="key-label">{{ keyLabel(key) }}</span>
@@ -395,6 +416,7 @@ const SECRET_MASK = '••••••••';
   `,
   styles: [`
     .page-container { padding: 24px; max-width: 800px; }
+    .secret-textarea { font-family: monospace; font-size: 12px; -webkit-text-security: disc; }
     .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
     .page-header h2 { margin: 0; }
     .settings-card { margin-bottom: 16px; }
@@ -765,6 +787,11 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
   isBooleanKey(key: string): boolean { return BOOLEAN_KEYS.has(key); }
   isSelectKey(key: string): boolean { return key in SELECT_KEYS; }
   isSecret(key: string): boolean { return !!this.settingsMap.get(key)?.is_secret; }
+  isTextareaKey(key: string): boolean { return TEXTAREA_KEYS.has(key); }
+  hasStoredSecret(key: string): boolean {
+    const item = this.settingsMap.get(key);
+    return !!item?.is_secret && !!item.value;
+  }
   selectOptions(key: string): string[] {
     // Perplexity's third-party models have no list endpoint, so the backend merges a
     // curated set with the Router catalogue — fetched once the provider is selected.
@@ -805,6 +832,9 @@ export class AiSettingsComponent implements OnInit, OnDestroy {
       'agent.auto_jira':                     'Create Jira tickets automatically',
       'error_clusters.enabled':              'Fehler-Cluster erkennen (Graylog-Muster, alle 5 min)',
       'error_clusters.mail_enabled':         'Sofort-Mails an angemeldete Nutzer versenden',
+      'probe.ssh_user':                      'SSH-Nutzer des Prüf-Containers',
+      'probe.ssh_key':                       'Privater SSH-Schlüssel (nur für den Prüf-Container)',
+      'probe.test_host':                     'Test-Host für den Verbindungstest',
       'agent.auto_enrich':                   'AI enrichment automatic (off = on demand)',
       'agent.rag_enabled':                   'Knowledge base search (RAG) in AI agent',
       'workflow.web_search':                 'Web search during AI analysis',

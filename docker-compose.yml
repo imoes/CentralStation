@@ -58,6 +58,10 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       # Internal DNS suffixes for hostname detection — deployment data, kept in .env
       CS_INTERNAL_DOMAINS: ${CS_INTERNAL_DOMAINS:-internal,local}
+      # Prüf-Container (Manpages, Prüfschritte): Adresse + gemeinsames Geheimnis.
+      PROBE_URL: http://probe-runner:8090
+      PROBE_SHARED_SECRET: ${PROBE_SHARED_SECRET:-}
+      CS_PROBE_EXTRA_HOSTS: ${CS_PROBE_EXTRA_HOSTS:-}
       OPENSEARCH_URL: https://opensearch:9200
       OPENSEARCH_USER: admin
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
@@ -110,6 +114,21 @@ services:
       - "127.0.0.1:4200:80"
 
   # Build-only service: produces the centralstation-userenv:latest image.
+  # Prüf-Container: führt NUR die Lese-Vorlagen aus cs_policy aus, mit einem
+  # System-SSH-Account. Den Account stellt der Administrator ein (Admin → KI →
+  # Prüf-Container); das Backend übergibt ihn per POST /configure. Bis dahin: 503.
+  probe-runner:
+    build:
+      context: .
+      dockerfile: probe/Dockerfile
+    restart: unless-stopped
+    environment:
+      PROBE_SHARED_SECRET: ${PROBE_SHARED_SECRET:-}
+      CS_INTERNAL_DOMAINS: ${CS_INTERNAL_DOMAINS:-internal,local}
+      CS_SSH_DENIED_HOSTS: ${CS_SSH_DENIED_HOSTS:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   # Per-user containers (code-server + Hermes in one) are started at runtime by the
   # backend. Profile "userenv" keeps this out of `compose up`.
   userenv:

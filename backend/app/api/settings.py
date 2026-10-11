@@ -186,6 +186,25 @@ async def test_setting_group(
         except Exception as e:
             return TestResult(success=False, message=str(e))
 
+    elif group == "probe":
+        # Prüf-Container: Account übergeben und eine Lese-Vorlage auf dem Test-Host ausführen.
+        from app.services.probe_client import ProbeError, run_probe
+        host = (s.get("probe.test_host") or "").strip()
+        if not host:
+            return TestResult(success=False, message="Test-Host eintragen (probe.test_host)")
+        try:
+            res = await run_probe(host, "host_capabilities", {}, source="test", timeout=30)
+        except ProbeError as e:
+            return TestResult(success=False, message=str(e), detail=e.kind)
+        if res.get("error"):
+            return TestResult(success=False, message=f"SSH fehlgeschlagen ({res['error']})",
+                              detail=(res.get("stderr") or "")[:300])
+        from app.services.manpages import parse_capabilities
+        caps = parse_capabilities(res.get("stdout") or "")
+        return TestResult(success=True,
+                          message=f"Verbindung OK — {res['host']}: {caps['os'].get('pretty_name', '?')}",
+                          detail=caps.get("identity") or None)
+
     elif group == "vision":
         url = (s.get("llm.vision_base_url") or "").rstrip("/")
         if not url:

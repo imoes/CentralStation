@@ -973,6 +973,31 @@ MCP servers:
   + personal connectors (VibeMK, AWX-NG, …)
 ```
 
+### Server documentation: man pages and capabilities (probe runner)
+
+The Console agents can look things up on the server itself, in the version installed there:
+
+| MCP tool | What it does |
+|---|---|
+| `host_capabilities(host)` | OS/version, kernel, available tools (docker, journalctl, zfs, …), sudo rights of the probe account |
+| `search_manpages(host, query)` | `apropos` for sections 1 and 8 |
+| `read_manpage(host, command, focus)` | NAME, SYNOPSIS and — with `focus` — exactly the matching option entries (e.g. `--delete`) |
+
+- **How it runs:** the tools go through the **probe runner** (`probe/`, compose service
+  `probe-runner`). It accepts only the fixed read-only templates of `cs_policy/templates.py`:
+  template id plus parameters, each validated against its pattern and shell-quoted, never free
+  command text.
+- **Which hosts:** only hosts from the CheckMK inventory, plus `CS_PROBE_EXTRA_HOSTS`. The
+  Docker host is never a target (`CS_SSH_DENIED_HOSTS`).
+- **Who may call:** only callers that authenticate with the agent token. Every call is
+  recorded in `remote_exec_log` (user, host, template, exit code; not the output).
+- **Account:** the probe runner's SSH account is set by the administrator under Admin → KI →
+  Prüf-Container (`probe.ssh_user`, `probe.ssh_key` encrypted, `probe.test_host` for the
+  connection test). The backend hands it to the runner (`POST /configure`) and re-sends it
+  after a restart or change, detected by fingerprint.
+- **Results are cached** (man pages 6 h, search and capabilities 1 h).
+- **Errors are named:** `host_unknown`, `not_configured`, `no_manpage`, `ssh_failed`.
+
 ### Write operations need consent (read-only by default)
 
 The Console agent is read-only until a human opens a **write window**. This is enforced in

@@ -12,6 +12,33 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ## 2026-10-11 — Console security, block 0 of the console plan
 
+### What is new
+
+- **The Console agent can look up man pages and capabilities on the server.**
+  Three new MCP tools: `host_capabilities`, `search_manpages` and `read_manpage`
+  (`focus` returns exactly the matching option).
+  - They run through a new **probe runner** (`probe/`). It executes only fixed read-only
+    templates from `cs_policy/templates.py`: no free command text, and no `--help`
+    execution, because programs that ignore `--help` would simply run.
+  - Only hosts from the CheckMK inventory (3,093 hosts) are allowed, and only callers
+    with an agent token.
+  - Every call is logged in `remote_exec_log`.
+  - The SSH account is set by the administrator under Admin → KI → Prüf-Container, for
+    now `marvin`. The backend hands it to the runner and re-sends it after a restart or
+    change.
+  - Verified live on vpp0221 (Debian 13):
+    - Capabilities found zfs, pvesh and journalctl, and no docker.
+    - `search_manpages rsync` returned rsync, rrsync and rsync-ssl.
+    - `read_manpage rsync --delete` returned exactly the option entry.
+    - A missing page answers `no_manpage`, and a host outside the inventory answers
+      `host_unknown`.
+  - Asked about rsync options on vpp0221, both GLM 5.3 Flash (Hermes) and Claude used
+    `read_manpage` on their own instead of answering from memory. Claude also determined
+    the installed version (3.4.1).
+  - Tests: 33 for the templates and SSH execution, 13 for the man page tools.
+  - Not yet verified: the connection test against docker-test failed, because the host
+    is unreachable from hal right now ("No route to host").
+
 ### What was fixed
 
 - **Agent text could run script in the browser.** The Console rendered the agent's

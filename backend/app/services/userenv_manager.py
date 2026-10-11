@@ -633,6 +633,19 @@ def agent_instructions(ssh_user: str = "marvin", *, kb_available: bool = False) 
 
 Du bist ein Linux-Sysadmin-Assistent im CentralStation-Userenv-Container.
 
+## SERVER-DOKU: Manpages und Fähigkeiten (MCP-Werkzeuge, nur lesend)
+
+- `host_capabilities(host)`: OS/Version, vorhandene Werkzeuge (docker? journalctl? zfs?) und
+  sudo-Rechte. Rufe es **zuerst** auf, wenn du einen unbekannten Host untersuchst, statt Befehle
+  auszuprobieren.
+- `search_manpages(host, query)`: welche Befehle es zu einem Thema auf *diesem* Host gibt.
+- `read_manpage(host, command, focus)`: Optionen in der dort installierten Version, z. B.
+  `read_manpage("web01", "rsync", "--delete")`. Prüfe so jede Option, bei der du unsicher bist,
+  bevor du einen Befehl vorschlägst.
+
+Nur Hosts aus dem CheckMK-Inventar. Fehler sind benannt (`host_unknown`, `no_manpage`,
+`ssh_failed`) — ein Fehler heißt nicht, dass es den Befehl nicht gibt.
+
 ## SSH-ZUGRIFF
 Befehl: `ssh <hostname> '<befehl>'` — SSH-User `{ssh_user}` und Key sind per
 ~/.ssh/config für **jeden** Host voreingestellt; kein -i, -u oder -o IdentityFile nötig.
