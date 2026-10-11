@@ -97,6 +97,14 @@ TEMPLATES: dict[str, Template] = {t.id: t for t in [
     Template("listening_ports", "Lauschende TCP-Ports", "ss -tlnH 2>/dev/null || netstat -tln"),
     Template("process_top", "Prozesse nach CPU",
              "ps -eo pid,user,%cpu,%mem,etime,comm --sort=-%cpu | head -n 25"),
+    Template("zfs_pools", "ZFS-Pools: Größe, Belegung, Fragmentierung, Zustand",
+             "zpool list -o name,size,alloc,free,frag,cap,health 2>/dev/null "
+             "|| sudo -n zpool list -o name,size,alloc,free,frag,cap,health; "
+             "zpool status -x 2>/dev/null || sudo -n zpool status -x"),
+    Template("zfs_datasets", "ZFS-Datasets eines Pools: Belegung, Snapshots, Quotas",
+             "zfs list -o name,used,avail,refer,usedbysnapshots,quota,reservation -r -- {pool} 2>/dev/null "
+             "|| sudo -n zfs list -o name,used,avail,refer,usedbysnapshots,quota,reservation -r -- {pool}",
+             {"pool": Param(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}", hint="Pool/Dataset, z. B. data")}),
     Template("package_version", "Installierte Version eines Pakets",
              "dpkg-query -W -f='${{Package}} ${{Version}}\\n' -- {package} 2>/dev/null "
              "|| rpm -q -- {package}",

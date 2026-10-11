@@ -1098,7 +1098,9 @@ export class ComputerComponent implements OnInit, OnDestroy {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ messages }),
+        // session_id: für Incident-Sitzungen liest das Backend daraus die ausgeführten
+        // Befehle und lernt ein Rezept (services/recipes.py).
+        body: JSON.stringify({ messages, session_id: session.session_id }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       this.sessions.update(ss => ss.map(s =>

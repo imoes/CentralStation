@@ -128,3 +128,12 @@ from app.services.error_clusters.notify import fmt_rate  # noqa: E402
 def test_rate_format_switches_unit_for_readability(count, seconds, expected):
     """Dieselben Stufen wie shared/format-rate.ts im Frontend."""
     assert fmt_rate(count, seconds) == expected
+
+
+def test_mail_shows_a_known_recipe_with_the_button_hint():
+    rec = {"title": "Backup-Pool voll", "solution": "Alte Backups entfernt",
+           "steps": [{"template": "zfs_pools", "params": {}, "why": "Pool-Zustand"}]}
+    html = render_html({**CTX, "recipe": rec}, None, None, pending=False)
+    assert "Bewährtes Rezept" in html and "Backup-Pool voll" in html and "zfs_pools" in html
+    assert "Prüfschritte ausführen" in html
+    assert "Bewährtes Rezept" not in render_html(CTX, None, None, pending=False)

@@ -14,6 +14,37 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What is new
 
+- **Recipes: resolved incidents teach the next outbreak.**
+  - **Linking:** a Console session started from an incident is now bound to it
+    (`incident:<id>`), so "✓ GELÖST" appears there too.
+  - **What resolving does:** it stores the solution on the incident and learns a recipe
+    from the commands that actually ran, not from the chat. The source is a new userenv
+    endpoint `/sessions/{sid}/tool-calls`, reading the Hermes SessionDB, Claude's
+    `.jsonl` or Codex' rollout.
+  - **What a recipe contains:** the AI maps the read-only commands to `cs_policy`
+    templates and validates them. Anything without a template (including every writing
+    command) stays text only and never runs.
+  - **Where it is stored:** on the pattern (`LogTemplate.key`, for fleet clusters too),
+    otherwise on the host, and mirrored as a cs-knowledge runbook.
+  - **Applying:** at the next outbreak of the same pattern, the recipe appears in the
+    incident, in the immediate mail and in the Console handoff. Its steps run through the
+    "Prüfschritte ausführen" button, recipe steps first.
+  - New read-only templates `zfs_pools` and `zfs_datasets`. The first recipe test showed
+    that zpool/zfs commands otherwise stay unusable text.
+  - Verified live on "Storage Pool data · 14 Hosts":
+    - A Claude session read pool `data` on vpp0199 over SSH: 75 %, healthy, almost
+      everything in `data/backup`.
+    - "Gelöst" produced the recipe "CheckMK-Alarm: Storage Pool data auf mehreren
+      Hosts" with `disk_usage`, `zfs_pools` and `zfs_datasets pool=data`.
+    - The incident now proposes exactly these steps (origin "rezept").
+    - Both ZFS templates ran on vpp0199 with exit 0.
+    - The probe runner keeps `known_hosts` across restarts (volume `probe-ssh`).
+  - Tests: 7 for recipes, 1 for the recipe block in the mail, 2 for the ZFS templates.
+  - Known gap: Codex sessions yield recipes only while their container is alive, because
+    the thread id is not persisted yet.
+- Lessons learned from alert sessions stored `service="cmk"` or `"ecl"` instead of the
+  service. They now store service and host from `cmk:<host>:<service>`.
+
 - **Check steps per button in the incident (experimental, read-only).** The incident
   view, opened from the mail link, has a "Prüfschritte ausführen" button.
   - It runs read-only templates through the probe runner. Nothing runs automatically,

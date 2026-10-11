@@ -940,17 +940,21 @@ async def incident_timeline(
             "merged_into": next((e.get("incident_id") for e in (inc.causal_context or [])
                                  if isinstance(e, dict) and e.get("type") == "merged_into"), None),
             # Prüfschritte (experimentell, nur per Knopf): was geplant ist und was lief.
-            **_checks_payload(inc),
+            **_checks_payload(inc, await _recipe_for(db, inc)),
         },
         "timeline": timeline,
     }
 
 
-def _checks_payload(inc) -> dict:
+def _checks_payload(inc, recipe=None) -> dict:
     from app.services.error_clusters.checks import check_runs, planned_steps
     from app.services.error_clusters.incident import cluster_context
-    steps, origin = planned_steps(cluster_context(inc))
-    return {"planned_checks": steps, "planned_checks_origin": origin, "check_runs": check_runs(inc)}
+    from app.services.recipes import summary_of
+    steps, origin = planned_steps(cluster_context(inc), recipe)
+    return {"planned_checks": steps, "planned_checks_origin": origin, "check_runs": check_runs(inc),
+            "recipe": summary_of(recipe),
+            "resolution": next((e for e in (inc.causal_context or [])
+                                if isinstance(e, dict) and e.get("type") == "resolution"), None)}
 
 
 @router.post("/incidents/{incident_id}/run-checks")
@@ -973,7 +977,7 @@ async def run_incident_checks(
         raise HTTPException(400, "Ungültige Incident-ID")
     if not inc:
         raise HTTPException(404, "Incident nicht gefunden")
-    run = await run_checks(db, inc, user)
+    run = await run_checks(db, inc, user, await _recipe_for(db, inc))
     if not run["results"]:
         raise HTTPException(422, "Keine Prüfschritte für diesen Incident (keine Hosts bekannt)")
     return run
@@ -985,6 +989,8 @@ async def run_incident_checks(
 
 class _ComputerResolveBody(BaseModel):
     messages: list[dict]  # [{role: "user"|"assistant", text: str}]
+    # Konsolen-Sitzung — für Incident-Sitzungen Quelle des Rezepts (ausgeführte Befehle).
+    session_id: str | None = None
 
 
 @router.post("/computer-resolve")
@@ -1046,6 +1052,9 @@ async def computer_resolve_alert(
 
     comment_body = f"🖥 **Lernkommentar (Computer-Diagnose):**\n{summary}"
 
+    if external_id.startswith("incident:"):
+        return await _resolve_incident_session(external_id, body, user, db, summary, comment_body)
+
     collab = await _get_or_create_collab(external_id, db)
     await _add_timeline(external_id, None, "Computer (KI)", "ai", comment_body, db)
     await db.commit()
@@ -1076,10 +1085,14 @@ async def computer_resolve_alert(
     # Living Documentation: Erkenntnis in cs-knowledge speichern
     try:
         from app.services.knowledge_index import store_knowledge
-        _service = external_id.split(":")[0] if ":" in external_id else ""
+        # cmk:<host>:<service> → Dienst und Host; bis 2026-10-11 landete hier "cmk"/"ecl".
+        _parts = external_id.split(":")
+        _service = _parts[2] if _parts[0] == "cmk" and len(_parts) > 2 else ""
+        _host = _parts[1] if _parts[0] == "cmk" and len(_parts) > 1 else ""
         await store_knowledge({
             "kind": "lesson",
             "service": _service,
+            "host": _host,
             "title": summary[:120],
             "problem": external_id,
             "solution": summary,
@@ -1092,6 +1105,40 @@ async def computer_resolve_alert(
 
     log.info("computer-resolve: Lernkommentar gespeichert für %s (%d Zeichen)", external_id[:24], len(summary))
     return {"ok": True, "comment": comment_body}
+
+
+async def _resolve_incident_session(external_id, body, user, db, summary, comment_body):
+    """„✓ GELÖST" einer Incident-Sitzung: Lösung am Incident festhalten und ein Rezept
+    aus den tatsächlich ausgeführten Befehlen lernen (services/recipes.py)."""
+    import uuid as _uuid
+    from datetime import datetime, timezone
+    from sqlalchemy import update as sa_update
+    from app.models.workflow import ComputerSession, Incident
+    try:
+        inc = await db.get(Incident, _uuid.UUID(external_id.split(":", 1)[1]))
+    except ValueError:
+        raise HTTPException(400, "Ungültige Incident-ID")
+    if not inc:
+        raise HTTPException(404, "Incident nicht gefunden")
+    others = [e for e in (inc.causal_context or [])
+              if not (isinstance(e, dict) and e.get("type") == "resolution")]
+    inc.causal_context = others + [{"type": "resolution", "at": datetime.now(timezone.utc).isoformat(),
+                                    "by": user.email, "summary": summary,
+                                    "session_id": body.session_id}]
+    await db.execute(sa_update(ComputerSession)
+                      .where(ComputerSession.external_id == external_id, ComputerSession.user_id == user.id)
+                      .values(resolved=True))
+    await db.commit()
+    recipe = None
+    if body.session_id:
+        try:
+            from app.services.recipes import distill
+            recipe = await distill(db, inc, session_id=body.session_id, user=user, summary=summary)
+        except Exception as exc:  # noqa: BLE001 — Lösung ist gespeichert, Rezept optional
+            log.warning("computer-resolve: recipe for %s failed: %s", external_id, exc)
+    log.info("computer-resolve: Incident %s gelöst, Rezept %s", external_id[:20],
+             recipe["title"][:40] if recipe else "—")
+    return {"ok": True, "comment": comment_body, "recipe": recipe}
 
 
 @router.get("/hermes-context")
@@ -1286,6 +1333,15 @@ def _check_prompt_lines(inc) -> list[str]:
     return prompt_lines(inc)
 
 
+async def _recipe_for(db, inc):
+    try:
+        from app.services.recipes import for_incident
+        return await for_incident(db, inc)
+    except Exception as exc:  # noqa: BLE001 — ein fehlendes Rezept darf die Ansicht nicht kexample
+        log.warning("recipe lookup for incident %s failed: %s", str(inc.id)[:8], exc)
+        return None
+
+
 @router.get("/incidents/{incident_id}/claude-prompt")
 async def incident_claude_prompt(
     incident_id: str,
@@ -1329,6 +1385,8 @@ async def incident_claude_prompt(
         # viele Container/Hosts hat seine Ursache meist woanders (Abhängigkeit, Zugang).
         lines.extend(_cluster_prompt_section(cluster, kind, severity, created_str))
         lines.extend(_check_prompt_lines(inc))
+        from app.services.recipes import prompt_lines as _recipe_lines, summary_of as _rsum
+        lines.extend(_recipe_lines(_rsum(await _recipe_for(db, inc))))
     else:
         lines.append(f"# Incident-Untersuchung: {host}")
         lines.append("")

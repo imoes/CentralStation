@@ -17,7 +17,7 @@ from cs_policy.templates import TEMPLATES, PolicyError, agent_templates, render
 
 def test_every_template_renders_with_its_defaults_or_sample():
     samples = {"query": "rsync", "page": "rsync", "unit": "nginx.service",
-               "name": "web-1", "package": "openssh-server"}
+               "name": "web-1", "package": "openssh-server", "pool": "data"}
     for tid, tpl in TEMPLATES.items():
         params = {n: samples[n] for n, p in tpl.params.items() if p.required and p.default is None}
         assert render(tid, params)
@@ -35,6 +35,8 @@ def test_every_template_renders_with_its_defaults_or_sample():
     ("journal_tail", {"unit": "nginx", "since": "yesterday; id"}),
     ("container_logs", {"name": "web`id`"}),
     ("package_version", {"package": "../../etc/passwd"}),
+    ("zfs_datasets", {"pool": "data; zfs destroy data"}),
+    ("zfs_datasets", {"pool": "-r data"}),
 ])
 def test_parameters_outside_their_pattern_are_refused(tid, params):
     with pytest.raises(PolicyError):

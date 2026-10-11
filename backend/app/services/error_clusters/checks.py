@@ -9,6 +9,7 @@ remote_exec_log. Nichts läuft automatisch, nichts geht per Mail hinaus.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -20,12 +21,25 @@ OUTPUT_CHARS = 4000
 KEEP_RUNS = 3
 
 
-def planned_steps(ctx: dict | None) -> tuple[list[dict], str]:
-    """(Schritte, Herkunft) — "triage" oder "basis"."""
+def planned_steps(ctx: dict | None, recipe=None) -> tuple[list[dict], str]:
+    """(Schritte, Herkunft) — Rezept-Schritte zuerst (bewährt), dann die der Einschätzung;
+    ohne beides eine Basisprüfung. Herkunft: "rezept", "triage", "rezept+triage", "basis"."""
     ctx = ctx or {}
     auto = (ctx.get("triage") or {}).get("pruefschritte_auto") or []
-    if auto:
-        return auto[:MAX_STEPS], "triage"
+    from_recipe: list[dict] = []
+    if recipe is not None and getattr(recipe, "steps", None):
+        from app.services.recipes import materialize
+        hosts = list(ctx.get("docker_hosts") or []) + list(ctx.get("hosts") or [])
+        from_recipe = materialize(recipe.steps, hosts)
+    if from_recipe or auto:
+        seen, steps = set(), []
+        for st in from_recipe + auto:
+            k = (st["host"], st["template"], json.dumps(st.get("params") or {}, sort_keys=True))
+            if k not in seen:
+                seen.add(k)
+                steps.append(st)
+        origin = "+".join(x for x, has in (("rezept", from_recipe), ("triage", auto)) if has)
+        return steps[:MAX_STEPS], origin
     hosts = [h for h in (ctx.get("docker_hosts") or ctx.get("hosts") or []) if "." in h]
     steps = []
     for h in hosts[:BASIS_HOSTS]:
@@ -38,12 +52,14 @@ def check_runs(inc) -> list[dict]:
     return [e for e in (inc.causal_context or []) if isinstance(e, dict) and e.get("type") == "check_run"]
 
 
-async def run_checks(db, inc, user) -> dict:
+async def run_checks(db, inc, user, recipe=None) -> dict:
     """Schritte ausführen, Ergebnis am Incident speichern (letzte KEEP_RUNS Läufe)."""
     from app.services.error_clusters.incident import cluster_context
     from app.services.probe_client import ProbeError, run_probe
 
-    steps, origin = planned_steps(cluster_context(inc))
+    steps, origin = planned_steps(cluster_context(inc), recipe)
+    if recipe is not None and "rezept" in origin:
+        recipe.applied_count = (recipe.applied_count or 0) + 1
     results = []
     for st in steps:
         item = {"host": st["host"], "template": st["template"], "params": st.get("params") or {}}

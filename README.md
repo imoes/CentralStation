@@ -998,6 +998,26 @@ The Console agents can look things up on the server itself, in the version insta
 - **Results are cached** (man pages 6 h, search and capabilities 1 h).
 - **Errors are named:** `host_unknown`, `not_configured`, `no_manpage`, `ssh_failed`.
 
+### Check steps and recipes (incidents)
+
+- **Check steps** (experimental, button only): the incident view, opened from the mail
+  link, has "Prüfschritte ausführen".
+  - The steps are, in this order: recipe steps, then the AI assessment's
+    `pruefschritte_auto`, otherwise a basic disk/memory check.
+  - Every step is a `cs_policy` template on a host of this outbreak and runs through the
+    probe runner. Results are stored on the incident and included in the Console
+    handoff.
+  - Switch: `error_clusters.checks_enabled`.
+- **Recipes:**
+  - **Source:** "✓ GELÖST" on a Console session that came from an incident
+    (`external_id = incident:<id>`).
+  - **Content:** the session's executed tool calls (userenv `/sessions/{sid}/tool-calls`),
+    mapped to templates by the AI and validated. Unmatched commands stay text.
+  - **Storage:** table `recipes`, keyed by pattern (`LogTemplate.key`) or host, mirrored
+    as a cs-knowledge runbook.
+  - **Shown:** in the incident, the immediate mail and the Console handoff of the next
+    outbreak.
+
 ### Write operations need consent (read-only by default)
 
 The Console agent is read-only until a human opens a **write window**. This is enforced in

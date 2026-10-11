@@ -1387,6 +1387,100 @@ def get_history(sid: str):
     raise HTTPException(404, "Session nicht gefunden")
 
 
+@app.get("/sessions/{sid}/tool-calls")
+def get_tool_calls(sid: str):
+    """Die Werkzeugaufrufe einer Sitzung: [{tool, command, input}] — Quelle für Rezepte.
+
+    Bewusst die AUSGEFÜHRTEN Aufrufe, nicht der Chat-Text: ein Rezept soll festhalten,
+    was tatsächlich geholfen hat, nicht was das Modell darüber erzählt.
+    - Hermes: SessionDB (assistant.tool_calls, OpenAI-Format)
+    - Claude: ~/.claude/projects/*/<sid>.jsonl (tool_use-Blöcke)
+    - Codex: Rollout der Thread-ID (function_call) — nur solange der Container die
+      Thread-ID kennt (sie liegt im Speicher des Sitzungs-Dicts)
+    """
+    agent_type = _sessions.get(sid, {}).get("agent_type")
+    calls: list[dict] = []
+    if agent_type == "codex_cli":
+        calls = _codex_tool_calls(_sessions[sid].get("codex_session_id") or "")
+    elif agent_type == "claude_cli" or (sid not in _sessions and _claude_jsonl(sid)):
+        calls = _claude_tool_calls(sid)
+    else:
+        try:
+            from hermes_state import SessionDB
+            db = SessionDB()
+            tip = _find_lineage_tip(db, sid)
+            for m in db.get_messages_as_conversation(tip, include_ancestors=(tip != sid)) or []:
+                for tc in m.get("tool_calls") or []:
+                    fn = tc.get("function") or {}
+                    calls.append(_call(fn.get("name", ""), fn.get("arguments")))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("tool-calls: SessionDB read for %s failed: %s", sid[:8], exc)
+    return {"session_id": sid, "agent_type": agent_type or "hermes", "calls": calls[:300]}
+
+
+def _call(name: str, args) -> dict:
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            args = {"raw": args}
+    args = args if isinstance(args, dict) else {}
+    cmd = args.get("command") or args.get("cmd") or ""
+    if isinstance(cmd, list):
+        cmd = " ".join(str(c) for c in cmd)
+        for prefix in ("/bin/bash -lc ", "bash -lc ", "/bin/sh -c "):
+            if cmd.startswith(prefix):
+                cmd = cmd[len(prefix):]
+    return {"tool": name, "command": str(cmd)[:2000],
+            "input": {k: (str(v)[:300] if not isinstance(v, (int, float, bool)) else v)
+                      for k, v in list(args.items())[:12] if k not in ("command", "cmd", "content")}}
+
+
+def _claude_jsonl(sid: str) -> str | None:
+    import glob as _glob
+    cfg_dir = os.environ.get("CLAUDE_CONFIG_DIR", f"{_YOLO_HOME}/.claude")
+    m = _glob.glob(f"{cfg_dir}/projects/*/{sid}.jsonl")
+    return m[0] if m else None
+
+
+def _claude_tool_calls(sid: str) -> list[dict]:
+    path = _claude_jsonl(sid)
+    out: list[dict] = []
+    if not path:
+        return out
+    with open(path) as fh:
+        for line in fh:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if ev.get("type") != "assistant":
+                continue
+            for b in (ev.get("message") or {}).get("content") or []:
+                if isinstance(b, dict) and b.get("type") == "tool_use":
+                    out.append(_call(b.get("name", ""), b.get("input") or {}))
+    return out
+
+
+def _codex_tool_calls(thread_id: str) -> list[dict]:
+    import glob as _glob
+    out: list[dict] = []
+    if not thread_id:
+        return out
+    home = os.environ.get("CODEX_HOME", f"{_YOLO_HOME}/.codex")
+    for path in _glob.glob(f"{home}/sessions/**/rollout-*{thread_id}*.jsonl", recursive=True):
+        with open(path) as fh:
+            for line in fh:
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                pl = ev.get("payload") or {}
+                if ev.get("type") == "response_item" and pl.get("type") == "function_call":
+                    out.append(_call(pl.get("name", ""), pl.get("arguments")))
+    return out
+
+
 # ── Message → SSE stream ───────────────────────────────────────────
 
 class MessageBody(BaseModel):

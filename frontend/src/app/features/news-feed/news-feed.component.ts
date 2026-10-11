@@ -69,6 +69,12 @@ interface CheckResult extends CheckStep {
   stderr?: string; truncated?: boolean; duration_ms?: number;
 }
 interface CheckRun { at: string; by?: string; origin: string; results: CheckResult[]; }
+interface RecipeSummary {
+  id: string; title: string; problem?: string; solution?: string; created_at?: string;
+  steps: { template: string; params?: Record<string, string>; host?: string | null; why?: string }[];
+  other_commands: { command: string; purpose?: string; writes?: boolean }[];
+  applied_count?: number;
+}
 
 interface IncidentTimeline {
   incident: {
@@ -86,8 +92,11 @@ interface IncidentTimeline {
     merged_into?: string | null;
     /** Prüfschritte (experimentell, nur per Knopf) — Backend error_clusters/checks.py */
     planned_checks?: CheckStep[];
-    planned_checks_origin?: 'triage' | 'basis';
+    planned_checks_origin?: string;
     check_runs?: CheckRun[];
+    /** Bewährtes Rezept aus einem früheren, gelösten Vorfall (services/recipes.py) */
+    recipe?: RecipeSummary | null;
+    resolution?: { at: string; by?: string; summary: string } | null;
   };
   timeline: {
     at: string;
@@ -888,12 +897,35 @@ const SEVERITY_COLOR: Record<string, string> = {
                   }
                 </div>
               }
+              @if (incidentTimeline()!.incident.resolution; as res) {
+                <div class="recipe-box resolved">
+                  <b>Gelöst</b> <span class="cluster-dim">{{ res.at | date:'dd.MM. HH:mm' }} · {{ res.by }}</span>
+                  <div>{{ res.summary }}</div>
+                </div>
+              }
+              @if (incidentTimeline()!.incident.recipe; as rec) {
+                <div class="recipe-box">
+                  <b>Bewährtes Rezept</b> <span class="cluster-dim">aus einem früheren Vorfall ·
+                    {{ rec.created_at | date:'dd.MM.yy' }} · {{ rec.applied_count || 0 }}× angewendet</span>
+                  <div class="recipe-title">{{ rec.title }}</div>
+                  @if (rec.solution) { <div><b>Lösung damals:</b> {{ rec.solution }}</div> }
+                  @if (rec.other_commands.length) {
+                    <div class="cluster-sub">Damals außerdem (nicht automatisch):</div>
+                    <ul class="checks-plan">
+                      @for (o of rec.other_commands; track $index) {
+                        <li><code>{{ o.command }}</code> {{ o.purpose }}
+                          @if (o.writes) { <span class="recipe-writes">schreibend — nur mit Freigabe</span> }</li>
+                      }
+                    </ul>
+                  }
+                </div>
+              }
               @if (incidentTimeline()!.incident.planned_checks?.length) {
                 @let inc = incidentTimeline()!.incident;
                 <div class="checks-box">
                   <div class="checks-head">
                     <span><b>Prüfschritte</b> <span class="cluster-dim">(experimentell · nur lesend ·
-                      {{ inc.planned_checks_origin === 'triage' ? 'aus der KI-Einschätzung' : 'Basisprüfung der Hosts' }})</span></span>
+                      {{ checkOriginLabel(inc.planned_checks_origin) }})</span></span>
                     <button mat-stroked-button class="checks-run-btn" [disabled]="checksRunning()"
                             (click)="runIncidentChecks(inc.id)">
                       <mat-icon>{{ checksRunning() ? 'hourglass_top' : 'play_arrow' }}</mat-icon>
@@ -1606,6 +1638,10 @@ const SEVERITY_COLOR: Record<string, string> = {
     .cluster-meta, .cluster-dim { opacity: .75; font-size: 12px; }
     .cluster-reasons { margin: 4px 0 6px 18px; padding: 0; font-size: 12px; }
     .cluster-ai { margin: 6px 0; padding: 6px 8px; border-radius: 6px; background: var(--mat-sys-surface-container); }
+    .recipe-box { margin: 8px 0; padding: 8px; border-radius: 6px; border: 1px solid var(--mat-sys-tertiary); font-size: 13px; }
+    .recipe-box.resolved { border-color: var(--mat-sys-primary); }
+    .recipe-title { font-weight: 600; margin: 2px 0; }
+    .recipe-writes { color: var(--mat-sys-error); font-size: 11px; margin-left: 4px; }
     .checks-box { margin: 8px 0; padding: 8px; border-radius: 6px; border: 1px dashed var(--mat-sys-outline-variant); }
     .checks-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
     .checks-plan { margin: 6px 0; padding-left: 18px; font-size: 12px; }
@@ -2638,7 +2674,10 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
           setTimeout(() => this.promptCopied.set(false), 2000);
           // Eine Sitzung je INCIDENT, nicht je Host: Cluster-Incidents teilen sich oft
           // den Docker-Host — zwei verschiedene Ausbrüche landeten sonst in einer Sitzung.
-          this.computerService.openWithContext(data.prompt, label, `incident:${incidentId}`);
+          // externalId = incident:<id>: macht die Sitzung dauerhaft dem Incident zugeordnet
+          // (✓ GELÖST erscheint) — beim Lösen entsteht daraus ein Rezept fürs Muster.
+          this.computerService.openWithContext(data.prompt, label, `incident:${incidentId}`,
+                                               `incident:${incidentId}`);
         },
         error: () => {
           this.copyingPrompt.set(false);
@@ -2648,6 +2687,15 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   checksRunning = signal(false);
+
+  checkOriginLabel(origin?: string): string {
+    switch (origin) {
+      case 'rezept': return 'aus dem bewährten Rezept';
+      case 'triage': return 'aus der KI-Einschätzung';
+      case 'rezept+triage': return 'Rezept + KI-Einschätzung';
+      default: return 'Basisprüfung der Hosts';
+    }
+  }
 
   checkParams(p?: Record<string, string>): string {
     const e = Object.entries(p || {});

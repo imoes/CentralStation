@@ -85,6 +85,18 @@ def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
     else:
         rows.append('<p style="color:#777"><i>KI-Einschätzung nicht verfügbar.</i></p>')
 
+    rec = ctx.get("recipe")
+    if rec:
+        steps = "".join(f"<li>{_esc(st.get('template'))} {_esc(st.get('params') or '')} — "
+                        f"{_esc(st.get('why') or '')}</li>" for st in rec.get("steps") or [])
+        rows.append(f"""
+        <div style="margin:10px 0;padding:8px;border:1px solid #9c6;border-radius:6px">
+        <b>Bewährtes Rezept aus einem früheren Vorfall:</b> {_esc(rec.get('title'))}<br>
+        <span style="color:#555">Lösung damals: {_esc(rec.get('solution'))}</span>
+        {f'<ol>{steps}</ol>' if steps else ''}
+        <span style="color:#777;font-size:12px">Ausführen (nur lesend): Incident öffnen → „Prüfschritte ausführen".</span>
+        </div>""")
+
     containers = ctx.get("containers") or []
     cont_html = "".join(f"<tr><td>{_esc(c['name'])}</td><td style='text-align:right'>"
                         f"{fmt_int(c['count'])}</td></tr>" for c in containers[:15])
@@ -272,6 +284,11 @@ async def deliver(ctx: dict, title: str, cluster_id: str, incident_id: str | Non
     async with AsyncSessionLocal() as db:
         app_url = await _public_url(db)
         to = await recipients(db, ctx.get("hosts") or []) if cfg.mail_enabled else []
+        try:
+            from app.services.recipes import for_cluster, summary_of
+            ctx["recipe"] = summary_of(await for_cluster(db, cluster_id))
+        except Exception as exc:  # noqa: BLE001 — ohne Rezept geht die Mail trotzdem
+            log.warning("error_clusters: recipe lookup failed: %s", exc)
 
     async def _run_triage():
         async with AsyncSessionLocal() as tdb:

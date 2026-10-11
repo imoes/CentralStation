@@ -126,6 +126,9 @@ services:
       PROBE_SHARED_SECRET: ${PROBE_SHARED_SECRET:-}
       CS_INTERNAL_DOMAINS: ${CS_INTERNAL_DOMAINS:-internal,local}
       CS_SSH_DENIED_HOSTS: ${CS_SSH_DENIED_HOSTS:-}
+    volumes:
+      # known_hosts überlebt Neustarts (sonst bei jedem Lauf "Permanently added …").
+      - probe-ssh:/root/.ssh
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -164,3 +167,6 @@ services:
     depends_on:
       - backend
       - frontend
+
+volumes:
+  probe-ssh:
