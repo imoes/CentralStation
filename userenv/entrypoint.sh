@@ -8,6 +8,12 @@ set -e
 
 SSH_DIR="$HOME/.ssh"
 
+# Getrennter Modus (Block 5): als root gestartet → Root-Teil (Schleuse, Hermes als agent),
+# der danach dieses Skript als yolo mit CS_SKIP_HERMES=1 erneut aufruft.
+if [ "$(id -u)" = "0" ] && [ "${CS_AGENT_SPLIT:-0}" = "1" ]; then
+    exec /usr/local/bin/cs-split-start.sh
+fi
+
 # Sanity-check: container must not run as root (claude --dangerously-skip-permissions is
 # blocked for root since 2.1.195). The image sets USER yolo (1000); if someone overrides
 # this, warn loudly but continue so the rest of the stack still works.
@@ -228,8 +234,12 @@ unset _hermes_cfg
 # whatever the user installed into their venv.
 _uvicorn="/opt/venv/bin/uvicorn"
 [ -x "$_uvicorn" ] || _uvicorn="uvicorn"   # fallback if the system venv moved
-cd /app && "$_uvicorn" main:app --host 0.0.0.0 --port 8001 &
-echo "cs-entrypoint: hermes started on :8001 (pid $!) via $_uvicorn"
+if [ "${CS_SKIP_HERMES:-0}" = "1" ]; then
+    echo "cs-entrypoint: hermes runs as agent (split mode) — not started here"
+else
+    cd /app && "$_uvicorn" main:app --host 0.0.0.0 --port 8001 &
+    echo "cs-entrypoint: hermes started on :8001 (pid $!) via $_uvicorn"
+fi
 unset _uvicorn
 
 # ── code-server in foreground on :8080 ────────────────────────────────

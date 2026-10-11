@@ -62,6 +62,8 @@ services:
       PROBE_URL: http://probe-runner:8090
       PROBE_SHARED_SECRET: ${PROBE_SHARED_SECRET:-}
       CS_PROBE_EXTRA_HOSTS: ${CS_PROBE_EXTRA_HOSTS:-}
+      # Getrennter Agent-Nutzer + SSH-Schleuse (Block 5): Nutzer-IDs, Komma-Liste, "*" = alle.
+      CS_AGENT_SPLIT_USERS: ${CS_AGENT_SPLIT_USERS:-}
       OPENSEARCH_URL: https://opensearch:9200
       OPENSEARCH_USER: admin
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}

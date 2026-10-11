@@ -51,6 +51,7 @@ RUN apt-get update \
         git openssh-client sshpass rsync ca-certificates curl jq wget sudo \
         python3 python3-pip python3-venv \
         iputils-ping traceroute nmap dnsutils netcat-openbsd mtr-tiny iproute2 \
+        iptables \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Node.js 22 LTS (required by Hermes browser tools) ────────────────
@@ -67,6 +68,15 @@ RUN usermod -l yolo coder \
     && usermod -d /home/yolo -m yolo \
     && groupmod -n yolo coder \
     && echo 'yolo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+# ── Getrennter Modus (Block 5): eigener Agent-Nutzer ohne sudo ───────────────
+# agent (1001) führt Hermes/Claude/Codex aus, ohne sudo und ohne SSH-Schlüssel; yolo
+# bleibt der Mensch (Werkbank). Workspace über die Gruppe cs-work geteilt. Nur aktiv,
+# wenn der Container als root mit CS_AGENT_SPLIT=1 startet (userenv_manager).
+RUN groupadd -g 1100 cs-work \
+    && useradd -u 1001 -U -m -d /home/agent -s /bin/bash -G cs-work agent \
+    && usermod -aG cs-work yolo \
+    && passwd -l agent
 
 # ── Python venv (avoids Debian PEP 668 protection + RECORD-less system packages) ─
 # World-readable so yolo can use it.
@@ -197,10 +207,17 @@ RUN mkdir -p /home/yolo/pip && chown yolo:yolo /home/yolo/pip
 RUN printf '%s\n' \
         '# CentralStation: keep the per-user pip venv ahead of the system Python,' \
         '# also in login shells where /etc/profile has just reset PATH.' \
-        'case ":$PATH:" in' \
-        '  *":/home/yolo/pip/venv/bin:"*) ;;' \
-        '  *) PATH="/home/yolo/pip/venv/bin:/home/yolo/.local/bin:/opt/venv/bin:$PATH" ;;' \
-        'esac' \
+        'if [ "$(id -u)" = "1001" ]; then' \
+        '  case ":$PATH:" in' \
+        '    *":/usr/local/lib/cs-agent-bin:"*) ;;' \
+        '    *) PATH="/usr/local/lib/cs-agent-bin:/home/agent/pip/venv/bin:/opt/venv/bin:$PATH" ;;' \
+        '  esac' \
+        'else' \
+        '  case ":$PATH:" in' \
+        '    *":/home/yolo/pip/venv/bin:"*) ;;' \
+        '    *) PATH="/home/yolo/pip/venv/bin:/home/yolo/.local/bin:/opt/venv/bin:$PATH" ;;' \
+        '  esac' \
+        'fi' \
         'export PATH' \
         > /etc/profile.d/10-cs-path.sh \
     && chmod 644 /etc/profile.d/10-cs-path.sh
@@ -247,6 +264,17 @@ RUN chmod a+rx /opt/cs-readonly-guard.py && chmod 644 /etc/claude-code/managed-s
 
 COPY userenv/entrypoint.sh /usr/local/bin/cs-entrypoint.sh
 RUN chmod +x /usr/local/bin/cs-entrypoint.sh
+
+# SSH-Schleuse (getrennter Modus): root-Dienst + Client als ssh/scp im PATH des Agenten.
+# Alles root-eigen — der Agent kann weder Regeln noch Client ändern.
+COPY cs_policy/ /opt/cs-gate/cs_policy/
+COPY userenv/gate/cs-ssh-gate.py /opt/cs-gate/cs-ssh-gate.py
+COPY userenv/gate/cs-ssh-client.py /usr/local/lib/cs-agent-bin/cs-ssh-client
+COPY userenv/gate/cs-split-start.sh /usr/local/bin/cs-split-start.sh
+RUN chmod 755 /usr/local/lib/cs-agent-bin/cs-ssh-client /usr/local/bin/cs-split-start.sh \
+    && chmod 700 /opt/cs-gate/cs-ssh-gate.py \
+    && for n in ssh scp rsync sftp sshpass; do \
+         ln -sf /usr/local/lib/cs-agent-bin/cs-ssh-client /usr/local/lib/cs-agent-bin/$n; done
 
 USER yolo
 ENTRYPOINT ["/usr/local/bin/cs-entrypoint.sh"]

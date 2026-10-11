@@ -1018,6 +1018,30 @@ The Console agents can look things up on the server itself, in the version insta
   - **Shown:** in the incident, the immediate mail and the Console handoff of the next
     outbreak.
 
+### Separate agent user and SSH gate (block 5, canary users first)
+
+For users listed in `CS_AGENT_SPLIT_USERS` (user ids, `*` = everyone) the Console container
+starts as root, and `userenv/gate/cs-split-start.sh` splits it into three users:
+
+| Who | Runs | May |
+|---|---|---|
+| root | SSH gate `/opt/cs-gate/cs-ssh-gate.py`, holds the key in `/etc/cs-ssh` (0600) | — |
+| `agent` (1001) | Hermes, Claude CLI, Codex CLI | no sudo, `NoNewPrivs`, no capabilities, no key; iptables blocks its ports 22/2222/8080 |
+| `yolo` (1000) | code-server (Werkbank, terminal) | unchanged, with sudo and its own `~/.ssh` |
+
+- **SSH for the agent:** `ssh`/`scp` are a client of the gate (`/usr/local/lib/cs-agent-bin`).
+  The gate checks the caller with `SO_PEERCRED`.
+  - Without approval it runs only commands that `cs_policy/remote_allowlist.py` accepts
+    as read-only. This is a positive list of programs with sub-command checks; sensitive
+    paths are refused even for reading.
+  - Anything else needs the write window, until the action list replaces it.
+  - Every decision goes to `/var/log/cs-gate/audit.jsonl` (root-only).
+  - `scp` only fetches. Interactive sessions are not possible.
+- **Workspace:** shared through the group `cs-work`. `.git`, `.vscode` and `ansible` are
+  not group-writable: hooks placed there would run with yolo's rights.
+- **Backend:** every container exec for agent data goes through `_agent_exec` (uid 1001,
+  `/home/agent`). `configure_ssh` writes to the gate and to yolo, never to the agent.
+
 ### Write operations need consent (read-only by default)
 
 The Console agent is read-only until a human opens a **write window**. This is enforced in

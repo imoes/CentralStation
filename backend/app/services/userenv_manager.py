@@ -29,6 +29,58 @@ USERENV_CONFIG_PATH = os.getenv("USERENV_CONFIG_PATH", "")
 WORKSPACES_DIR = "/home/yolo/workspaces"
 _YOLO_HOME = "/home/yolo"
 
+# ── Getrennte Nutzer (Block 5): Agent ohne sudo/Schlüssel, Mensch bleibt yolo ──────────
+# Für Nutzer in console.agent_split_users startet der Container als root: der Root-Teil
+# des Entrypoints (cs-split-start.sh) richtet die SSH-Schleuse ein, startet Hermes als
+# `agent` (uid 1001, ohne neue Privilegien) und übergibt dann an yolo (code-server).
+# Alle übrigen Nutzer behalten den bisherigen Weg. Welcher Modus gilt, steht am Container
+# (Label) — eine Stelle, die jeder exec-Aufruf abfragt.
+SPLIT_LABEL = "cs.agent_split"
+AGENT_UID = "1001"
+AGENT_HOME = "/home/agent"
+GATE_SSH_DIR = "/etc/cs-ssh"
+
+
+def split_wanted(user_id: str) -> bool:
+    """Soll dieser Nutzer im getrennten Modus laufen? CS_AGENT_SPLIT_USERS (Komma-Liste von
+    Nutzer-IDs) — zunächst nur Testnutzer; "*" = alle."""
+    raw = os.getenv("CS_AGENT_SPLIT_USERS", "").strip()
+    if not raw:
+        return False
+    ids = {x.strip() for x in raw.split(",") if x.strip()}
+    return "*" in ids or str(user_id) in ids
+
+
+def is_split(c) -> bool:
+    return ((getattr(c, "labels", None) or {}).get(SPLIT_LABEL)) == "1"
+
+
+def _agent_home_for(user_id: str) -> str:
+    return AGENT_HOME if split_wanted(user_id) else _YOLO_HOME
+
+
+def agent_home(c) -> str:
+    return AGENT_HOME if is_split(c) else _YOLO_HOME
+
+
+def _agent_exec(c, cmd, environment: dict | None = None):
+    """Als die Identität ausführen, unter der die Konsolen-Agenten laufen.
+
+    Getrennt: uid 1001 mit HOME/CLAUDE_CONFIG_DIR/CODEX_HOME unter /home/agent.
+    Bisher: Standardnutzer des Containers (yolo), HOME aus der Container-Umgebung.
+    """
+    env = dict(environment or {})
+    if is_split(c):
+        env = {"HOME": AGENT_HOME, "CLAUDE_CONFIG_DIR": f"{AGENT_HOME}/.claude",
+               "CODEX_HOME": f"{AGENT_HOME}/.codex", **env}
+        return c.exec_run(cmd, user=AGENT_UID, environment=env)
+    return c.exec_run(cmd, environment=env)
+
+
+def _human_exec(c, cmd, environment: dict | None = None):
+    """Als der Mensch (yolo) — Werkbank, Ansible, git."""
+    return c.exec_run(cmd, user="1000", environment={"HOME": _YOLO_HOME, **(environment or {})})
+
 # ── Playwright MCP (shared stdio server for all Console agents) ────────────
 # The `playwright-mcp` binary and the Chromium browser are baked into the image
 # (see userenv/Dockerfile). --no-sandbox is required because the container has no
@@ -153,9 +205,10 @@ def write_hermes_config(user_id: str, extra_servers: dict) -> str:
     # Neustart wirkungslos. Deshalb hier zusätzlich direkt hineinschreiben.
     try:
         c = _client().containers.get(container_name(user_id))
-        c.exec_run(
-            ["sh", "-c", f"mkdir -p {_YOLO_HOME}/.hermes && "
-                         f"printf '%s' \"$CFG\" > {_YOLO_HOME}/.hermes/config.yaml"],
+        home = agent_home(c)
+        _agent_exec(c,
+            ["sh", "-c", f"mkdir -p {home}/.hermes && "
+                         f"printf '%s' \"$CFG\" > {home}/.hermes/config.yaml"],
             environment={"CFG": rendered},
         )
     except Exception as exc:  # noqa: BLE001
@@ -353,6 +406,15 @@ def ensure_container(user_id: str) -> str:
         # Ein neu gebautes Image bleibt sonst folgenlos: der Container liefe mit dem
         # alten Stand weiter, und nichts würde das anzeigen. Deshalb wird hier das
         # Image des laufenden Containers mit dem aktuellen Tag verglichen.
+        if is_split(existing) != split_wanted(user_id):
+            log.info("userenv_manager: %s läuft im falschen Modus (split=%s) → wird neu erstellt",
+                     name, is_split(existing))
+            try:
+                existing.remove(force=True)
+                existing = None
+            except Exception as exc:  # noqa: BLE001
+                log.warning("userenv_manager: %s konnte nicht entfernt werden: %s", name, exc)
+    if existing is not None:
         if _image_outdated(cli, existing):
             log.info("userenv_manager: %s läuft auf einem veralteten Image → wird neu erstellt", name)
             try:
@@ -386,9 +448,10 @@ def ensure_container(user_id: str) -> str:
     volumes: dict = {
         ws_path: {"bind": WORKSPACES_DIR, "mode": "rw"},
         vs_path: {"bind": f"{_YOLO_HOME}/.local/share/code-server", "mode": "rw"},
-        config_volume_name(user_id): {"bind": f"{_YOLO_HOME}/.claude", "mode": "rw"},
-        f"hermes-state-{user_id}": {"bind": f"{_YOLO_HOME}/.hermes", "mode": "rw"},
-        f"cs-pip-{user_id}": {"bind": f"{_YOLO_HOME}/pip", "mode": "rw"},
+        # Agenten-Daten: im getrennten Modus unter /home/agent (der Agent läuft dort).
+        config_volume_name(user_id): {"bind": f"{_agent_home_for(user_id)}/.claude", "mode": "rw"},
+        f"hermes-state-{user_id}": {"bind": f"{_agent_home_for(user_id)}/.hermes", "mode": "rw"},
+        f"cs-pip-{user_id}": {"bind": f"{_agent_home_for(user_id)}/pip", "mode": "rw"},
     }
     # Mount per-user hermes_config.yaml to /app/hermes_config.yaml (NOT into the
     # hermes-state volume at /root/.hermes — Docker volume mounts shadow file bind-mounts
@@ -437,21 +500,29 @@ def ensure_container(user_id: str) -> str:
         "no_proxy": _no_proxy,
     }
 
+    split = split_wanted(user_id)
+    if split:
+        # Root-Start: cs-split-start.sh richtet Schleuse und Netzwerkregeln ein und gibt
+        # dann an agent (Hermes) und yolo (code-server) ab.
+        environment["CS_AGENT_SPLIT"] = "1"
     c = cli.containers.run(
         USERENV_IMAGE,
         name=name,
         detach=True,
-        user="1000:1000",
+        user="0:0" if split else "1000:1000",
         environment=environment,
         volumes=volumes,
         network=USERENV_NETWORK,
-        labels={"cs-userenv": "1", "cs-userenv-uid": user_id},
+        labels={"cs-userenv": "1", "cs-userenv-uid": user_id, SPLIT_LABEL: "1" if split else "0"},
+        # init: reaps the background processes (gate, Hermes) of the root start.
+        init=split,
         # unless-stopped: survive Docker-daemon restarts and host reboots so the
         # Console/Werkbank container comes back automatically instead of only on the
         # next on-demand access. The idle reaper's explicit stop() is still honored
         # (unless-stopped does not auto-restart an explicitly stopped container).
         restart_policy={"Name": "unless-stopped"},
-        cap_add=["NET_RAW"],
+        # NET_ADMIN only in split mode: the root start sets iptables owner rules for the agent.
+        cap_add=["NET_RAW", "NET_ADMIN"] if split else ["NET_RAW"],
         extra_hosts={"host.docker.internal": "host-gateway"},
     )
     _wait_ready(c)
@@ -493,6 +564,13 @@ def ssh_config_ready(user_id: str, username: str) -> bool:
     except Exception:  # noqa: BLE001
         return True  # im Zweifel nicht dauernd neu schreiben
     try:
+        if is_split(c):
+            # Getrennt: der Agent hat keinen Schlüssel — die Schleuse (root) und yolo schon.
+            code, _ = c.exec_run(
+                ["sh", "-c",
+                 f"test -s {GATE_SSH_DIR}/user.key && grep -qE '^[[:space:]]*User[[:space:]]+{want}$' "
+                 f"{GATE_SSH_DIR}/config && test -s {_YOLO_HOME}/.ssh/user.key"], user="0")
+            return code == 0
         code, _ = c.exec_run(
             ["sh", "-c",
              f"test -s $HOME/.ssh/user.key && grep -qE '^[[:space:]]*User[[:space:]]+{want}$' "
@@ -522,18 +600,27 @@ def configure_ssh(
         log.warning("userenv_manager: container %s not found for configure_ssh", name)
         return
 
+    # Ziele: (exec-Funktion, Verzeichnis). Bisher nur ~/.ssh des Containernutzers; getrennt
+    # die Schleuse (root, /etc/cs-ssh — der Agent kann sie nicht lesen) und yolo (Werkbank,
+    # Ansible, eigenes Terminal). Der Agent selbst bekommt KEINEN Schlüssel.
+    if is_split(c):
+        targets = [(lambda cmd, environment=None: c.exec_run(cmd, user="0", environment=environment or {}),
+                    GATE_SSH_DIR),
+                   (lambda cmd, environment=None: _human_exec(c, cmd, environment), f"{_YOLO_HOME}/.ssh")]
+    else:
+        targets = [(lambda cmd, environment=None: c.exec_run(cmd, environment=environment or {}),
+                    f"{_YOLO_HOME}/.ssh")]
     if key_pem and key_pem.strip():
         # Normalise key: strip trailing whitespace, then add exactly one trailing newline.
         # printf '%s' suppresses newlines which breaks OpenSSH ("error in libcrypto").
         # The sed strips any existing trailing blank lines before we append the required \n.
-        c.exec_run(
-            ["sh", "-c",
-             "mkdir -p $HOME/.ssh && "
-             "printf '%s' \"$KEY\" | sed 's/[[:space:]]*$//' > $HOME/.ssh/user.key && "
-             "printf '\\n' >> $HOME/.ssh/user.key && "
-             "chmod 600 $HOME/.ssh/user.key"],
-            environment={"KEY": key_pem},
-        )
+        for run, d in targets:
+            run(["sh", "-c",
+                 f"mkdir -p {d} && chmod 700 {d} && "
+                 f"printf '%s' \"$KEY\" | sed 's/[[:space:]]*$//' > {d}/user.key && "
+                 f"printf '\\n' >> {d}/user.key && "
+                 f"chmod 600 {d}/user.key"],
+                environment={"KEY": key_pem})
 
     ssh_user = username.strip() or "marvin"
     # Internal hosts resolve via sssd on the Docker host (127.0.1.1 alias). ProxyJump
@@ -572,7 +659,7 @@ def configure_ssh(
             f"    User {ssh_user}",
         ]
         if key_pem and key_pem.strip():
-            ssh_cfg_lines.append(f"    IdentityFile {_YOLO_HOME}/.ssh/user.key")
+            ssh_cfg_lines.append("    IdentityFile __SSHDIR__/user.key")
         ssh_cfg_lines += [
             f"    ProxyJump {ssh_user}@host.docker.internal",
             "    StrictHostKeyChecking no",
@@ -589,19 +676,23 @@ def configure_ssh(
         f"    User {ssh_user}",
     ]
     if key_pem and key_pem.strip():
-        ssh_cfg_lines.append(f"    IdentityFile {_YOLO_HOME}/.ssh/user.key")
+        ssh_cfg_lines.append("    IdentityFile __SSHDIR__/user.key")
     ssh_cfg_lines += [
         "    StrictHostKeyChecking no",
         "    ConnectTimeout 10",
         "",
     ]
     ssh_cfg = "\n".join(ssh_cfg_lines)
-    c.exec_run(
-        ["sh", "-c", "mkdir -p $HOME/.ssh && printf '%s' \"$CFG\" > $HOME/.ssh/config && chmod 600 $HOME/.ssh/config"],
-        environment={"CFG": ssh_cfg},
-    )
-    log.info("userenv_manager: SSH configured for %s (user=%s key=%s)",
-             name, ssh_user, "yes" if key_pem else "no")
+    for run, d in targets:
+        cfg = ssh_cfg.replace("__SSHDIR__", d)
+        if d == GATE_SSH_DIR:
+            # Eigene known_hosts der Schleuse (nicht in einem Verzeichnis, das ein
+            # Nutzer beschreiben kann).
+            cfg = cfg.replace("Host *\n", f"Host *\n    UserKnownHostsFile {d}/known_hosts\n", 1)
+        run(["sh", "-c", f"mkdir -p {d} && printf '%s' \"$CFG\" > {d}/config && chmod 600 {d}/config"],
+            environment={"CFG": cfg})
+    log.info("userenv_manager: SSH configured for %s (user=%s key=%s split=%s)",
+             name, ssh_user, "yes" if key_pem else "no", is_split(c))
     configure_claude_md(user_id, ssh_user, kb_available=kb_available)
 
 
@@ -875,7 +966,7 @@ def configure_agent_instructions(
         return
 
     content = agent_instructions(ssh_user, kb_available=kb_available)
-    c.exec_run(
+    _agent_exec(c,
         ["sh", "-c",
          "mkdir -p $HOME/.claude $HOME/.codex && "
          "printf '%s' \"$MD\" > $HOME/.claude/CLAUDE.md && "
@@ -923,7 +1014,7 @@ def read_claude_oauth(user_id: str) -> dict | None:
     import json
     try:
         c = _client().containers.get(container_name(user_id))
-        rr = c.exec_run(["sh", "-c", "cat $HOME/.claude/.credentials.json 2>/dev/null || echo '{}'"])
+        rr = _agent_exec(c, ["sh", "-c", "cat $HOME/.claude/.credentials.json 2>/dev/null || echo '{}'"])
         data = json.loads(rr.output.decode(errors="replace"))
         oauth = data.get("claudeAiOauth")
         if isinstance(oauth, dict) and oauth.get("accessToken"):
@@ -967,7 +1058,7 @@ def configure_claude_credentials(
 
         # Read existing credentials file so we can preserve extra fields.
         existing: dict = {}
-        read_result = c.exec_run(
+        read_result = _agent_exec(c, 
             ["sh", "-c", "cat $HOME/.claude/.credentials.json 2>/dev/null || echo '{}'"],
         )
         try:
@@ -1015,7 +1106,7 @@ def configure_claude_credentials(
         existing["claudeAiOauth"] = oauth
         creds = json.dumps(existing)
 
-        c.exec_run(
+        _agent_exec(c,
             ["sh", "-c",
              "mkdir -p $HOME/.claude && "
              "printf '%s' \"$C\" > $HOME/.claude/.credentials.json && "
@@ -1045,12 +1136,12 @@ def configure_claude_credentials(
             # never arrive while the stale entry looks perfectly healthy. The
             # .claude.json lives on a named volume, so "existing" is the normal
             # case. Remove first, then add: this function owns the entry.
-            c.exec_run(["claude", "mcp", "remove", "--scope", "user", srv_name])
+            _agent_exec(c, ["claude", "mcp", "remove", "--scope", "user", srv_name])
             cmd = ["claude", "mcp", "add", "--transport", transport, "--scope", "user", srv_name, url]
             for h_name, h_value in (srv_cfg.get("headers") or {}).items():
                 if h_value:
                     cmd += ["--header", f"{h_name}: {h_value}"]
-            code, out = c.exec_run(cmd)
+            code, out = _agent_exec(c, cmd)
             if code != 0:
                 log.warning("userenv_manager: MCP server '%s' registration failed for %s: %s",
                             srv_name, container_name(user_id), out.decode(errors="replace")[:200])
@@ -1059,10 +1150,10 @@ def configure_claude_credentials(
 
         # Playwright — stdio command server (browser automation). The `--` separates
         # claude's flags from the server command + its args.
-        c.exec_run(["claude", "mcp", "remove", "--scope", "user", "playwright"])
+        _agent_exec(c, ["claude", "mcp", "remove", "--scope", "user", "playwright"])
         pw_cmd = ["claude", "mcp", "add", "--scope", "user", "playwright", "--",
                   _PLAYWRIGHT_MCP_CMD, *_PLAYWRIGHT_MCP_ARGS]
-        c.exec_run(pw_cmd)
+        _agent_exec(c, pw_cmd)
         log.info("userenv_manager: MCP server 'playwright' registered for %s", container_name(user_id))
     except _docker.errors.NotFound:
         log.warning("configure_claude_credentials: container %s not found", container_name(user_id))
@@ -1156,13 +1247,14 @@ def configure_codex_credentials(
         # CODEX_HOME lives under yolo's home: the codex subprocess runs as yolo
         # (uid 1000) and cannot read /root. main.py sources $CODEX_HOME/env for the
         # OPENAI_API_KEY and sets CODEX_HOME so config.toml is picked up.
-        code, out = c.exec_run(
+        ch = f"{agent_home(c)}/.codex"
+        code, out = _agent_exec(c,
             ["sh", "-c",
-             "mkdir -p /home/yolo/.codex && "
+             f"mkdir -p {ch} && "
              # OPENAI_API_KEY into $CODEX_HOME/env (sourced by main.py before `codex exec`)
-             "printf 'export OPENAI_API_KEY=\"%s\"\\n' \"$K\" > /home/yolo/.codex/env && "
+             f"printf 'export OPENAI_API_KEY=\"%s\"\\n' \"$K\" > {ch}/env && "
              # provider + MCP config so codex talks to the ChatGPT backend and tools
-             "printf '%s' \"$CFG\" > /home/yolo/.codex/config.toml"],
+             f"printf '%s' \"$CFG\" > {ch}/config.toml"],
             environment={"K": access_token, "CFG": config_toml},
         )
         if code != 0:

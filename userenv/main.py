@@ -59,7 +59,10 @@ log = logging.getLogger("userenv")
 
 # This process runs unprivileged as yolo (uid 1000); /root is 0700 root:root and
 # unwritable here. All state that used to assume HOME=/root lives under yolo's home.
-_YOLO_HOME = "/home/yolo"
+# Getrennter Modus (Block 5): der Prozess läuft als `agent` mit HOME=/home/agent — alles
+# Agenten-eigene (Claude/Codex/Hermes-Konfiguration, pip) liegt dann dort; der Workspace
+# bleibt /home/yolo/workspaces (geteilt über die Gruppe cs-work).
+_YOLO_HOME = os.environ.get("HOME") or "/home/yolo"
 
 #: Arbeitsverzeichnis der Agenten — dasselbe, das die Werkbank (code-server) öffnet.
 #: Die Konsole und die Werkbank sollen an denselben Dateien arbeiten: was der Agent
@@ -738,7 +741,7 @@ async def _run_cli_agent(
     # process. HOME="/root" here made Claude fail internal writes outside
     # CLAUDE_CONFIG_DIR (npm/node cache dirs etc.), which corrupted .credentials.json
     # mid-run (emptied accessToken) rather than just erroring cleanly.
-    env = {**os.environ, "HOME": "/home/yolo"}
+    env = {**os.environ, "HOME": _YOLO_HOME}
     # MCP tool-call timeout (ms). A deepsearch can run up to 900s (aikb
     # DEEPSEARCH_TIMEOUT_S); the Claude CLI default (60s) would abort it. 930s sits above
     # it — same value as MCP_TOOL_TIMEOUT_S for Hermes and Codex in userenv_manager.
@@ -1006,7 +1009,7 @@ async def _run_cli_agent(
     # the internal session ID from a previous turn's JSONL stream.
     # Codex config lives under a yolo-writable CODEX_HOME (the process runs as yolo,
     # so /root/.codex is unreadable). userenv_manager writes config.toml + env there.
-    codex_home = "/home/yolo/.codex"
+    codex_home = os.environ.get("CODEX_HOME") or f"{_YOLO_HOME}/.codex"
     codex_session_id = session.get("codex_session_id", "")
     if codex_session_id:
         # --skip-git-repo-check auch hier: ohne bricht resume im Workspace mit "Not inside
@@ -1039,7 +1042,7 @@ async def _run_cli_agent(
         stdin=asyncio.subprocess.DEVNULL,   # codex exec else tries to read piped stdin → "Reading additional input from stdin..."
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={**env, "HOME": "/home/yolo", "CODEX_HOME": codex_home,
+        env={**env, "HOME": _YOLO_HOME, "CODEX_HOME": codex_home,
              "MSG": message, "CODEX_MODEL": model or "", **img_env},
         cwd=_agent_cwd(),
     )

@@ -14,6 +14,32 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What is new
 
+- **Separate agent user and SSH gate (canary: admin@example.com).** Until now the Console
+  agent ran as `yolo` with passwordless sudo, and its SSH key was readable. So any lock
+  held only as long as the model did not obfuscate.
+  - In split mode the agent runs as its own user `agent`: no sudo, `NoNewPrivs`, no
+    capabilities, no key. It reaches servers only through a root-owned **SSH gate**.
+  - The gate lets through, without approval, only what `cs_policy/remote_allowlist`
+    recognizes as read-only (a positive list).
+  - The human in the Werkbank stays `yolo`, unchanged.
+  - Enabled per user (`CS_AGENT_SPLIT_USERS`). All others keep the previous setup.
+  - Verified live in the canary container:
+    - Hermes runs as `agent` with `NoNewPrivs: 1` and `CapBnd: 0`.
+    - As `agent`, these are refused: reading the gate key, reading yolo's key, listing
+      `/home/yolo`, `sudo`, the Werkbank on :8080, and direct `ssh` to port 22.
+    - Through the gate `uptime` and `zpool list` on vpp0199 work. `touch`,
+      `/etc/shadow` and interactive sessions are refused.
+    - A Hermes session (qwen35b) read `zpool list` and was stopped at `touch`; no file
+      was created.
+    - With the write window, the gate let `touch` through and logged
+      `approved:admin@example.com`. After revoking, `rm` was refused.
+    - Werkbank and Claude/Codex work as `agent`.
+  - Tests: 70 for the positive list (every probe template also passes it, so it is one
+    rule), 3 for the mode switch. Full suite: 605 passed.
+  - Found on the way: the admin container's Werkbank data still belonged to root from
+    an earlier setup, which is why it had been stopped. The split start takes it over
+    once.
+
 - **Recipes: resolved incidents teach the next outbreak.**
   - **Linking:** a Console session started from an incident is now bound to it
     (`incident:<id>`), so "✓ GELÖST" appears there too.
