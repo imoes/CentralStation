@@ -4,9 +4,18 @@ All tests run inside the Docker backend container where the app packages are
 already installed.  We replace only the parts that would require a live
 OpenSearch / PostgreSQL connection.
 """
+import os
 import sys
 import types
 from unittest.mock import AsyncMock, MagicMock
+
+# app.core.config verlangt diese vier Werte aus der Umgebung. Im Testlauf fehlen sie —
+# dadurch war bisher jedes Modul unimportierbar, das app.core.security lädt (u. a.
+# computer_proxy). Nur Standardwerte: eine echte Umgebung überschreibt sie.
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
+os.environ.setdefault("ENCRYPTION_KEY", "Sqd3Ljc0V0SY6DGzF3BGgDTPLnk1HLkfVZqJIgDZq7o=")
 
 
 def _make_module(name: str, **attrs) -> types.ModuleType:

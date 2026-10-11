@@ -763,7 +763,8 @@ async def _run_cli_agent(
                 import aiohttp as _aiohttp
                 async with _aiohttp.ClientSession() as _s:
                     async with _s.get(f"{_backend}/api/computer/agent-credentials/claude_cli",
-                                      headers={"X-CS-User-ID": _cs_uid},
+                                      headers={"X-CS-User-ID": _cs_uid,
+                                               "X-CS-Agent-Token": os.getenv("CS_AGENT_TOKEN", "")},
                                       timeout=_aiohttp.ClientTimeout(total=5)) as _r:
                         if _r.status == 200:
                             _tok = await _r.json()

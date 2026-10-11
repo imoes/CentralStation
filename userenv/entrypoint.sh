@@ -1,13 +1,12 @@
 #!/bin/sh
 # Unified Werkbank+Hermes entrypoint.
-# 1. SSH setup (keys from host mount — user-specific config injected later via configure_ssh API)
+# 1. SSH setup (user-specific key + config injected later via configure_ssh API)
 # 2. All VS Code / Claude Code extension patches
 # 3. Hermes (uvicorn) in background on :8001
 # 4. code-server in foreground on :8080
 set -e
 
 SSH_DIR="$HOME/.ssh"
-HOST_SSH="$HOME/.ssh_host"
 
 # Sanity-check: container must not run as root (claude --dangerously-skip-permissions is
 # blocked for root since 2.1.195). The image sets USER yolo (1000); if someone overrides
@@ -41,20 +40,6 @@ Host *
     ConnectTimeout 10
 EOF
     chmod 600 "$SSH_DIR/config"
-fi
-
-# Copy SSH keys from host ~/.ssh mount (read-only bind mount).
-if [ -d "$HOST_SSH" ]; then
-    for KEY in id_rsa id_ed25519 id_ecdsa; do
-        if [ -f "$HOST_SSH/$KEY" ]; then
-            cp "$HOST_SSH/$KEY" "$SSH_DIR/$KEY"
-            chmod 600 "$SSH_DIR/$KEY"
-        fi
-    done
-    if [ -f "$HOST_SSH/known_hosts" ]; then
-        cp "$HOST_SSH/known_hosts" "$SSH_DIR/known_hosts"
-        chmod 644 "$SSH_DIR/known_hosts"
-    fi
 fi
 
 mkdir -p "$HOME/workspaces"

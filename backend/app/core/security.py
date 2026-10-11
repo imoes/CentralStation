@@ -11,6 +11,31 @@ from app.core.config import settings
 _fernet = Fernet(settings.encryption_key.encode())
 
 
+# --- Agent-Token (Konsolen-Container → Backend) ---
+#
+# Die Konsolen-Agenten schicken ihre Nutzer-ID als X-CS-User-ID. Bis 2026-10-11 wurde sie
+# ungeprüft geglaubt: jeder Container (und jeder, der /api erreicht) konnte sich als
+# beliebiger Nutzer ausgeben — beim MCP-Server (Freigabe-Prüfung) und bei
+# /computer/agent-credentials, der die OAuth-Tokens der CLI-Agenten herausgibt. Das Token
+# bindet die ID an das SECRET_KEY des Backends; ein fremder Container kennt es nicht.
+
+AGENT_TOKEN_HEADER = "x-cs-agent-token"
+
+
+def agent_token(user_id: str) -> str:
+    import hashlib
+    import hmac
+    return hmac.new(settings.secret_key.encode(), f"cs-agent:{user_id}".encode(),
+                    hashlib.sha256).hexdigest()
+
+
+def verify_agent_token(user_id: str | None, token: str | None) -> bool:
+    import hmac
+    if not user_id or not token:
+        return False
+    return hmac.compare_digest(agent_token(user_id), token.strip())
+
+
 # --- Passwords ---
 
 def hash_password(password: str) -> str:

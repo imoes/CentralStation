@@ -62,7 +62,6 @@ services:
       OPENSEARCH_USER: admin
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
       # Werkbank Web-IDE: backend orchestrates per-user userenv containers.
-      IDE_HOST_SSH_DIR: ${HOME}/.ssh
       IDE_CONTAINER_PORT: "8080"
       # Workspaces are bind-mounted from this host path into each cs-userenv container.
       # The backend also mounts this path so os.makedirs() creates dirs on the host.

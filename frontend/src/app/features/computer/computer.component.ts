@@ -9,7 +9,7 @@ import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
-import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
+import { DomSanitizer } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { extractWorkspaceFiles, workspaceRelative } from '../../shared/workspace-files';
@@ -301,9 +301,8 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                 <div class="msg-text"
                      [innerHTML]="renderMarkdown(msg)"></div>
                 @if (msg.attachments?.length) {
-                  <!-- Im Template gerendert, NICHT über Markdown/innerHTML: dort läuft
-                       bypassSecurityTrustHtml ohne Sanitizer, und diese Fläche soll
-                       nicht zusätzlich belastet werden. Bilder kommen als Blob-URL,
+                  <!-- Im Template gerendert, NICHT über Markdown/innerHTML: Anhänge
+                       brauchen Blob-URLs und eigene Elemente. Bilder kommen als Blob-URL,
                        weil ein <img src> keinen Authorization-Header mitschickt. -->
                   <div class="msg-attachments">
                     @for (a of msg.attachments!; track a.url) {
@@ -607,7 +606,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   // including the mouse events fired while selecting text, which wipes the
   // selection. Messages are replaced immutably on each update (new object key),
   // so a WeakMap auto-invalidates on text change and stays bounded to live messages.
-  private _mdCache = new WeakMap<HermesMessage, SafeHtml>();
+  private _mdCache = new WeakMap<HermesMessage, string>();
 
   private _wsFileCache = new WeakMap<HermesMessage, string[]>();
 
@@ -687,11 +686,14 @@ export class ComputerComponent implements OnInit, OnDestroy {
     }).catch(() => { w.document.body.textContent = 'Datei konnte nicht geladen werden.'; });
   }
 
-  renderMarkdown(msg: HermesMessage): SafeHtml {
+  renderMarkdown(msg: HermesMessage): string {
     const cached = this._mdCache.get(msg);
-    if (cached) return cached;
-    const html = marked.parse(msg.text) as string;
-    const safe = this.sanitizer.bypassSecurityTrustHtml(html);
+    if (cached !== undefined) return cached;
+    // Bereinigt, nicht vertraut: der Text kommt vom Agenten, und der liest Logs, Tickets
+    // und Webseiten — ein eingeschleustes <img onerror=…> liefe sonst mit dem Token
+    // dieser Seite und könnte z. B. eine Freigabe selbst auslösen. Bis 2026-10-11 stand
+    // hier bypassSecurityTrustHtml.
+    const safe = this.sanitizer.sanitize(SecurityContext.HTML, marked.parse(msg.text) as string) ?? '';
     this._mdCache.set(msg, safe);
     return safe;
   }

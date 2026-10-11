@@ -53,14 +53,25 @@ CS_USER_HEADER = "x-cs-user-id"
 
 
 def _calling_user_id() -> str | None:
-    """CentralStation-Nutzer-ID des aufrufenden MCP-Clients, falls mitgeschickt."""
+    """CentralStation-Nutzer-ID des aufrufenden MCP-Clients — nur mit gültigem Agent-Token.
+
+    Ohne passendes X-CS-Agent-Token gilt der Aufrufer als nicht identifiziert: eine
+    selbst erklärte ID allein ist keine Identität (siehe security.agent_token).
+    """
     try:
         from fastmcp.server.dependencies import get_http_headers
         headers = get_http_headers(include_all=True) or {}
     except Exception:
         return None
+    from app.core.security import AGENT_TOKEN_HEADER, verify_agent_token
     value = (headers.get(CS_USER_HEADER) or "").strip()
-    return value or None
+    if not value:
+        return None
+    if not verify_agent_token(value, headers.get(AGENT_TOKEN_HEADER)):
+        log.warning("MCP call with X-CS-User-ID %s but missing/invalid agent token — "
+                    "treated as unidentified", value[:8])
+        return None
+    return value
 
 
 async def _write_allowed() -> tuple[bool, str]:
@@ -644,6 +655,11 @@ async def post_alert_comment(external_id: str, text: str) -> dict:
 
     if not external_id or not text:
         return {"ok": False, "error": "external_id und text sind erforderlich"}
+    # Schreibt in die Timeline, die das ganze Team sieht — bis 2026-10-11 ohne Prüfung,
+    # obwohl der Docstring "nur nach Bestätigung" sagt.
+    denied = await _require_write("KI-Kommentar an einem Alert speichern")
+    if denied:
+        return denied
 
     async with (await _get_db_session()) as db:
         db.add(AlertComment(
@@ -690,6 +706,12 @@ async def create_feed_exclusion(
     Hinweis: Die Ausnahme wird sofort aktiv und blendet matching Alerts im Feed aus.
     Du kannst den query_string sorgfältig aus dem Kontext des betreffenden Alerts ableiten."""
     from app.models.workflow import FeedSearch
+
+    # Blendet Alerts dauerhaft aus — eine der folgenreichsten Aktionen überhaupt, bis
+    # 2026-10-11 ohne Freigabe-Prüfung.
+    denied = await _require_write("Feed-Ausnahme anlegen")
+    if denied:
+        return denied
 
     source = source.strip().lower()
     valid_sources = {"checkmk", "graylog", "wazuh", "icinga2", "coroot"}
@@ -924,7 +946,7 @@ async def list_remediations(status: str = "proposed") -> dict:
     from sqlalchemy import select as sa_select
     from app.models.remediation import RemediationProposal
 
-    async with AsyncSessionLocal() as db:
+    async with (await _get_db_session()) as db:
         q = sa_select(RemediationProposal).order_by(RemediationProposal.created_at.desc())
         if status != "all":
             q = q.where(RemediationProposal.status == status)
@@ -956,7 +978,7 @@ async def list_awx_templates() -> dict:
     from app.core.security import decrypt_credentials
     from app.services.connectors.awx import AWXConnector
 
-    async with AsyncSessionLocal() as db:
+    async with (await _get_db_session()) as db:
         result = await db.execute(
             sa_select(ConnectorConfig).where(
                 ConnectorConfig.type == "awx",
@@ -1000,7 +1022,7 @@ async def run_remediation(remediation_id: str) -> dict:
     import asyncio
     from datetime import datetime, timezone
 
-    async with AsyncSessionLocal() as db:
+    async with (await _get_db_session()) as db:
         rid = _uuid.UUID(remediation_id)
         r = (await db.execute(sa_select(RemediationProposal).where(RemediationProposal.id == rid))).scalar_one_or_none()
         if not r:
@@ -1045,7 +1067,7 @@ async def _get_gitlab_connector(user_id: str | None = None):
     from app.core.security import decrypt_credentials
     from app.services.connectors.gitlab import GitLabConnector
 
-    async with AsyncSessionLocal() as db:
+    async with (await _get_db_session()) as db:
         q = select(ConnectorConfig).where(
             ConnectorConfig.type == "gitlab",
             ConnectorConfig.enabled.is_(True),

@@ -17,7 +17,10 @@ log = logging.getLogger(__name__)
 
 USERENV_IMAGE   = os.getenv("USERENV_IMAGE",   "centralstation-userenv:latest")
 USERENV_NETWORK = os.getenv("USERENV_NETWORK", "centralstation_default")
-USERENV_HOST_SSH_DIR = os.getenv("IDE_HOST_SSH_DIR", "")  # reuse IDE env var for compat
+# Kein Mount des Betreiber-~/.ssh mehr (bis 2026-10-11: IDE_HOST_SSH_DIR=${HOME}/.ssh). Er
+# legte u. a. marvin.key und marvin.password in JEDEN Nutzer-Container — nur durch die uid
+# vor yolo geschützt, nicht vor dessen sudo. Gebraucht wurde er nie: die Schlüssel waren für
+# yolo nicht lesbar und wurden nie kopiert; SSH läuft über user.key (configure_ssh).
 USERENV_ANSIBLE_PATH = os.getenv("IDE_ANSIBLE_PATH", "")
 # Host-side base dir for workspace + vscode bind mounts (same as ide_manager).
 USERENV_WORKSPACES_BASE = os.getenv("IDE_WORKSPACES_BASE", "/opt/centralstation/ide-workspaces")
@@ -87,6 +90,17 @@ def hermes_config_path(user_id: str) -> str:
 HERMES_AGENT_LIMITS = {"api_max_retries": 2, "auto_recovery_cycles": 0}
 
 
+def agent_token(user_id: str) -> str:
+    # Spät importiert: app.core.security lädt die Einstellungen (SECRET_KEY …).
+    from app.core.security import agent_token as _tok
+    return _tok(user_id)
+
+
+def _agent_headers(user_id: str) -> dict:
+    """Kopfzeilen, mit denen ein Konsolen-Agent sich beim CentralStation-MCP ausweist."""
+    return {"X-CS-User-ID": user_id, "X-CS-Agent-Token": agent_token(user_id)}
+
+
 def write_hermes_config(user_id: str, extra_servers: dict) -> str:
     """Generate per-user hermes_config.yaml from DB-loaded connectors.
 
@@ -107,7 +121,7 @@ def write_hermes_config(user_id: str, extra_servers: dict) -> str:
             "url": f"{backend_url}/api/mcp/sse",
             # Nutzerkennung, damit der Backend-MCP-Server die Schreibfreigabe
             # dieses Nutzers prüfen kann (mcp_server._require_write).
-            "headers": {"X-CS-User-ID": user_id},
+            "headers": _agent_headers(user_id),
             # Per-tool-call timeout. A deepsearch can run up to 900s; this sits above
             # it so Hermes never cuts one off (see MCP_TOOL_TIMEOUT_S).
             "timeout": MCP_TOOL_TIMEOUT_S,
@@ -386,8 +400,6 @@ def ensure_container(user_id: str) -> str:
     )
     if _cfg_to_mount:
         volumes[_cfg_to_mount] = {"bind": "/app/hermes_config.yaml", "mode": "ro"}
-    if USERENV_HOST_SSH_DIR:
-        volumes[USERENV_HOST_SSH_DIR] = {"bind": f"{_YOLO_HOME}/.ssh_host", "mode": "ro"}
     if USERENV_ANSIBLE_PATH:
         volumes[USERENV_ANSIBLE_PATH] = {"bind": f"{WORKSPACES_DIR}/ansible", "mode": "rw"}
 
@@ -414,6 +426,8 @@ def ensure_container(user_id: str) -> str:
     environment = {
         "HOME": _YOLO_HOME,
         "CS_USER_ID": user_id,
+        # Beweis der Nutzer-ID gegenüber dem Backend (agent-credentials) — security.agent_token.
+        "CS_AGENT_TOKEN": agent_token(user_id),
         "CENTRALSTATION_BACKEND_URL": _backend_url,
         "HTTP_PROXY": os.getenv("HTTP_PROXY", ""),
         "HTTPS_PROXY": os.getenv("HTTPS_PROXY", ""),
@@ -1004,7 +1018,7 @@ def configure_claude_credentials(
             "centralstation": {
                 "transport": "streamable-http",
                 "url": f"{os.getenv('CENTRALSTATION_BACKEND_URL', 'http://backend:8000').rstrip('/')}/api/mcp-http/",
-                "headers": {"X-CS-User-ID": user_id},
+                "headers": _agent_headers(user_id),
             },
             **(extra_servers or {}),
         }
@@ -1072,7 +1086,8 @@ def _codex_config_toml(mcp_servers: dict | None, cs_user_id: str = "") -> str:
         '[mcp_servers.centralstation]',
         f'url = "{backend_url}/api/mcp-http/"',
         # Nutzerkennung für die Schreibfreigabe-Prüfung im Backend.
-        f'http_headers = {{ "X-CS-User-ID" = "{cs_user_id}" }}',
+        f'http_headers = {{ "X-CS-User-ID" = "{cs_user_id}", '
+        f'"X-CS-Agent-Token" = "{agent_token(cs_user_id) if cs_user_id else ""}" }}',
         'default_tools_approval_mode = "approve"',
         # A deepsearch can run up to 900s — this sits above it (MCP_TOOL_TIMEOUT_S).
         f'tool_timeout_sec = {MCP_TOOL_TIMEOUT_S}',
@@ -1148,10 +1163,17 @@ def configure_codex_credentials(
 
 
 def exec_sh(user_id: str, script: str, environment: dict | None = None) -> tuple[int, str]:
-    """Run a /bin/sh -c script as root inside the user's container."""
+    """Run a /bin/sh -c script as the container's human user (yolo) — NOT as root.
+
+    Bis 2026-10-11 lief das als root: die Werkbank-Provisionierung macht `git fetch` /
+    `git checkout` in einem Repo im Workspace, den auch der Agent beschreiben kann. Eine
+    dort abgelegte .git/config (core.fsmonitor, core.hooksPath) hätte Code als root
+    ausgeführt. Als yolo ist es dieselbe Rechtestufe wie ein Klick im Werkbank-Terminal.
+    """
     cli = _client()
     c = cli.containers.get(container_name(user_id))
-    code, out = c.exec_run(["sh", "-c", script], user="root", environment=environment or {})
+    env = {"HOME": _YOLO_HOME, **(environment or {})}
+    code, out = c.exec_run(["sh", "-c", script], user="1000", environment=env)
     return code, (out.decode(errors="replace") if isinstance(out, (bytes, bytearray)) else str(out))
 
 

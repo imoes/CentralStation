@@ -10,6 +10,48 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-10-11 — Console security, block 0 of the console plan
+
+### What was fixed
+
+- **Agent text could run script in the browser.** The Console rendered the agent's
+  markdown as trusted HTML (`bypassSecurityTrustHtml`). The agent reads logs, tickets
+  and web pages, so an injected `<img onerror=…>` would have run with the page's token
+  and could, for example, have triggered an approval.
+  - Agent text is now sanitized.
+  - A Content-Security-Policy additionally allows only the app's own scripts and the one
+    inline handler of Angular's critical CSS, pinned by its hash.
+  - Verified live: the agent printed `<img src=x onerror="document.title=…">`. The DOM
+    holds only `<img src="x">`, the title is unchanged, and `<b>` is kept.
+  - Dashboard, Console, map and Werkbank load without CSP violations. The TTS audio
+    (`blob:`) was blocked at first and is now allowed.
+- **Anyone could pose as any user towards the backend.** MCP calls and
+  `/computer/agent-credentials` (which hands out the CLI agents' OAuth tokens) trusted
+  the `X-CS-User-ID` header as sent, and `/api` is reachable through nginx.
+  - Every console agent now also sends `X-CS-Agent-Token`: an HMAC of the user id with
+    the backend's `SECRET_KEY`.
+  - Without a valid token, an MCP caller counts as unidentified, so write tools refuse,
+    and `agent-credentials` answers 403.
+  - Verified: 7 tests (valid, foreign and missing token; Codex config carries the
+    token). In the new container the token is in the environment and in the Claude MCP
+    config (`.claude.json`), and the backend logs no token warnings.
+- **The operator's `~/.ssh` was mounted into every user's container.** This included
+  `marvin.key` and `marvin.password`, protected from the agent only by a different uid,
+  not from its passwordless sudo. Nothing used it: the keys were never readable, so they
+  were never copied, and SSH runs on `user.key`.
+  - The mount (`IDE_HOST_SSH_DIR`) and the copy step are gone.
+  - Verified: the recreated container has no `.ssh_host`.
+- **Werkbank provisioning ran `git` as root** in a workspace the agent can write. A
+  `.git/config` placed there would have run code as root. It now runs as `yolo`, and
+  the GitLab credentials go to `~yolo/.git-credentials`.
+- **Two write tools had no approval check:** `post_alert_comment` (team timeline) and
+  `create_feed_exclusion` (hides alerts permanently).
+- **`run_remediation`, `list_remediations`, the AWX tools and all GitLab tools failed with
+  a `NameError`:** `AsyncSessionLocal` was never imported in the MCP server.
+- **Tests:** `tests/conftest.py` now sets default values for the four required settings.
+  Modules that load `app.core.security` can be imported in tests. Backend suite: 364
+  passed.
+
 ## 2026-09-17
 
 ### What is new

@@ -411,11 +411,13 @@ async def get_agent_credentials(
 ):
     """Internal endpoint: userenv containers call this to re-inject expired CLI credentials.
 
-    Authentication: The request must carry an X-CS-User-ID header identifying the container's
-    user. This endpoint is only reachable within the Docker-internal cs-net network — no JWT
-    is used since the container has no user session.
+    Authentication: X-CS-User-ID plus X-CS-Agent-Token (HMAC of the user id with the
+    backend's SECRET_KEY, injected into the container at creation). Until 2026-10-11 the
+    user id alone sufficed — and /api is reachable through nginx, so anyone knowing a user
+    id could fetch that user's OAuth tokens.
     """
     import uuid as _uuid
+    from app.core.security import verify_agent_token
     user_id = request.headers.get("X-CS-User-ID", "").strip()
     if not user_id:
         raise HTTPException(400, "X-CS-User-ID header erforderlich")
@@ -423,6 +425,8 @@ async def get_agent_credentials(
         _uuid.UUID(user_id)
     except ValueError:
         raise HTTPException(400, "X-CS-User-ID muss eine gültige UUID sein")
+    if not verify_agent_token(user_id, request.headers.get("X-CS-Agent-Token")):
+        raise HTTPException(403, "Agent-Token fehlt oder ist ungültig")
     if agent_type not in ("claude_cli", "codex_cli"):
         raise HTTPException(400, "agent_type muss 'claude_cli' oder 'codex_cli' sein")
 

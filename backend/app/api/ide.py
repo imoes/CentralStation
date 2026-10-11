@@ -349,8 +349,8 @@ async def provision_workspace(
         script = (
             "set -e; "
             "git config --global credential.helper store; "
-            'printf "https://oauth2:%s@%s\\n" "$GL_TOKEN" "$GL_HOST" > /root/.git-credentials; '
-            "chmod 600 /root/.git-credentials; "
+            'printf "https://oauth2:%s@%s\\n" "$GL_TOKEN" "$GL_HOST" > "$HOME/.git-credentials"; '
+            'chmod 600 "$HOME/.git-credentials"; '
             'git config --global user.name "$GL_USER"; '
             'git config --global user.email "$GL_EMAIL"; '
             f"cd {ide_manager.WORKSPACES_DIR}; "
