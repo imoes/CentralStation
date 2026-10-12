@@ -14,6 +14,33 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What changed
 
+- **Outbreak mails show the research behind the AI assessment.**
+  - **Why:** the mail showed only the AI's conclusion. The data it was based on stayed in
+    the incident view. Those data are the containers that the heuristic search found
+    conspicuous at the same time, and the CheckMK alerts of the affected hosts.
+  - **New section "Recherche"** (automatic, read-only), between the AI assessment and the
+    pattern:
+    - containers that were ≥ 3× above their 48-hour median in the same 15-minute window,
+      with lines and factor;
+    - CheckMK alerts of the affected hosts, from 15 minutes before the start, with
+      severity and time.
+  - **Empty findings are named, not hidden.** Examples: "keine — der Ausbruch steht für
+    sich" (none, the outbreak stands alone) and "keine seit 15 min vor Beginn" (none since
+    15 minutes before the start).
+  - **When no search ran, there is no section.** This applies to fleet clusters and to
+    mails caught up after a restart. The mail then does not claim "none".
+  - **The incident link stays.** It is now also at the top ("→ Incident öffnen"), and still
+    in the link line at the bottom. The late "KI-Einschätzung" mail has the same content.
+  - Verified:
+    - 3 new tests: link before research, link twice, findings with factor/time; empty
+      findings named; no section without a search. Full suite: 634 passed.
+    - A real outbreak mail was re-rendered without sending: cue-router SSE-500, 09.10.,
+      25 containers. It shows 5 conspicuous containers, including cue-app-revproxy-01 with
+      6,467 lines (10,778×), and the CheckMK alerts of the zipline hosts.
+  - **Gap:** the CheckMK search has a start but no end. In a re-rendered mail of an old
+    outbreak it shows alerts up to today. Live mails go out at most ~35 minutes after the
+    start, so this does not matter there.
+
 - **Error-cluster detection now sees application errors from containers, and reports
   steady new error loops.**
   - **Why:** the content-store DocumentIndex retry loop

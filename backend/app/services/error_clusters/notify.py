@@ -69,6 +69,8 @@ def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
                 pending: bool) -> str:
     """Deutsche Mail. Inhalt vor Chrom: KI-Einschätzung, Muster, Verlauf, Betroffene."""
     rows = []
+    if incident_url:
+        rows.append(f'<p style="margin:0 0 10px"><a href="{_esc(incident_url)}"><b>→ Incident öffnen</b></a></p>')
     if triage:
         steps = "".join(f"<li>{_esc(s)}</li>" for s in triage.get("pruefschritte") or [])
         signals = "".join(f"<li>{_esc(s)}</li>" for s in triage.get("verwandte_signale") or [])
@@ -97,6 +99,8 @@ def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
         <span style="color:#777;font-size:12px">Ausführen (nur lesend): Incident öffnen → „Prüfschritte ausführen".</span>
         </div>""")
 
+    rows.append(_research_html(ctx))
+
     containers = ctx.get("containers") or []
     cont_html = "".join(f"<tr><td>{_esc(c['name'])}</td><td style='text-align:right'>"
                         f"{fmt_int(c['count'])}</td></tr>" for c in containers[:15])
@@ -124,6 +128,52 @@ def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
     <p style="margin:14px 0">{' · '.join(links)}</p>
     <p style="color:#888;font-size:12px;margin-top:18px">Automatisch erkannt – keine Aktion ausgeführt.
        Abbestellen: Einstellungen → E-Mail-Berichte.</p></div>"""
+
+
+def _without_host(title: str | None, host: str | None) -> str:
+    """CheckMK-Titel lauten "host — Dienst"; der Host steht in der Zeile schon davor."""
+    title = title or ""
+    if host and title.startswith(host):
+        return title[len(host):].lstrip(" —-:") or title
+    return title
+
+
+def _research_html(ctx: dict) -> str:
+    """Was die automatische Suche fand — die Daten, auf denen die KI-Einschätzung beruht.
+
+    Auch "nichts gefunden" steht da: ein leerer Abschnitt ist ein Befund, kein Fehlen.
+    """
+    corr = ctx.get("correlated")
+    cmk = [a for a in (ctx.get("checkmk") or []) if a.get("titel")]
+    parts = []
+    if corr is not None:
+        if corr:
+            items = "".join(
+                f"<li>{_esc(c.get('container'))} — {fmt_int(c.get('zeilen_15min'))} Zeilen in 15 min, "
+                f"{_esc(c.get('faktor'))}× über üblich</li>" for c in corr[:10])
+            parts.append(f"<p style='margin:6px 0 2px'><b>Gleichzeitig auffällige Container</b> "
+                         f"<span style='color:#777'>(im selben 15-min-Fenster ≥ 3× über ihrem "
+                         f"48-h-Median)</span>:</p><ul style='margin:0'>{items}</ul>")
+        else:
+            parts.append("<p style='margin:6px 0 2px'><b>Gleichzeitig auffällige Container:</b> "
+                         "keine — der Ausbruch steht für sich.</p>")
+    if "checkmk" in ctx:
+        if cmk:
+            items = "".join(
+                f"<li>{_esc(a.get('host'))}: {_esc(_without_host(a.get('titel'), a.get('host')))} "
+                f"<span style='color:#777'>({_esc(a.get('schwere'))}, {_esc(_hm(a.get('zeit')))} UTC)</span></li>"
+                for a in cmk[:15])
+            parts.append(f"<p style='margin:6px 0 2px'><b>CheckMK-Alerts der betroffenen Hosts</b> "
+                         f"<span style='color:#777'>(ab 15 min vor Beginn)</span>:</p>"
+                         f"<ul style='margin:0'>{items}</ul>")
+        else:
+            parts.append("<p style='margin:6px 0 2px'><b>CheckMK-Alerts der betroffenen Hosts:</b> "
+                         "keine seit 15 min vor Beginn.</p>")
+    if not parts:
+        return ""
+    return ("<div style='margin:12px 0;padding:8px;border:1px solid #ccc;border-radius:6px'>"
+            "<b>Recherche</b> <span style='color:#777;font-size:12px'>(automatisch, nur lesend — "
+            "Grundlage der KI-Einschätzung)</span>" + "".join(parts) + "</div>")
 
 
 def _hm(iso: str | None) -> str:
@@ -269,7 +319,10 @@ async def _notify_one(ev, rt, cfg, base_url: str) -> None:
                 set_cluster_context(inc, {**{k: v for k, v in cur.items() if k != "type"},
                                           "correlated": correlated})
                 await db.commit()
+    # Recherche für die Mail (notify._research_html): nur auf diesem Weg tatsächlich
+    # gesucht — Flotten-Cluster und Nachholen nach Neustart zeigen den Abschnitt nicht.
     ctx["correlated"] = correlated
+    ctx["checkmk"] = checkmk
     await deliver(ctx, f"Fehlerausbruch: {short_title(ev.template.template)}", ev.episode.id,
                   incident_id, cfg, correlated, checkmk)
 

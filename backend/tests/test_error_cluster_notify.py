@@ -137,3 +137,28 @@ def test_mail_shows_a_known_recipe_with_the_button_hint():
     assert "Bewährtes Rezept" in html and "Backup-Pool voll" in html and "zfs_pools" in html
     assert "Prüfschritte ausführen" in html
     assert "Bewährtes Rezept" not in render_html(CTX, None, None, pending=False)
+
+
+def test_mail_links_incident_at_the_top_and_shows_research():
+    """Nutzerwunsch 12.10.: Link zum Incident bleibt, dazu die Rechercheergebnisse des KI-Laufs."""
+    ctx = {**CTX,
+           "correlated": [{"container": "cue-zipline-product-3", "zeilen_15min": 420, "faktor": 7.5}],
+           "checkmk": [{"host": "docker0218.example.com", "titel": "docker0218.example.com — Docker container status",
+                        "schwere": "critical", "zeit": "2026-10-12T12:20:00+00:00"}]}
+    html = render_html(ctx, None, "https://cs/feed?incident=1", pending=True)
+    assert html.index("Incident öffnen") < html.index("Recherche")      # Link zuerst
+    assert html.count("https://cs/feed?incident=1") == 2                 # oben und unten
+    assert "cue-zipline-product-3" in html and "7.5× über üblich" in html
+    assert "docker0218.example.com: Docker container status" in html and "12:20 UTC" in html
+    assert html.count("docker0218.example.com") == 1                     # Host nicht doppelt
+
+
+def test_research_names_empty_findings_instead_of_hiding_them():
+    html = render_html({**CTX, "correlated": [], "checkmk": []}, None, None, pending=False)
+    assert "keine — der Ausbruch steht für sich" in html
+    assert "keine seit 15 min vor Beginn" in html
+
+
+def test_no_research_section_when_no_search_ran():
+    """Flotte / Nachholen nach Neustart: keine Suche gelaufen → kein (falsches) „keine"."""
+    assert "Recherche" not in render_html(CTX, None, None, pending=False)

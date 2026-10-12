@@ -697,6 +697,11 @@ Episode (bis 60 min Ruhe) → Incident → KI-Einschätzung → Sofort-Mail / Ta
 | Erneut melden | nur bei Verdopplung der 5-min-Rate oder der Container, höchstens stündlich |
 | Ein Vorfall | ein Muster, das ≤ 30 min nach einem gemeldeten Ausbruch auf denselben Containern/Hosts beginnt, wird Teil davon (eine Mail, ein Incident) |
 
+Die Sofort-Mail enthält neben der KI-Einschätzung den Abschnitt **Recherche**: gleichzeitig
+auffällige Container (≥ 3× über ihrem 48-h-Median) und CheckMK-Alerts der betroffenen Hosts —
+die Daten, auf denen die Einschätzung beruht; leere Funde stehen als „keine" da. Der
+Incident-Link steht oben und unten.
+
 Docker liefert stdout pauschal als Level 6. Mitgelesen werden davon Container-Zeilen, deren
 **erstes Level-Wort** ERROR/FATAL/CRITICAL/SEVERE ist (sonst `level=error`, JSON-`level`,
 Traceback); `INFO … outcome=ERROR` zählt nicht. Muster, die in den ersten 2 h nach dem Lesen
