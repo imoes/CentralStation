@@ -15,6 +15,7 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from urllib.parse import quote
 
 from sqlalchemy import delete, select
@@ -415,11 +416,17 @@ async def _run() -> None:
                 await db.commit()
             if report and events:
                 from app.services.error_clusters import notify
-                await notify.on_events(events, rt, cfg, base_url)
+                await notify.on_events(_hold_young(rt, events, now), rt, cfg, base_url)
             rt.last_bucket = b
             n_events += len(events) if report else 0
             n_mails += sum(1 for e in events if e.mail) if report else 0
             b += BUCKET
+        # Zurückgehaltene Meldungen junger Ausbrüche: jetzt alt genug und noch aktiv?
+        due = _release_held(rt, now)
+        if due:
+            from app.services.error_clusters import notify
+            await notify.on_events(due, rt, cfg, base_url)
+            n_mails += len(due)
         # CheckMK-Flotten-Cluster: einmal je Lauf, nur im Echtbetrieb (nicht beim Nachholen).
         if now - target <= REPORT_HORIZON:
             try:
@@ -434,6 +441,58 @@ async def _run() -> None:
         log.info("error_clusters: done in %.0fs — %d templates, %d open episodes, "
                  "%d event(s), %d mail event(s)", (_now() - t_start).total_seconds(),
                  len(rt.store.templates), len(rt.store.open), n_events, n_mails)
+
+
+# ── Mindestalter für Mails (rules.min_age_minutes) ───────────────────────────
+#: Zurückgehaltene Mail-Ereignisse je Episode. Im Speicher: nach einem Neustart greift
+#: notify.resend_pending — mit derselben Altersregel.
+_held: dict[str, Any] = {}
+HELD_ACTIVE_WINDOW = timedelta(minutes=15)
+
+
+def _young(ep, now) -> bool:
+    from app.services.error_clusters.rules import DEFAULT
+    return now - ep.started_at < timedelta(minutes=DEFAULT.min_age_minutes)
+
+
+def _hold_young(rt, events, now):
+    """Mails für Ausbrüche, die jünger als min_age sind, zurückhalten (nicht verwerfen)."""
+    from app.services.error_clusters.rules import DEFAULT
+    out = []
+    for ev in events:
+        if ev.mail and ev.action in ("open", "reopen") and _young(ev.episode, now):
+            _held[ev.episode.id] = ev
+            log.info("error_clusters: mail for %s held until it is %d min old (pattern %s)",
+                     ev.episode.id[:8], DEFAULT.min_age_minutes, ev.episode.key[:8])
+            ev = _without_mail(ev)
+        out.append(ev)
+    return out
+
+
+def _without_mail(ev):
+    import dataclasses
+    return dataclasses.replace(ev, mail=False) if dataclasses.is_dataclass(ev) else ev
+
+
+def _release_held(rt, now) -> list:
+    """Alt genug und noch aktiv → melden; vorher vorbei → verwerfen (war nur kurz)."""
+    from app.services.error_clusters.rules import DEFAULT
+    due = []
+    for eid, ev in list(_held.items()):
+        ep = ev.episode
+        if ep.closed_at is not None or (rt.store.open.get(ep.key) is not ep):
+            log.info("error_clusters: held mail for %s dropped — outbreak ended before %d min",
+                     eid[:8], DEFAULT.min_age_minutes)
+            _held.pop(eid)
+            continue
+        if _young(ep, now):
+            continue
+        _held.pop(eid)
+        if now - ep.last_active_at <= HELD_ACTIVE_WINDOW:
+            due.append(ev)
+        else:
+            log.info("error_clusters: held mail for %s dropped — no longer active", eid[:8])
+    return due
 
 
 #: So viele der größten Muster eines gekappten Fensters zählt Graylog exakt nach.

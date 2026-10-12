@@ -91,10 +91,18 @@ def worth_renotify(hosts_now: int, notified_hosts: int, notified_at: datetime | 
 
 
 async def _collect(db, now: datetime):
+    """Probleme, die vor min_age bis min_age+15 min BEGANNEN und JETZT noch offen sind.
+
+    Bis 2026-10-12 zählten Probleme ab der ersten Minute — ein Proxmox-Neustart oder der
+    nächtliche Backup-Job machte für Minuten viele Hosts rot, und die Mail war raus,
+    bevor sich alles von selbst erholt hatte. Jetzt muss ein Problem min_age_minutes
+    überstehen (ein noch offener Alarm dieses Alters hat das nachweislich).
+    """
     from app.models.alert import Alert
+    aged = now - timedelta(minutes=DEFAULT.min_age_minutes)
     rows = (await db.execute(select(Alert).where(
-        Alert.source == "checkmk", Alert.created_at >= now - WINDOW,
-        Alert.status != "resolved"))).scalars().all()
+        Alert.source == "checkmk", Alert.created_at >= aged - WINDOW,
+        Alert.created_at < aged, Alert.status != "resolved"))).scalars().all()
     now_hosts: dict[str, set[str]] = {}
     alerts: dict[str, list[tuple[str, str]]] = {}
     outputs: dict[str, list[str]] = {}
@@ -120,7 +128,7 @@ async def _collect(db, now: datetime):
             FROM alerts
             WHERE source = 'checkmk' AND created_at >= :since AND created_at < :until
               AND metadata->>'service' = ANY(:svcs)
-            GROUP BY 1, 2"""), {"since": now - BASELINE, "until": now - WINDOW, "svcs": big})
+            GROUP BY 1, 2"""), {"since": aged - BASELINE, "until": aged - WINDOW, "svcs": big})
         for svc, _w, n in res.all():
             history.setdefault(svc, []).append(int(n))
     n_windows = int(BASELINE / WINDOW)

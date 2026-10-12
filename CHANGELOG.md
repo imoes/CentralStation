@@ -12,6 +12,30 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ## 2026-10-12 — Console searches Jira and ServiceDesk tickets
 
+### What changed
+
+- **Incident detection reports only after 30 minutes.**
+  - **Why:** of the 24 immediate mails between 08.10. and 12.10., 22 came from CheckMK
+    fleet clusters, mailed about one minute after the start. Many were over again after
+    0–15 minutes: a Proxmox restart, the nightly backup job (Filesystem
+    /data/backup 21:36), ORD1 at 22:36, Check_MK after reboots.
+  - **Fleet clusters (CheckMK):** only problems that started 30–45 minutes ago **and are
+    still open now** count. An alert still unresolved at that age has demonstrably lasted.
+    Incident and mail therefore come 30 minutes after the start at the earliest. Short
+    reboots and jobs drop out entirely.
+  - **Log clusters (Graylog):** the incident opens immediately (visible in the feed), but
+    the mail is held. It goes out only when the outbreak is 30 minutes old **and still
+    active**. If it ends earlier, there is no mail. Mails caught up after a restart follow
+    the same rule.
+  - **Threshold:** `rules.Thresholds.min_age_minutes = 30`.
+  - Verified:
+    - 6 tests: held and not sent; sent once old enough and active; dropped when it ended
+      early; dropped when no longer active; old outbreaks and renotifies are not held.
+    - The database self-test (rolled back) adds "outage 5 minutes old → no incident, no
+      mail" (19/19).
+    - The first live run after the deploy ran without errors.
+  - **Not affected:** host incidents. They send no mail.
+
 ### What is new
 
 - **`search_tickets` for the Console agents.**

@@ -61,6 +61,10 @@ class Thresholds:
     group_overlap: float = 0.2        # … und Container teilen, sind EIN Vorfall
     fleet_min_hosts: int = 5
     fleet_factor: float = 3.0
+    #: Erst ab diesem Alter wird gemeldet (Mail, Flotten-Incident). Ein Neustart oder ein
+    #: nächtlicher Job macht Dienste für Minuten rot und ist dann vorbei — 10/2026 waren
+    #: das die meisten Sofort-Mails (aktiv 0–15 min). Ein echtes Problem besteht weiter.
+    min_age_minutes: int = 30
 
 
 DEFAULT = Thresholds()

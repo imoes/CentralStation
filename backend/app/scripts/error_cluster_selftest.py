@@ -40,13 +40,29 @@ async def fleet_section(db, now) -> None:
     from app.models.error_cluster import ErrorCluster
     from app.services.error_clusters import fleet
     tag = uuid.uuid4().hex[:6]
+    # 0. Junger Ausfall (5 min, z. B. ein Neustart): noch kein Incident, keine Mail.
+    young_svc, young_hosts = f"Selftest Reboot {tag}", [f"st{tag}-y{i}.example.invalid" for i in range(6)]
+    for h in young_hosts:
+        db.add(Alert(source="checkmk", severity="high", title=f"{h} {young_svc}",
+                     external_id=f"st:{tag}:{h}:young", status="new",
+                     metadata_={"service": young_svc, "host": h},
+                     created_at=now - timedelta(minutes=5)))
+    await db.flush()
+    young = [n for n in await fleet.run(db, None, "") if n["ctx"].get("service") == young_svc]
+    young_eps = (await db.execute(select(ErrorCluster).where(
+        ErrorCluster.key == fleet.fleet_key(young_svc)))).scalars().all()
+    check("Flotte: 5 min junger Ausfall → kein Incident, keine Mail", not young and not young_eps)
+
     svcs = [f"Selftest ORD1 {tag}", f"Selftest ORD2 {tag}"]
     hosts = [f"st{tag}-{i}.example.invalid" for i in range(6)]
     for svc in svcs:
         for h in hosts:
             db.add(Alert(source="checkmk", severity="high", title=f"{h} {svc}",
                          external_id=f"st:{tag}:{h}:{svc}", status="new",
-                         metadata_={"service": svc, "host": h}, created_at=now))
+                         # 35 min alt und noch offen: erst dann zählt ein Problem
+                         # (rules.min_age_minutes).
+                         metadata_={"service": svc, "host": h},
+                         created_at=now - timedelta(minutes=35)))
     await db.flush()
     keys = [fleet.fleet_key(s) for s in svcs]
 

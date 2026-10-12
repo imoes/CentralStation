@@ -720,6 +720,9 @@ gleichzeitig auffällige Dienste, weitere Muster desselben Ausbruchs und den Gra
 - **KI-Einschätzung**: je Episode ein Aufruf, kein Budget, kein Token-Limit. Die Mail wartet
   höchstens 240 s; danach „KI-Einschätzung folgt" + zweite Mail. Nicht zugestellte Mails
   (Neustart) holt der Runner nach (`mailed_at`).
+- **Mindestalter 30 min** (`rules.min_age_minutes`): Flotten-Cluster zählen nur Probleme, die
+  seit 30–45 min bestehen und noch offen sind; Mails zu Log-Clustern werden zurückgehalten, bis
+  der Ausbruch 30 min alt und noch aktiv ist — Neustarts und kurze Jobs lösen keine Mail aus.
 - **Eine Mail je Vorfall**: Flotten-Ausfälle, die höchstens 30 min nacheinander beginnen und
   sich Hosts teilen (Jaccard ≥ 0,2), sind ein Incident mit mehreren Mustern und eine Mail
   (z. B. ORD1/ORD2/ORD3 auf denselben 5 Hosts). Kehrt ein Ausfall binnen 3 h nach dem

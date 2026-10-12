@@ -436,13 +436,20 @@ async def resend_pending(cfg) -> int:
     from app.core.tasks import run_background
     from app.models.error_cluster import ErrorCluster, LogTemplate
     from app.services.error_clusters.runner import short_title
-    since = datetime.now(timezone.utc) - timedelta(hours=2)
+    from app.services.error_clusters.rules import DEFAULT
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(hours=2)
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(
             select(ErrorCluster, LogTemplate)
             .join(LogTemplate, LogTemplate.key == ErrorCluster.key, isouter=True)
             .where(ErrorCluster.notify_class == "immediate", ErrorCluster.notified_at >= since,
-                   ErrorCluster.mailed_at.is_(None)))).all()
+                   ErrorCluster.mailed_at.is_(None),
+                   # Dieselbe Altersregel wie im laufenden Betrieb (rules.min_age_minutes):
+                   # nur Ausbrüche, die alt genug UND noch offen/aktiv sind.
+                   ErrorCluster.status == "open",
+                   ErrorCluster.started_at <= now - timedelta(minutes=DEFAULT.min_age_minutes),
+                   ErrorCluster.last_active_at >= now - timedelta(minutes=15)))).all()
     for ec, t in rows:
         ctx = ctx_from_row(ec, t)
         title = (f"Flotten-Ausfall: {ctx['template']}" if ec.source == "checkmk_fleet"
