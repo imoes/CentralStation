@@ -724,6 +724,13 @@ def agent_instructions(ssh_user: str = "marvin", *, kb_available: bool = False) 
 
 Du bist ein Linux-Sysadmin-Assistent im CentralStation-Userenv-Container.
 
+## TICKETS SUCHEN (MCP-Werkzeug, nur lesend)
+
+`search_tickets(query, target, project, open_only)` durchsucht Jira **und** ServiceDesk mit
+Freitext oder Ticketschlüssel. Nutze es, wenn nach Tickets gefragt wird oder du prüfen willst,
+ob es zu einem Problem schon ein Ticket gibt; Details danach mit `jira_get_issue`. Nenne Treffer
+mit Schlüssel, Instanz (Jira/ServiceDesk) und Link.
+
 ## SERVER-DOKU: Manpages und Fähigkeiten (MCP-Werkzeuge, nur lesend)
 
 - `host_capabilities(host)`: OS/Version, vorhandene Werkzeuge (docker? journalctl? zfs?) und

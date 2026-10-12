@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import re
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -320,3 +321,99 @@ async def find_connector_for_project(db: AsyncSession, user, project: str,
         return None, (f"Projekt {project} gibt es {label} nicht."
                       + (f" Verfügbar {label}: {', '.join(keys[:40])}." if keys else ""))
     return None, f"Projekt {project} gibt es auf keiner verbundenen Jira-Instanz."
+
+
+# ── Tickets suchen (Jira + ServiceDesk) ──────────────────────────────────────
+
+INSTANCE_LABEL = {"jira": "Jira", "jira_sd": "ServiceDesk"}
+_ISSUE_KEY = re.compile(r"^[A-Z][A-Z0-9_]+-\d+$")
+_SEARCH_FIELDS = ["summary", "status", "priority", "assignee", "reporter", "issuetype",
+                  "created", "updated", "description"]
+
+
+def build_search_jql(query: str, project: str | None = None, open_only: bool = False) -> str:
+    """Freitext → JQL. Ein Ticketschlüssel (IMIT-123) wird direkt gesucht."""
+    q = (query or "").strip()
+    clauses: list[str] = []
+    if q and _ISSUE_KEY.match(q.upper()):
+        clauses.append(f"issuekey = {q.upper()}")
+    elif q:
+        esc = q.replace("\\", "\\\\").replace('"', '\\"')
+        clauses.append(f'text ~ "{esc}"')
+    if project:
+        clauses.append(f'project = "{project.upper()}"')
+    if open_only:
+        clauses.append("statusCategory != Done")
+    if not clauses:
+        raise ValueError("Suchbegriff, Projekt oder 'nur offene' angeben")
+    return " AND ".join(clauses) + " ORDER BY updated DESC"
+
+
+def snippet(text: str | None, query: str, width: int = 140) -> str:
+    """Textstelle um den ersten Suchbegriff — damit man sieht, WARUM ein Ticket passt."""
+    t = re.sub(r"\s+", " ", text or "").strip()
+    if not t:
+        return ""
+    words = [w for w in re.split(r"\W+", query or "") if len(w) > 2]
+    pos = min((t.lower().find(w.lower()) for w in words if t.lower().find(w.lower()) >= 0), default=-1)
+    if pos < 0:
+        return t[:width] + ("…" if len(t) > width else "")
+    a = max(0, pos - width // 2)
+    return ("…" if a else "") + t[a:a + width] + ("…" if a + width < len(t) else "")
+
+
+async def search_tickets(db: AsyncSession, user_id, query: str, *, target: str | None = None,
+                         project: str | None = None, open_only: bool = False,
+                         max_results: int = 20) -> dict:
+    """In Jira UND ServiceDesk suchen (oder in einem genannten Ziel).
+
+    Ein Projekt wird nur dort gesucht, wo es existiert — sonst lieferte die andere Instanz
+    eine JQL-Fehlermeldung ("Wert 'IMIT' existiert nicht"), die wie ein Problem aussieht.
+    """
+    from app.core.security import decrypt_credentials
+    from app.services.connectors.jira import JiraConnector
+
+    wanted, err = normalize_target(target)
+    if err:
+        return {"ok": False, "error": err}
+    jql = build_search_jql(query, project, open_only)
+    results: list[dict] = []
+    notes: list[str] = []
+    searched: list[str] = []
+    for ctype in ([wanted] if wanted else ["jira", "jira_sd"]):
+        conn = await resolve_jira_connector(db, user_id, ctype)
+        label = INSTANCE_LABEL[ctype]
+        if not conn:
+            if wanted:
+                notes.append(f"Kein {label}-Connector konfiguriert")
+            continue
+        jira = JiraConnector(base_url=conn.base_url, credentials=decrypt_credentials(conn.encrypted_credentials))
+        if project and not await jira.has_project(project.upper()):
+            notes.append(f"Projekt {project.upper()} gibt es nicht in {label}")
+            continue
+        searched.append(label)
+        try:
+            issues = await jira.search_issues(jql, fields=_SEARCH_FIELDS)
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"{label}: {str(exc)[:160]}")
+            continue
+        base = conn.base_url.rstrip("/")
+        for i in issues:
+            f = i.get("fields") or {}
+            desc = f.get("description")
+            results.append({
+                "key": i.get("key"), "summary": f.get("summary"),
+                "status": (f.get("status") or {}).get("name"),
+                "type": (f.get("issuetype") or {}).get("name"),
+                "priority": (f.get("priority") or {}).get("name"),
+                "assignee": (f.get("assignee") or {}).get("displayName"),
+                "reporter": (f.get("reporter") or {}).get("displayName"),
+                "created": f.get("created"), "updated": f.get("updated"),
+                "instance": label, "url": f"{base}/browse/{i.get('key')}",
+                "match": snippet(desc if isinstance(desc, str) else f.get("summary"), query),
+            })
+    results.sort(key=lambda r: r.get("updated") or "", reverse=True)
+    n = max(1, min(50, max_results))
+    return {"ok": bool(searched) or bool(results), "jql": jql, "searched": searched,
+            "count": len(results[:n]), "total_found": len(results), "issues": results[:n],
+            **({"notes": notes} if notes else {})}

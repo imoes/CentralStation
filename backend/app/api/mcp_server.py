@@ -1698,6 +1698,33 @@ async def _jira_for_issue(issue_key: str):
 
 
 @mcp.tool()
+async def search_tickets(query: str, target: str = "", project: str = "",
+                         open_only: bool = False, max_results: int = 20) -> dict:
+    """Tickets in Jira UND ServiceDesk durchsuchen — Freitext, kein JQL nötig.
+
+    Nimm das für "such mal Tickets zu …", "gab es dazu schon ein Ticket?", "was ist mit
+    IMIT-1234?". Liefert je Treffer Schlüssel, Titel, Status, Bearbeiter, Instanz (Jira oder
+    ServiceDesk), Link und die passende Textstelle. Danach Details mit jira_get_issue.
+
+    Parameter:
+    - query: Suchbegriffe (Volltext) oder ein Ticketschlüssel, z. B. 'zipline 401' / 'IMIT-1234'
+    - target: optional 'jira' oder 'servicedesk' — sonst beide
+    - project: optional Projektschlüssel (z. B. 'IMIT', 'IMSP'); gesucht wird nur dort, wo es
+      das Projekt gibt
+    - open_only: nur nicht erledigte Tickets
+    - max_results: höchstens so viele Treffer (Standard 20, max. 50), neueste zuerst
+    Für komplexe Filter (Bearbeiter, Zeiträume, Felder) gibt es jira_search_issues mit JQL.
+    """
+    from app.services.ticketing import search_tickets as _search
+    try:
+        async with (await _get_db_session()) as db:
+            return await _search(db, _calling_user_id(), query, target=target or None,
+                                 project=project or None, open_only=open_only, max_results=max_results)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@mcp.tool()
 async def jira_search_issues(jql: str, max_results: int = 20) -> dict:
     """Sucht Jira-Tickets via JQL-Abfrage — über ALLE konfigurierten Instanzen.
 

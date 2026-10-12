@@ -10,6 +10,31 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-10-12 — Console searches Jira and ServiceDesk tickets
+
+### What is new
+
+- **`search_tickets` for the Console agents.**
+  - **Input:** free text or a ticket key, searched in Jira **and** ServiceDesk. No JQL
+    needed. Optional filters: target (`jira`/`servicedesk`), project and open tickets
+    only.
+  - **Result:** each hit has key, title, status, assignee, instance, link and the text
+    passage that matched.
+  - **Projects:** a project is searched only on the instance where it exists. Before,
+    `project = IMIT` produced a JQL error on Jira ("Der Wert 'IMIT' existiert nicht"),
+    which looked like a problem.
+  - **Agents:** Hermes, Claude and Codex are told when to use it ("gibt es dazu schon ein
+    Ticket?").
+  - Verified live:
+    - "vpp0252" in project IMIT found 35 hits on the ServiceDesk only, with the note
+      "Projekt IMIT gibt es nicht in Jira".
+    - "zipline 401" searched both instances.
+    - Asked "Gibt es schon Tickets zu vpp0252?", both Claude and GLM 5.3 Flash (Hermes)
+      used `search_tickets` and named the open IMIT-135211 with its link (11 and 15 s).
+      GLM also recognized the other 34 hits as closed alert tickets.
+  - Tests: 6 (JQL from free text, key search, quotes cannot break out, filters, text
+    passage).
+
 ## 2026-10-11 — Console security, block 0 of the console plan
 
 ### What is new

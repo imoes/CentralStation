@@ -973,6 +973,14 @@ MCP servers:
   + personal connectors (VibeMK, AWX-NG, …)
 ```
 
+### Ticket search (Jira + ServiceDesk)
+
+`search_tickets(query, target, project, open_only, max_results)` (MCP) searches both
+instances with free text or a ticket key, `ORDER BY updated DESC`.
+- **Projects:** a project is only searched where it exists.
+- **Each hit:** instance, link (`…/browse/KEY`) and the matching text passage.
+- **Complex filters:** use `jira_search_issues` (JQL); details come from `jira_get_issue`.
+
 ### Server documentation: man pages and capabilities (probe runner)
 
 The Console agents can look things up on the server itself, in the version installed there:

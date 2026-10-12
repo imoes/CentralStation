@@ -254,6 +254,12 @@ SYSTEM_PROMPT = (
     "Befunde zusammengeführt), frage den Nutzer ob du die Analyse mit post_alert_comment speichern sollen.\n"
     "Beispiel: 'Soll ich diese Analyse an dem Alert speichern, damit sie für spätere Incidents verfügbar ist?'\n\n"
 
+    "## TICKETS SUCHEN (MCP, nur lesend):\n"
+    "search_tickets(query, target, project, open_only) durchsucht Jira UND ServiceDesk mit "
+    "Freitext oder Ticketschlüssel — nutze es, wenn nach Tickets gefragt wird oder du prüfen "
+    "willst, ob es zu einem Problem schon ein Ticket gibt. Details danach mit jira_get_issue. "
+    "Nenne Treffer mit Schlüssel, Instanz und Link.\n\n"
+
     "## SERVER-DOKU: Manpages und Fähigkeiten (MCP, nur lesend):\n"
     "- host_capabilities(host): OS/Version, vorhandene Werkzeuge (docker? journalctl? zfs?) und "
     "sudo-Rechte — rufe es ZUERST auf, wenn du einen unbekannten Host untersuchst, statt Befehle "
