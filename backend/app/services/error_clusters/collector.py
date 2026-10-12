@@ -1,8 +1,16 @@
 """Ein 5-Minuten-Fenster aus Graylog holen und Zeilen je Muster zählen.
 
-Geholt wird jede Fehlerzeile des Fensters (level:<=4 — Docker liefert jede Zeile
-zusätzlich als Level-6-Kopie, ohne den Filter zählte alles doppelt). Switches
-(nsa/nss/nsc) bleiben draußen wie im Feed-Collector; sie haben eigene Werkzeuge.
+Geholt wird jede Fehlerzeile des Fensters:
+- level:<=4 (Syslog, Journald, GELF mit Level), und
+- Container-Zeilen mit level 6, die selbst einen Fehler melden. Docker liefert stdout
+  pauschal als Level 6 (info); Java/Python-Anwendungen schreiben ihr eigenes "ERROR" in
+  den Text. Ohne diese Zeilen blieb z. B. die DocumentIndex-Retry-Schleife der
+  Content-Stores unsichtbar (12.10.: 6 663 solche Zeilen in 2 h, 0 davon mit level<=4).
+  Graylog sucht ohne Groß-/Kleinschreibung, deshalb prüft ERROR_LINE die erste Zeile
+  danach exakt (Großschreibung bzw. level=error) — "an error occurred" in einer
+  Info-Meldung zählt nicht. Eine Level-6-Zeile, die im selben Fenster wortgleich auch mit
+  level<=4 kam (Docker-Kopie, gemessen ~1 %), zählt nicht doppelt.
+Switches (nsa/nss/nsc) bleiben draußen wie im Feed-Collector; sie haben eigene Werkzeuge.
 
 OpenSearch liefert höchstens 10 000 Treffer je Abfrage. Ist ein Fenster voller (bei
 einer Flut: ~7 500 Flutzeilen + ~5 000 normale), wird es in Teilfenster zerlegt. Was
@@ -12,6 +20,7 @@ und der Runner lässt Kandidaten-Muster von Graylog exakt nachzählen.
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -19,7 +28,35 @@ from datetime import datetime, timedelta, timezone
 from app.services.error_clusters.miner import Miner
 from app.services.graylog_occurrences import iso
 
-BASE_QUERY = "level:<=4 AND NOT source:(nsa* OR nss* OR nsc*)"
+BASE_QUERY = ("NOT source:(nsa* OR nss* OR nsc*) AND (level:<=4 OR (level:6 AND "
+              "_exists_:container_name AND message:(ERROR OR FATAL OR CRITICAL OR SEVERE "
+              "OR Traceback)))")
+#: Ändert sich, welche Zeilen gelesen werden, ändert sich diese Kennung — die Erkennung
+#: weiß dann, dass Muster der neuen Quelle schon vorher gelaufen sein können (engine
+#: COVERAGE_MARGIN: "anhaltend neu" anfangs nur als Tagesübersicht).
+SOURCE_VERSION = "level6-errors-1"
+_LEVEL_WORD = re.compile(r'\b(TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|FATAL|CRITICAL|SEVERE)\b')
+_ERROR_WORDS = {"ERROR", "FATAL", "CRITICAL", "SEVERE"}
+_ERROR_FIELD = re.compile(
+    r'\blevel=(error|fatal|critical)\b'
+    r'|"level"\s*:\s*"(error|fatal|critical)"'
+    r'|^Traceback \(most recent')
+
+
+class _ErrorLine:
+    """Meldet die Zeile selbst einen Fehler? Es zählt das ERSTE Level-Wort (Großschreibung):
+    "INFO … outcome=ERROR" ist eine Info-Meldung der Anwendung, kein Fehler (gemessen 12.10.:
+    Yarp3-Rückmeldungen). Ohne Level-Wort entscheiden level=error / JSON-level / Traceback."""
+
+    @staticmethod
+    def search(first_line: str) -> bool:
+        m = _LEVEL_WORD.search(first_line)
+        if m:
+            return m.group(1) in _ERROR_WORDS
+        return bool(_ERROR_FIELD.search(first_line))
+
+
+ERROR_LINE = _ErrorLine()
 FIELDS = ["message", "source", "container_name", "timestamp", "level"]
 MAX_RESULT_WINDOW = 10_000
 SPLIT_AT = 9_500
@@ -46,6 +83,29 @@ class Fetched:
     complete: bool        # alle Zeilen geholt?
 
 
+def _level(m: dict) -> int:
+    try:
+        return int(m.get("level"))
+    except (TypeError, ValueError):
+        return 7
+
+
+def keep_lines(msgs: list[dict]) -> list[dict]:
+    """Level ≤4 immer; Level 6 nur mit Fehlerkennung im Text und ohne Level-≤4-Zwilling."""
+    strong = {(m.get("container_name") or m.get("source"), m.get("message"))
+              for m in msgs if _level(m) <= 4}
+    out = []
+    for m in msgs:
+        if _level(m) <= 4:
+            out.append(m)
+            continue
+        first = str(m.get("message") or "").split("\n", 1)[0]
+        if (ERROR_LINE.search(first)
+                and (m.get("container_name") or m.get("source"), m.get("message")) not in strong):
+            out.append(m)
+    return out
+
+
 def _line(m: dict) -> Line:
     return Line(
         ts=str(m.get("timestamp") or ""),
@@ -61,19 +121,25 @@ async def fetch_window(svc, since: datetime, until: datetime,
     msgs, total = await svc.search_window(query, iso(since), iso(until),
                                           limit=MAX_RESULT_WINDOW, fields=FIELDS)
     if total <= SPLIT_AT or total <= len(msgs):
-        return Fetched([_line(m) for m in msgs], total, True)
+        kept = keep_lines(msgs)
+        return Fetched([_line(m) for m in kept], len(kept), True)
     parts = min(MAX_PARTS, math.ceil(total / (SPLIT_AT - 500)))
     step = (until - since) / parts
     lines: list[Line] = []
     complete = True
+    seen, est = 0, 0.0
     for i in range(parts):
         a = since + step * i
         b = until if i == parts - 1 else since + step * (i + 1)
         part, part_total = await svc.search_window(query, iso(a), iso(b),
                                                    limit=MAX_RESULT_WINDOW, fields=FIELDS)
-        lines.extend(_line(m) for m in part)
+        kept = keep_lines(part)
+        lines.extend(_line(m) for m in kept)
         complete = complete and part_total <= len(part)
-    return Fetched(lines, total, complete)
+        # Gesamtzahl hochrechnen: Graylog zählt auch, was der Nachfilter verwirft.
+        seen += len(part)
+        est += part_total * len(kept) / max(len(part), 1)
+    return Fetched(lines, round(est) if not complete else len(lines), complete)
 
 
 # ── Zählen ───────────────────────────────────────────────────────────────────

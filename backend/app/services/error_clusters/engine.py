@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from app.services.error_clusters.collector import BucketTally
 from app.services.error_clusters.rules import (
     DEFAULT,
+    PERSIST_PARTS,
     WINDOW_BUCKETS,
     EpisodeState,
     Thresholds,
@@ -34,6 +35,9 @@ HISTORY = timedelta(days=14)
 HOURLY_HISTORY = timedelta(days=28)
 SEASON_WEEKS = 4
 MAX_BUCKET_ENTITIES = 50
+#: Erscheint ein Muster in den ersten 2 h nach Beginn der Beobachtung (Erststart, neue
+#: Log-Quelle), lief es womöglich schon vorher — "anhaltend neu" dann nur als Tagesübersicht.
+COVERAGE_MARGIN = timedelta(hours=2)
 
 
 @dataclass
@@ -97,8 +101,11 @@ class Event:
 class MemoryStore:
     """Alles im Speicher — für Backtest und Tests. Gleiche Schnittstelle wie der DB-Store."""
 
-    def __init__(self, detector_started_at: datetime) -> None:
+    def __init__(self, detector_started_at: datetime,
+                 coverage_since: datetime | None = None) -> None:
         self.detector_started_at = detector_started_at
+        #: Seit wann alle heute gelesenen Log-Quellen beobachtet werden (≥ Erkennungsstart).
+        self.coverage_since = max(detector_started_at, coverage_since or detector_started_at)
         self.templates: dict[str, TemplateInfo] = {}
         self.buckets: dict[str, dict[datetime, BucketRec]] = {}
         self.entity_buckets: dict[str, dict[datetime, int]] = {}
@@ -275,8 +282,19 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
                 vals = seasonal_values(store, key, b)
                 if len(vals) >= 2:
                     lam = max(lam, statistics.median(vals) / 12)
+        tinfo = store.templates.get(key)
+        fs_hours = ((b + BUCKET - tinfo.first_seen).total_seconds() / 3600
+                    if tinfo is not None and tinfo.first_seen else None)
+        recent = [series.get(b - BUCKET * i) for i in range(th.persist_window_buckets)]
+        part = max(1, th.persist_window_buckets // PERSIST_PARTS)
+        recent_parts = sum(1 for j in range(PERSIST_PARTS)
+                           if any(r and r.count for r in recent[j * part:(j + 1) * part]))
         window = Window(counts=counts, entities=len(ents15), sources=len(srcs15) or 1,
-                        usual_entities=usual, seen_before=bool(nonzero), active_days=active_days)
+                        usual_entities=usual, seen_before=bool(nonzero), active_days=active_days,
+                        first_seen_hours=fs_hours, recent_parts=recent_parts,
+                        recent_total=sum(r.count for r in recent if r),
+                        coverage_unsure=(tinfo is not None and tinfo.first_seen is not None
+                                         and tinfo.first_seen < store.coverage_since + COVERAGE_MARGIN))
         verdict = evaluate(window, lam, th=th, history_peak=peak)
 
         info = store.templates.get(key)

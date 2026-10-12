@@ -76,7 +76,21 @@ async def _hydrate(db) -> _Runtime:
         await db.commit()
         log.info("error_clusters: first start — backfilling %s silently", INITIAL_BACKFILL)
 
-    store = MemoryStore(state.started_at)
+    # Seit wann die heutige Log-Quelle (collector.SOURCE_VERSION) gelesen wird — beim ersten
+    # Start mit einer neuen Quelle jetzt. Muster, die gleich danach auftauchen, liefen
+    # womöglich schon vorher (engine.COVERAGE_MARGIN).
+    from app.services.error_clusters.collector import SOURCE_VERSION
+    from app.services.settings import get_setting, set_setting
+    cov_key = f"error_clusters.coverage_since.{SOURCE_VERSION}"
+    cov_raw = await get_setting(db, cov_key)
+    if cov_raw:
+        coverage_since = datetime.fromisoformat(cov_raw)
+    else:
+        coverage_since = now
+        await set_setting(db, cov_key, now.isoformat())
+        await db.commit()
+        log.info("error_clusters: log source %s observed from %s", SOURCE_VERSION, now)
+    store = MemoryStore(state.started_at, coverage_since)
     since = now - HISTORY - timedelta(hours=1)
     for t in (await db.execute(select(LogTemplate).where(LogTemplate.last_seen >= since))).scalars():
         store.templates[t.key] = TemplateInfo(t.key, t.template, t.first_seen, t.last_seen,
@@ -460,7 +474,9 @@ def _hold_young(rt, events, now):
     from app.services.error_clusters.rules import DEFAULT
     out = []
     for ev in events:
-        if ev.mail and ev.action in ("open", "reopen") and _young(ev.episode, now):
+        # "anhaltend neu" läuft nachweislich schon 2 h — kein weiteres Zurückhalten.
+        persistent = "persistent" in (getattr(getattr(ev, "verdict", None), "rules", None) or ())
+        if ev.mail and ev.action in ("open", "reopen") and not persistent and _young(ev.episode, now):
             _held[ev.episode.id] = ev
             log.info("error_clusters: mail for %s held until it is %d min old (pattern %s)",
                      ev.episode.id[:8], DEFAULT.min_age_minutes, ev.episode.key[:8])

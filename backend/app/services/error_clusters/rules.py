@@ -24,6 +24,7 @@ from typing import Sequence
 BUCKET_MINUTES = 5
 WINDOW_BUCKETS = 3          # bewertet werden 15 min
 BUCKETS_PER_HOUR = 60 // BUCKET_MINUTES
+PERSIST_PARTS = 4           # "anhaltend": in jeder halben Stunde der letzten 2 h
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,16 @@ class Thresholds:
     group_overlap: float = 0.2        # … und Container teilen, sind EIN Vorfall
     fleet_min_hosts: int = 5
     fleet_factor: float = 3.0
+    #: ANHALTEND NEU: ein Muster, das erst seit höchstens persist_max_age_hours existiert und
+    #: in JEDER halben Stunde der letzten 2 h auftrat (persist_window_buckets 5-min-Fenster in
+    #: PERSIST_PARTS Teilen), zusammen ≥ persist_min_total Zeilen. Anlass 12.10.: eine
+    #: Retry-Schleife nach einem Deploy (DocumentIndex, schubweise alle ~10 min, ein Container)
+    #: blieb unter NEU (20 in 15 min) — im ersten Fenster zu leise, danach galt das Muster als
+    #: "gesehen" und wurde nie wieder als neu bewertet. Halbstunden statt 5-min-Fenster, weil
+    #: Retry-Schleifen schubweise laufen (gemessen: 1 464 Zeilen in 2 h, aber nur 12/24 Fenster).
+    persist_max_age_hours: float = 24.0
+    persist_window_buckets: int = 24
+    persist_min_total: int = 100
     #: Erst ab diesem Alter wird gemeldet (Mail, Flotten-Incident). Ein Neustart oder ein
     #: nächtlicher Job macht Dienste für Minuten rot und ist dann vorbei — 10/2026 waren
     #: das die meisten Sofort-Mails (aktiv 0–15 min). Ein echtes Problem besteht weiter.
@@ -188,6 +199,15 @@ class Window:
     #: WIEDERKEHRENDES Muster (täglicher Job) muss auch sein bisheriges Höchstniveau
     #: übertreffen; ein wiederholter Ausbruch (ein, zwei Tage) nicht.
     active_days: int = 0
+    #: Stunden seit dem ersten Auftreten (None = älter als die Historie / unbekannt)
+    first_seen_hours: float | None = None
+    #: Letzte persist_window_buckets 5-min-Fenster: in wie vielen der PERSIST_PARTS Teile
+    #: aktiv, wie viele Zeilen insgesamt
+    recent_parts: int = 0
+    recent_total: int = 0
+    #: Muster erschien kurz nach Beginn der Beobachtung — ob es "neu" ist oder schon vorher
+    #: lief, ist nicht entscheidbar (Erststart, neue Log-Quelle). Dann Tagesübersicht statt Mail.
+    coverage_unsure: bool = False
 
 
 @dataclass(frozen=True)
@@ -219,7 +239,20 @@ def evaluate(window: Window, lam: float | None, history: Sequence[int] | None = 
     if not window.seen_before and (count15 >= th.new_min_count
                                    or window.sources >= th.new_min_sources):
         rules.add("new")
-        reasons.append("neues Muster (14 Tage nicht gesehen)")
+        reasons.append("neu in der Beobachtung (Log-Quelle wird erst seit Kurzem gelesen)"
+                       if window.coverage_unsure else "neues Muster (14 Tage nicht gesehen)")
+
+    if (window.first_seen_hours is not None
+            and window.first_seen_hours <= th.persist_max_age_hours
+            and window.recent_parts >= PERSIST_PARTS
+            and window.recent_total >= th.persist_min_total):
+        rules.add("persistent")
+        if window.coverage_unsure:
+            reasons.append(f"anhaltendes Muster seit Beginn der Beobachtung: "
+                           f"{window.recent_total} Zeilen in 2 h, in jeder halben Stunde")
+        else:
+            reasons.append(f"neues Muster läuft seit {window.first_seen_hours:.0f} h anhaltend: "
+                           f"{window.recent_total} Zeilen in 2 h, in jeder halben Stunde")
 
     elevated = sum(1 for c in window.counts if c >= th.spike_bucket_factor * lam)
     if history_peak is None:
@@ -246,12 +279,17 @@ def evaluate(window: Window, lam: float | None, history: Sequence[int] | None = 
         reasons.append(f"{window.entities} Container/Quellen, üblich "
                        f"{max(window.usual_entities, 1.0):.0f}")
 
-    if "spread" in rules or ("spike" in rules and count15 >= th.spike_immediate_count):
+    persistent_now = "persistent" in rules and not window.coverage_unsure
+    if "spread" in rules or persistent_now or (
+            "spike" in rules and count15 >= th.spike_immediate_count):
         notify = "immediate"
     elif "spike" in rules:
         notify = "digest"           # deutlich, aber ein Container und überschaubar
+    elif "persistent" in rules:
+        notify = "digest"           # lief vermutlich schon vor der Beobachtung
     elif "new" in rules:
-        notify = "immediate" if count15 >= th.new_immediate_count else "digest"
+        notify = ("immediate" if count15 >= th.new_immediate_count and not window.coverage_unsure
+                  else "digest")
     else:
         notify = "none"
     return Verdict(frozenset(rules), notify, count15, expected, p, tuple(reasons))

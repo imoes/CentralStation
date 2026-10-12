@@ -14,6 +14,54 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What changed
 
+- **Error-cluster detection now sees application errors from containers, and reports
+  steady new error loops.**
+  - **Why:** the content-store DocumentIndex retry loop
+    (`Unparseable number: "<ecs_selection>50</ecs_selection>"`, NullPointerException) ran
+    for days without a report. There were two causes:
+    1. Docker delivers every stdout line as level 6 (info). Java and Python applications
+       write their own `ERROR` into the text. The detector read only `level<=4`.
+       Measured on 12.10. over 2 h: 6,663 container lines with ERROR in the text at level 6,
+       0 of the DocumentIndex lines at level ≤4. 19,402 "Unparseable number" lines in
+       4 days reached the detector not once.
+    2. NEW fired only in a pattern's first 15-minute window (≥ 20 lines). A quiet loop was
+       "seen" from then on. SPIKE (≥ 200) and SPREAD (≥ 8 containers) never trigger for one
+       container at 60 lines per hour.
+  - **Collector:** it also reads level-6 container lines whose *own* level is an error.
+    The first level word in the line decides: `ERROR`, `FATAL`, `CRITICAL` or `SEVERE`
+    (upper case). Without a level word, `level=error`, a JSON `"level":"error"` or a Python
+    traceback decide.
+    - `INFO … outcome=ERROR` stays out. That case was measured: the Yarp3 feedback lines.
+    - A level-6 line that came word for word at level ≤4 in the same window is not counted
+      twice.
+    - Measured over 2 h: 6,663 hits → 4,112 kept, in 52 patterns.
+  - **New rule "anhaltend neu" (persistent new):** a pattern that first appeared at most
+    24 h ago, ran in **every half hour of the last 2 h**, with ≥ 100 lines in total, is
+    reported immediately. The reason reads "neues Muster läuft seit X h anhaltend".
+    - Half hours, not 5-minute windows, because retry loops run in bursts. DocumentIndex
+      had 1,464 lines in 2 h but was active in only 12 of 24 windows.
+    - The rule is not held by the 30-minute minimum age: it has demonstrably lasted 2 h.
+  - **No mail flood at the switch:** patterns that appear in the first 2 h after a log
+    source is first read can have been running before. They go to the daily overview only,
+    for NEW and for persistent alike. Their reason then reads "neu in der Beobachtung"
+    instead of "14 Tage nicht gesehen". The start is stored per source
+    (`error_clusters.coverage_since.level6-errors-1`).
+    - Measured before the switch: 5 patterns would have been persistent: DocumentIndex,
+      nifi StandardProcessGroup, three cue-zipline-dam patterns.
+  - Verified:
+    - 17 tests, including a full engine replay of the DocumentIndex case. A loop starting
+      after a deploy (bursts every 10 min) gets the first window into the daily overview
+      and an immediate mail 1.5 h later, with the persistent reason. The same loop already
+      running when observation starts gets no immediate mail.
+    - Full suite: 631 passed.
+    - Live after the deploy: the DocumentIndex pattern is in the detector (122 lines in the
+      first window).
+    - The 12 newly read patterns opened as daily-overview episodes, with no mail.
+  - **Gap:** two `INFO … outcome=ERROR` patterns came through before the
+    first-level-word fix. They were opened as daily-overview episodes and close by
+    themselves once quiet. The 5 episodes from the first run still carry the old reason
+    "14 Tage nicht gesehen".
+
 - **Incident detection reports only after 30 minutes.**
   - **Why:** of the 24 immediate mails between 08.10. and 12.10., 22 came from CheckMK
     fleet clusters, mailed about one minute after the start. Many were over again after

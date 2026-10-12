@@ -675,14 +675,14 @@ entstehen nur noch hier.
 ### Ablauf (alle 5 Minuten)
 
 ```
-Graylog (level:<=4, ohne Switches) ── jede Zeile, KEINE Deduplizierung
+Graylog (level:<=4 + Container-Zeilen mit eigenem ERROR, ohne Switches) ── jede Zeile, KEINE Deduplizierung
    │   Fenster > 10 000 Treffer werden geteilt (OpenSearch-Grenze)
    ▼
 Drain3-Muster (Zahlen/IDs/IPs maskiert, HTTP-Codes bleiben: 401 ≠ 500)
    ▼
 Zählwerte je Muster und 5-min-Fenster (Postgres)  →  Grundlast = Median (Nullen inklusive)
    ▼
-Regeln (fest, kein LLM):  NEU · SPITZE · AUSBREITUNG     CheckMK: FLOTTE
+Regeln (fest, kein LLM):  NEU · ANHALTEND NEU · SPITZE · AUSBREITUNG     CheckMK: FLOTTE
    ▼
 Episode (bis 60 min Ruhe) → Incident → KI-Einschätzung → Sofort-Mail / Tagesübersicht
 ```
@@ -690,11 +690,18 @@ Episode (bis 60 min Ruhe) → Incident → KI-Einschätzung → Sofort-Mail / Ta
 | Regel | Bedingung |
 |---|---|
 | **NEU** | 14 Tage nicht gesehen und ≥ 20 Zeilen in 15 min oder ≥ 2 Quellen. Sofort bei Ausbreitung oder ≥ 500 Zeilen, sonst Tagesübersicht |
+| **ANHALTEND NEU** | erstmals vor ≤ 24 h gesehen, in jeder halben Stunde der letzten 2 h aktiv, ≥ 100 Zeilen — sofort (Retry-Schleifen nach einem Deploy) |
 | **SPITZE** | ≥ 200 Zeilen in 15 min, ≥ 5 × Grundlast, Poisson p < 1e-6, 2 von 3 Fenstern erhöht. Wiederkehrende Muster (≥ 3 aktive Tage) müssen ihren bisherigen Höchstwert verdoppeln. Sofort ab 1 000 Zeilen, sonst Tagesübersicht |
 | **AUSBREITUNG** | ≥ 8 Container/Quellen, ≥ 100 Zeilen, ≥ 3 × üblich — immer sofort |
 | **FLOTTE** (CheckMK) | derselbe Service auf ≥ 5 Hosts in 15 min neu nicht OK, ≥ 3 × dem 7-Tage-Median |
 | Erneut melden | nur bei Verdopplung der 5-min-Rate oder der Container, höchstens stündlich |
 | Ein Vorfall | ein Muster, das ≤ 30 min nach einem gemeldeten Ausbruch auf denselben Containern/Hosts beginnt, wird Teil davon (eine Mail, ein Incident) |
+
+Docker liefert stdout pauschal als Level 6. Mitgelesen werden davon Container-Zeilen, deren
+**erstes Level-Wort** ERROR/FATAL/CRITICAL/SEVERE ist (sonst `level=error`, JSON-`level`,
+Traceback); `INFO … outcome=ERROR` zählt nicht. Muster, die in den ersten 2 h nach dem Lesen
+einer neuen Quelle auftauchen, gehen nur in die Tagesübersicht (sie liefen womöglich schon
+vorher) — Stand je Quelle in `error_clusters.coverage_since.<version>`.
 
 ### Incidents
 
