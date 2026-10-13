@@ -30,11 +30,17 @@ from app.services.graylog_occurrences import iso
 
 BASE_QUERY = ("NOT source:(nsa* OR nss* OR nsc*) AND (level:<=4 OR (level:6 AND "
               "_exists_:container_name AND message:(ERROR OR FATAL OR CRITICAL OR SEVERE "
-              "OR Traceback)))")
+              "OR Traceback)) OR (NOT _exists_:level AND "
+              "log_level:(emerg OR alert OR critical OR error)))")
+#: Filebeat (Rolle img_filebeat, hyde_processor.js) liefert KEIN `level`, sondern ein aus
+#: dem Text geschätztes `log_level`. Gemessen 13.10.: 45 % aller Graylog-Zeilen (2,36 von
+#: 5,27 Mio./h, ≥ 73 Hosts) kamen so an und waren für die Erkennung unsichtbar — darunter
+#: der OOM auf docker0209. Mitgelesen wird log_level emerg/alert/critical/error.
+BEATS_ERROR_LEVELS = {"emerg", "alert", "critical", "error"}
 #: Ändert sich, welche Zeilen gelesen werden, ändert sich diese Kennung — die Erkennung
 #: weiß dann, dass Muster der neuen Quelle schon vorher gelaufen sein können (engine
 #: COVERAGE_MARGIN: "anhaltend neu" anfangs nur als Tagesübersicht).
-SOURCE_VERSION = "level6-errors-1"
+SOURCE_VERSION = "beats-log-level-2"
 _LEVEL_WORD = re.compile(r'\b(TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|FATAL|CRITICAL|SEVERE)\b')
 _ERROR_WORDS = {"ERROR", "FATAL", "CRITICAL", "SEVERE"}
 _ERROR_FIELD = re.compile(
@@ -57,7 +63,7 @@ class _ErrorLine:
 
 
 ERROR_LINE = _ErrorLine()
-FIELDS = ["message", "source", "container_name", "timestamp", "level"]
+FIELDS = ["message", "source", "container_name", "timestamp", "level", "log_level"]
 MAX_RESULT_WINDOW = 10_000
 SPLIT_AT = 9_500
 MAX_PARTS = 8          # bis 80 000 Zeilen je 5 min vollständig; darüber Untergrenze
@@ -91,13 +97,19 @@ def _level(m: dict) -> int:
 
 
 def keep_lines(msgs: list[dict]) -> list[dict]:
-    """Level ≤4 immer; Level 6 nur mit Fehlerkennung im Text und ohne Level-≤4-Zwilling."""
+    """Level ≤4 immer; Level 6 nur mit Fehlerkennung im Text und ohne Level-≤4-Zwilling;
+    ohne Level (Filebeat) nach log_level."""
     strong = {(m.get("container_name") or m.get("source"), m.get("message"))
               for m in msgs if _level(m) <= 4}
     out = []
     for m in msgs:
         if _level(m) <= 4:
             out.append(m)
+            continue
+        if m.get("level") is None:
+            # Filebeat: kein Syslog-Level, das geschätzte log_level entscheidet (BASE_QUERY).
+            if str(m.get("log_level") or "").lower() in BEATS_ERROR_LEVELS:
+                out.append(m)
             continue
         first = str(m.get("message") or "").split("\n", 1)[0]
         if (ERROR_LINE.search(first)

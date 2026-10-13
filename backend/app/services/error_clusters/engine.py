@@ -38,6 +38,31 @@ MAX_BUCKET_ENTITIES = 50
 #: Erscheint ein Muster in den ersten 2 h nach Beginn der Beobachtung (Erststart, neue
 #: Log-Quelle), lief es womöglich schon vorher — "anhaltend neu" dann nur als Tagesübersicht.
 COVERAGE_MARGIN = timedelta(hours=2)
+#: So lange nach Beginn einer Quelle fehlt solchen Mustern die Grundlast (wie warmup_hours).
+COVERAGE_WARMUP = timedelta(hours=24)
+
+
+def fresh_at_coverage(first_seen: datetime | None, coverage_starts,
+                      now: datetime | None) -> bool:
+    """Lief das Muster womöglich schon, bevor seine Quelle gelesen wurde — und ist das noch
+    nicht durch eine Grundlast geklärt?
+
+    Unsicher heißt: erstmals gesehen in den ersten 2 h nach dem Beginn IRGENDEINER Quelle
+    (`coverage_starts`, alle bisherigen) und dieser Beginn liegt < 24 h zurück. Drei Fehler
+    vom 13.10. stecken in diesen Grenzen:
+      - ohne untere Grenze galten alle ALTEN Muster als unsicher (SPITZE/AUSBREITUNG aus);
+      - nur die neueste Quelle zu kennen ließ die Level-6-Muster von gestern als "neu seit
+        24 h" melden (3 Mails, vor dem Versand gestoppt);
+      - ohne Ablauf hätten Muster aus diesen 2 h NIE wieder eine Spitze gemeldet.
+    `now=None`: ohne Ablauf — "war schon beim Beginn da" (für ANHALTEND NEU).
+    """
+    if first_seen is None or coverage_starts is None:
+        return False
+    if isinstance(coverage_starts, datetime):
+        coverage_starts = [coverage_starts]
+    return any(c <= first_seen < c + COVERAGE_MARGIN
+               and (now is None or now < c + COVERAGE_WARMUP)
+               for c in coverage_starts)
 
 
 @dataclass
@@ -102,10 +127,13 @@ class MemoryStore:
     """Alles im Speicher — für Backtest und Tests. Gleiche Schnittstelle wie der DB-Store."""
 
     def __init__(self, detector_started_at: datetime,
-                 coverage_since: datetime | None = None) -> None:
+                 coverage_since: datetime | list[datetime] | None = None) -> None:
         self.detector_started_at = detector_started_at
-        #: Seit wann alle heute gelesenen Log-Quellen beobachtet werden (≥ Erkennungsstart).
-        self.coverage_since = max(detector_started_at, coverage_since or detector_started_at)
+        #: Beginn jeder Log-Quelle (Erkennungsstart + je collector.SOURCE_VERSION), für
+        #: fresh_at_coverage.
+        given = ([coverage_since] if isinstance(coverage_since, datetime)
+                 else list(coverage_since or []))
+        self.coverage_starts = sorted({detector_started_at, *given})
         self.templates: dict[str, TemplateInfo] = {}
         self.buckets: dict[str, dict[datetime, BucketRec]] = {}
         self.entity_buckets: dict[str, dict[datetime, int]] = {}
@@ -283,8 +311,8 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
                 if len(vals) >= 2:
                     lam = max(lam, statistics.median(vals) / 12)
         tinfo = store.templates.get(key)
-        fs_hours = ((b + BUCKET - tinfo.first_seen).total_seconds() / 3600
-                    if tinfo is not None and tinfo.first_seen else None)
+        fs = tinfo.first_seen if tinfo is not None else None
+        fs_hours = (b + BUCKET - fs).total_seconds() / 3600 if fs else None
         recent = [series.get(b - BUCKET * i) for i in range(th.persist_window_buckets)]
         part = max(1, th.persist_window_buckets // PERSIST_PARTS)
         recent_parts = sum(1 for j in range(PERSIST_PARTS)
@@ -293,8 +321,8 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
                         usual_entities=usual, seen_before=bool(nonzero), active_days=active_days,
                         first_seen_hours=fs_hours, recent_parts=recent_parts,
                         recent_total=sum(r.count for r in recent if r),
-                        coverage_unsure=(tinfo is not None and tinfo.first_seen is not None
-                                         and tinfo.first_seen < store.coverage_since + COVERAGE_MARGIN))
+                        coverage_unsure=fresh_at_coverage(fs, store.coverage_starts, now),
+                        present_at_start=fresh_at_coverage(fs, store.coverage_starts, None))
         verdict = evaluate(window, lam, th=th, history_peak=peak)
 
         info = store.templates.get(key)

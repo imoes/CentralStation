@@ -60,6 +60,27 @@ def _now() -> datetime:
 
 # ── Laden ────────────────────────────────────────────────────────────────────
 
+COVERAGE_PREFIX = "error_clusters.coverage_since."
+
+
+async def coverage_starts(db) -> list[datetime]:
+    """Beginn ALLER bisher eingeführten Log-Quellen (je collector.SOURCE_VERSION).
+
+    Nicht nur die neueste: sonst vergisst die Erkennung, dass die Muster der vorigen
+    Umstellung schon beim Einschalten liefen (13.10.: 3 Fehl-Mails, vor Versand gestoppt).
+    """
+    from app.models.settings import GlobalSetting
+    rows = await db.execute(select(GlobalSetting.value_plain)
+                            .where(GlobalSetting.key.like(COVERAGE_PREFIX + "%")))
+    out = []
+    for (v,) in rows:
+        try:
+            out.append(datetime.fromisoformat(v))
+        except (TypeError, ValueError):
+            continue
+    return sorted(out)
+
+
 async def _hydrate(db) -> _Runtime:
     from app.models.error_cluster import (
         EntityBucket, ErrorCluster, ErrorClusterState, LogTemplate, LogTemplateBucket,
@@ -81,16 +102,19 @@ async def _hydrate(db) -> _Runtime:
     # womöglich schon vorher (engine.COVERAGE_MARGIN).
     from app.services.error_clusters.collector import SOURCE_VERSION
     from app.services.settings import get_setting, set_setting
-    cov_key = f"error_clusters.coverage_since.{SOURCE_VERSION}"
+    cov_key = COVERAGE_PREFIX + SOURCE_VERSION
     cov_raw = await get_setting(db, cov_key)
     if cov_raw:
         coverage_since = datetime.fromisoformat(cov_raw)
     else:
-        coverage_since = now
-        await set_setting(db, cov_key, now.isoformat())
+        # Das erste Fenster, das mit der neuen Quelle gelesen wird — nicht die Uhrzeit: die
+        # Erkennung läuft einige Minuten hinterher (13.10.: Uhr 11:47, erstes Fenster 11:35;
+        # die neuen Muster lagen damit "vor" dem Beginn und galten als bekannt).
+        coverage_since = state.last_bucket + BUCKET if state.last_bucket else now
+        await set_setting(db, cov_key, coverage_since.isoformat())
         await db.commit()
-        log.info("error_clusters: log source %s observed from %s", SOURCE_VERSION, now)
-    store = MemoryStore(state.started_at, coverage_since)
+        log.info("error_clusters: log source %s observed from %s", SOURCE_VERSION, coverage_since)
+    store = MemoryStore(state.started_at, await coverage_starts(db))
     since = now - HISTORY - timedelta(hours=1)
     for t in (await db.execute(select(LogTemplate).where(LogTemplate.last_seen >= since))).scalars():
         store.templates[t.key] = TemplateInfo(t.key, t.template, t.first_seen, t.last_seen,

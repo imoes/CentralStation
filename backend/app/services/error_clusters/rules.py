@@ -205,9 +205,12 @@ class Window:
     #: aktiv, wie viele Zeilen insgesamt
     recent_parts: int = 0
     recent_total: int = 0
-    #: Muster erschien kurz nach Beginn der Beobachtung — ob es "neu" ist oder schon vorher
-    #: lief, ist nicht entscheidbar (Erststart, neue Log-Quelle). Dann Tagesübersicht statt Mail.
+    #: Muster erschien kurz nach Beginn der Beobachtung einer Quelle, und die Grundlast dafür
+    #: fehlt noch (< 24 h): SPITZE, AUSBREITUNG und NEU sind nicht entscheidbar.
     coverage_unsure: bool = False
+    #: Muster erschien kurz nach Beginn der Beobachtung einer Quelle (ohne Ablauf): es lief
+    #: womöglich schon vorher — ANHALTEND NEU dann nur in die Tagesübersicht, nie als Mail.
+    present_at_start: bool = False
 
 
 @dataclass(frozen=True)
@@ -236,23 +239,33 @@ def evaluate(window: Window, lam: float | None, history: Sequence[int] | None = 
     rules: set[str] = set()
     reasons: list[str] = []
 
-    if not window.seen_before and (count15 >= th.new_min_count
-                                   or window.sources >= th.new_min_sources):
+    # Kurz nach dem Einschalten einer Log-Quelle ist "nicht gesehen" kein Befund, sondern
+    # Bestand (13.10.: Filebeat-Quellen brächten auf einen Schlag Hunderte "neue" Muster).
+    # Laufende Schleifen darunter meldet ANHALTEND NEU — in die Tagesübersicht.
+    if (not window.seen_before and not window.coverage_unsure
+            and (count15 >= th.new_min_count or window.sources >= th.new_min_sources)):
         rules.add("new")
-        reasons.append("neu in der Beobachtung (Log-Quelle wird erst seit Kurzem gelesen)"
-                       if window.coverage_unsure else "neues Muster (14 Tage nicht gesehen)")
+        reasons.append("neues Muster (14 Tage nicht gesehen)")
 
     if (window.first_seen_hours is not None
             and window.first_seen_hours <= th.persist_max_age_hours
             and window.recent_parts >= PERSIST_PARTS
             and window.recent_total >= th.persist_min_total):
         rules.add("persistent")
-        if window.coverage_unsure:
+        if window.present_at_start or window.coverage_unsure:
             reasons.append(f"anhaltendes Muster seit Beginn der Beobachtung: "
                            f"{window.recent_total} Zeilen in 2 h, in jeder halben Stunde")
         else:
             reasons.append(f"neues Muster läuft seit {window.first_seen_hours:.0f} h anhaltend: "
                            f"{window.recent_total} Zeilen in 2 h, in jeder halben Stunde")
+
+    if window.coverage_unsure:
+        # Gerade erst gelesene Quelle: keine Grundlast, keine übliche Breite — SPITZE und
+        # AUSBREITUNG wären gegen die Mindest-Grundlast gemessen und träfen jeden Dauerläufer
+        # (13.10.: 7 Sofortmails für dockerd "copy stream failed" u. ä. nach der
+        # Filebeat-Umstellung, abgefangen von der 30-min-Sperre). Bleibt: ANHALTEND.
+        notify = "digest" if "persistent" in rules else "none"
+        return Verdict(frozenset(rules), notify, count15, expected, p, tuple(reasons))
 
     elevated = sum(1 for c in window.counts if c >= th.spike_bucket_factor * lam)
     if history_peak is None:
@@ -279,7 +292,7 @@ def evaluate(window: Window, lam: float | None, history: Sequence[int] | None = 
         reasons.append(f"{window.entities} Container/Quellen, üblich "
                        f"{max(window.usual_entities, 1.0):.0f}")
 
-    persistent_now = "persistent" in rules and not window.coverage_unsure
+    persistent_now = "persistent" in rules and not window.present_at_start
     if "spread" in rules or persistent_now or (
             "spike" in rules and count15 >= th.spike_immediate_count):
         notify = "immediate"
@@ -288,8 +301,7 @@ def evaluate(window: Window, lam: float | None, history: Sequence[int] | None = 
     elif "persistent" in rules:
         notify = "digest"           # lief vermutlich schon vor der Beobachtung
     elif "new" in rules:
-        notify = ("immediate" if count15 >= th.new_immediate_count and not window.coverage_unsure
-                  else "digest")
+        notify = "immediate" if count15 >= th.new_immediate_count else "digest"
     else:
         notify = "none"
     return Verdict(frozenset(rules), notify, count15, expected, p, tuple(reasons))

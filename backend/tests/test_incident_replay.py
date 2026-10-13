@@ -144,3 +144,16 @@ def test_weekly_job_is_normal_in_its_hour_of_week():
     third_monday = start + timedelta(days=21)
     assert not [m for m in mails if m[0] >= third_monday], mails
     assert store.hourly["weekly"][start.replace(hour=9)] == 3_000
+
+
+def test_old_pattern_still_mails_after_a_log_source_switch():
+    """13.10.: nach einer Quellen-Umstellung (coverage_since) galten auch ALTE Muster als
+    unsicher — Welle 2 eines längst bekannten Musters wäre stumm geblieben."""
+    store = MemoryStore(START, coverage_since=WAVE2[0] - timedelta(hours=1))
+    mails = []
+    b = START
+    while b < END:
+        mails += [e for e in process(store, _bucket(b)) if e.mail and e.template.key == LOG401]
+        b += BUCKET
+    assert len(mails) == 2
+    assert WAVE2[0] <= mails[1].bucket_start <= WAVE2[0] + timedelta(minutes=10)

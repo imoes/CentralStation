@@ -137,14 +137,30 @@ def test_error_line_is_case_sensitive():
     assert ERROR_LINE.search("<TS> ERROR [Timer-Driven Process Thread-3] o.a.nifi INFO x")
 
 
-def test_new_at_observation_start_is_digest_with_honest_reason():
-    """Erststart einer Quelle: 600 Zeilen eines vorher ungelesenen Musters sind kein
-    "14 Tage nicht gesehen" und keine Sofortmail."""
+def test_pattern_at_observation_start_is_not_new():
+    """Neue Log-Quelle: was gleich beim Einschalten läuft, ist Bestand, nicht "neu"."""
     v = evaluate(_w(counts=(200, 200, 200), seen_before=False, coverage_unsure=True), 0.1)
-    assert "new" in v.rules and v.notify == "digest"
-    assert "erst seit Kurzem" in v.reasons[0]
+    assert "new" not in v.rules
     v = evaluate(_w(counts=(200, 200, 200), seen_before=False), 0.1)
-    assert "14 Tage" in v.reasons[0]
+    assert "new" in v.rules and "14 Tage" in v.reasons[0]
+
+
+def test_beats_lines_are_kept_by_log_level():
+    """Filebeat liefert kein `level`, nur das geschätzte log_level (13.10., docker0209)."""
+    msgs = [
+        {"source": "docker0209.example.com", "log_level": "critical",
+         "message": "sammelpdf kernel: Out of memory: Killed process 2046866 ([celeryd: celer)"},
+        {"source": "docker0209.example.com", "log_level": "error",
+         "message": 'sammelpdf dockerd[1250]: level=error msg="copy stream failed"'},
+        {"source": "docker0209.example.com", "log_level": "info",
+         "message": "sammelpdf kernel: Mem-Info:"},
+        {"source": "docker0209.example.com", "log_level": "warn", "message": "x warning"},
+        {"source": "docker0209.example.com", "message": "no level at all"},
+    ]
+    kept = keep_lines(msgs)
+    assert [m["log_level"] for m in kept] == ["critical", "error"]
+    assert "log_level:(emerg OR alert OR critical OR error)" in BASE_QUERY
+    assert "NOT _exists_:level" in BASE_QUERY
 
 
 def test_keep_lines_filters_level6_and_drops_docker_twins():
@@ -165,3 +181,70 @@ def test_default_thresholds():
     assert DEFAULT.persist_max_age_hours == 24
     assert DEFAULT.persist_min_total == 100
     assert DEFAULT.persist_window_buckets == 24
+
+
+def test_fresh_source_triggers_no_spike_or_spread():
+    """13.10.: nach der Filebeat-Umstellung galten Dauerläufer als SPITZE/AUSBREITUNG."""
+    w = _w(counts=(3000, 3000, 3000), entities=30, seen_before=False, coverage_unsure=True)
+    v = evaluate(w, DEFAULT.lam_floor)
+    assert v.rules == frozenset() and v.notify == "none"
+    w = _w(counts=(3000, 3000, 3000), entities=30, coverage_unsure=True,
+           first_seen_hours=2, recent_parts=4, recent_total=50000)
+    v = evaluate(w, DEFAULT.lam_floor)
+    assert v.rules == frozenset({"persistent"}) and v.notify == "digest"
+    # dieselben Zahlen bei bekannter Quelle: sofort
+    w = _w(counts=(3000, 3000, 3000), entities=30, usual_entities=1.0)
+    assert evaluate(w, DEFAULT.lam_floor).notify == "immediate"
+
+
+def test_alarm_from_fresh_source_is_not_resent_after_restart():
+    """13.10.: Fehlalarme der Filebeat-Umstellung dürfen auch nach Neustart nicht raus."""
+    from types import SimpleNamespace as NS
+    from app.services.error_clusters.notify import from_fresh_source
+    cov = datetime(2026, 10, 13, 11, 35, tzinfo=timezone.utc)
+    now = cov + timedelta(minutes=40)
+    fresh = NS(first_seen=datetime(2026, 10, 13, 11, 40, tzinfo=timezone.utc))
+    old = NS(first_seen=datetime(2026, 10, 1, 8, 0, tzinfo=timezone.utc))
+    assert from_fresh_source(NS(source="log"), fresh, [cov], now) is True
+    assert from_fresh_source(NS(source="log"), old, [cov], now) is False
+    assert from_fresh_source(NS(source="checkmk_fleet"), None, [cov], now) is False
+    assert from_fresh_source(NS(source="log"), fresh, [], now) is False
+
+
+def test_only_the_two_hours_after_coverage_start_are_unsure():
+    from app.services.error_clusters.engine import fresh_at_coverage
+    cov = datetime(2026, 10, 13, 11, 35, tzinfo=timezone.utc)
+    now = cov + timedelta(hours=3)
+    assert fresh_at_coverage(cov, [cov], now) is True
+    assert fresh_at_coverage(cov + timedelta(hours=1, minutes=59), [cov], now) is True
+    assert fresh_at_coverage(cov + timedelta(hours=2), [cov], now) is False
+    assert fresh_at_coverage(cov - timedelta(minutes=5), [cov], now) is False   # schon bekannt
+    assert fresh_at_coverage(None, [cov], now) is False
+
+
+def test_every_earlier_source_switch_counts_not_only_the_newest():
+    """13.10.: die Level-6-Muster vom 12.10. galten nach der Filebeat-Umstellung als "neu
+    seit 24 h" — die Erkennung kannte nur noch den neuesten Quellenstart."""
+    from app.services.error_clusters.engine import fresh_at_coverage
+    level6 = datetime(2026, 10, 12, 12, 25, tzinfo=timezone.utc)
+    beats = datetime(2026, 10, 13, 11, 35, tzinfo=timezone.utc)
+    nifi = datetime(2026, 10, 12, 12, 25, tzinfo=timezone.utc)
+    assert fresh_at_coverage(nifi, [level6, beats], datetime(2026, 10, 13, 12, 5,
+                                                             tzinfo=timezone.utc)) is True
+
+
+def test_unsure_expires_once_a_baseline_exists():
+    """Ohne Ablauf meldeten Muster aus den 2 h nach einer Umstellung NIE wieder eine Spitze."""
+    from app.services.error_clusters.engine import fresh_at_coverage
+    cov = datetime(2026, 10, 13, 11, 35, tzinfo=timezone.utc)
+    first = cov + timedelta(minutes=5)
+    assert fresh_at_coverage(first, [cov], cov + timedelta(hours=23)) is True
+    assert fresh_at_coverage(first, [cov], cov + timedelta(hours=24)) is False
+
+
+def test_pattern_present_at_start_is_never_mailed_as_persistent_new():
+    """Läuft ein Muster schon beim Einschalten, ist es nach Ablauf der Unsicherheit (24 h)
+    Bestand — "anhaltend neu" bleibt Tagesübersicht (Replay: Rauschen ab Erkennungsstart)."""
+    v = evaluate(_w(first_seen_hours=24, recent_parts=4, recent_total=1800,
+                    present_at_start=True), 50.0)
+    assert "persistent" in v.rules and v.notify == "digest"

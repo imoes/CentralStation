@@ -10,9 +10,64 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
-## 2026-10-13 — Console write lock lets read-only command substitution through
+## 2026-10-13 — Error-cluster detection reads Filebeat hosts; console write lock lets read-only command substitution through
 
 ### What was fixed
+
+- **Error-cluster detection was blind to every host that ships its logs with Filebeat.**
+  - **The case:** docker0209 (sammelpdf) had a global OOM on 13.10. at 11:21 UTC. Paperless
+    `celeryd` was killed at 14.9 GB RSS, and the host rebooted at 11:30. CentralStation
+    reported nothing; CheckMK showed only a CPU warning at 11:14 UTC.
+  - **Cause 1, CentralStation:** Filebeat (role `img_filebeat`, `hyde_processor.js`) sends
+    no `level` field. It sends a `log_level` guessed from the text. The detector read only
+    `level:<=4`.
+    - Measured: 45 % of all Graylog lines (2.36 of 5.27 million per hour, at least 73
+      hosts) never reached it.
+    - Fixed: it now also reads lines without `level` whose `log_level` is emerg, alert,
+      critical or error. That is about 10,100 lines per 5 minutes, on top of the previous
+      ~3,900. A run takes ~5 s instead of 2 s.
+  - **Cause 2, Filebeat itself (not fixed here):** `hyde_processor.js` drops lines whose
+    level it cannot guess. "Out of memory: Killed process …" and "invoked oom-killer"
+    contain no level word, so they were dropped on the host. Only "kernel: Mem-Info:" got
+    through, because it contains "Info". The fix belongs in
+    `~/Dev/ansible/ansible03/roles/img_filebeat` and is being worked on in a separate
+    session. **Until it is rolled out, OOM kills still do not reach Graylog.**
+  - **Three logic errors in the switch-over itself, found and fixed the same day.** "Fresh
+    source" means a pattern first seen in the 2 h after a log source was first read.
+    1. The first switch-over turned 7 permanent noise patterns of the new source into
+       SPIKE/SPREAD immediate mails, and opened 4 incidents. Example:
+       dockerd "copy stream failed". These patterns have no baseline yet.
+       - The 30-minute minimum age held the mails back; none was sent.
+       - Fixed: patterns of a fresh source trigger neither NEW, SPIKE nor SPREAD for
+         24 h, until they have a baseline. Only PERSISTENT can fire, into the daily
+         overview.
+    2. The test for "fresh" had no lower bound. *All* old patterns counted as uncertain
+       too, so SPIKE/SPREAD were switched off for them from 11:54 to 12:13 UTC.
+       - Fixed: only first seen in [start, start + 2 h) counts, and only for 24 h.
+    3. Only the newest source start was remembered. Yesterday's level-6 patterns then
+       counted as "new for 24 h": nifi, DocumentIndex, "Bad Request". Three immediate mails
+       were decided; the backend was stopped 3 minutes before they would have been sent.
+       - Fixed: all source starts count (`error_clusters.coverage_since.*`).
+       - The start is now stored as the first window read, not wall-clock time (11:35, not
+         11:47:22). The detector runs a few minutes behind the clock.
+    - A pattern that was already running when its source was switched on is never mailed
+      as PERSISTENT NEW. It goes to the daily overview at most.
+    - Mails caught up after a restart follow the same rule.
+  - **Cleaned up (database):**
+    - 11 false-alarm episodes closed and their 4 incidents set to resolved, with the note
+      "zurückgenommen" (withdrawn).
+    - 3 level-6 episodes downgraded to daily overview, and their 3 incidents set to
+      resolved.
+  - Verified:
+    - Tests: an engine replay checks that an old pattern still mails after a source
+      switch. Further tests: all source starts count; uncertainty expires after 24 h;
+      present-at-start is never persistent-new; no catch-up mail for a fresh source;
+      Filebeat lines are kept by `log_level`. Full suite: 670 passed.
+    - A dry run in a throwaway container on the real state (nothing saved or sent):
+      0 events in the pending window (15,776 lines).
+    - The first live run afterwards: 0 events, 0 mails.
+  - **Gap:** from 11:54 to 12:13 UTC, SPIKE/SPREAD were off for old patterns (error 2).
+    An outbreak in that window would have gone unreported. No check has been run for one.
 
 - **A read-only diagnosis over SSH was blocked as a write.**
   - **The case:** a Paperless diagnosis on sammelpdf: kernel journal, boots, grep in

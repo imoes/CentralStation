@@ -503,7 +503,15 @@ async def resend_pending(cfg) -> int:
                    ErrorCluster.status == "open",
                    ErrorCluster.started_at <= now - timedelta(minutes=DEFAULT.min_age_minutes),
                    ErrorCluster.last_active_at >= now - timedelta(minutes=15)))).all()
+        from app.services.error_clusters.runner import coverage_starts
+        starts = await coverage_starts(db)
+    sent = 0
     for ec, t in rows:
+        if from_fresh_source(ec, t, starts, now):
+            log.info("error_clusters: not resending %s — pattern from a freshly read log source",
+                     str(ec.id)[:8])
+            continue
+        sent += 1
         ctx = ctx_from_row(ec, t)
         title = (f"Flotten-Ausfall: {ctx['template']}" if ec.source == "checkmk_fleet"
                  else f"Fehlerausbruch: {short_title(ctx['template'])}")
@@ -511,4 +519,16 @@ async def resend_pending(cfg) -> int:
         run_background(deliver(ctx, title, str(ec.id),
                                str(ec.incident_id) if ec.incident_id else None, cfg),
                        name=f"error_cluster_resend_{str(ec.id)[:8]}")
-    return len(rows)
+    return sent
+
+
+def from_fresh_source(ec, t, coverage_starts, now: datetime) -> bool:
+    """Log-Muster, das in den ersten 2 h einer neu gelesenen Quelle auftauchte.
+
+    Dafür gibt es heute keine Sofort-Meldung (rules.evaluate, coverage_unsure) — also auch
+    keine nachgeholte. Anlass 13.10.: 7 Fehlalarme der Filebeat-Umstellung waren vor der
+    Regelkorrektur als "sofort" beschlossen; ein Neustart hätte sie nachträglich verschickt.
+    """
+    from app.services.error_clusters.engine import fresh_at_coverage
+    return (ec.source == "log" and t is not None
+            and fresh_at_coverage(t.first_seen, coverage_starts, now))
