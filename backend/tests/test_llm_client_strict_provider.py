@@ -73,3 +73,23 @@ def test_other_400_is_not_retried(monkeypatch):
     with pytest.raises(llm_client.LLMInvocationError):
         asyncio.run(llm_client.generate_text(_cfg(), [{"role": "user", "content": "x"}]))
     assert len(seen) == 1
+
+
+def test_thinking_switch_goes_where_llama_cpp_reads_it(monkeypatch):
+    """llama.cpp liest enable_thinking NUR aus chat_template_kwargs (13.10.: oberste Ebene
+    allein → Thinking lief, Ticket-Entwurf > 300 s; mit kwargs 29 s)."""
+    seen = _patch_transport(monkeypatch, lambda r: _ok())
+    asyncio.run(llm_client.generate_text(_cfg(), [{"role": "user", "content": "x"}]))
+    assert seen[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "max_tokens" not in seen[0] and "n_predict" not in seen[0]      # globale Regel
+
+
+def test_strict_provider_retry_also_drops_chat_template_kwargs(monkeypatch):
+    def handler(request):
+        if "chat_template_kwargs" in json.loads(request.content):
+            return httpx.Response(400, json={"error": {
+                "message": "Unknown request parameter: chat_template_kwargs"}})
+        return _ok()
+    seen = _patch_transport(monkeypatch, handler)
+    assert asyncio.run(llm_client.generate_text(_cfg(), [{"role": "user", "content": "x"}])) == "OK"
+    assert len(seen) == 2 and "chat_template_kwargs" not in seen[1]

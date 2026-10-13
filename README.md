@@ -722,6 +722,13 @@ gleichzeitig auffällige Dienste, weitere Muster desselben Ausbruchs und den Gra
 „An Konsole übergeben" setzt am Muster an, nicht nur am Host. Admins können ein Muster dort
 **stummschalten** (protokolliert, umkehrbar).
 
+**Ticket erstellen** (Incident-Ansicht, neben „Computer, untersuche das"): öffnet den gemeinsamen
+Ticket-Dialog (ServiceDesk/Jira, Projekt, Typ, Priorität aus der Incident-Schwere). Den Entwurf
+schreibt die KI aus demselben Lagebild wie die Konsolen-Übergabe (`feed.incident_briefing`:
+Muster, Belege, Recherche, Einschätzung, Prüfergebnisse, Rezept, Lösungsvermerk) — vor dem
+Anlegen frei bearbeitbar. Das Backend hängt den Link zum Incident an und vermerkt das Ticket am
+Incident; dort erscheint es als Link („Tickets: IMIT-…").
+
 ### Mails, Dashboard, Einstellungen
 
 - **Nutzer** (Einstellungen → E-Mail-Berichte): „Sofort-Mail bei einem Ausbruch" und „Neue,
@@ -751,6 +758,7 @@ gleichzeitig auffällige Dienste, weitere Muster desselben Ausbruchs und den Gra
 | `GET /api/error-clusters/{id}` | Detail mit 5-min-Verlauf |
 | `POST/DELETE /api/error-clusters/templates/{key}/mute` | Muster stumm/frei (Admin, Audit-Log) |
 | `GET /api/feed/incidents` · `…/{id}/timeline` · `…/{id}/claude-prompt` | Incidents, Timeline (mit `kind`, `error_cluster`, `merged_into`), Konsolen-Briefing |
+| `POST /api/tickets/draft` · `/api/tickets/create` mit `incident_id` | KI-Ticketentwurf aus dem Incident-Lagebild; Anlage mit Rückverweis, Vermerk in `timeline.incident.tickets` |
 
 ### Backtest
 

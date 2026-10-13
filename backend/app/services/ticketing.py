@@ -98,7 +98,13 @@ async def ai_ticket_draft(
                 "h3. Durchgeführte Schritte | what was already tried or investigated. "
                 "No invented facts. Every claim in Ursache and Lösungsvorschlag must be backed by "
                 "something in Belege — no speculation without data.>\"}. "
-                "The 'log source' field names the collector (Graylog/CheckMK), NOT the failing system.",
+                "The 'log source' field names the collector (Graylog/CheckMK), NOT the failing system. "
+                # Stilregel für alles, was in Tickets landet (Menschen, oft Externe, lesen es):
+                "Write like a colleague documenting the case. NEVER mention how information "
+                "was obtained or the state of the tooling: no SSH, tools, connectors, commands "
+                "used for diagnosis, read-only mode, check containers, recipes, 'AI analysis', "
+                "'KI-Einschätzung', confidence values or automatic detection internals. State "
+                "unclear points factually ('no log entries on the host') or leave them out.",
                 lang,
             )
             raw = await generate_text(
@@ -125,6 +131,18 @@ async def ai_ticket_draft(
         description = (context or "").strip()[:2000]
 
     return {"summary": summary, "description": description, "priority": priority}
+
+
+def incident_link_appended(description: str, url: str) -> str:
+    """Den Link zum Incident ans Ende der Beschreibung — einmal, Jira-Wiki-Syntax."""
+    if url in description:
+        return description
+    return f"{description}\n\n----\nVorfall in CentralStation: [{url}]".strip()
+
+
+def incident_tickets(inc) -> list[dict]:
+    """Aus einem Incident erstellte Tickets (causal_context, type "ticket"), älteste zuerst."""
+    return [e for e in (inc.causal_context or []) if isinstance(e, dict) and e.get("type") == "ticket"]
 
 
 def pick_assignee(candidates: list[dict], query: str) -> tuple[str | None, str]:

@@ -241,7 +241,7 @@ async def _collect_codex_stream(response: Any) -> str:
 ANTHROPIC_MAX_TOKENS = 32000
 
 #: llama.cpp-spezifische Felder im chat_completions-Payload (siehe generate_text).
-_THINKING_KEYS = frozenset({"enable_thinking", "thinking_budget"})
+_THINKING_KEYS = frozenset({"enable_thinking", "thinking_budget", "chat_template_kwargs"})
 
 
 async def generate_text(
@@ -369,6 +369,11 @@ async def generate_text(
         #   within the configured timeout. Without a cap the model may exhaust
         #   the timeout while thinking and leave content="".
         thinking_on = getattr(llm_config, "thinking_mode", False)
+        # llama.cpp liest den Schalter NUR aus chat_template_kwargs; das Feld auf oberster
+        # Ebene ignoriert es. Gemessen 13.10. (Ticket-Entwurf, qwen auf llm-host03): nur
+        # oberste Ebene → Thinking lief, > 300 s, Timeout; mit chat_template_kwargs → 29 s,
+        # 0 Zeichen Reasoning, gleiche Antwortqualität.
+        payload["chat_template_kwargs"] = {"enable_thinking": thinking_on}
         payload["enable_thinking"] = thinking_on
         payload["thinking_budget"] = (
             getattr(llm_config, "thinking_budget", 1500) if thinking_on else 512

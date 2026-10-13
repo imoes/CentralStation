@@ -18,8 +18,9 @@ import { I18nService } from '../../core/services/i18n.service';
 
 /** How the dialog was opened — drives where the AI draft context comes from. */
 export interface TicketDialogData {
-  mode: 'feed' | 'computer';
+  mode: 'feed' | 'computer' | 'incident';
   feedExternalId?: string;
+  incidentId?: string;       // Incident (Fehler-Cluster/Flotte/Host): Entwurf aus dem Lagebild
   transcript?: string;       // Computer-Console conversation transcript
   host?: string;
   severity?: string;
@@ -221,6 +222,7 @@ export class TicketCreateDialogComponent implements OnInit {
     this.loadingDraft.set(true);
     const body = {
       feed_external_id: this.data.feedExternalId,
+      incident_id: this.data.incidentId,
       transcript: this.data.transcript,
       host: this.data.host,
       severity: this.data.severity,
@@ -280,6 +282,7 @@ export class TicketCreateDialogComponent implements OnInit {
       priority: this.priority(),
       issue_type: this.issueType(),
       feed_external_id: this.data.feedExternalId,
+      incident_id: this.data.incidentId,
       assignee: this.assignee().trim() || null,
     };
     this.http.post<CreateResponse>(`${environment.apiUrl}/tickets/create`, body).subscribe({

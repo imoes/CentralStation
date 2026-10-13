@@ -939,11 +939,18 @@ async def incident_timeline(
                                    if isinstance(e, dict) and e.get("type") == "error_cluster"), None),
             "merged_into": next((e.get("incident_id") for e in (inc.causal_context or [])
                                  if isinstance(e, dict) and e.get("type") == "merged_into"), None),
+            # Aus diesem Incident erstellte Tickets (tickets.create mit incident_id).
+            "tickets": _incident_tickets(inc),
             # Prüfschritte (experimentell, nur per Knopf): was geplant ist und was lief.
             **_checks_payload(inc, await _recipe_for(db, inc)),
         },
         "timeline": timeline,
     }
+
+
+def _incident_tickets(inc) -> list[dict]:
+    from app.services.ticketing import incident_tickets
+    return incident_tickets(inc)
 
 
 def _checks_payload(inc, recipe=None) -> dict:
@@ -1355,31 +1362,69 @@ async def incident_claude_prompt(
     oversight) to actually investigate and fix. CentralStation does NOT
     execute — it briefs.
     """
-    import uuid as _uuid
-    from sqlalchemy import select
-    from app.models.workflow import Incident, IncidentMember, AlertComment
+    inc = await _incident_or_404(db, incident_id)
+    # Primitive Werte vor weiteren awaits holen (SQLAlchemy lässt `inc` sonst verfallen).
+    inc_id_str, host = str(inc.id), inc.primary_host
+    kind = getattr(inc, "kind", "host") or "host"
+    is_cluster = _cluster_of(inc) is not None and kind in ("log_cluster", "fleet")
+    lines = await incident_briefing(db, inc)
+    lines.append("## Auftrag")
+    if is_cluster:
+        lines.append("1. Prüfe, was alle betroffenen Container/Hosts gemeinsam haben "
+                     "(gemeinsame Abhängigkeit, Zugangsdaten, Deployment zur Startzeit).")
+    else:
+        lines.append(f"1. Verifiziere die Belege oben auf {host} (Logs, Service-Status, Metriken).")
+    lines.append("2. Nenne die wahrscheinlichste Ursache MIT Beleg — keine Spekulation ohne Daten.")
+    lines.append("3. Schlage einen konkreten, reversiblen Fix vor und warte auf Freigabe, bevor du ihn ausführst.")
 
+    prompt = "\n".join(lines)
+    return {"incident_id": inc_id_str, "host": host, "prompt": prompt}
+
+
+async def _incident_or_404(db, incident_id: str):
+    import uuid as _uuid
+    from app.models.workflow import Incident
     try:
         inc_id = _uuid.UUID(incident_id)
     except ValueError:
         raise HTTPException(400, "Ungültige Incident-ID")
-
     inc = await db.get(Incident, inc_id)
     if not inc:
         raise HTTPException(404, "Incident nicht gefunden")
+    return inc
+
+
+def _cluster_of(inc) -> dict | None:
+    return next((e for e in (inc.causal_context or [])
+                 if isinstance(e, dict) and e.get("type") == "error_cluster"), None)
+
+
+async def incident_briefing(db, inc) -> list[str]:
+    """Lagebild eines Incidents mit Belegen: Muster, Recherche, KI-Einschätzung, Prüfschritte,
+    Rezept, Alerts, KI-Diagnose, frühere Vorfälle.
+
+    EINE Quelle für die Konsolen-Übergabe (claude-prompt, + Auftrag) und den Ticket-Entwurf
+    (tickets.draft) — sonst stünde im Ticket etwas anderes als in der Übergabe.
+    """
+    from sqlalchemy import select
+    from app.models.workflow import IncidentMember, AlertComment
 
     # Extract all primitive values immediately — SQLAlchemy expires `inc` after
-    # each subsequent await db.execute(), so accessing inc.id in the final return
-    # would trigger a lazy refresh that fails outside an async greenlet context.
-    inc_id_str = str(inc.id)
+    # each subsequent await db.execute(), so accessing inc.id later would trigger a
+    # lazy refresh that fails outside an async greenlet context.
+    inc_id = inc.id
     host = inc.primary_host
     severity = inc.severity
     created_str = inc.created_at.strftime('%Y-%m-%d %H:%M')
     kind = getattr(inc, "kind", "host") or "host"
-    cluster = next((e for e in (inc.causal_context or [])
-                    if isinstance(e, dict) and e.get("type") == "error_cluster"), None)
+    cluster = _cluster_of(inc)
+    resolution = next((e for e in (inc.causal_context or [])
+                       if isinstance(e, dict) and e.get("type") == "resolution"), None)
 
     lines: list[str] = []
+    if resolution and resolution.get("summary"):
+        lines += ["## Bereits gelöst", f"{resolution['summary']}",
+                  f"(festgehalten {str(resolution.get('at') or '')[:16].replace('T', ' ')} UTC)", ""]
     if cluster and kind in ("log_cluster", "fleet"):
         # Fehler-Cluster: am MUSTER ansetzen, nicht an einem Host — ein Ausbruch über
         # viele Container/Hosts hat seine Ursache meist woanders (Abhängigkeit, Zugang).
@@ -1446,17 +1491,7 @@ async def incident_claude_prompt(
     except Exception as e:
         log.debug("claude-prompt: past_incidents failed: %s", e)
 
-    lines.append("## Auftrag")
-    if cluster and kind in ("log_cluster", "fleet"):
-        lines.append("1. Prüfe, was alle betroffenen Container/Hosts gemeinsam haben "
-                     "(gemeinsame Abhängigkeit, Zugangsdaten, Deployment zur Startzeit).")
-    else:
-        lines.append(f"1. Verifiziere die Belege oben auf {host} (Logs, Service-Status, Metriken).")
-    lines.append("2. Nenne die wahrscheinlichste Ursache MIT Beleg — keine Spekulation ohne Daten.")
-    lines.append("3. Schlage einen konkreten, reversiblen Fix vor und warte auf Freigabe, bevor du ihn ausführst.")
-
-    prompt = "\n".join(lines)
-    return {"incident_id": inc_id_str, "host": host, "prompt": prompt}
+    return lines
 
 
 # ─────────────────────────────────────────────────────────────────────────────

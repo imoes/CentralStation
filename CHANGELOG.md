@@ -10,9 +10,52 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
-## 2026-10-13 — Error-cluster detection reads Filebeat hosts; console write lock lets read-only command substitution through
+## 2026-10-13 — Ticket from an incident; error-cluster detection reads Filebeat hosts; console write lock lets read-only command substitution through
+
+### What is new
+
+- **Create a ServiceDesk or Jira ticket from an incident, with AI text.**
+  - **Where:** "Ticket erstellen" in the incident view (link from the mail), next to
+    "Computer, untersuche das". It opens the shared ticket dialog (the one already used by
+    feed items and the console).
+  - **The draft is based on the same briefing as the console handoff.**
+    `feed.incident_briefing` is now one function with two users. It contains the pattern,
+    examples, affected containers, research, AI assessment, check results, recipe,
+    resolution note, alerts and earlier incidents. Ticket and handoff cannot drift apart.
+  - **Defaults:** the priority comes from the incident severity. The draft can be edited
+    freely before the ticket is created.
+  - **Link and record:** the backend appends the link back to the incident ("Vorfall in
+    CentralStation: …"). It is there even if someone replaces the whole text. The ticket is
+    recorded on the incident and appears in the incident view as a link
+    ("Tickets: IMIT-…").
+  - **Ticket style (all ticket paths):** the AI prompt now forbids mentioning tools, SSH,
+    "KI-Einschätzung", confidence values or detection internals. Humans, often external,
+    read tickets.
+  - Verified:
+    - Live in the browser, as sysadmin, on incident 494f0988 (PayloadTransformer SSE,
+      6 containers, critical): the dialog opened with target ServiceDesk, project IMIT,
+      priority Kritisch, and the AI summary and description filled in.
+    - Closed with "Abbrechen" — no ticket was created (0 calls to `tickets/create`).
+    - Tests: 5 new; full suite 677 passed.
+  - **Gap:** in "Durchgeführte Schritte" the model still occasionally writes "Graylog-Suche
+    durchgeführt" despite the style rule. Check the draft before creating the ticket.
 
 ### What was fixed
+
+- **Local LLM calls had thinking switched on although it was configured off — all
+  callers.**
+  - **Cause:** llama.cpp reads the switch only from `chat_template_kwargs`. `llm_client`
+    sent it only as a top-level field, so it was ignored.
+  - Measured with the real ticket prompt on qwen (llm-host03):
+    - before: over 300 s, timeout, and the draft fell back to raw text;
+    - after: 29 s with 0 reasoning characters, and 42 s through the regular code path.
+  - Affected every `generate_text` call with `chat_completions`: triage, recipes, ticket
+    drafts, overview and others. Strict providers that reject the field get the existing
+    retry without the thinking fields; the new field is included in that retry.
+  - Verified: 2 new tests (switch in `chat_template_kwargs`; retry drops it; no
+    `max_tokens`).
+- **The ticket draft fell back to raw text in a request whose database session had been
+  rolled back** (`greenlet_spawn` error). It now passes only the user ID.
 
 - **Error-cluster detection was blind to every host that ships its logs with Filebeat.**
   - **The case:** docker0209 (sammelpdf) had a global OOM on 13.10. at 11:21 UTC. Paperless

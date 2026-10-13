@@ -97,6 +97,8 @@ interface IncidentTimeline {
     /** Bewährtes Rezept aus einem früheren, gelösten Vorfall (services/recipes.py) */
     recipe?: RecipeSummary | null;
     resolution?: { at: string; by?: string; summary: string } | null;
+    /** Aus diesem Incident erstellte Tickets (Backend tickets.create mit incident_id) */
+    tickets?: { key: string; url?: string | null; by?: string; at: string; connector?: string }[];
   };
   timeline: {
     at: string;
@@ -844,6 +846,12 @@ const SEVERITY_COLOR: Record<string, string> = {
               }
               {{ promptCopied() ? 'Übergeben ✓' : 'Computer, untersuche das' }}
             </button>
+            <button mat-stroked-button class="claude-handoff-btn"
+                    (click)="createIncidentTicket()"
+                    matTooltip="Ticket im ServiceDesk oder Jira anlegen — die KI schreibt den Entwurf aus Muster, Belegen und Einschätzung; vor dem Anlegen bearbeitbar">
+              <mat-icon>confirmation_number</mat-icon>
+              Ticket erstellen
+            </button>
           } @else {
             <span>Incident Timeline</span>
           }
@@ -854,6 +862,20 @@ const SEVERITY_COLOR: Record<string, string> = {
         @if (loadingIncident()) {
           <div class="incident-drawer-loading"><mat-spinner diameter="32"></mat-spinner></div>
         } @else if (incidentTimeline()) {
+          @if (incidentTimeline()!.incident.tickets?.length) {
+            <div class="incident-tickets">
+              <mat-icon>confirmation_number</mat-icon>
+              <span>Tickets:</span>
+              @for (t of incidentTimeline()!.incident.tickets!; track t.key) {
+                @if (t.url) {
+                  <a [href]="t.url" target="_blank" rel="noopener"
+                     [matTooltip]="'erstellt von ' + (t.by || '?') + ' · ' + relTime(t.at)">{{ t.key }}</a>
+                } @else {
+                  <span [matTooltip]="'erstellt von ' + (t.by || '?') + ' · ' + relTime(t.at)">{{ t.key }}</span>
+                }
+              }
+            </div>
+          }
           @if (incidentTimeline()!.incident.merged_into; as into) {
             <div class="cluster-merged" (click)="openIncidentTimeline(into)">
               <mat-icon>call_merge</mat-icon> Aufgegangen in einem übergreifenden Fehlerausbruch — öffnen
@@ -1621,6 +1643,11 @@ const SEVERITY_COLOR: Record<string, string> = {
     .claude-handoff-btn mat-spinner { display: inline-block; margin-right: 4px; }
     :host-context(html.cs-theme-lcars) .claude-handoff-btn { color: #99CCFF; border-color: rgba(153,204,255,.45); }
     .incident-drawer-loading { display: flex; justify-content: center; padding: 40px; }
+
+    .incident-tickets { margin: 10px 16px 0; display: flex; gap: 8px; align-items: center;
+      flex-wrap: wrap; font-size: 13px; }
+    .incident-tickets mat-icon { font-size: 16px; width: 16px; height: 16px; opacity: .7; }
+    .incident-tickets a { color: var(--mat-sys-primary); font-weight: 500; }
 
     /* ── Causal Panel ── */
     .cluster-merged { margin: 10px 16px 0; padding: 8px 10px; border-radius: 8px; cursor: pointer;
@@ -2684,6 +2711,21 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
           this.snackBar.open('Kontext konnte nicht geladen werden', 'OK', { duration: 3000 });
         },
       });
+  }
+
+  /** Ticket aus dem Incident: gemeinsamer Dialog, KI-Entwurf aus dem Lagebild (tickets.draft). */
+  createIncidentTicket() {
+    const inc = this.incidentTimeline()?.incident;
+    if (!inc) return;
+    this.dialog.open(TicketCreateDialogComponent, {
+      data: { mode: 'incident', incidentId: inc.id, host: inc.primary_host, severity: inc.severity },
+      panelClass: 'tkt-panel',
+      autoFocus: false,
+      maxWidth: '92vw',
+    }).afterClosed().subscribe(res => {
+      // Angelegt → Ticket-Link sofort im Incident zeigen.
+      if (res?.ok) this.openIncidentTimeline(inc.id);
+    });
   }
 
   checksRunning = signal(false);
