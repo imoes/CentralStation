@@ -126,6 +126,143 @@ _REMOTE_INDIRECT = re.compile(
     """,
     re.VERBOSE,
 )
+
+# Befehlsersetzung in einem ssh-Befehl: `for f in $(ls -tr x.log*); do grep … $f; done`
+# ist reine Diagnose — das Ergebnis wird nur als ARGUMENT gelesen. Gefährlich ist sie,
+# wenn das Ergebnis selbst AUSGEFÜHRT wird (`$(cat cmd.txt)`, `sudo $(…)`) oder der
+# Inhalt schreibt. Deshalb: Inhalt mit denselben Regeln prüfen, Befehlsposition sperren,
+# dann durch einen Platzhalter ersetzen und den Rest wie gehabt prüfen. Anlass 13.10.:
+# eine Paperless-Diagnose auf sammelpdf wurde nur wegen `$(ls -tr …)` gesperrt.
+#: Davor stehend wird das Folgende ausgeführt (Befehlsposition), nicht als Argument gelesen.
+_EXEC_WORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{", "(",
+               "sudo", "exec", "command", "builtin", "env", "nohup", "nice", "time",
+               "timeout", "xargs", "stdbuf", "watch", "eval", "source", ".", "su",
+               "bash", "sh", "zsh", "dash", "ksh", "-c", "--", "-n", "-u", "-i", "-E"}
+_ASSIGN = re.compile(r"^[A-Za-z_]\w*=")
+_SEGMENT_SPLIT = re.compile(r"\|\||&&|[;&|\n(]")
+
+
+def _command_position(before: str) -> bool:
+    """Steht etwas nach `before` an der Stelle eines Befehls (statt eines Arguments)?"""
+    seg = _SEGMENT_SPLIT.split(before)[-1]
+    words = [w.strip("'\"") for w in seg.split()]
+    words = [w for w in words if w and not _ASSIGN.match(w)]
+    # `ssh [optionen] host …`: der entfernte Befehl beginnt nach dem Host.
+    for i, w in enumerate(words):
+        if w in ("ssh", "sshpass") or w.endswith("/ssh"):
+            k = i + 1
+            while k < len(words) and words[k].startswith("-"):
+                f = words[k]
+                k += 2 if (len(f) == 2 and f[1] in _SSH_OPTS_WITH_ARG) else 1
+            words = words[k + 1:]
+            break
+    # Nur Wrapper/Schlüsselwörter/Optionen/Zahlen davor → das Ergebnis wird ausgeführt.
+    return all(w in _EXEC_WORDS or w.startswith("-") or w.isdigit() for w in words)
+
+
+def _substitutions(cmd: str) -> list[tuple[int, int, str | None]] | None:
+    """Alle $(…), `…` und $((…)) der obersten Ebene als (start, ende, inhalt); Inhalt None =
+    reine Rechnung. None = unbalanciert oder Befehl in einer Rechnung."""
+    out, i, n = [], 0, len(cmd)
+    while i < n:
+        if cmd.startswith("$((", i):            # Arithmetik — kein Befehl
+            depth, j = 0, i + 1
+            while j < n:
+                depth += cmd[j] == "("
+                depth -= cmd[j] == ")"
+                j += 1
+                if depth == 0:
+                    break
+            inner = cmd[i + 3:j - 2]
+            if "$(" in inner or "`" in inner:   # Befehl in der Rechnung: wie Ersetzung
+                return None
+            out.append((i, j, None))
+            i = j
+            continue
+        if cmd.startswith("$(", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                depth += cmd[j] == "("
+                depth -= cmd[j] == ")"
+                j += 1
+            if depth:
+                return None
+            out.append((i, j, cmd[i + 2:j - 1]))
+            i = j
+            continue
+        if cmd[i] == "`":
+            j = cmd.find("`", i + 1)
+            if j < 0:
+                return None
+            out.append((i, j + 1, cmd[i + 1:j]))
+            i = j + 1
+            continue
+        i += 1
+    return out
+
+
+_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+_INTERPRETERS = re.compile(r"^(?:python[\d.]*|perl|ruby|node)$")
+_PIPE_TARGET = re.compile(r"(?<!\|)\|(?!\|)\s*([^;&|\n]*)")
+
+
+def _pipe_into_shell(cmd: str) -> bool:
+    """`ssh h 'cat x | sh'`: die Gegenseite führt Text aus, den der Hook nie sieht.
+
+    Shell: nur Optionen bis zum Trenner (`sh`, `sh -x`, `bash -s`) liest das Skript von
+    stdin; `sh -c '…'` nicht (dessen Text prüfen die übrigen Regeln). Interpreter: nackt
+    oder `-` liest stdin; `python3 -m json.tool` bleibt lesend.
+    """
+    if not re.search(_SSH, cmd):
+        return False
+    for m in _PIPE_TARGET.finditer(cmd):
+        words = [w.strip("'\")") for w in m.group(1).split()]
+        words = [w for w in words if w]
+        if words and words[0] == "sudo":
+            words = words[1:]
+            while words and words[0].startswith("-"):
+                words = words[1:]
+        if not words:
+            continue
+        prog, args = words[0].rsplit("/", 1)[-1], words[1:]
+        if prog in _SHELLS and all(a.startswith("-") and a != "-c" and "c" not in a[1:2]
+                                   for a in args):
+            return True
+        if _INTERPRETERS.match(prog) and (not args or args == ["-"]):
+            return True
+    return False
+
+
+#: `$var` / `${var}` an Befehlsposition führt aus, was in der Variablen steht —
+#: `c=$(echo rm); $c -rf /x` wäre sonst der Umweg um die Prüfung der Ersetzung.
+_VAR_AT_CMD = re.compile(r"(?:^|\|\||&&|[;&|\n(]|\b(?:do|then|else|sudo|exec|xargs|env)\b)"
+                         r"\s*(?:[A-Za-z_]\w*=\S*\s+)*[\"']?\$\{?[A-Za-z_]")
+
+
+def _ssh_substitution_write(cmd: str, cwd: str, depth: int) -> tuple[bool, str]:
+    """(schreibend?, Befehl mit Platzhaltern statt geprüfter Ersetzungen)."""
+    if not re.search(_SSH, cmd) or not ("$(" in cmd or "`" in cmd or "$" in cmd):
+        return False, cmd
+    if _VAR_AT_CMD.search(cmd):
+        return True, cmd
+    subs = _substitutions(cmd)
+    if subs is None or depth > 3:
+        return True, cmd
+    out, last = [], 0
+    for start, end, inner in subs:
+        if inner is None:                       # $((…)) ohne Befehl: nur eine Zahl
+            out.append(cmd[last:start] + "0")
+            last = end
+            continue
+        if _command_position(cmd[:start]):
+            return True, cmd
+        # Als entfernter Befehl prüfen: `rm x.txt` ist dort kein Workspace-Schreiben.
+        if _is_write(f"ssh SUBSTHOST {inner}", cwd, _depth=depth + 1):
+            return True, cmd
+        out.append(cmd[last:start] + "SUBST")
+        last = end
+    out.append(cmd[last:])
+    return False, "".join(out)
 #: Python-Bibliotheken, die selbst eine SSH-Verbindung aufbauen — damit sähe der Hook
 #: den entfernten Befehl nie als Shell-Text. Lesen geht über `ssh host 'befehl'`.
 _PY_SSH_LIB = re.compile(r"\b(paramiko|asyncssh|fabric|netmiko|pexpect)\b")
@@ -195,7 +332,11 @@ _AGENT_CONFIG_PATH = re.compile(
 
 
 def _is_write(cmd: str, cwd: str = "", _depth: int = 0) -> bool:
-    if _REMOTE_INDIRECT.search(cmd) or _bare_ssh(cmd) or _PY_SSH_LIB.search(cmd):
+    sub_write, cmd = _ssh_substitution_write(cmd, cwd, _depth)
+    if sub_write:
+        return True
+    if (_REMOTE_INDIRECT.search(cmd) or _bare_ssh(cmd) or _PY_SSH_LIB.search(cmd)
+            or _pipe_into_shell(cmd)):
         return True
     if _depth == 0 and _script_is_write(cmd, cwd):
         return True

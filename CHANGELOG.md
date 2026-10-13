@@ -10,6 +10,38 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-10-13 — Console write lock lets read-only command substitution through
+
+### What was fixed
+
+- **A read-only diagnosis over SSH was blocked as a write.**
+  - **The case:** a Paperless diagnosis on sammelpdf: kernel journal, boots, grep in
+    `celery.log`/`paperless.log*`. It was refused only because of
+    `for f in $(ls -tr paperless.log*); do … done`. The guard blocked every `$(…)` and
+    every backtick inside an ssh command across the board.
+  - **New rule for `$(…)` and backticks in ssh commands:**
+    - The content is checked with the same rules, as a remote command (`rm x.txt` there
+      is not a workspace write).
+    - If the result is used only as an **argument** (`for f in $(ls …)`,
+      `grep x $(ls a)`), the command goes through.
+    - At **command position** it stays blocked: `$(cat cmd.txt)`, `sudo $(…)`,
+      `sh -c "$(…)"`, `if $(…)`.
+    - `$var` at command position is newly blocked (`c=$(echo rm); $c -rf …`). Otherwise
+      it would be the way around the check.
+    - Pure arithmetic `$((1+2))` goes through. Unbalanced brackets are blocked.
+  - **Also closed, an older gap:** `ssh host 'cat x | sh'` was allowed, and so were
+    `| sh -x`, `| sudo bash` and `| python3 -`. Text piped into a remote shell or
+    interpreter runs without the guard seeing it. It is now blocked.
+    `| python3 -m json.tool` stays allowed.
+  - **Not changed:** the SSH gate in split mode (so far only the canary user). It still
+    refuses `$` outright, because it is the hard boundary.
+  - Verified:
+    - The original command, replayed through the guard in the live console container,
+      is allowed (exit 0; before: deny).
+    - Guard tests: 132, including 6 new allowed and 22 new blocked cases, among them the
+      bypass attempts listed above. Full suite: 662 passed.
+    - The running console container has the new guard; the userenv image is rebuilt.
+
 ## 2026-10-12 — Console searches Jira and ServiceDesk tickets
 
 ### What changed

@@ -48,6 +48,17 @@ ALLOWED = [
     "docker ps",
     "journalctl -u sshd --since '-1h'",
     "ssh cue0110 'df -h'",
+    # Command substitution whose result is only READ as an argument (13.10.: a Paperless
+    # diagnosis on sammelpdf was refused only because of `$(ls -tr …)`)
+    "ssh sammelpdf.example.com 'cd /data1/dockerapps/paperless/data/log; sudo journalctl -k "
+    "--no-pager | head -1; sudo journalctl --list-boots --no-pager | tail -2; sudo grep -h "
+    "\"SIGKILL\" celery.log.20 | head -2; for f in $(ls -tr paperless.log*); do sudo grep "
+    "-hiE \"classif\" $f | head -3; done | cut -c1-250 | head -40'",
+    "ssh h 'grep x $(ls a)'",
+    "ssh h 'wc -l `ls /var/log/*.log`'",
+    "ssh h 'echo $((1+2))'",
+    "ssh h 'curl -s localhost:9200 | python3 -m json.tool'",
+    "ssh h 'ps aux | grep bash'",
     # Pulling a file FROM a host is reading it
     "scp cue0110:/var/log/messages .",
     "rsync -a cue0110:/home/marvin/out/ ./out/",
@@ -90,6 +101,30 @@ BLOCKED = [
     "/usr/bin/pip install pandas",
     "pip install --break-system-packages pandas",
     "pip install --target /usr/lib/python3/dist-packages foo",
+    # Command substitution: result EXECUTED, or the content itself writes
+    "ssh h '$(cat /tmp/cmd)'",
+    "ssh -p 22 h '$(cat /tmp/cmd)'",
+    "ssh h 'sudo $(cat /tmp/cmd)'",
+    "ssh h 'sh -c \"$(cat /tmp/cmd)\"'",
+    "ssh h 'if $(true); then ls; fi'",
+    "ssh h 'for f in $(ls); do $f; done'",
+    "ssh h 'c=$(echo rm); $c -rf /x'",
+    "ssh h 'c=rm; ${c} -rf /x'",
+    "ssh h 'ls $(rm -rf /x)'",
+    "ssh h 'ls $(touch a.txt)'",
+    "ssh h 'ls $(systemctl restart nginx)'",
+    "ssh h 'ls $(echo cm0= | base64 -d)'",
+    "ssh h 'ls $(ls $(rm x))'",
+    "ssh h 'echo $(($(rm x)))'",
+    "ssh h 'ls $(ls'",
+    "ssh h 'ls > $(echo /etc/passwd)'",
+    # Piping text into a remote shell/interpreter runs what the hook never sees
+    "ssh h 'cat /tmp/x | sh'",
+    "ssh h 'cat x | sh -x'",
+    "ssh h 'cat x | sudo -n bash'",
+    "ssh h 'cat x | /bin/sh'",
+    "ssh h 'cat /tmp/x | python3 -'",
+    "ssh h 'cat x | python3'",
     # A permitted pip install must not launder the rest of a compound command
     "pip install pandas && rm -rf /etc/foo",
     "pip install pandas; systemctl restart nginx",
