@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -41,14 +42,22 @@ class FleetHit:
     hosts: tuple[str, ...]
     usual: float
     alerts: tuple[tuple[str, str], ...]     # (external_id, severity)
+    #: An wie vielen der letzten Tage derselbe Ausfall zur gleichen Uhrzeit (rules.
+    #: fleet_recurring_*). Ab fleet_recurring_days: geplanter Job, kein Vorfall.
+    recurring_days: int = 0
+
+    def recurring(self, th: Thresholds = DEFAULT) -> bool:
+        return self.recurring_days >= th.fleet_recurring_days
 
 
 def evaluate(now_hosts: dict[str, set[str]], history: dict[str, list[int]], n_windows: int,
-             alerts: dict[str, list[tuple[str, str]]], th: Thresholds = DEFAULT) -> list[FleetHit]:
+             alerts: dict[str, list[tuple[str, str]]], th: Thresholds = DEFAULT,
+             recurring: dict[str, int] | None = None) -> list[FleetHit]:
     """Reine Bewertung: welcher Service ist gerade auf ungewöhnlich vielen Hosts betroffen.
 
     history[service]: Host-Anzahlen der 15-min-Fenster der letzten 7 Tage, in denen der
     Service überhaupt betroffen war (der Rest zählt als 0, siehe median_with_zeros).
+    recurring[service]: Tage mit demselben Ausfall zur gleichen Uhrzeit (_collect).
     """
     hits = []
     for service, hosts in now_hosts.items():
@@ -57,8 +66,29 @@ def evaluate(now_hosts: dict[str, set[str]], history: dict[str, list[int]], n_wi
         usual = median_with_zeros(history.get(service, []), n_windows)
         if fleet_cluster(len(hosts), usual, th):
             hits.append(FleetHit(service, tuple(sorted(hosts)), usual,
-                                 tuple(alerts.get(service, []))))
+                                 tuple(alerts.get(service, [])),
+                                 (recurring or {}).get(service, 0)))
     return sorted(hits, key=lambda h: -len(h.hosts))
+
+
+def recurring_days(per_day: list[tuple[int, int]], hosts_now: int,
+                   th: Thresholds = DEFAULT) -> int:
+    """Tage, an denen derselbe Ausfall zur gleichen Uhrzeit kam.
+
+    per_day: je früherem Tag (Hosts im Zeitfenster, große 15-min-Fenster außerhalb davon).
+    Ein Tag zählt, wenn der Ausfall dort ähnlich groß war und der Service sonst ruhig.
+    """
+    need = max(th.fleet_min_hosts, math.ceil(th.fleet_recurring_share * hosts_now))
+    return sum(1 for in_hosts, outside in per_day
+               if in_hosts >= need and outside <= th.fleet_recurring_max_outside)
+
+
+def recurring_reason(hit: FleetHit, th: Thresholds = DEFAULT) -> str:
+    return (f"wiederkehrend: an {hit.recurring_days} der letzten "
+            f"{th.fleet_recurring_lookback_days} Tage zur gleichen Uhrzeit "
+            f"(±{th.fleet_recurring_tolerance_minutes} min) auf ≥ {th.fleet_min_hosts} Hosts — "
+            f"vermutlich ein geplanter Job, kein Vorfall (CheckMK-Downtime für das Zeitfenster "
+            f"blendet ihn ganz aus)")
 
 
 def group_leader(hosts: set[str], candidates: list[tuple[str, datetime, set[str]]],
@@ -131,8 +161,40 @@ async def _collect(db, now: datetime):
             GROUP BY 1, 2"""), {"since": aged - BASELINE, "until": aged - WINDOW, "svcs": big})
         for svc, _w, n in res.all():
             history.setdefault(svc, []).append(int(n))
+    recurring = await _recurring(db, aged, {s: len(now_hosts[s]) for s in big}) if big else {}
     n_windows = int(BASELINE / WINDOW)
-    return now_hosts, history, n_windows, alerts, outputs
+    return now_hosts, history, n_windows, alerts, outputs, recurring
+
+
+async def _recurring(db, aged: datetime, hosts_now: dict[str, int]) -> dict[str, int]:
+    """Derselbe Ausfall an früheren Tagen zur gleichen Uhrzeit: das Fenster dieses Laufs
+    [aged-15min, aged) um k Tage verschoben, ± Toleranz. Je Tag: Hosts im Fenster und große
+    15-min-Fenster im übrigen Tag (±12 h) — Bewertung in recurring_days."""
+    big = list(hosts_now)
+    tol = timedelta(minutes=DEFAULT.fleet_recurring_tolerance_minutes)
+    res = await db.execute(text("""
+        WITH bins AS (
+            SELECT a.metadata->>'service' AS svc, d.k,
+                   date_bin('15 minutes', a.created_at, TIMESTAMPTZ '2000-01-01') AS w,
+                   count(DISTINCT a.metadata->>'host') AS hosts,
+                   bool_or(a.created_at >= CAST(:lo AS timestamptz) - d.k * interval '1 day'
+                           AND a.created_at < CAST(:hi AS timestamptz) - d.k * interval '1 day') AS in_win
+            FROM generate_series(1, :days) AS d(k)
+            JOIN alerts a
+              ON a.source = 'checkmk' AND a.metadata->>'service' = ANY(:svcs)
+             AND a.created_at >= CAST(:mid AS timestamptz) - interval '12 hours' - d.k * interval '1 day'
+             AND a.created_at <  CAST(:mid AS timestamptz) + interval '12 hours' - d.k * interval '1 day'
+            GROUP BY 1, 2, 3)
+        SELECT svc, k, coalesce(max(hosts) FILTER (WHERE in_win), 0),
+               count(*) FILTER (WHERE NOT in_win AND hosts >= :min_hosts)
+        FROM bins GROUP BY 1, 2"""),
+        {"days": DEFAULT.fleet_recurring_lookback_days, "svcs": big,
+         "lo": aged - WINDOW - tol, "hi": aged + tol, "mid": aged - WINDOW / 2,
+         "min_hosts": DEFAULT.fleet_min_hosts})
+    per_day: dict[str, list[tuple[int, int]]] = {}
+    for svc, _k, in_hosts, outside in res.all():
+        per_day.setdefault(svc, []).append((int(in_hosts), int(outside)))
+    return {svc: recurring_days(rows, hosts_now[svc]) for svc, rows in per_day.items()}
 
 
 async def run(db, cfg, base_url: str) -> list[dict]:
@@ -146,8 +208,9 @@ async def run(db, cfg, base_url: str) -> list[dict]:
     )
 
     now = datetime.now(timezone.utc)
-    now_hosts, history, n_windows, alerts, outputs = await _collect(db, now)
-    hits = {h.service: h for h in evaluate(now_hosts, history, n_windows, alerts)}
+    now_hosts, history, n_windows, alerts, outputs, recurring = await _collect(db, now)
+    hits = {h.service: h for h in evaluate(now_hosts, history, n_windows, alerts,
+                                           recurring=recurring)}
     open_eps = {ec.key: ec for ec in (await db.execute(select(ErrorCluster).where(
         ErrorCluster.source == "checkmk_fleet", ErrorCluster.status == "open"))).scalars()}
     to_notify: list[dict] = []
@@ -201,6 +264,26 @@ async def run(db, cfg, base_url: str) -> list[dict]:
         if muted:
             continue
         title = f"Flotten-Ausfall: {service} · {len(hit.hosts)} Hosts"
+        if ep is None and hit.recurring():
+            # Geplanter, täglich wiederkehrender Ausfall: nur Tagesübersicht — kein
+            # Incident, keine Mail. Nicht still: Episode mit Begründung, plus Logzeile.
+            reason = recurring_reason(hit)
+            db.add(ErrorCluster(id=uuid.uuid4(), key=key, source="checkmk_fleet", status="open",
+                                rules=["fleet", "recurring"], reasons=[*ctx["reasons"], reason],
+                                notify_class="digest", started_at=now, last_active_at=now,
+                                peak15=len(hit.hosts), total=len(hit.alerts),
+                                entities={h: 1 for h in hit.hosts}, sources=list(hit.hosts)))
+            log.info("fleet: %s on %d hosts — recurring (%d/%d days), daily overview only",
+                     service, len(hit.hosts), hit.recurring_days,
+                     DEFAULT.fleet_recurring_lookback_days)
+            continue
+        if ep is not None and ep.incident_id is None and "recurring" in (ep.rules or []):
+            # Fortsetzung eines wiederkehrenden Laufs: fortschreiben, nie melden.
+            ep.last_active_at = now
+            ep.peak15 = max(ep.peak15, len(hit.hosts))
+            ep.entities = {**(ep.entities or {}), **{h: 1 for h in hit.hosts}}
+            ep.sources = sorted(set(ep.sources or []) | set(hit.hosts))
+            continue
         if ep is None:
             ep = ErrorCluster(id=uuid.uuid4(), key=key, source="checkmk_fleet", status="open",
                               rules=["fleet"], reasons=ctx["reasons"], notify_class="immediate",

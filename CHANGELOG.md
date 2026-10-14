@@ -10,6 +10,55 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-10-14 — Nightly jobs are no longer incidents
+
+### What changed
+
+- **Fleet failures that recur daily at the same time go to the daily overview — no
+  incident, no mail.**
+  - **The case:** "Orderserver-Dienst auf 5 Hosts ausgefallen" arrived every night. Nothing
+    restarts there.
+    - ORD1/ORD3 stop at 00:31 local time and come back at 01:00 (~29 min).
+    - ORD2, plus ORD4/ORD5 on aomp05, stay away until **05:00** (4.5 h). Measured via the
+      CheckMK `last_state_change` of all 23 orderserver services.
+    - A later incident threshold does not help: ORD2 is down 4.5 h, the 30-minute minimum
+      age is long satisfied.
+  - **Cause:** the fleet rule compares against the median of *all* 15-minute windows of
+    the last 7 days. For a failure that comes once a day, that median is 0, so every night
+    looked unusual.
+  - **New rule "wiederkehrend" (recurring):** a fleet failure counts as a planned job when
+    the same service failed at the same clock time (±30 min) on at least 3 of the last 7
+    days. A past day counts only if both hold:
+    - the failure was similar in size: at least half of today's hosts, and at least 5;
+    - the service had at most 2 large 15-minute windows outside that time slot that day.
+    A job is tied to its clock time; a generally unstable service is not a job.
+  - **What happens instead:** an episode in the daily overview, with the reason ("an 7 der
+    letzten 7 Tage zur gleichen Uhrzeit … vermutlich ein geplanter Job"). Nothing vanishes
+    silently. The individual CheckMK alerts stay in the feed.
+  - **Even better at the source:** a recurring CheckMK downtime for the time slot.
+    CentralStation already ignores services in a downtime entirely.
+  - Verified:
+    - **Backtest over 14 days, 75 fleet incidents:** 38 would have gone to the daily
+      overview instead.
+      - Recognised as jobs: Proxmox VE VM Backup Status 12/12, orderserver ORD1 11/11,
+        ORD2 2/2, Storage Pool data 7/8, Filesystem /data/backup 5/7, Service Summary 3/7.
+      - **Still reported:** all 15 Check_MK failures. Without the "similar in size / quiet
+        otherwise" condition, 12 of them would have counted as recurring, because the
+        service was disturbed all day from 30.09. to 02.10.
+    - **Dry run of the real code at historical times (read-only):**
+      - 13.10. 22:36: ORD1/2/3 found recurring on 6–7 of 7 days.
+      - Proxmox backup at 23:03: 7 of 7 days.
+      - Check_MK on 29 hosts on 11.10. at 02:00: 0 days, so still reported.
+      - The dry run also found a type error in the SQL (asyncpg inferred the time
+        parameters as interval). It is fixed with explicit casts; the unit tests could not
+        have caught it.
+    - Tests: 4 new. Full suite: 681 passed.
+  - **Not yet verified live:** the first real night with the rule is 14.10. at 22:31 UTC.
+- **Checked, no change needed:** today at 05:41 UTC CheckMK reported "agent timed out" on
+  1,411 hosts. They recovered at 05:56–05:58. There was rightly no incident (under
+  30 min), and alert reconciliation set all 1,411 alerts to resolved at 06:06 ("Freshness:
+  resolved 1411 stale CheckMK alert(s)").
+
 ## 2026-10-13 — Ticket from an incident; error-cluster detection reads Filebeat hosts; console write lock lets read-only command substitution through
 
 ### What is new

@@ -62,6 +62,23 @@ class Thresholds:
     group_overlap: float = 0.2        # … und Container teilen, sind EIN Vorfall
     fleet_min_hosts: int = 5
     fleet_factor: float = 3.0
+    #: WIEDERKEHREND (Flotte): derselbe Service fiel an ≥ fleet_recurring_days der letzten
+    #: fleet_recurring_lookback_days Tage zur gleichen Uhrzeit (± Toleranz) auf
+    #: ≥ fleet_min_hosts Hosts aus → geplanter Job, kein Vorfall: Tagesübersicht statt
+    #: Incident/Mail. Anlass 14.10.: Orderserver ORD1/2 jede Nacht 00:30–05:00 Ortszeit
+    #: (11 Incidents in 14 Tagen), ebenso Proxmox-Backup 23:03 (12), Storage Pool 21:33 (7).
+    #: Der 7-Tage-Median aller 15-min-Fenster ist für einen täglichen Lauf 0 — die
+    #: Flotten-Regel allein hält jede Nacht für ungewöhnlich.
+    fleet_recurring_days: int = 3
+    fleet_recurring_lookback_days: int = 7
+    fleet_recurring_tolerance_minutes: int = 30
+    #: Ein früherer Tag zählt nur, wenn der Ausfall dort ähnlich groß war (≥ share × heute)
+    #: UND der Service außerhalb des Zeitfensters höchstens max_outside 15-min-Fenster mit
+    #: ≥ fleet_min_hosts hatte — ein Job ist an seine Uhrzeit gebunden. Backtest 14 Tage:
+    #: ohne diese Bedingung galten 12 von 15 Check_MK-Ausfällen als "wiederkehrend" (der
+    #: Dienst war 30.09.–02.10. ganztägig gestört), mit ihr 0; die Jobs bleiben erkannt.
+    fleet_recurring_share: float = 0.5
+    fleet_recurring_max_outside: int = 2
     #: ANHALTEND NEU: ein Muster, das erst seit höchstens persist_max_age_hours existiert und
     #: in JEDER halben Stunde der letzten 2 h auftrat (persist_window_buckets 5-min-Fenster in
     #: PERSIST_PARTS Teilen), zusammen ≥ persist_min_total Zeilen. Anlass 12.10.: eine
