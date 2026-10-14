@@ -77,6 +77,19 @@ class Thresholds:
     #: ≥ fleet_min_hosts hatte — ein Job ist an seine Uhrzeit gebunden. Backtest 14 Tage:
     #: ohne diese Bedingung galten 12 von 15 Check_MK-Ausfällen als "wiederkehrend" (der
     #: Dienst war 30.09.–02.10. ganztägig gestört), mit ihr 0; die Jobs bleiben erkannt.
+    #: KRITISCHES EREIGNIS (critical.py): dieselbe schwere Kernelmeldung (OOM-Kill, Kernel
+    #: panic, I/O-Fehler …) auf demselben Host in ≥ critical_repeat_count 5-min-Fenstern
+    #: binnen critical_repeat_hours → Incident + Mail. Einzelnes Auftreten: Tagesübersicht.
+    #: Anlass 14.10.: docker0209 hatte 25+ h lang stündlich einen OOM — 1–3 Kernelzeilen,
+    #: für die mengenbasierten Regeln unsichtbar. Gemessen 7 Tage Flotte: 14 Host/Art-
+    #: Kombinationen, davon erreicht nur vpp0177 (MCE, 246 Fenster) die Schwelle.
+    #: QUELLENWECHSEL: so viele neue Muster in einem 5-min-Fenster → Beginn der Beobachtung
+    #: (engine.fresh_at_coverage). Normalbetrieb 05.–12.10.: Median 1, p99 18, max 46;
+    #: Filebeat-Rollout 13.10. 13:55: 480, danach 101/92/87/74 (≈ 80 Fehl-Mails).
+    burst_new_templates: int = 60
+    critical_repeat_count: int = 3
+    critical_repeat_hours: int = 6
+    critical_quiet_hours: int = 6
     fleet_recurring_share: float = 0.5
     fleet_recurring_max_outside: int = 2
     #: ANHALTEND NEU: ein Muster, das erst seit höchstens persist_max_age_hours existiert und

@@ -10,9 +10,82 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
-## 2026-10-14 — Nightly jobs are no longer incidents
+## 2026-10-14 — Nightly jobs are no longer incidents; repeated kernel failures (OOM) are reported; false-mail flood after the Filebeat rollout stopped
 
-### What changed
+### What is new
+
+- **Critical kernel events: OOM kill, kernel panic, hung task, CPU lockup, I/O,
+  filesystem and hardware errors.**
+  - **Why:** docker0209 had an OOM every hour for 25+ hours: Paperless/celeryd, 14.9 GB,
+    global OOM, the last one before the reboot on 13.10. Nothing was reported. One OOM is
+    1–3 kernel lines on one host, invisible to the volume-based rules (NEW ≥ 20 lines,
+    SPIKE ≥ 200, PERSISTENT ≥ 100 in 2 h).
+  - **Rule:** a fixed list of signatures, no LLM. Only kernel lines count (program
+    "kernel"); container logs do not. A sudo log of a `grep 'invoked oom-killer'` is not an
+    OOM.
+    - **One event** = one host × one kind × one 5-minute window.
+    - **First event:** a daily overview entry (its own section "Kritische
+      Kernelereignisse").
+    - **3 events within 6 h on the same host:** incident (kind `critical`, "Kritisches
+      Ereignis (wiederholt)") and mail. Subject example: "Kritisches Ereignis: OOM-Kill
+      (Arbeitsspeicher erschöpft) auf docker0209.example.com · 3× in 6 h". The mail
+      includes the CheckMK alerts of the host.
+    - **6 h without an event:** the episode and the incident close, with the reason stated.
+  - **Can be muted per kind and host** (admin, like any pattern). The events are stored in
+    the new table `critical_events` (migration 0053).
+  - Measured, 7 days across the fleet: 14 host/kind combinations.
+    - Only vpp0177 (machine-check hardware errors, 246 windows) reaches the threshold.
+    - The 8 Veeam proxies (I/O error once a day, probably the backup run) stay in the daily
+      overview.
+  - Verified:
+    - Dry run against the real database with rollback: three hourly OOMs → 1st and 2nd go
+      to the daily overview, the 3rd opens an incident and a mail, the 4th sends no second
+      mail; 6 h of quiet → closed.
+    - Live: the first run found the 7 Veeam proxies with an I/O error.
+    - Tests: 6 new.
+- **The daily overview has named sections:** "Kritische Kernelereignisse", "Neue
+  Fehlermuster", "Wiederkehrende Flotten-Ausfälle (vermutlich geplante Jobs)". Before,
+  everything was listed as "Muster, die es 14 Tage nicht gab".
+
+### What was fixed
+
+- **About 80 false immediate mails after the Filebeat rollout (13.10. 14:12 UTC to 14.10.
+  06:49 UTC).**
+  - **Cause:** the Filebeat role (ansible03, rolled out from 13.10. around 13:55 UTC)
+    changed the line format.
+    - Before: `<time> <host> dockerd[…]`; after: `<host> dockerd[…]`.
+    - Every known noise line became a NEW pattern, separately per host.
+    - Measured new patterns per 5-minute window: normal operation (05.–12.10.) median 1,
+      p99 18, max 46. At 13:55: **480**, then 101, 92, 87, 74.
+    - My "fresh source" window (11:35–13:35) had already passed, so dockerd "copy stream
+      failed", salt-minion DNS errors and the like each mailed as NEW + PERSISTENT + SPIKE.
+  - **Immediate measures:**
+    - Backend stopped at 06:49 UTC. The 3 mails of the 06:48 run had already gone out.
+    - Error-cluster mails switched off via the kill switch (`error_clusters.mail_enabled`)
+      until the fix was verified.
+  - **Fix 1:** the syslog header (time stamp, host) is stripped from Filebeat lines before
+    pattern mining (`collector.strip_syslog_head`).
+    - The pattern no longer depends on the sender's format.
+    - The same error on 20 hosts is now **one** pattern, not 20, so SPREAD can work again.
+    - Filebeat lines are always stripped, even when the host in the line has a different
+      name (docker0209 writes "sammelpdf"). For other lines, only when the host matches;
+      "ERROR com.escenic.x: …" stays unchanged.
+  - **Fix 2, a guard against mass novelty:** ≥ 60 new patterns in one window counts as a
+    source change.
+    - From there, observation restarts automatically: no NEW/SPIKE/SPREAD for 24 h for
+      those patterns.
+    - Instead of dozens of mails, **one** feed entry ("Viele neue Fehlermuster auf einmal:
+      … vermutlich Umstellung eines Log-Versenders").
+    - Known patterns keep reporting normally, so a real large-scale event stays visible.
+  - Verified:
+    - Dry run on the real state: 62 new patterns in the next window → guard triggered,
+      0 mails.
+    - Live: the first run after the deploy had 0 mail events. Tests: 690 passed.
+  - Error-cluster mails were switched back on at 07:06 UTC, after 3 runs in a row with
+    0 mail events.
+  - **Open:** the 64 immediate episodes from the faulty period are still open. Their old
+    keys no longer receive lines, so they close by themselves after 60 minutes of quiet,
+    together with their incidents.
 
 - **Fleet failures that recur daily at the same time go to the daily overview — no
   incident, no mail.**

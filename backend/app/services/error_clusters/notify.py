@@ -59,6 +59,12 @@ def fmt_rate(count: float | None, seconds: float) -> str:
 
 def subject(ctx: dict, title: str, followup: bool = False) -> str:
     n_cont = len(ctx.get("containers") or [])
+    if ctx.get("kind") == "critical":
+        # Kritisches Ereignis (critical.py): Art, Host, Wiederholung — keine Zeilenrate.
+        head = "KI-Einschätzung" if followup else "Kritisches Ereignis"
+        host = (ctx.get("hosts") or ["?"])[0]
+        return (f"[CentralStation] {head}: {ctx.get('label')} auf {host} · "
+                f"{ctx.get('events')}× in {ctx.get('window_hours')} h")
     head = "KI-Einschätzung" if followup else "Fehlerausbruch"
     short = title.split(": ", 1)[-1].split(" · ")[0]
     return (f"[CentralStation] {head}: {short} · {n_cont} Container · "
@@ -109,6 +115,16 @@ def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
                        f"margin:4px 0;font-size:12px'>{_esc(e)}</pre>"
                        for e in (ctx.get("examples") or [])[:3])
     reasons = "".join(f"<li>{_esc(r)}</li>" for r in ctx.get("reasons") or [])
+    critical_kind = ctx.get("kind") == "critical"
+    if critical_kind:
+        volume = (f'<p style="margin:4px 0">Erstes Ereignis {_esc(_hm(ctx.get("started_at")))} UTC, '
+                  f'zuletzt {_esc(_hm(ctx.get("until")))} UTC · <b>{fmt_int(ctx.get("events"))}×</b> '
+                  f'in {_esc(ctx.get("window_hours"))} h (je Ereignis ein 5-min-Fenster)</p>')
+    else:
+        volume = (f'<p style="margin:4px 0">Seit {_esc(_hm(ctx.get("started_at")))} UTC · '
+                  f'{fmt_int(ctx.get("total"))} Zeilen gesamt · zuletzt '
+                  f'<b>{fmt_rate(ctx.get("count15"), 900)}</b> ({fmt_int(ctx.get("count15"))} in 15 min, '
+                  f'erwartet {fmt_rate(ctx.get("expected15") or 0, 900)})</p>')
     links = []
     if incident_url:
         links.append(f'<a href="{_esc(incident_url)}">Incident öffnen (Timeline, An Konsole übergeben)</a>')
@@ -119,10 +135,8 @@ def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
     <h4 style="margin:16px 0 4px">Warum gemeldet</h4><ul>{reasons}</ul>
     <h4 style="margin:12px 0 4px">Muster</h4>
     <pre style="white-space:pre-wrap;background:#f4f4f4;padding:6px;font-size:12px">{_esc(ctx.get('template'))}</pre>
-    <p style="margin:4px 0">Seit {_esc(_hm(ctx.get('started_at')))} UTC · {fmt_int(ctx.get('total'))} Zeilen gesamt ·
-       zuletzt <b>{fmt_rate(ctx.get('count15'), 900)}</b> ({fmt_int(ctx.get('count15'))} in 15 min,
-       erwartet {fmt_rate(ctx.get('expected15') or 0, 900)})</p>
-    <h4 style="margin:12px 0 4px">Betroffen ({len(containers)} Container)</h4>
+    {volume}
+    <h4 style="margin:12px 0 4px">Betroffen ({len(containers)} {'Host' if critical_kind else 'Container'})</h4>
     <table style="border-collapse:collapse;font-size:13px">{cont_html}</table>{more}
     <h4 style="margin:12px 0 4px">Beispiele</h4>{examples}
     <p style="margin:14px 0">{' · '.join(links)}</p>
@@ -423,24 +437,61 @@ async def build_digest_html(db, user_id: str, since: datetime) -> str | None:
                                  for s in scope)]
     if not items:
         return None
-    trs = "".join(
-        f"<tr><td style='padding:4px 8px'>{_esc(short_title(t.template))}</td>"
-        f"<td style='padding:4px 8px;white-space:nowrap'>{_esc(ec.started_at.strftime('%d.%m. %H:%M'))}</td>"
-        f"<td style='padding:4px 8px;text-align:right'>{fmt_int(ec.total)}</td>"
-        f"<td style='padding:4px 8px'>{_esc(', '.join(list((ec.entities or {}).keys())[:3]))}</td>"
-        f"<td style='padding:4px 8px'>{_esc(((ec.triage or {}).get('zusammenfassung') or '')[:160])}</td></tr>"
-        for ec, t in items[:40])
-    return f"""<div style="font-family:Arial,sans-serif;font-size:14px;max-width:900px">
-    <h3>Neue Fehlermuster (letzte 24 Stunden)</h3>
-    <p style="color:#555">Muster, die es 14 Tage nicht gab, aber ohne Ausbruch — zum Durchsehen,
-       nicht zum sofortigen Handeln. {len(items)} Muster{'' if len(items) <= 40 else ', die 40 größten gezeigt'}.</p>
+    sections = []
+    for group, (head, intro, count_label, who_label) in DIGEST_SECTIONS.items():
+        rows_g = [(ec, t) for ec, t in items if digest_group(ec) == group]
+        if not rows_g:
+            continue
+        trs = "".join(
+            f"<tr><td style='padding:4px 8px'>{_esc(short_title(t.template))}</td>"
+            f"<td style='padding:4px 8px;white-space:nowrap'>{_esc(ec.started_at.strftime('%d.%m. %H:%M'))}</td>"
+            f"<td style='padding:4px 8px;text-align:right'>{fmt_int(ec.total)}</td>"
+            f"<td style='padding:4px 8px'>{_esc(', '.join(list((ec.entities or {}).keys())[:3]))}</td>"
+            f"<td style='padding:4px 8px'>{_esc(digest_note(ec)[:160])}</td></tr>"
+            for ec, t in rows_g[:40])
+        more = '' if len(rows_g) <= 40 else ', die 40 größten gezeigt'
+        sections.append(f"""
+    <h3>{head}</h3>
+    <p style="color:#555">{intro} {len(rows_g)} Einträge{more}.</p>
     <table style="border-collapse:collapse;font-size:13px">
       <tr style="background:#eee"><th style="padding:4px 8px;text-align:left">Muster</th>
-      <th style="padding:4px 8px">Erstmals</th><th style="padding:4px 8px">Zeilen</th>
-      <th style="padding:4px 8px;text-align:left">Container</th><th style="padding:4px 8px;text-align:left">KI-Kurzfazit</th></tr>
-      {trs}</table>
+      <th style="padding:4px 8px">Erstmals</th><th style="padding:4px 8px">{count_label}</th>
+      <th style="padding:4px 8px;text-align:left">{who_label}</th><th style="padding:4px 8px;text-align:left">Hinweis</th></tr>
+      {trs}</table>""")
+    return f"""<div style="font-family:Arial,sans-serif;font-size:14px;max-width:900px">
+    {''.join(sections)}
     <p style="color:#888;font-size:12px;margin-top:18px">Automatisch erkannt – keine Aktion ausgeführt.
        Abbestellen: Einstellungen → E-Mail-Berichte.</p></div>"""
+
+
+#: Abschnitte der Tagesübersicht — je Art ein eigener Name (sonst stünden kritische
+#: Kernelereignisse und geplante Jobs unter "Muster, die es 14 Tage nicht gab").
+DIGEST_SECTIONS = {
+    "critical": ("Kritische Kernelereignisse (letzte 24 Stunden)",
+                 "OOM-Kill, I/O-, Dateisystem- oder Hardwarefehler — einzeln aufgetreten; ab 3× in "
+                 "6 h auf demselben Host folgt ein Incident mit Mail.", "Ereignisse", "Host"),
+    "log": ("Neue Fehlermuster (letzte 24 Stunden)",
+            "Muster, die es 14 Tage nicht gab, aber ohne Ausbruch — zum Durchsehen, nicht zum "
+            "sofortigen Handeln.", "Zeilen", "Container"),
+    "recurring": ("Wiederkehrende Flotten-Ausfälle (vermutlich geplante Jobs)",
+                  "Derselbe CheckMK-Service fällt täglich zur gleichen Uhrzeit auf vielen Hosts "
+                  "aus — kein Incident. Eine CheckMK-Downtime blendet ihn ganz aus.",
+                  "Alerts", "Hosts"),
+}
+
+
+def digest_group(ec) -> str:
+    if ec.source == "critical":
+        return "critical"
+    if ec.source == "checkmk_fleet" and "recurring" in (ec.rules or []):
+        return "recurring"
+    return "log"
+
+
+def digest_note(ec) -> str:
+    if digest_group(ec) == "log":
+        return (ec.triage or {}).get("zusammenfassung") or ""
+    return (ec.reasons or [""])[-1]
 
 
 async def on_fleet(items: list[dict], cfg) -> None:
@@ -453,6 +504,23 @@ async def on_fleet(items: list[dict], cfg) -> None:
     if items:
         from app.services.ai_agent.scheduler import run_generative_refresh
         run_background(run_generative_refresh(), name="error_cluster_generative_refresh")
+
+
+async def on_critical(items: list[dict], cfg) -> None:
+    """Kritische Ereignisse (critical.process) melden — mit den CheckMK-Alerts des Hosts."""
+    from app.core.database import AsyncSessionLocal
+    from app.core.tasks import run_background
+    for it in items:
+        ctx = it["ctx"]
+        try:
+            async with AsyncSessionLocal() as db:
+                since = datetime.fromisoformat(ctx["started_at"]) - timedelta(minutes=15)
+                ctx["checkmk"] = await _checkmk(db, ctx["hosts"], since)
+        except Exception as exc:  # noqa: BLE001 — ohne Recherche geht die Meldung trotzdem
+            log.warning("error_clusters: critical checkmk lookup failed: %s", exc)
+        run_background(deliver(ctx, it["title"], it["cluster_id"], it["incident_id"], cfg,
+                               None, ctx.get("checkmk") or []),
+                       name=f"error_cluster_critical_{it['cluster_id'][:8]}")
 
 
 async def _mark_mailed(db, cluster_id: str) -> None:

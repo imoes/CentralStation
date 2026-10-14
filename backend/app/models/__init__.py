@@ -10,6 +10,7 @@ from app.models.workflow import UserPreference, UserJiraQuery, WorkSession
 from app.models.remediation import RemediationProposal, PlaybookDraft
 from app.models.remote_exec import RemoteExecLog
 from app.models.recipe import Recipe
+from app.models.critical_event import CriticalEvent
 from app.models.error_cluster import (
     LogTemplate, LogTemplateBucket, LogTemplateHourly, EntityBucket, ErrorCluster,
     ErrorClusterState,
@@ -31,4 +32,5 @@ __all__ = [
     "ErrorClusterState",
     "RemoteExecLog",
     "Recipe",
+    "CriticalEvent",
 ]

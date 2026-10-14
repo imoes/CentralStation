@@ -21,10 +21,13 @@ from urllib.parse import quote
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from app.services.error_clusters import critical
 from app.services.error_clusters.collector import bucket_floor, fetch_window, tally
 from app.services.error_clusters.engine import (
-    BUCKET, HISTORY, BucketRec, Episode, Event, MemoryStore, TemplateInfo, process,
+    BUCKET, HISTORY, BucketRec, Episode, Event, MemoryStore, TemplateInfo, fresh_at_coverage,
+    process,
 )
+from app.services.error_clusters.rules import DEFAULT
 from app.services.error_clusters.miner import Miner
 
 log = logging.getLogger(__name__)
@@ -79,6 +82,42 @@ async def coverage_starts(db) -> list[datetime]:
         except (TypeError, ValueError):
             continue
     return sorted(out)
+
+
+async def _record_burst(db, b: datetime, n_new: int, t, notice: bool) -> None:
+    """Quellenwechsel festhalten (Beginn der Beobachtung) und — einmal je Wechsel — im Feed
+    benennen. Statt Dutzender Einzelmeldungen EIN Eintrag mit Begründung; auch ein echtes
+    Großereignis bleibt so sichtbar (und meldet weiter über bekannte Muster: SPITZE/AUSBREITUNG)."""
+    from app.models.alert import Alert
+    from app.services.feed_index import index_items
+    from app.services.settings import set_setting
+    await set_setting(db, f"{COVERAGE_PREFIX}auto-{b:%Y%m%dT%H%M}", b.isoformat())
+    if not notice:
+        return
+    new = [tt for k, tt in t.templates.items()]
+    hosts = Counter()
+    for tt in new:
+        hosts.update(tt.entities)
+    title = (f"Viele neue Fehlermuster auf einmal: {n_new} in 5 min — "
+             f"vermutlich Umstellung eines Log-Versenders")
+    body = "\n".join([
+        f"{n_new} Muster tauchten im Fenster {b:%d.%m. %H:%M} UTC erstmals auf (Normalbetrieb "
+        f"05.–12.10.: höchstens 46 je Fenster, Schwelle {DEFAULT.burst_new_templates}).",
+        "Behandelt als Quellenwechsel: diese Muster melden 24 h lang weder NEU noch SPITZE noch "
+        "AUSBREITUNG (keine Grundlast); laufende Schleifen darunter erscheinen in der Tagesübersicht.",
+        "Falls es doch ein Großereignis ist: bekannte Muster melden weiter normal.",
+        "", "Meiste neue Zeilen von: " + ", ".join(f"{h} ({n})" for h, n in hosts.most_common(8)),
+    ])
+    ext_id = f"eclburst:{b:%Y%m%dT%H%M}"
+    meta = {"kind": "error_cluster_burst", "host": (hosts.most_common(1) or [("", 0)])[0][0],
+            "new_patterns": n_new, "window": b.isoformat()}
+    row = Alert(source="graylog", severity="medium", title=title[:512], body=body,
+                external_id=ext_id, status="new", metadata_=meta)
+    db.add(row)
+    await db.flush()
+    await index_items([{"id": str(row.id), "type": "alert", "source": "graylog", "severity": "medium",
+                        "title": title, "body": body, "metadata": meta, "created_at": b.isoformat(),
+                        "status": "new", "external_id": ext_id}])
 
 
 async def _hydrate(db) -> _Runtime:
@@ -432,6 +471,16 @@ async def _run() -> None:
                                         fetched.total, fetched.complete)
             if not fetched.complete:
                 await _recount_exact(svc, t, b)
+            # Massen-Neuheit = Quellenwechsel: so viele neue Muster in EINEM Fenster gab es
+            # im Normalbetrieb nie (max. 46) — ein Versender wurde umgestellt. Ab hier gelten
+            # Muster dieses Fensters als "schon vorher gelaufen" (engine.fresh_at_coverage).
+            n_new = sum(1 for k in t.templates if k not in rt.store.templates)
+            burst = n_new >= DEFAULT.burst_new_templates
+            burst_known = burst and fresh_at_coverage(b, rt.store.coverage_starts, None)
+            if burst:
+                rt.store.coverage_starts = sorted({*rt.store.coverage_starts, b})
+                log.warning("error_clusters: %d new patterns in window %s — treated as a "
+                            "log-source change (coverage start)", n_new, b)
             events = process(rt.store, t)
             report = now - (b + BUCKET) <= REPORT_HORIZON
             if not report:
@@ -443,6 +492,8 @@ async def _run() -> None:
                         ev.episode.notified_rate = 0
                         ev.episode.notified_entities = 0
                         ev.episode.notified_at = None
+            found = critical.scan(fetched.lines)
+            crit: list[dict] = []
             async with AsyncSessionLocal() as db:
                 await _persist(db, rt, t)
                 if report and events:
@@ -451,10 +502,23 @@ async def _run() -> None:
                     for ev in events:
                         rt.store.dirty_episodes[ev.episode.id] = ev.episode
                     await _persist_episodes_only(db, rt)
+                if burst:
+                    await _record_burst(db, b, n_new, t, notice=report and not burst_known)
+                # Kritische Kernelereignisse (OOM-Kill …): eigener Savepoint — ein Fehler
+                # dort darf die Mengen-Erkennung dieses Fensters nicht mitreißen.
+                try:
+                    async with db.begin_nested():
+                        crit = await critical.process(db, found, b, report, base_url)
+                except Exception:
+                    log.exception("error_clusters: critical events of window %s failed", b)
+                    crit = []
                 await db.commit()
             if report and events:
                 from app.services.error_clusters import notify
                 await notify.on_events(_hold_young(rt, events, now), rt, cfg, base_url)
+            if crit:
+                from app.services.error_clusters import notify
+                await notify.on_critical(crit, cfg)
             rt.last_bucket = b
             n_events += len(events) if report else 0
             n_mails += sum(1 for e in events if e.mail) if report else 0

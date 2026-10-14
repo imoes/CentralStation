@@ -248,3 +248,34 @@ def test_pattern_present_at_start_is_never_mailed_as_persistent_new():
     v = evaluate(_w(first_seen_hours=24, recent_parts=4, recent_total=1800,
                     present_at_start=True), 50.0)
     assert "persistent" in v.rules and v.notify == "digest"
+
+
+# ── Format des Versenders darf kein "neues Muster" erzeugen (13.10. 13:55) ────────
+
+def test_syslog_head_is_stripped_so_format_changes_do_not_create_new_patterns():
+    from app.services.error_clusters.collector import _line
+    old = _line({"message": "2026-10-13T13:43:03.92+02:00 cue0141 dockerd[1250]: copy stream failed",
+                 "source": "cue0141.example.com", "log_level": "error"})
+    new = _line({"message": "cue0141 dockerd[1250]: copy stream failed",
+                 "source": "cue0141.example.com", "log_level": "error"})
+    other_host = _line({"message": "cue0200 dockerd[77]: copy stream failed",
+                        "source": "cue0200.example.com", "log_level": "error"})
+    assert old.message == new.message == "dockerd[1250]: copy stream failed"
+    assert other_host.message.startswith("dockerd[")              # ein Muster über Hosts
+    # docker0209 schreibt "sammelpdf" — Filebeat-Zeile: Kopf trotzdem weg
+    assert _line({"message": "sammelpdf kernel: Out of memory: Killed process 1",
+                  "source": "docker0209.example.com", "log_level": "critical"}).message \
+        == "kernel: Out of memory: Killed process 1"
+
+
+def test_application_text_is_not_mistaken_for_a_syslog_head():
+    from app.services.error_clusters.collector import _line
+    for m in ({"message": "ERROR com.escenic.x: boom", "source": "h", "level": 3},
+              {"message": "ERROR com.escenic.x: boom", "source": "h", "level": 6,
+               "container_name": "cue-content-store-01"}):
+        assert _line(m).message == "ERROR com.escenic.x: boom"
+
+
+def test_burst_threshold_above_normal_maximum():
+    """Normalbetrieb 05.–12.10.: max. 46 neue Muster je Fenster; Rollout 13.10.: 480."""
+    assert 46 < DEFAULT.burst_new_templates < 74

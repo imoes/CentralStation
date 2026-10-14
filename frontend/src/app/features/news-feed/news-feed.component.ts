@@ -61,6 +61,9 @@ interface ClusterContext {
   patterns?: { template?: string; total?: number; containers?: unknown[] }[];
   correlated?: { container?: string; zeilen_15min?: number; faktor?: number }[];
   resolved_reason?: string;
+  /** Kritisches Ereignis (Backend error_clusters/critical.py): Wiederholungen im Zeitraum */
+  events?: number;
+  window_hours?: number;
 }
 
 interface CheckStep { host: string; template: string; params?: Record<string, string>; }
@@ -884,10 +887,11 @@ const SEVERITY_COLOR: Record<string, string> = {
           @if (incidentTimeline()!.incident.error_cluster; as ec) {
             <div class="cluster-panel">
               <div class="cluster-panel-header">
-                <mat-icon>{{ incidentTimeline()!.incident.kind === 'fleet' ? 'dns' : 'bubble_chart' }}</mat-icon>
-                <span>{{ incidentTimeline()!.incident.kind === 'fleet' ? 'Flotten-Ausfall' : 'Fehlerausbruch' }}</span>
+                <mat-icon>{{ clusterKindIcon(incidentTimeline()!.incident.kind) }}</mat-icon>
+                <span>{{ clusterKindLabel(incidentTimeline()!.incident.kind) }}</span>
                 <span class="cluster-spacer"></span>
-                @if (isAdmin() && ec.template_key && incidentTimeline()!.incident.kind === 'log_cluster') {
+                @if (isAdmin() && ec.template_key && (incidentTimeline()!.incident.kind === 'log_cluster'
+                                                      || incidentTimeline()!.incident.kind === 'critical')) {
                   <button mat-stroked-button class="cluster-mute" (click)="muteTemplate(ec.template_key!)"
                           matTooltip="Dieses Muster meldet nie mehr (protokolliert, jederzeit umkehrbar)">
                     <mat-icon>notifications_off</mat-icon> Muster stummschalten
@@ -898,6 +902,8 @@ const SEVERITY_COLOR: Record<string, string> = {
               <div class="cluster-meta">
                 @if (incidentTimeline()!.incident.kind === 'fleet') {
                   {{ (ec.containers?.length ?? 0) }} Hosts · {{ (ec.total ?? 0).toLocaleString('de-DE') }} Alerts
+                } @else if (incidentTimeline()!.incident.kind === 'critical') {
+                  {{ ec.events }}× in {{ ec.window_hours }} h · je Ereignis ein 5-min-Fenster
                 } @else {
                   {{ (ec.containers?.length ?? 0) }} Container/Hosts · {{ (ec.total ?? 0).toLocaleString('de-DE') }} Zeilen
                   @if (ec.count15) { · zuletzt {{ rate(ec.count15, 900) }} }
@@ -2726,6 +2732,16 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       // Angelegt → Ticket-Link sofort im Incident zeigen.
       if (res?.ok) this.openIncidentTimeline(inc.id);
     });
+  }
+
+  /** Art des Incidents (Backend Incident.kind) → Überschrift und Symbol im Cluster-Panel. */
+  clusterKindLabel(kind?: string): string {
+    return kind === 'fleet' ? 'Flotten-Ausfall'
+         : kind === 'critical' ? 'Kritisches Ereignis (wiederholt)'
+         : 'Fehlerausbruch';
+  }
+  clusterKindIcon(kind?: string): string {
+    return kind === 'fleet' ? 'dns' : kind === 'critical' ? 'report' : 'bubble_chart';
   }
 
   checksRunning = signal(false);

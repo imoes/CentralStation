@@ -40,7 +40,7 @@ BEATS_ERROR_LEVELS = {"emerg", "alert", "critical", "error"}
 #: Ändert sich, welche Zeilen gelesen werden, ändert sich diese Kennung — die Erkennung
 #: weiß dann, dass Muster der neuen Quelle schon vorher gelaufen sein können (engine
 #: COVERAGE_MARGIN: "anhaltend neu" anfangs nur als Tagesübersicht).
-SOURCE_VERSION = "beats-log-level-2"
+SOURCE_VERSION = "syslog-head-stripped-3"
 _LEVEL_WORD = re.compile(r'\b(TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|FATAL|CRITICAL|SEVERE)\b')
 _ERROR_WORDS = {"ERROR", "FATAL", "CRITICAL", "SEVERE"}
 _ERROR_FIELD = re.compile(
@@ -63,7 +63,8 @@ class _ErrorLine:
 
 
 ERROR_LINE = _ErrorLine()
-FIELDS = ["message", "source", "container_name", "timestamp", "level", "log_level"]
+FIELDS = ["message", "source", "container_name", "timestamp", "level", "log_level",
+          "application_name", "facility"]
 MAX_RESULT_WINDOW = 10_000
 SPLIT_AT = 9_500
 MAX_PARTS = 8          # bis 80 000 Zeilen je 5 min vollständig; darüber Untergrenze
@@ -75,6 +76,8 @@ class Line:
     source: str
     container: str
     message: str
+    #: Programm laut Syslog (application_name/facility) — z. B. "kernel" (critical.py)
+    app: str = ""
 
     @property
     def entity(self) -> str:
@@ -118,12 +121,50 @@ def keep_lines(msgs: list[dict]) -> list[dict]:
     return out
 
 
+#: Syslog-Kopf einer Filebeat-Zeile: [Zeitstempel] HOST PROGRAMM[PID]: …  — HOST wird nur
+#: entfernt, wenn er der Quelle der Zeile entspricht (sonst ist es Text, kein Kopf).
+_SYSLOG_HEAD = re.compile(
+    r"^(?:\S+\s+){0,3}?(?P<host>[A-Za-z0-9][A-Za-z0-9_.-]*)\s+"
+    r"(?=[A-Za-z0-9_./()-]+(?:\[\d+\])?:\s)")
+
+
+def strip_syslog_head(message: str, source: str, raw_syslog: bool = False) -> str:
+    """Zeitstempel und Host vor dem Programmnamen entfernen.
+
+    Anlass 13.10.: ein Filebeat-Rollout änderte den Kopf von "<Zeit> <Host> dockerd[…]"
+    zu "<Host> dockerd[…]" — jedes bekannte Rauschen wurde je Host zum NEUEN Muster
+    (480 neue Muster in einem 5-min-Fenster, ~80 Fehl-Mails). Ohne Kopf ist das Muster
+    unabhängig vom Format des Versenders, und derselbe Fehler auf 20 Hosts ist EIN Muster.
+    """
+    m = _SYSLOG_HEAD.match(message[:200])
+    if not m:
+        return message
+    if raw_syslog:
+        # Filebeat liest die Syslog-Datei: der Kopf ist sicher da, der Host darin heißt
+        # aber oft anders als die Quelle (docker0209 schreibt "sammelpdf").
+        return message[m.end():]
+    if not source:
+        return message
+    host, src = m.group("host").lower(), source.lower()
+    if src == host or src.startswith(host + ".") or host.startswith(src.split(".")[0]):
+        return message[m.end():]
+    return message
+
+
 def _line(m: dict) -> Line:
+    msg = str(m.get("message") or "")
+    container = str(m.get("container_name") or m.get("container_tag") or "")
+    source = str(m.get("source") or "")
+    if not container:
+        # Filebeat-Zeile = rohe Syslog-Zeile (log_level, aber kein Syslog-level-Feld)
+        raw = m.get("level") is None and bool(m.get("log_level"))
+        msg = strip_syslog_head(msg, source, raw_syslog=raw)
     return Line(
         ts=str(m.get("timestamp") or ""),
-        source=str(m.get("source") or ""),
-        container=str(m.get("container_name") or m.get("container_tag") or ""),
-        message=str(m.get("message") or ""),
+        source=source,
+        container=container,
+        message=msg,
+        app=str(m.get("application_name") or m.get("facility") or ""),
     )
 
 

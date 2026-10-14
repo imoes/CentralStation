@@ -694,6 +694,8 @@ Episode (bis 60 min Ruhe) → Incident → KI-Einschätzung → Sofort-Mail / Ta
 | **SPITZE** | ≥ 200 Zeilen in 15 min, ≥ 5 × Grundlast, Poisson p < 1e-6, 2 von 3 Fenstern erhöht. Wiederkehrende Muster (≥ 3 aktive Tage) müssen ihren bisherigen Höchstwert verdoppeln. Sofort ab 1 000 Zeilen, sonst Tagesübersicht |
 | **AUSBREITUNG** | ≥ 8 Container/Quellen, ≥ 100 Zeilen, ≥ 3 × üblich — immer sofort |
 | **FLOTTE** (CheckMK) | derselbe Service auf ≥ 5 Hosts in 15 min neu nicht OK, ≥ 3 × dem 7-Tage-Median |
+| **KRITISCHES EREIGNIS** | OOM-Kill, Kernel panic, hung task, Lockup, I/O-/Dateisystem-/Hardwarefehler (nur Kernelzeilen): 1× → Tagesübersicht, 3× in 6 h auf demselben Host → Incident + Mail |
+| **QUELLENWECHSEL** | ≥ 60 neue Muster in einem 5-min-Fenster (normal max. 46): Beginn der Beobachtung, 24 h keine NEU/SPITZE/AUSBREITUNG für diese Muster, ein Feed-Eintrag statt Einzelmails |
 | **WIEDERKEHREND** (Flotte) | derselbe Ausfall an ≥ 3 der letzten 7 Tage zur gleichen Uhrzeit (± 30 min), ähnlich groß, sonst ruhig → geplanter Job: nur Tagesübersicht, kein Incident, keine Mail |
 | Erneut melden | nur bei Verdopplung der 5-min-Rate oder der Container, höchstens stündlich |
 | Ein Vorfall | ein Muster, das ≤ 30 min nach einem gemeldeten Ausbruch auf denselben Containern/Hosts beginnt, wird Teil davon (eine Mail, ein Incident) |
