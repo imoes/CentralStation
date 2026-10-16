@@ -8,6 +8,7 @@ Mails, Feed-Einträge und KI-Einschätzungen macht. Dieselbe Funktion treibt den
 """
 from __future__ import annotations
 
+import re
 import statistics
 import uuid
 from collections import Counter
@@ -395,3 +396,72 @@ def process(store: MemoryStore, t: BucketTally, th: Thresholds = DEFAULT) -> lis
 
     store.prune(now)
     return events
+
+
+# ── Ähnliche Meldungen (Recherche für Mail, Incident, Konsole) ─────────────────
+
+#: Nur inhaltliche Wörter vergleichen: Platzhalter (<NUM>, <*>, …) und Level-Wörter
+#: tragen keinen Zusammenhang — "ERROR … timeout" und "ERROR … disk full" sind nicht ähnlich.
+_PLACEHOLDER = re.compile(r"<[A-Z*]+>")
+_WORD = re.compile(r"[A-Za-z][A-Za-z0-9_.\-]{2,}")
+_STOP = frozenset({"error", "err", "warn", "warning", "info", "debug", "trace", "fatal",
+                   "critical", "severe", "notice", "the", "and", "for", "with", "from", "this",
+                   "that", "was", "has", "not"})
+#: Ab diesem Anteil gemeinsamer Wörter (Jaccard) und mindestens so vielen gleichen Wörtern
+#: gilt ein anderes Muster als ähnlich.
+SIMILAR_MIN_SHARE = 0.5
+SIMILAR_MIN_SHARED = 3
+
+
+def template_words(template: str) -> frozenset[str]:
+    text = _PLACEHOLDER.sub(" ", template or "")
+    return frozenset(w.lower().strip(".-_") for w in _WORD.findall(text)
+                     if w.lower().strip(".-_") not in _STOP)
+
+
+def similarity(a: frozenset[str], b: frozenset[str]) -> tuple[float, int]:
+    if not a or not b:
+        return 0.0, 0
+    shared = len(a & b)
+    return shared / len(a | b), shared
+
+
+def similar_patterns(store: MemoryStore, key: str, b: datetime, limit: int = 8) -> list[dict]:
+    """Andere Muster, die im selben 15-min-Fenster aktiv sind UND eine ähnliche Meldung tragen.
+
+    Ersetzt "gleichzeitig auffällige Container" (bis 16.10.): dort stand jeder Container mit
+    erhöhter Fehlerrate, egal welcher Fehler — seit den Filebeat-Hosts praktisch immer
+    irgendwer (Nutzer: "nur ähnliche Meldungen, kein Bruteforce"). Hier entscheidet der
+    Inhalt der Meldung; die Rate steht nur als Zusatz dabei.
+    """
+    info = store.templates.get(key)
+    if info is None:
+        return []
+    mine = template_words(info.template)
+    window = [b - BUCKET * i for i in range(WINDOW_BUCKETS)]
+    out = []
+    for other, series in store.buckets.items():
+        if other == key:
+            continue
+        recs = [series.get(w) for w in window]
+        count15 = sum(r.count for r in recs if r)
+        if count15 == 0:
+            continue
+        oinfo = store.templates.get(other)
+        if oinfo is None:
+            continue
+        share, shared = similarity(mine, template_words(oinfo.template))
+        if share < SIMILAR_MIN_SHARE or shared < SIMILAR_MIN_SHARED:
+            continue
+        ents: Counter = Counter()
+        for r in recs:
+            if r and r.entities:
+                ents.update(r.entities)
+        hist = [r.count for t, r in series.items() if t < window[-1]]
+        n = max(1, int((window[-1] - min(series)) / BUCKET)) if series else 1
+        usual15 = WINDOW_BUCKETS * max(median_with_zeros(hist, n), 0.2)
+        out.append({"template": oinfo.template, "similarity": round(share, 2),
+                    "zeilen_15min": count15, "faktor": round(count15 / usual15, 1),
+                    "containers": [{"name": c, "count": n_} for c, n_ in ents.most_common(5)]})
+    out.sort(key=lambda x: (-x["similarity"], -x["zeilen_15min"]))
+    return out[:limit]

@@ -142,20 +142,23 @@ def test_mail_shows_a_known_recipe_with_the_button_hint():
 def test_mail_links_incident_at_the_top_and_shows_research():
     """Nutzerwunsch 12.10.: Link zum Incident bleibt, dazu die Rechercheergebnisse des KI-Laufs."""
     ctx = {**CTX,
-           "correlated": [{"container": "cue-zipline-product-3", "zeilen_15min": 420, "faktor": 7.5}],
+           "correlated": [{"template": "Failed to read change-log: HTTP Status 401 from <*>",
+                           "similarity": 0.62, "zeilen_15min": 420, "faktor": 7.5,
+                           "containers": [{"name": "cue-zipline-dam.cue.example.com", "count": 400}]}],
            "checkmk": [{"host": "docker0218.example.com", "titel": "docker0218.example.com — Docker container status",
                         "schwere": "critical", "zeit": "2026-10-12T12:20:00+00:00"}]}
     html = render_html(ctx, None, "https://cs/feed?incident=1", pending=True)
     assert html.index("Incident öffnen") < html.index("Recherche")      # Link zuerst
     assert html.count("https://cs/feed?incident=1") == 2                 # oben und unten
-    assert "cue-zipline-product-3" in html and "7.5× über üblich" in html
+    assert "cue-zipline-dam.cue.example.com" in html and "7.5× üblich" in html
+    assert "Ähnliche Meldungen" in html and "62 % gleiche Wörter" in html
     assert "docker0218.example.com: Docker container status" in html and "12:20 UTC" in html
     assert html.count("docker0218.example.com") == 1                     # Host nicht doppelt
 
 
 def test_research_names_empty_findings_instead_of_hiding_them():
     html = render_html({**CTX, "correlated": [], "checkmk": []}, None, None, pending=False)
-    assert "keine — der Ausbruch steht für sich" in html
+    assert "keine — die Meldung tritt nur in diesem Muster auf" in html
     assert "keine seit 15 min vor Beginn" in html
 
 

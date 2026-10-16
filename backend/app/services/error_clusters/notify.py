@@ -152,6 +152,9 @@ def _without_host(title: str | None, host: str | None) -> str:
     return title
 
 
+from app.services.error_clusters.engine import SIMILAR_MIN_SHARE as SIMILAR_SHARE  # noqa: E402
+
+
 def _research_html(ctx: dict) -> str:
     """Was die automatische Suche fand — die Daten, auf denen die KI-Einschätzung beruht.
 
@@ -163,14 +166,18 @@ def _research_html(ctx: dict) -> str:
     if corr is not None:
         if corr:
             items = "".join(
-                f"<li>{_esc(c.get('container'))} — {fmt_int(c.get('zeilen_15min'))} Zeilen in 15 min, "
-                f"{_esc(c.get('faktor'))}× über üblich</li>" for c in corr[:10])
-            parts.append(f"<p style='margin:6px 0 2px'><b>Gleichzeitig auffällige Container</b> "
-                         f"<span style='color:#777'>(im selben 15-min-Fenster ≥ 3× über ihrem "
-                         f"48-h-Median)</span>:</p><ul style='margin:0'>{items}</ul>")
+                f"<li><code>{_esc(c.get('template', '')[:160])}</code><br>"
+                f"<span style='color:#555'>{_esc(', '.join(x['name'] for x in c.get('containers') or []))}"
+                f" — {fmt_int(c.get('zeilen_15min'))} Zeilen in 15 min ({_esc(c.get('faktor'))}× üblich)"
+                f" · {round(100 * (c.get('similarity') or 0))} % gleiche Wörter</span></li>"
+                for c in corr[:8])
+            parts.append(f"<p style='margin:6px 0 2px'><b>Ähnliche Meldungen</b> "
+                         f"<span style='color:#777'>(anderes Muster, ≥ {round(100 * SIMILAR_SHARE)} % "
+                         f"gleiche Wörter, im selben 15-min-Fenster aktiv)</span>:</p>"
+                         f"<ul style='margin:0'>{items}</ul>")
         else:
-            parts.append("<p style='margin:6px 0 2px'><b>Gleichzeitig auffällige Container:</b> "
-                         "keine — der Ausbruch steht für sich.</p>")
+            parts.append("<p style='margin:6px 0 2px'><b>Ähnliche Meldungen:</b> "
+                         "keine — die Meldung tritt nur in diesem Muster auf.</p>")
     if "checkmk" in ctx:
         if cmk:
             items = "".join(
@@ -220,28 +227,10 @@ async def recipients(db, hosts: list[str]) -> list[str]:
     return sorted(set(out))
 
 
-async def _correlated(rt, ev, limit: int = 10) -> list[dict]:
-    """Andere Container, die im selben 15-min-Fenster ≥ 3× über ihrem 48-h-Median liegen."""
-    from app.services.error_clusters.engine import BUCKET
-    from app.services.error_clusters.rules import median_with_zeros
-    b = ev.bucket_start
-    window = [b - BUCKET * 2, b - BUCKET, b]
-    own = set(ev.episode.entities)
-    out = []
-    for ent, series in rt.store.entity_buckets.items():
-        if ent in own:
-            continue
-        now15 = sum(series.get(x, 0) for x in window)
-        if now15 < 30:
-            continue
-        hist = [v for k, v in series.items() if k < window[0]]
-        n = max(1, int((window[0] - min(series)) / BUCKET)) if series else 1
-        lam = max(median_with_zeros(hist, n), 0.2)
-        factor = now15 / (3 * lam)
-        if factor >= 3:
-            out.append({"container": ent, "zeilen_15min": now15, "faktor": round(factor, 1)})
-    out.sort(key=lambda x: -x["faktor"])
-    return out[:limit]
+async def _correlated(rt, ev, limit: int = 8) -> list[dict]:
+    """Ähnliche Meldungen im selben 15-min-Fenster (engine.similar_patterns)."""
+    from app.services.error_clusters.engine import similar_patterns
+    return similar_patterns(rt.store, ev.template.key, ev.bucket_start, limit)
 
 
 async def _checkmk(db, hosts: list[str], since: datetime) -> list[dict]:

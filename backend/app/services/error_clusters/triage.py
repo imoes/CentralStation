@@ -1,7 +1,7 @@
 """KI-Einschätzung eines Fehler-Clusters — nur Text, entscheidet nichts.
 
 Ob gemeldet wird, haben die Regeln schon entschieden. Das LLM bekommt den aufbereiteten
-Cluster (Muster, Beispiele, Verlauf gegen Grundlast, Container, gleichzeitig auffällige
+Cluster (Muster, Beispiele, Verlauf gegen Grundlast, Container, ähnliche Meldungen anderer Muster
 Dienste, CheckMK-Alerts der betroffenen Hosts) und schreibt Zusammenfassung, vermutete
 Ursache und lesende Prüfschritte. Kein Token-Limit (globale Regel); kein Budget — gegen
 eine Flut schützt die Episodenlogik (ein Aufruf je Episode, einer je Verdopplung).
@@ -17,8 +17,9 @@ log = logging.getLogger(__name__)
 SYSTEM = (
     "Du bist ein erfahrener Site-Reliability-Engineer. Du bekommst einen automatisch "
     "erkannten Fehler-Cluster aus Graylog: ein Log-Muster, das plötzlich auf vielen "
-    "Containern oder weit über seiner Grundlast auftritt, dazu gleichzeitig auffällige "
-    "Dienste und CheckMK-Alerts der betroffenen Hosts.\n"
+    "Containern oder weit über seiner Grundlast auftritt, dazu ähnliche "
+    "Meldungen (andere Muster mit ähnlichem Text im selben Zeitfenster) und CheckMK-Alerts "
+    "der betroffenen Hosts.\n"
     "Schätze ein, was passiert ist und womit man anfängt. Halte dich an die Daten; "
     "Vermutungen kennzeichnest du als solche. Nenne nur LESENDE Prüfschritte (Logs, "
     "Status, Konfiguration ansehen) — keine Änderungen, keine Neustarts.\n"
@@ -89,7 +90,8 @@ def build_prompt(ctx: dict, correlated: list[dict], checkmk: list[dict]) -> str:
         "container": [c["name"] for c in (ctx.get("containers") or [])[:15]],
         "anzahl_container": len(ctx.get("containers") or []),
         "hosts": ctx.get("hosts"),
-        "gleichzeitig_auffaellig": correlated[:10],
+        # Andere Muster mit ähnlicher Meldung im selben Fenster (engine.similar_patterns)
+        "aehnliche_meldungen": correlated[:8],
         "checkmk_alerts_betroffene_hosts": checkmk[:15],
         "vorlagen": _templates_for_prompt(),
     }

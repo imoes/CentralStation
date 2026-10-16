@@ -59,7 +59,10 @@ interface ClusterContext {
   triage?: { titel?: string; zusammenfassung?: string; vermutete_ursache?: string;
              konfidenz?: string; pruefschritte?: string[] } | null;
   patterns?: { template?: string; total?: number; containers?: unknown[] }[];
-  correlated?: { container?: string; zeilen_15min?: number; faktor?: number }[];
+  /** Ähnliche Meldungen (engine.similar_patterns); vor dem 16.10. nur {container, faktor} */
+  correlated?: { container?: string; template?: string; similarity?: number;
+                 containers?: { name: string; count: number }[];
+                 zeilen_15min?: number; faktor?: number }[];
   resolved_reason?: string;
   /** Kritisches Ereignis (Backend error_clusters/critical.py): Wiederholungen im Zeitraum */
   events?: number;
@@ -979,11 +982,23 @@ const SEVERITY_COLOR: Record<string, string> = {
                 </div>
               }
               @if (ec.correlated?.length) {
-                <div class="cluster-sub">Gleichzeitig auffällig:
-                  @for (c of ec.correlated!; track c.container) {
-                    <span class="cluster-chip">{{ c.container }} {{ c.faktor }}×</span>
+                @if (ec.correlated![0].template) {
+                  <div class="cluster-sub" matTooltip="Anderes Muster mit ähnlichem Text (≥ 50 % gleiche Wörter), im selben 15-min-Fenster aktiv">Ähnliche Meldungen:</div>
+                  @for (c of ec.correlated!; track c.template) {
+                    <pre class="cluster-template small">{{ c.template }}</pre>
+                    <div class="cluster-sub small">
+                      @for (x of c.containers || []; track x.name) { <span class="cluster-chip">{{ x.name }}</span> }
+                      {{ c.zeilen_15min }} Zeilen in 15 min · {{ c.faktor }}× üblich · {{ ((c.similarity ?? 0) * 100) | number:'1.0-0' }} % gleiche Wörter
+                    </div>
                   }
-                </div>
+                } @else {
+                  <!-- Incidents vor dem 16.10.: noch "gleichzeitig auffällige Container" -->
+                  <div class="cluster-sub">Gleichzeitig auffällig:
+                    @for (c of ec.correlated!; track c.container) {
+                      <span class="cluster-chip">{{ c.container }} {{ c.faktor }}×</span>
+                    }
+                  </div>
+                }
               }
               @if (ec.patterns?.length) {
                 <div class="cluster-sub">Weitere Muster desselben Ausbruchs:</div>

@@ -1317,9 +1317,16 @@ def _cluster_prompt_section(c: dict, kind: str, severity: str, created_str: str)
     if c.get("docker_hosts"):
         out.append(f"Docker-Hosts: {', '.join(c['docker_hosts'])}")
     if c.get("correlated"):
-        out += ["", "## Gleichzeitig auffällig"] + [
-            f"- {x.get('container')}: {x.get('zeilen_15min')} Zeilen in 15 min ({x.get('faktor')}× üblich)"
-            for x in c["correlated"][:10]]
+        out += ["", "## Ähnliche Meldungen (anderes Muster, gleiches Zeitfenster)"]
+        for x in c["correlated"][:8]:
+            if x.get("template"):
+                names = ", ".join(y["name"] for y in x.get("containers") or [])
+                out.append(f"- `{x['template'][:200]}` — {names}: {x.get('zeilen_15min')} Zeilen in "
+                           f"15 min ({x.get('faktor')}× üblich, {round(100 * (x.get('similarity') or 0))} % "
+                           f"gleiche Wörter)")
+            else:   # Incidents vor dem 16.10.: noch "gleichzeitig auffällige Container"
+                out.append(f"- {x.get('container')}: {x.get('zeilen_15min')} Zeilen in 15 min "
+                           f"({x.get('faktor')}× üblich)")
     for p in c.get("patterns") or []:
         out += ["", "## Weiteres Muster desselben Ausbruchs",
                 f"```\n{p.get('template', '')}\n```",

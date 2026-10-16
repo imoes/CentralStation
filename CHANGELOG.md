@@ -10,6 +10,37 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-10-16 — Mails show similar messages instead of every noisy container
+
+### What changed
+
+- **The "Recherche" section in outbreak mails, the incident view and the console handoff
+  now lists only similar messages.**
+  - **Why:** "Gleichzeitig auffällige Container" listed every container whose error rate
+    was ≥ 3× its 48-hour median in the same 15 minutes, whatever the error. Since the
+    Filebeat hosts were added, that is almost always someone: cue0112 with 2,285 lines,
+    stylo07, nfw062, dispocloud02 … The user asked: "nur ähnliche Meldungen, kein
+    Bruteforce" (only similar messages, no brute force).
+  - **New rule:** another pattern counts as similar when it shares at least 50 % of its
+    content words with the reported one (Jaccard, at least 3 shared words). Placeholders
+    (`<NUM>`, `<*>`, …) and level words (ERROR, WARN, …) do not count. The pattern must
+    also be active in the same 15-minute window.
+  - **Shown:** the pattern text, its containers, its rate, and the reason ("90 % gleiche
+    Wörter").
+  - **Empty findings are named:** "keine — die Meldung tritt nur in diesem Muster auf"
+    (none — the message occurs only in this pattern).
+  - The AI assessment gets the same data, under the field `aehnliche_meldungen`.
+  - Incidents created before 16.10. still show their old list ("Gleichzeitig auffällig").
+  - Verified:
+    - Read-only on the live state, the six loudest patterns. dockerd "copy stream failed"
+      → finds "stream copy error: reading from a closed fifo" (90 %) and the same message
+      in the old line format on docker0209 and others. "Error running exec … OCI runtime"
+      → only its variants (65–74 %). The Digicol file error, Go heap profiling and the
+      linmap warning → none, where before every container with a raised rate would have
+      been listed.
+    - Tests: 3 new, 2 adapted. Full suite: 693 passed.
+    - The first live run after the deploy completed without errors.
+
 ## 2026-10-14 — Nightly jobs are no longer incidents; repeated kernel failures (OOM) are reported; false-mail flood after the Filebeat rollout stopped
 
 ### What is new
