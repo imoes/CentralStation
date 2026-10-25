@@ -1194,6 +1194,20 @@ def _guard_denials(pos: int, session_id: str) -> tuple[int, list[str]]:
 _CODEX_TOOL_ITEMS = {"command_execution", "mcp_tool_call", "file_change", "web_search"}
 
 
+def hermes_tool_label(name: str) -> str:
+    """Anzeigename eines Hermes-Werkzeugs: "mcp__<server>__<werkzeug>" → "werkzeug" (mit Leerzeichen).
+
+    Bis 25.10. schnitt ein gieriger Ausdruck (^mcp_[a-z0-9_]+_) bis zum LETZTEN Unterstrich
+    ab: query_idgen_sql wurde zu "sql", lookup_idgen_host zu "host", search_knowledge_base
+    zu "base" — in der Konsole stand dann "sql: SELECT …" statt des Werkzeugs.
+    """
+    if name.startswith("mcp__"):
+        parts = name.split("__", 2)
+        if len(parts) == 3 and parts[2]:
+            name = parts[2]
+    return name.replace("_", " ")
+
+
 def _codex_tool_label(item: dict) -> str:
     t = item.get("type")
     if t == "command_execution":
@@ -1682,11 +1696,7 @@ async def send_message(sid: str, body: MessageBody):
         response_buf.append(text)
         loop.call_soon_threadsafe(q.put_nowait, {"type": "delta", "text": text})
 
-    def _tool_label(name: str) -> str:
-        import re
-        # Strip any mcp_{server}_ prefix so only the tool action name remains.
-        name = re.sub(r'^mcp_[a-z0-9_]+_', '', name)
-        return name.replace("_", " ")
+    _tool_label = hermes_tool_label
 
     def on_tool_progress(event_type: str, *cb_args, **cb_kwargs) -> None:
         # Hermes' unified progress callback. Variadic signature per event:

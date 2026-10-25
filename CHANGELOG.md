@@ -46,6 +46,17 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What was fixed
 
+- **Console tool steps showed fragments of the tool name, e.g. "sql: SELECT …".**
+  - A greedy expression (`^mcp_[a-z0-9_]+_`) was meant to cut off the prefix
+    `mcp__<server>__`. It cut up to the *last* underscore instead.
+    - `query_idgen_sql` became "sql", `lookup_idgen_host` became "host",
+      `search_knowledge_base` became "base".
+    - Every MCP tool with underscores in its name was affected, not only the new ones.
+  - Now only the server prefix is removed: "query idgen sql: SELECT …".
+  - Verified: 7 new tests; full suite: 700 passed.
+  - Takes effect once the console container restarts, because it is part of the console
+    image.
+
 - **The console image could no longer be built.**
   - Hermes was cloned unpinned from the main branch. After a `docker system prune` (around
     16.10.) the build cache was gone, so the build fetched the latest Hermes. Its pinned
