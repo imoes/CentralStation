@@ -10,6 +10,50 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-10-25 — The console can look up master data in the ID-Generator; console image builds reproducibly
+
+### What is new
+
+- **ID-Generator tools for all console agents (Hermes, Claude, Codex), read-only.**
+  - **Why:** the console had no ID-Generator tool. The ID-Generator skill under `~/skills`
+    only runs locally over stdio, and the console cannot reach it. When asked for the
+    location of vpp0221, Hermes improvised for 202 s: SSH to idgen01, attempts to read
+    database passwords from the containers (5 blocked by the write lock), and in the end
+    an answer from Confluence.
+  - **New:** `lookup_idgen_host` (location for host, IP address or switch),
+    `list_idgen_records` (rows of a table with a filter) and `query_idgen_sql` (one
+    SELECT). They use the existing ID-Generator connector; the agent instructions have a
+    section "STAMMDATEN".
+  - **Safety:**
+    - Host names and IP addresses are validated against a pattern; table names allow only
+      `[a-z0-9_]`.
+    - SQL accepts exactly one SELECT, without `;` and without file or sleep functions.
+    - The write lock recognises all three as read-only (names start with lookup/list/query).
+  - Verified:
+    - Against the real ID-Generator: vpp0221 and 10.0.188.48 → MUE-0 München (ID 27);
+      locations, companies and a SELECT over virt_servers ⨝ locations return data.
+    - SQL injection in the host name, `../admin`, `DELETE` and `SELECT 1; DROP …` are
+      rejected.
+    - Hermes session after the container restart: `lookup_idgen_host` called, the right
+      answer in 11 s.
+    - Full suite: 693 passed.
+  - **Gap:** containers that were already running see the tools only after a restart
+    (Hermes loads its tool list at startup).
+  - **Not included:** the new ID-Generator API (`/ng/api`, idgen-ng 1.8.10) cannot be used
+    headless. It logs in only via Keycloak in the browser; bearer tokens and username/
+    password login are not enabled for the client. The tools use the old `/api/v2`, which
+    still works.
+
+### What was fixed
+
+- **The console image could no longer be built.**
+  - Hermes was cloned unpinned from the main branch. After a `docker system prune` (around
+    16.10.) the build cache was gone, so the build fetched the latest Hermes. Its pinned
+    versions conflict (Pillow==13.0.0 vs browser-harness==0.1.13).
+  - Hermes is now pinned to the commit of the last working image (`userenv/HERMES_REF`,
+    6206f893). Updating Hermes means changing that file.
+  - Verified: the image builds; the console starts with "hermes_available: true".
+
 ## 2026-10-16 — Mails show similar messages instead of every noisy container
 
 ### What changed

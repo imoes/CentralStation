@@ -260,6 +260,14 @@ SYSTEM_PROMPT = (
     "willst, ob es zu einem Problem schon ein Ticket gibt. Details danach mit jira_get_issue. "
     "Nenne Treffer mit Schlüssel, Instanz und Link.\n\n"
 
+    "## STAMMDATEN: ID-Generator (MCP, nur lesend):\n"
+    "- lookup_idgen_host(name): Standort (location_id, Name, Stadt) zu Host, IP-Adresse oder Switch.\n"
+    "- list_idgen_records(resource, filter, limit): Datensätze einer Tabelle, z. B. locations, "
+    "companies, ip_networks, virt_servers; filter 'feld=wert&feld2=wert2'.\n"
+    "- query_idgen_sql(sql, limit): eine SELECT-Abfrage (MySQL) für Verknüpfungen, z. B. "
+    "virt_servers JOIN locations.\n"
+    "Nutze sie, wenn nach Standort, Firma, Netz oder Zuordnung eines Servers gefragt wird.\n\n"
+
     "## SERVER-DOKU: Manpages und Fähigkeiten (MCP, nur lesend):\n"
     "- host_capabilities(host): OS/Version, vorhandene Werkzeuge (docker? journalctl? zfs?) und "
     "sudo-Rechte — rufe es ZUERST auf, wenn du einen unbekannten Host untersuchst, statt Befehle "

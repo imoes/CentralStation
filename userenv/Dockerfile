@@ -108,8 +108,16 @@ RUN pip install --no-cache-dir ansible ansible-lint
 # To fetch newer versions, bump it:
 #     date -u +%Y-%m-%dT%H:%MZ > userenv/AGENT_REFRESH && docker compose build userenv
 COPY userenv/AGENT_REFRESH /etc/cs-agent-refresh
+# Hermes ist dagegen auf einen Commit festgelegt (userenv/HERMES_REF): am 25.10. scheiterte
+# jeder Neubau, weil der Hauptzweig widersprüchliche Versionen festschrieb (Pillow==13.0.0
+# gegen browser-harness==0.1.13) — nachdem ein "docker system prune" den Build-Cache und
+# damit den alten Klon gelöscht hatte. Hermes aktualisieren = Commit in HERMES_REF ändern.
+COPY userenv/HERMES_REF /etc/cs-hermes-ref
 RUN echo "agent-refresh=$(cat /etc/cs-agent-refresh)" \
-    && git clone --depth=1 https://github.com/NousResearch/hermes-agent /opt/hermes \
+    && git init -q /opt/hermes \
+    && git -C /opt/hermes remote add origin https://github.com/NousResearch/hermes-agent \
+    && git -C /opt/hermes fetch -q --depth=1 origin "$(cat /etc/cs-hermes-ref)" \
+    && git -C /opt/hermes checkout -q FETCH_HEAD \
     && pip install --no-cache-dir -e /opt/hermes \
     && chmod -R a+rX /opt/hermes
 # Hermes gates EVERY runtime dependency on python_version >= '3.14' while allowing

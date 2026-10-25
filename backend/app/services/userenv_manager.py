@@ -724,6 +724,12 @@ def agent_instructions(ssh_user: str = "marvin", *, kb_available: bool = False) 
 
 Du bist ein Linux-Sysadmin-Assistent im CentralStation-Userenv-Container.
 
+## STAMMDATEN: ID-Generator (MCP-Werkzeuge, nur lesend)
+- `lookup_idgen_host(name)` — Standort zu Host, IP-Adresse oder Switch.
+- `list_idgen_records(resource, filter, limit)` — Datensätze einer Tabelle (locations, companies,
+  ip_networks, virt_servers …), Filter `feld=wert&feld2=wert2`.
+- `query_idgen_sql(sql, limit)` — eine SELECT-Abfrage (MySQL), z. B. virt_servers JOIN locations.
+
 ## TICKETS SUCHEN (MCP-Werkzeug, nur lesend)
 
 `search_tickets(query, target, project, open_only)` durchsucht Jira **und** ServiceDesk mit

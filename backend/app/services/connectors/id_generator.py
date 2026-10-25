@@ -154,3 +154,22 @@ class IDGeneratorConnector(BaseConnector):
             "location_city": loc.get("city", ""),
             "country": loc.get("country", ""),
         }
+
+    async def list_records(self, resource: str, filters: dict | None = None,
+                           limit: int = 25) -> list[dict]:
+        """GET /api/v2/{resource} — beliebige Tabelle, Gleichheitsfilter als Query-Parameter."""
+        params = {"limit": limit, **(filters or {})}
+        async with self._client(timeout=30.0) as client:
+            r = await client.get(self._api(resource), params=params, auth=self._auth())
+            r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else data.get("results", data.get("data", []))
+
+    async def sql_select(self, sql: str, limit: int = 50) -> list[dict]:
+        """Lesende SQL-Abfrage über den sql-query-Parameter (braucht Basic Auth)."""
+        async with self._client(timeout=30.0) as client:
+            r = await client.get(self._api("locations"), auth=self._auth(),
+                                 params={"limit": limit, "sql-query": sql})
+            r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else data.get("results", data.get("data", []))

@@ -1008,6 +1008,17 @@ instances with free text or a ticket key, `ORDER BY updated DESC`.
 - **Each hit:** instance, link (`…/browse/KEY`) and the matching text passage.
 - **Complex filters:** use `jira_search_issues` (JQL); details come from `jira_get_issue`.
 
+### Master data: ID-Generator (read-only)
+
+The CentralStation MCP server offers three read-only tools on the ID-Generator connector
+(`id_generator`, API `/api/v2`, Basic Auth from the connector config):
+- `lookup_idgen_host(name)` — location for a host/FQDN (via `virt_servers`, else DNS + `ip_networks`),
+  an IPv4 address or a switch (NSA/NSS/NSC).
+- `list_idgen_records(resource, filter, limit)` — rows of a table (`locations`, `companies`,
+  `ip_networks`, `virt_servers`, …), equality filter `field=value&field2=value2`, max 500.
+- `query_idgen_sql(sql, limit)` — exactly one `SELECT` (no `;`, no file/sleep functions), max 500 rows.
+Inputs are validated (hostname/IP pattern, table name pattern) before they reach SQL.
+
 ### Server documentation: man pages and capabilities (probe runner)
 
 The Console agents can look things up on the server itself, in the version installed there:

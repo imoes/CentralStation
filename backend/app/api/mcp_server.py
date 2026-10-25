@@ -323,6 +323,114 @@ async def _checkmk_configs():
         return await _checkmk_configs_svc(db)
 
 
+# ── ID-Generator (Stammdaten: Standorte, Firmen, Netze, Server) — nur lesend ──────
+
+import re as _re  # noqa: E402
+
+_IDGEN_NAME = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
+_IDGEN_IP = _re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+_IDGEN_RESOURCE = _re.compile(r"^[a-z][a-z0-9_]{1,63}$")
+#: Nur EINE lesende Anweisung: SELECT … ohne Semikolon und ohne Datei-/Wartefunktionen.
+_IDGEN_SQL_FORBIDDEN = _re.compile(r";|\binto\s+(out|dump)file\b|\bload_file\b|\bsleep\s*\(|\bbenchmark\s*\(",
+                                   _re.I)
+
+
+async def _idgen_connector():
+    from sqlalchemy import select
+    from app.core.security import decrypt_credentials
+    from app.models.connector import ConnectorConfig
+    from app.services.connectors.id_generator import IDGeneratorConnector
+    async with (await _get_db_session()) as db:
+        cfg = (await db.execute(select(ConnectorConfig).where(
+            ConnectorConfig.type == "id_generator", ConnectorConfig.enabled.is_(True)))).scalars().first()
+    if cfg is None:
+        return None
+    return IDGeneratorConnector(base_url=cfg.base_url,
+                                credentials=decrypt_credentials(cfg.encrypted_credentials))
+
+
+@mcp.tool()
+async def lookup_idgen_host(name: str) -> dict:
+    """Standort eines Hosts, einer IP-Adresse oder eines Switches aus dem ID-Generator.
+
+    Parameter:
+    - name: Hostname/FQDN (z. B. 'vpp0221.example.com'), IPv4-Adresse oder Switch (NSA…/NSS…/NSC…)
+
+    Liefert location_id, Standortname und Stadt. Hosts werden über die Tabelle virt_servers
+    gesucht, sonst über DNS und das passende IP-Netz (ip_networks)."""
+    conn = await _idgen_connector()
+    if conn is None:
+        return {"error": "Kein ID-Generator-Connector konfiguriert"}
+    name = (name or "").strip()
+    if not (_IDGEN_IP.match(name) or _IDGEN_NAME.match(name)):
+        return {"error": "Ungültiger Name — erlaubt: Hostname, FQDN, IPv4-Adresse oder Switch-Name"}
+    try:
+        if _IDGEN_IP.match(name):
+            loc, how = await conn.resolve_ip_to_location(name), "IP-Netz"
+        elif name[:3].lower() in ("nsa", "nss", "nsc"):
+            loc, how = await conn.resolve_switch_to_location(name), "Switch-Tabelle"
+        else:
+            loc, how = await conn.resolve_host_to_location(name), "virt_servers bzw. DNS + IP-Netz"
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"ID-Generator nicht erreichbar: {str(exc)[:200]}"}
+    if not loc:
+        return {"name": name, "found": False, "searched": how}
+    return {"name": name, "found": True, "via": how, **loc}
+
+
+@mcp.tool()
+async def list_idgen_records(resource: str, filter: str = "", limit: int = 25) -> dict:
+    """Datensätze einer ID-Generator-Tabelle (Stammdaten), nur lesend.
+
+    Parameter:
+    - resource: Tabelle, z. B. 'locations', 'companies', 'companygroups', 'ip_networks',
+      'virt_servers', 'switchnsadevices'
+    - filter: optional 'feld=wert' (Gleichheit), mehrere mit '&', z. B. 'status=active&city=München'
+    - limit: Anzahl (Standard 25, höchstens 500)"""
+    conn = await _idgen_connector()
+    if conn is None:
+        return {"error": "Kein ID-Generator-Connector konfiguriert"}
+    resource = (resource or "").strip().lower()
+    if not _IDGEN_RESOURCE.match(resource):
+        return {"error": "Ungültiger Tabellenname (nur Kleinbuchstaben, Ziffern, _)"}
+    filters = {}
+    for part in (filter or "").split("&"):
+        k, sep, v = part.partition("=")
+        if sep and _IDGEN_RESOURCE.match(k.strip().lower()):
+            filters[k.strip()] = v.strip()
+    limit = max(1, min(int(limit or 25), 500))
+    try:
+        rows = await conn.list_records(resource, filters, limit)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"ID-Generator: {str(exc)[:200]}", "resource": resource}
+    return {"resource": resource, "filter": filters, "count": len(rows), "rows": rows[:limit]}
+
+
+@mcp.tool()
+async def query_idgen_sql(sql: str, limit: int = 50) -> dict:
+    """Lesende SQL-Abfrage (MySQL) gegen die ID-Generator-Datenbank.
+
+    Parameter:
+    - sql: genau EINE SELECT-Anweisung, z. B.
+      "SELECT v.name, l.name AS standort FROM virt_servers v LEFT JOIN locations l ON v.location_id = l.id WHERE v.name LIKE 'vpp02%'"
+    - limit: Anzahl Zeilen (Standard 50, höchstens 500)
+
+    Nur SELECT; mehrere Anweisungen, Datei- und Wartefunktionen werden abgelehnt."""
+    conn = await _idgen_connector()
+    if conn is None:
+        return {"error": "Kein ID-Generator-Connector konfiguriert"}
+    q = (sql or "").strip()
+    if not q.lower().startswith("select") or _IDGEN_SQL_FORBIDDEN.search(q):
+        return {"error": "Nur eine einzelne SELECT-Anweisung ist erlaubt (kein ';', keine "
+                         "Datei- oder Wartefunktionen)."}
+    limit = max(1, min(int(limit or 50), 500))
+    try:
+        rows = await conn.sql_select(q, limit)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"ID-Generator: {str(exc)[:300]}"}
+    return {"count": len(rows), "rows": rows[:limit]}
+
+
 @mcp.tool()
 async def get_checkmk_host(hostname: str) -> dict:
     """Ruft den CheckMK-Status eines Hosts ab: alle Services + aktuelle Performance-Metriken (CPU, RAM, Disk).
