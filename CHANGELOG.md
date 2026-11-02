@@ -10,6 +10,29 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-02 — The console browser (Playwright) reaches the internet
+
+### What was fixed
+
+- **Playwright (browser automation) for the console agents got no internet page.**
+  - Playwright was already set up as an MCP server for all three agents: Hermes (25 tools
+    loaded), Claude (`claude mcp add`) and Codex (`[mcp_servers.playwright]`).
+  - But every page outside the network ended in `ERR_TIMED_OUT`. Chromium does not take
+    `HTTP(S)_PROXY` from the environment; curl in the same container answered via the
+    proxy in 0.02 s.
+  - **Fix:** `playwright-mcp` now gets `--proxy-server` and `--proxy-bypass` from the
+    backend's proxy settings.
+    - The bypass list is the same as `NO_PROXY` in the container (`no_proxy_entries()`,
+      one source).
+    - Internal names (`.example.com`, backend, VibeMK) keep bypassing the proxy.
+  - Verified:
+    - Hermes session: playwright.dev opened in 8 s, with title and H1. Before: two
+      timeouts.
+    - netbox.example.com still opens directly (6 s).
+    - Tests: 2 new; full suite: 702 passed.
+  - **Gap:** containers that are already running pick this up for Hermes only after a
+    restart. Claude and Codex get it with their next session.
+
 ## 2026-10-25 — The console can look up master data in the ID-Generator; console image builds reproducibly
 
 ### What is new

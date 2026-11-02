@@ -85,6 +85,42 @@ def _human_exec(c, cmd, environment: dict | None = None):
 # The `playwright-mcp` binary and the Chromium browser are baked into the image
 # (see userenv/Dockerfile). --no-sandbox is required because the container has no
 # user-namespace sandbox; --headless because there is no display.
+def no_proxy_entries() -> list[str]:
+    """Proxy-Ausnahmen der Konsolen-Container — EINE Quelle für die Umgebung (NO_PROXY) und
+    den Browser (playwright-mcp --proxy-bypass).
+
+    Every container the agent talks to over the Docker network must bypass the
+    proxy. Missing names do not fail loudly — Squid answers 503 and the MCP client
+    reports the server as unreachable, which reads like the server being broken.
+    The VibeMK names come from vibemk_manager so there is one source for them.
+    """
+    from urllib.parse import urlparse
+    from app.core.domains import internal_domains
+    from app.services.vibemk_manager import container_name as vibemk_name, TIERS as vibemk_tiers
+    backend_host = urlparse(os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000")).hostname or "backend"
+    default = ",".join(["localhost", "127.0.0.1"] + [f".{d}" for d in internal_domains()])
+    entries = [e.strip() for e in os.getenv("NO_PROXY", default).split(",") if e.strip()]
+    for host in [backend_host] + [vibemk_name(t) for t in vibemk_tiers]:
+        if host not in entries:
+            entries.insert(0, host)
+    return entries
+
+
+def playwright_mcp_args() -> list[str]:
+    """Argumente für playwright-mcp — mit Proxy, wenn das Backend einen hat.
+
+    Chromium übernimmt HTTP(S)_PROXY aus der Umgebung NICHT: ohne --proxy-server lief jeder
+    Seitenaufruf ins Internet in ERR_TIMED_OUT (02.11., playwright.dev), während curl im
+    selben Container über den Proxy in 0,02 s antwortete.
+    """
+    args = list(_PLAYWRIGHT_MCP_ARGS)
+    proxy = (os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
+             or os.getenv("HTTP_PROXY") or os.getenv("http_proxy") or "")
+    if proxy:
+        args += ["--proxy-server", proxy, "--proxy-bypass", ",".join(no_proxy_entries())]
+    return args
+
+
 _PLAYWRIGHT_MCP_CMD = "playwright-mcp"
 _PLAYWRIGHT_MCP_ARGS = [
     "--browser", "chromium",
@@ -181,7 +217,7 @@ def write_hermes_config(user_id: str, extra_servers: dict) -> str:
         # Browser automation — stdio command server (no transport/url).
         "playwright": {
             "command": _PLAYWRIGHT_MCP_CMD,
-            "args": list(_PLAYWRIGHT_MCP_ARGS),
+            "args": playwright_mcp_args(),
         },
     }
     servers.update(extra_servers)
@@ -470,22 +506,7 @@ def ensure_container(user_id: str) -> str:
     # The hostname can vary (e.g. "backend", "centralstation-backend", ...) depending on
     # the Docker Compose service name, so we derive it dynamically instead of hardcoding.
     _backend_url = os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000")
-    from urllib.parse import urlparse as _urlparse
-    _backend_host = _urlparse(_backend_url).hostname or "backend"
-    from app.core.domains import internal_domains as _int_domains
-    _default_no_proxy = ",".join(["localhost", "127.0.0.1"] + [f".{d}" for d in _int_domains()])
-    _no_proxy = os.getenv("NO_PROXY", _default_no_proxy)
-    # Every container the agent talks to over the Docker network must bypass the
-    # proxy. Missing names do not fail loudly — Squid answers 503 and the MCP client
-    # reports the server as unreachable, which reads like the server being broken.
-    # The VibeMK names come from vibemk_manager so there is one source for them.
-    from app.services.vibemk_manager import container_name as _vibemk_name, TIERS as _vibemk_tiers
-    _bypass = [_backend_host] + [_vibemk_name(t) for t in _vibemk_tiers]
-    _entries = [e.strip() for e in _no_proxy.split(",") if e.strip()]
-    for _host in _bypass:
-        if _host not in _entries:
-            _entries.insert(0, _host)
-    _no_proxy = ",".join(_entries)
+    _no_proxy = ",".join(no_proxy_entries())
     environment = {
         "HOME": _YOLO_HOME,
         "CS_USER_ID": user_id,
@@ -1165,7 +1186,7 @@ def configure_claude_credentials(
         # claude's flags from the server command + its args.
         _agent_exec(c, ["claude", "mcp", "remove", "--scope", "user", "playwright"])
         pw_cmd = ["claude", "mcp", "add", "--scope", "user", "playwright", "--",
-                  _PLAYWRIGHT_MCP_CMD, *_PLAYWRIGHT_MCP_ARGS]
+                  _PLAYWRIGHT_MCP_CMD, *playwright_mcp_args()]
         _agent_exec(c, pw_cmd)
         log.info("userenv_manager: MCP server 'playwright' registered for %s", container_name(user_id))
     except _docker.errors.NotFound:
@@ -1212,7 +1233,7 @@ def _codex_config_toml(mcp_servers: dict | None, cs_user_id: str = "") -> str:
         # Playwright — stdio command server (browser automation).
         '[mcp_servers.playwright]',
         f'command = "{_PLAYWRIGHT_MCP_CMD}"',
-        'args = [' + ", ".join(f'"{a}"' for a in _PLAYWRIGHT_MCP_ARGS) + ']',
+        'args = [' + ", ".join(f'"{a}"' for a in playwright_mcp_args()) + ']',
         'default_tools_approval_mode = "approve"',
         'tool_timeout_sec = 120',
     ]
