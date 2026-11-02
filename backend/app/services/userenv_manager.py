@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 
 log = logging.getLogger(__name__)
@@ -1193,7 +1194,7 @@ def configure_claude_credentials(
         log.warning("configure_claude_credentials: container %s not found", container_name(user_id))
 
 
-def _codex_config_toml(mcp_servers: dict | None, cs_user_id: str = "") -> str:
+def _codex_config_toml(mcp_servers: dict | None, cs_user_id: str = "", model: str = "") -> str:
     """Render ~/.codex/config.toml: ChatGPT-backend provider + MCP servers.
 
     mcp_servers maps name → {transport, url, headers?} (same shape as the Hermes
@@ -1204,7 +1205,9 @@ def _codex_config_toml(mcp_servers: dict | None, cs_user_id: str = "") -> str:
     """
     backend_url = os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000").rstrip("/")
     parts = [
-        'model = "gpt-5.5"',
+        # Das im Codex-Connector gewählte Modell, sonst settings.CODEX_DEFAULT_MODEL —
+        # nie fest: gpt-5.5 stand hier fest und wurde am 02.11. vom Dienst abgelehnt.
+        f'model = "{_toml_model(model)}"',
         'model_provider = "chatgpt_backend"',
         # Shell-command governance (separate from MCP tool approval below):
         # danger-full-access: disables bwrap sandboxing so SSH and other network
@@ -1254,8 +1257,15 @@ def _codex_config_toml(mcp_servers: dict | None, cs_user_id: str = "") -> str:
     return "\n".join(parts) + "\n"
 
 
+def _toml_model(model: str) -> str:
+    from app.core.codex_defaults import CODEX_DEFAULT_MODEL
+    model = (model or "").strip()
+    # Modellnamen sind kurze Bezeichner; alles andere gehört nicht in die TOML-Zeile.
+    return model if re.fullmatch(r"[A-Za-z0-9._:-]{1,64}", model or "") else CODEX_DEFAULT_MODEL
+
+
 def configure_codex_credentials(
-    user_id: str, access_token: str, mcp_servers: dict | None = None
+    user_id: str, access_token: str, mcp_servers: dict | None = None, model: str = ""
 ) -> None:
     """Configure @openai/codex CLI for the user's ChatGPT-account OAuth token.
 
@@ -1275,7 +1285,7 @@ def configure_codex_credentials(
     """
     import docker as _docker
 
-    config_toml = _codex_config_toml(mcp_servers, cs_user_id=user_id)
+    config_toml = _codex_config_toml(mcp_servers, cs_user_id=user_id, model=model)
     try:
         c = _client().containers.get(container_name(user_id))
         # CODEX_HOME lives under yolo's home: the codex subprocess runs as yolo

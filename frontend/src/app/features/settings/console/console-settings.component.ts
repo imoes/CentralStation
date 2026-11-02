@@ -472,7 +472,7 @@ export class ConsoleSettingsComponent implements OnInit, OnDestroy {
   modelPlaceholder(mode: string): string {
     switch (mode) {
       case 'anthropic_messages': return 'claude-opus-4-8';
-      case 'codex_responses':    return 'gpt-5.5';
+      case 'codex_responses':    return 'gpt-6.1-sol';  // = Backend settings.CODEX_DEFAULT_MODEL
       case 'bedrock_converse':   return 'anthropic.claude-3-5-sonnet-20241022-v2:0';
       default:                   return 'llama3.2 / mistral-large / etc.';
     }

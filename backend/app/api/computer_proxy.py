@@ -443,15 +443,19 @@ async def get_agent_credentials(
 
 # ── CLI Model Selection ────────────────────────────────────────────
 
+from app.core.codex_defaults import CODEX_DEFAULT_MODEL  # noqa: E402
+
 _CLAUDE_FALLBACK = [
     "claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-fable-5",
     "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
     "claude-sonnet-4-6", "claude-opus-4-5-20251101",
     "claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001",
 ]
+#: Nur wenn der Codex-Dienst seine Liste nicht liefert. Stand …/codex/models am 02.11.2026
+#: (gpt-5.5 wird seitdem abgelehnt).
 _CODEX_FALLBACK = [
-    "gpt-6-astra", "gpt-reserve", "gpt-5.6-sol", "gpt-5.6-terra",
-    "gpt-5.6-luna", "gpt-5.5", "codex-auto-review",
+    "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
 ]
 
 
@@ -625,7 +629,7 @@ async def get_hermes_llm(
     api_mode = creds.get("api_mode") or "chat_completions"
     model = creds.get("model") or ""
     if not model and api_mode == "codex_responses":
-        model = "gpt-5.5"
+        model = CODEX_DEFAULT_MODEL
     elif not model and api_mode == "anthropic_messages":
         model = "claude-opus-4-8"
     return {
@@ -672,7 +676,7 @@ async def put_hermes_llm(
 
     model = (body.model or "").strip()
     if not model and body.api_mode == "codex_responses":
-        model = "gpt-5.5"
+        model = CODEX_DEFAULT_MODEL
     elif not model and body.api_mode == "anthropic_messages":
         model = "claude-opus-4-8"
 
@@ -999,6 +1003,7 @@ async def create_session(
                 await asyncio.to_thread(
                     configure_codex_credentials, str(user.id),
                     _codex_creds.get("access_token", ""), extra_servers,
+                    _codex_creds.get("model") or "",
                 )
     except Exception as exc:
         log.warning("Could not ensure userenv container for %s: %s — falling back to shared Hermes session", user.id, exc)

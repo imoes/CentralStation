@@ -17,6 +17,8 @@ PERPLEXITY_ROUTER_BASE_URL = "https://api.perplexity.ai/router/v1"
 PERPLEXITY_DEFAULT_MODEL = "anthropic/claude-sonnet-5"
 # Third-party models are not exposed through a list endpoint, so they are maintained
 # here (same approach as _CLAUDE_FALLBACK/_CODEX_FALLBACK in computer_proxy).
+from app.core.codex_defaults import CODEX_DEFAULT_MODEL  # noqa: E402,F401
+
 PERPLEXITY_FALLBACK_MODELS = [
     "anthropic/claude-sonnet-5",
     "anthropic/claude-opus-5",
@@ -208,7 +210,7 @@ def _llm_config_from_connector(conn, creds: dict) -> LLMConfig:
     api_mode = creds.get("api_mode") or "chat_completions"
     model = creds.get("model") or ""
     if not model and api_mode == "codex_responses":
-        model = "gpt-5.5"
+        model = CODEX_DEFAULT_MODEL
     elif not model and api_mode == "anthropic_messages":
         model = "claude-opus-4-8"
     return LLMConfig(
@@ -257,7 +259,7 @@ async def get_active_llm_config(db: AsyncSession, user_id=None) -> LLMConfig:
         token = await get_codex_access_token(db)
         if token:
             from app.api.oauth_providers import CODEX_BASE_URL
-            model = s.get("llm.codex_model") or "gpt-5.5"
+            model = s.get("llm.codex_model") or CODEX_DEFAULT_MODEL
             return LLMConfig(
                 base_url=CODEX_BASE_URL,
                 model=model,

@@ -144,7 +144,7 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     { key: 'api_key',          label: 'API Key / OAuth Bearer Token', type: 'password',
       hint: 'Leer lassen wenn kein Auth nötig. Bei Codex: OAuth access_token aus Device-Code-Flow.' },
     { key: 'model',            label: 'Modell',                   type: 'text',
-      hint: 'z.B. gpt-5.5, gpt-5.4-mini, claude-sonnet-4-6, llama3.2' },
+      hint: 'z.B. gpt-6.1-sol, gpt-5.6-terra, claude-sonnet-4-6, llama3.2' },
     { key: 'api_mode',         label: 'API Modus',                type: 'select', options: [
         { value: 'chat_completions',   label: 'OpenAI Chat Completions' },
         { value: 'responses',          label: 'OpenAI Responses API' },

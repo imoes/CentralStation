@@ -32,6 +32,30 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
     - Tests: 2 new; full suite: 702 passed.
   - **Gap:** containers that are already running pick this up for Hermes only after a
     restart. Claude and Codex get it with their next session.
+  - Verified for all three agents (Hermes 8 s, Claude 10 s, Codex 15 s): playwright.dev
+    opened, title and H1 read.
+
+- **Codex in the console was broken entirely — every request was rejected.**
+  - **Cause:** the model `gpt-5.5` was hard-coded in five places (Codex `config.toml`, the
+    backend defaults, the fallback list, the frontend). Since then the Codex service no
+    longer accepts it for ChatGPT accounts ("The 'gpt-5.5' model is not supported when
+    using Codex with a ChatGPT account"); `gpt-5.4` fails the same way.
+    - The console showed only the harmless stderr line "Reading additional input from
+      stdin…". The real error was in the JSON stream.
+  - **Fix:**
+    - **One default:** `app/core/codex_defaults.CODEX_DEFAULT_MODEL = "gpt-6.1-sol"`. The
+      models the account offers (`…/codex/models`): gpt-6.1-sol/-terra, gpt-6-astra/-sol/-luna
+      and gpt-5.6-sol/-terra/-luna.
+    - **The selected model wins:** the model chosen in the Codex connector now goes into
+      `config.toml`; before, the config always said gpt-5.5.
+    - **Validation:** model names are checked before they enter the TOML line.
+    - **The user's connector** was changed from gpt-5.5 to gpt-6.1-sol, as requested. The
+      console agent setting stays on Claude.
+  - Verified:
+    - Manually: `codex exec --model gpt-6.1-sol` → "ok", while gpt-5.5, gpt-5.4 and
+      gpt-5.3/5.4-codex are rejected.
+    - Codex session with Playwright works (see above).
+    - Tests: 3 new; full suite: 705 passed.
 
 ## 2026-10-25 — The console can look up master data in the ID-Generator; console image builds reproducibly
 
