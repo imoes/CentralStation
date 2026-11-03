@@ -1261,7 +1261,11 @@ export class ComputerComponent implements OnInit, OnDestroy {
       if (!existing) {
         existing = await this.newSession(label, undefined, ticketRef);
       }
-      if (!existing) return;
+      if (!existing) {
+        this.snackBar.open('Neue Konsolen-Sitzung konnte nicht angelegt werden — Ticket nicht übergeben.',
+                           'OK', { duration: 6000 });
+        return;
+      }
       this.activeTabId.set(existing.session_id);
       this.selectTab(existing.session_id);
       // An established ticket session only resumes here. Its live Jira changes are
@@ -1323,9 +1327,17 @@ export class ComputerComponent implements OnInit, OnDestroy {
       this.hostSessions.delete(hostKey);
     }
 
-    await this.newSession(label, externalId);
-    const sid = this.activeTabId();
-    if (!sid) return;
+    const created = await this.newSession(label, externalId);
+    if (!created) {
+      // Nie in die gerade offene Sitzung ausweichen: dort liefe der Auftrag eines anderen
+      // Incidents weiter (03.11.: Sitzungsanlage scheiterte an einem zu langen Namen, der
+      // Auftrag landete kommentarlos in der letzten Sitzung).
+      this.snackBar.open('Neue Konsolen-Sitzung konnte nicht angelegt werden — Auftrag nicht gesendet.',
+                         'OK', { duration: 6000 });
+      return;
+    }
+    const sid = created.session_id;
+    this.activeTabId.set(sid);
 
     if (hostKey) this.hostSessions.set(hostKey, sid);
 

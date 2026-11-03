@@ -441,6 +441,23 @@ async def get_agent_credentials(
     }
 
 
+# ── Sitzungsname ────────────────────────────────────────────────────
+
+def fit_session_label(label: str | None) -> str:
+    """Sitzungsname auf die Spaltenbreite kürzen (ComputerSession.label, String(100)).
+
+    Die Übergabe aus einem Incident nimmt dessen Titel als Namen — 517 von 8 569 Titeln
+    der letzten 30 Tage waren länger als 100 Zeichen (bis 172). Die Anlage scheiterte
+    dann mit "value too long for type character varying(100)", und die Konsole schickte
+    den Auftrag in die zuletzt offene Sitzung (03.11.2026). Umbenennen kürzte auf 120 —
+    ebenfalls zu lang.
+    """
+    from app.models.workflow import ComputerSession
+    limit = ComputerSession.__table__.c.label.type.length or 100
+    text = " ".join((label or "").split())
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
 # ── CLI Model Selection ────────────────────────────────────────────
 
 from app.core.codex_defaults import CODEX_DEFAULT_MODEL  # noqa: E402
@@ -1018,7 +1035,7 @@ async def create_session(
     # Use the caller's custom label (handoff host name) when provided. Otherwise
     # generate a label from the PostgreSQL session count — Hermes's in-memory
     # counter resets to 1 after every restart, causing duplicate "Session 1" labels.
-    label = (body.label or "").strip()
+    label = fit_session_label(body.label)
     if not label:
         count_result = await db.execute(
             select(func.count(ComputerSession.id)).where(ComputerSession.user_id == user.id)
@@ -1380,7 +1397,7 @@ async def update_session(
     Only fields present in the request body are written."""
     values: dict = {}
     if body.label is not None:
-        lbl = body.label.strip()[:120]
+        lbl = fit_session_label(body.label)
         if lbl:
             values["label"] = lbl
     if body.external_id is not None:

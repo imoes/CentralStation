@@ -10,6 +10,29 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-03 — "Computer, untersuche das" opens its own session again
+
+### What was fixed
+
+- **The handoff from an incident wrote into the last open console session.**
+  - **Cause 1:** the session name is the incident title. Titles longer than 100 characters
+    broke the session creation ("value too long for type character varying(100)", HTTP
+    500).
+    - In the last 30 days that was **517 of 8,569** incidents (up to 172 characters).
+    - Example: "Kritisches Ereignis: OOM-Kill … auf mu-img-docker19.example.com · 3× in 6 h" has
+      101 characters.
+  - **Cause 2:** when the creation failed, the console took the open tab without a word
+    and sent the incident task there.
+  - **Fix:**
+    - Session names are trimmed to the column width (100, with "…") — on creation and on
+      rename. Rename used to trim to 120, which was also too long.
+    - If a session still cannot be created, the console says so ("Neue Konsolen-Sitzung
+      konnte nicht angelegt werden — Auftrag nicht gesendet.") and does not send the task
+      anywhere. The same applies to the ticket handoff.
+  - Verified: creating a session through the real endpoint with exactly that 101-character
+    title → 201, name 100 characters ending in "…" (test session deleted afterwards). Full
+    suite: 705 passed.
+
 ## 2026-11-02 — The console browser (Playwright) reaches the internet
 
 ### What was fixed
