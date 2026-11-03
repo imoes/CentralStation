@@ -308,6 +308,22 @@ def affected_hosts(sources, entities) -> list[str]:
     return sorted(set(sources or []) | {e for e in (entities or {}) if "." in e})
 
 
+def entity_kind(entities, sources) -> str:
+    """Was die Betroffenen sind: "Hosts", "Container" oder "Container und Hosts".
+
+    Eine Zeile gehört zum Container, wenn sie einen trägt, sonst zur Quelle (collector.Line.
+    entity) — ein Betroffener, der zugleich Quelle ist, ist also ein Host. Bis 03.11. hieß
+    alles "Container": 13 RHEL-Server mit rhsmcertd-Fehlern standen in der Mail als
+    "Betroffen (13 Container)".
+    """
+    srcs = {str(s).lower() for s in (sources or ())}
+    names = [str(e).lower() for e in (entities or ())]
+    hosts = sum(1 for n in names if n in srcs)
+    if not names or hosts == len(names):
+        return "Hosts"
+    return "Container" if hosts == 0 else "Container und Hosts"
+
+
 def cluster_context(ev: Event, base_url: str) -> dict:
     ep = ev.episode
     until = ev.bucket_start + BUCKET
@@ -327,6 +343,7 @@ def cluster_context(ev: Event, base_url: str) -> dict:
         "containers": [{"name": n, "count": c} for n, c in ep.entities.most_common(50)],
         "hosts": affected_hosts(ep.sources, ep.entities),
         "docker_hosts": sorted(ep.sources),
+        "entity_kind": entity_kind(ep.entities, ep.sources),
         "graylog_url": graylog_link(base_url, ev.template.template, ep.started_at, until),
     }
 
@@ -345,7 +362,7 @@ async def _handle(db, rt: _Runtime, events: list[Event], base_url: str) -> None:
         n_cont = len(ep.entities)
         severity = ("critical" if {"spike", "spread"} <= ep.rules else
                     "high" if ep.notify_class == "immediate" else "medium")
-        title = f"Fehlerausbruch: {short_title(ev.template.template)} · {n_cont} Container" \
+        title = f"Fehlerausbruch: {short_title(ev.template.template)} · {n_cont} {ctx['entity_kind']}" \
             if ep.notify_class == "immediate" else f"Neues Fehlermuster: {short_title(ev.template.template)}"
         meta = {
             "kind": "error_cluster", "cluster_id": ep.id, "host": (ctx["docker_hosts"] or ctx["hosts"] or [""])[0],

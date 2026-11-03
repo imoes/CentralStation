@@ -23,6 +23,11 @@ SYSTEM = (
     "Schätze ein, was passiert ist und womit man anfängt. Halte dich an die Daten; "
     "Vermutungen kennzeichnest du als solche. Nenne nur LESENDE Prüfschritte (Logs, "
     "Status, Konfiguration ansehen) — keine Änderungen, keine Neustarts.\n"
+    "Zusammenhänge: 'aehnliche_meldungen' und 'checkmk_alerts_mit_zusammenhang' sind bereits "
+    "geprüft (Begründung im Feld 'grund'). Nenne als verwandte Signale NUR diese, mit ihrer "
+    "Begründung, und leite keine Ursache aus Ereignissen ab, die bloß gleichzeitig oder auf "
+    "einzelnen Hosts auftreten. Bezeichne die Betroffenen so, wie 'art_der_betroffenen' sagt "
+    "(Hosts sind keine Container).\n"
     "Antworte ausschließlich mit einem JSON-Objekt, ohne Text davor oder danach:\n"
     '{"titel": str (≤ 80 Zeichen), "zusammenfassung": str (2–3 Sätze), '
     '"vermutete_ursache": str, "betroffene_komponente": str, '
@@ -87,12 +92,16 @@ def build_prompt(ctx: dict, correlated: list[dict], checkmk: list[dict]) -> str:
         "erwartet_15min": ctx.get("expected15"),
         "zeilen_gesamt": ctx.get("total"),
         "seit": ctx.get("started_at"),
-        "container": [c["name"] for c in (ctx.get("containers") or [])[:15]],
-        "anzahl_container": len(ctx.get("containers") or []),
+        # Hosts oder Container — Filebeat-/Syslog-Zeilen kommen von Hosts (runner.entity_kind)
+        "art_der_betroffenen": ctx.get("entity_kind") or "Container",
+        "betroffene": [c["name"] for c in (ctx.get("containers") or [])[:15]],
+        "anzahl_betroffene": len(ctx.get("containers") or []),
         "hosts": ctx.get("hosts"),
         # Andere Muster mit ähnlicher Meldung im selben Fenster (engine.similar_patterns)
         "aehnliche_meldungen": correlated[:8],
-        "checkmk_alerts_betroffene_hosts": checkmk[:15],
+        # NUR Alerts mit statistisch belegtem Zusammenhang (notify.related_checkmk), je mit Grund
+        "checkmk_alerts_mit_zusammenhang": [
+            {k: a.get(k) for k in ("dienst", "titel", "schwere", "grund")} for a in checkmk[:10]],
         "vorlagen": _templates_for_prompt(),
     }
     return json.dumps(payload, ensure_ascii=False, default=str)

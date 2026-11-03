@@ -79,9 +79,10 @@ def test_unusable_triage_answer_is_none():
 
 
 def test_prompt_carries_the_evidence_not_the_raw_flood():
-    p = build_prompt(CTX, [{"container": "cue-db", "faktor": 11.2}], [{"host": "cuedb"}])
+    p = build_prompt(CTX, [{"container": "cue-db", "faktor": 11.2}],
+                     [{"dienst": "Memory", "grund": "auf 3 von 3 betroffenen Hosts"}])
     assert "ChangelogReader" in p and "cue-db" in p
-    assert '"anzahl_container": 24' in p
+    assert '"anzahl_betroffene": 24' in p and "auf 3 von 3 betroffenen Hosts" in p
     assert p.count("cue-zipline-product-") <= 15 + 1   # höchstens 15 Container im Prompt
 
 
@@ -146,20 +147,23 @@ def test_mail_links_incident_at_the_top_and_shows_research():
                            "similarity": 0.62, "zeilen_15min": 420, "faktor": 7.5,
                            "containers": [{"name": "cue-zipline-dam.cue.example.com", "count": 400}]}],
            "checkmk": [{"host": "docker0218.example.com", "titel": "docker0218.example.com — Docker container status",
-                        "schwere": "critical", "zeit": "2026-10-12T12:20:00+00:00"}]}
+                        "dienst": "Docker container status", "schwere": "critical",
+                        "zeit": "2026-10-12T12:20:00+00:00",
+                        "grund": "auf 9 von 13 betroffenen Hosts, sonst auf 2 von 3080 Hosts (p = 1e-20)"}],
+           "checkmk_hidden": 2}
     html = render_html(ctx, None, "https://cs/feed?incident=1", pending=True)
     assert html.index("Incident öffnen") < html.index("Recherche")      # Link zuerst
     assert html.count("https://cs/feed?incident=1") == 2                 # oben und unten
     assert "cue-zipline-dam.cue.example.com" in html and "7.5× üblich" in html
     assert "Ähnliche Meldungen" in html and "62 % gleiche Wörter" in html
-    assert "docker0218.example.com: Docker container status" in html and "12:20 UTC" in html
-    assert html.count("docker0218.example.com") == 1                     # Host nicht doppelt
+    assert "Docker container status" in html and "auf 9 von 13 betroffenen Hosts" in html
+    assert "2 gleichzeitige Alert(s) auf einzelnen Hosts ohne belegten Zusammenhang" in html
 
 
 def test_research_names_empty_findings_instead_of_hiding_them():
     html = render_html({**CTX, "correlated": [], "checkmk": []}, None, None, pending=False)
     assert "keine — die Meldung tritt nur in diesem Muster auf" in html
-    assert "keine seit 15 min vor Beginn" in html
+    assert "CheckMK-Alerts mit Zusammenhang:</b> keine." in html
 
 
 def test_no_research_section_when_no_search_ran():

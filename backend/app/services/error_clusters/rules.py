@@ -319,7 +319,7 @@ def evaluate(window: Window, lam: float | None, history: Sequence[int] | None = 
             and count15 >= th.spread_min_count
             and window.entities >= th.spread_factor * max(window.usual_entities, 1.0)):
         rules.add("spread")
-        reasons.append(f"{window.entities} Container/Quellen, üblich "
+        reasons.append(f"auf {window.entities} Systemen gleichzeitig (Container oder Hosts), üblich "
                        f"{max(window.usual_entities, 1.0):.0f}")
 
     persistent_now = "persistent" in rules and not window.present_at_start

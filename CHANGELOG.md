@@ -10,6 +10,48 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-03 — Outbreak mails: only signals with proven relation, hosts named as hosts
+
+### What changed
+
+- **CheckMK alerts appear in the research only when they are statistically related.**
+  - **Why:** in the rhsmcertd mail (JSON parsing errors on 13 RHEL hosts), "File group
+    PrintPdfExport/ePaperExport" on **one** of the hosts was listed as a related signal.
+    The AI concluded from it that configuration files were missing — an inference from
+    mere coincidence. Before, every alert of the affected hosts was listed, from 15 min
+    before the start and with no end to the window.
+  - **New rule:** a CheckMK service counts as related only when it occurs **significantly
+    more often** on the affected hosts than on all other hosts in the same time window.
+    - Test: one-sided exact Fisher test, p < 0.01, on at least 2 affected hosts. For a
+      single-host outbreak, p < 0.01 alone, i.e. an alert that hardly occurs anywhere else.
+    - The idea follows Luo et al., KDD 2014 ("Correlating Events with Time Series for
+      Incident Diagnosis"): compare against a random reference sample, not co-occurrence.
+      Here the other hosts are the reference sample.
+    - The time window is closed (start − 15 min until delivery).
+  - **Shown:** each related alert with its reason ("auf 9 von 13 betroffenen Hosts, sonst
+    auf 2 von 3080 Hosts (p = …)"). The rest is named as a count ("2 gleichzeitige
+    Alert(s) auf einzelnen Hosts ohne belegten Zusammenhang ausgeblendet"). Nothing
+    disappears silently.
+  - **AI assessment:** it receives only the related alerts with their reason. The prompt
+    forbids naming as related, or deriving a cause from, signals that merely occur at the
+    same time.
+- **Hosts are called hosts.** Filebeat/syslog lines come from servers, not containers. Mail,
+  subject, incident title and AI input now say "Hosts", "Container" or "Container und
+  Hosts". The rule reason says "auf N Systemen gleichzeitig" instead of
+  "N Container/Quellen".
+- Verified:
+  - The real rhsmcertd outbreak of 03.11., re-rendered without sending: "17 Hosts";
+    CheckMK related: none, "2 … ausgeblendet". Before: "13 Container" plus both File Group
+    alerts as signals.
+  - Tests: 6 new — Fisher tail; 1 of 13 is not related; 9 of 13 is; an alert present
+    everywhere is not; single-host case; host/container detection. Full suite: 711 passed.
+
+### What is missing
+
+- Two hosts send misspelled names: `cue0156.example.mediia` and `cue0107REDACTED-CREDENTIAL.example.com`.
+  They come from the Filebeat configuration of those hosts. CheckMK does not know them, so
+  they cannot be matched in the research.
+
 ## 2026-11-03 — "Computer, untersuche das" opens its own session again
 
 ### What was fixed

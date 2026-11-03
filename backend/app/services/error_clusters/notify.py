@@ -67,7 +67,7 @@ def subject(ctx: dict, title: str, followup: bool = False) -> str:
                 f"{ctx.get('events')}× in {ctx.get('window_hours')} h")
     head = "KI-Einschätzung" if followup else "Fehlerausbruch"
     short = title.split(": ", 1)[-1].split(" · ")[0]
-    return (f"[CentralStation] {head}: {short} · {n_cont} Container · "
+    return (f"[CentralStation] {head}: {short} · {n_cont} {ctx.get('entity_kind') or 'Container'} · "
             f"{fmt_rate(ctx.get('count15'), 900)}")
 
 
@@ -136,7 +136,7 @@ def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
     <h4 style="margin:12px 0 4px">Muster</h4>
     <pre style="white-space:pre-wrap;background:#f4f4f4;padding:6px;font-size:12px">{_esc(ctx.get('template'))}</pre>
     {volume}
-    <h4 style="margin:12px 0 4px">Betroffen ({len(containers)} {'Host' if critical_kind else 'Container'})</h4>
+    <h4 style="margin:12px 0 4px">Betroffen ({len(containers)} {'Host' if critical_kind else (ctx.get('entity_kind') or 'Container')})</h4>
     <table style="border-collapse:collapse;font-size:13px">{cont_html}</table>{more}
     <h4 style="margin:12px 0 4px">Beispiele</h4>{examples}
     <p style="margin:14px 0">{' · '.join(links)}</p>
@@ -179,17 +179,22 @@ def _research_html(ctx: dict) -> str:
             parts.append("<p style='margin:6px 0 2px'><b>Ähnliche Meldungen:</b> "
                          "keine — die Meldung tritt nur in diesem Muster auf.</p>")
     if "checkmk" in ctx:
+        hidden = ctx.get("checkmk_hidden") or 0
+        hidden_txt = (f" {hidden} gleichzeitige Alert(s) auf einzelnen Hosts ohne belegten "
+                      f"Zusammenhang ausgeblendet." if hidden else "")
         if cmk:
             items = "".join(
-                f"<li>{_esc(a.get('host'))}: {_esc(_without_host(a.get('titel'), a.get('host')))} "
-                f"<span style='color:#777'>({_esc(a.get('schwere'))}, {_esc(_hm(a.get('zeit')))} UTC)</span></li>"
-                for a in cmk[:15])
-            parts.append(f"<p style='margin:6px 0 2px'><b>CheckMK-Alerts der betroffenen Hosts</b> "
-                         f"<span style='color:#777'>(ab 15 min vor Beginn)</span>:</p>"
-                         f"<ul style='margin:0'>{items}</ul>")
+                f"<li>{_esc(a.get('dienst') or _without_host(a.get('titel'), a.get('host')))} "
+                f"<span style='color:#777'>— {_esc(a.get('grund') or '')}</span></li>"
+                for a in cmk[:10])
+            parts.append(f"<p style='margin:6px 0 2px'><b>CheckMK-Alerts mit Zusammenhang</b> "
+                         f"<span style='color:#777'>(signifikant häufiger auf den betroffenen Hosts "
+                         f"als auf allen übrigen, gleiches Zeitfenster)</span>:</p>"
+                         f"<ul style='margin:0'>{items}</ul>"
+                         + (f"<p style='margin:2px 0;color:#777'>{hidden_txt}</p>" if hidden else ""))
         else:
-            parts.append("<p style='margin:6px 0 2px'><b>CheckMK-Alerts der betroffenen Hosts:</b> "
-                         "keine seit 15 min vor Beginn.</p>")
+            parts.append("<p style='margin:6px 0 2px'><b>CheckMK-Alerts mit Zusammenhang:</b> "
+                         f"keine.{hidden_txt}</p>")
     if not parts:
         return ""
     return ("<div style='margin:12px 0;padding:8px;border:1px solid #ccc;border-radius:6px'>"
@@ -233,18 +238,92 @@ async def _correlated(rt, ev, limit: int = 8) -> list[dict]:
     return similar_patterns(rt.store, ev.template.key, ev.bucket_start, limit)
 
 
-async def _checkmk(db, hosts: list[str], since: datetime) -> list[dict]:
+def _entity_kind(entities, sources) -> str:
+    from app.services.error_clusters.runner import entity_kind
+    return entity_kind(entities, sources)
+
+
+#: Ein CheckMK-Alert gehört zum Ausbruch, wenn er auf den betroffenen Hosts signifikant
+#: häufiger auftritt als auf allen übrigen im selben Zeitfenster (einseitiger exakter
+#: Fisher-Test). Idee wie Luo et al., KDD 2014 ("Correlating Events with Time Series for
+#: Incident Diagnosis"): verglichen wird mit einer Zufallsstichprobe, nicht bloße
+#: Gleichzeitigkeit — hier sind die übrigen Hosts die Vergleichsstichprobe.
+RELATED_P = 0.01
+RELATED_MIN_HOSTS = 2
+
+
+def hypergeom_sf(a: int, population: int, marked: int, drawn: int) -> float:
+    """P(X ≥ a) für X ~ Hypergeometrisch(N=population, K=marked, n=drawn)."""
+    from math import comb
+    if a <= 0:
+        return 1.0
+    total = comb(population, drawn)
+    if total == 0:
+        return 1.0
+    hi = min(marked, drawn)
+    return sum(comb(marked, k) * comb(population - marked, drawn - k)
+               for k in range(a, hi + 1)) / total
+
+
+def related_alerts(per_service: dict[str, dict], affected_n: int, population: int) -> tuple[list[dict], int]:
+    """Welche Dienste gehören zum Ausbruch? per_service: {dienst: {"hosts": set, "affected": set,
+    "first": alert-dict}}. Rückgabe: (zusammenhängende, Anzahl ausgeblendeter Alerts)."""
+    related, hidden = [], 0
+    for svc, d in per_service.items():
+        a, k = len(d["affected"]), len(d["hosts"])
+        if a == 0:
+            continue
+        p = hypergeom_sf(a, max(population, k, affected_n), k, affected_n)
+        enough = a >= RELATED_MIN_HOSTS or affected_n == 1
+        if p < RELATED_P and enough:
+            others, rest = k - a, max(population - affected_n, 0)
+            related.append({**d["first"], "dienst": svc, "betroffen": a, "von": affected_n,
+                            "sonst": others, "sonst_von": rest, "p": p,
+                            "grund": (f"auf {a} von {affected_n} betroffenen Hosts, sonst auf "
+                                      f"{others} von {rest} Hosts (p = {p:.1g})")})
+        else:
+            hidden += a
+    related.sort(key=lambda x: x["p"])
+    return related, hidden
+
+
+async def related_checkmk(db, hosts: list[str], since: datetime,
+                          until: datetime | None = None) -> tuple[list[dict], int]:
+    """CheckMK-Alerts mit BELEGTEM Zusammenhang zum Ausbruch (statt aller Alerts der Hosts).
+
+    Bis 03.11. stand hier jeder Alert der betroffenen Hosts ab 15 min vor Beginn — ohne
+    Ende des Fensters und ohne Bezug: "File group PrintPdfExport" auf 1 von 13 Hosts wurde
+    so zum "verwandten Signal" eines rhsmcertd-Fehlers, und die KI schloss daraus auf
+    fehlende Konfigurationsdateien.
+    """
+    from sqlalchemy import text
     from app.models.alert import Alert
     from app.services.error_clusters.incident import host_matches
-    rows = await db.execute(select(Alert).where(Alert.source == "checkmk",
-                                                Alert.created_at >= since))
-    out = []
-    for a in rows.scalars():
-        h = (a.metadata_ or {}).get("host", "")
-        if h and host_matches(h, hosts):
-            out.append({"host": h, "titel": a.title, "schwere": a.severity,
-                        "zeit": a.created_at.isoformat()})
-    return out[:15]
+    until = until or datetime.now(timezone.utc)
+    rows = (await db.execute(select(Alert).where(
+        Alert.source == "checkmk", Alert.created_at >= since, Alert.created_at <= until))).scalars().all()
+    population = (await db.execute(text(
+        "SELECT count(DISTINCT lower(metadata->>'host')) FROM alerts WHERE source='checkmk' "
+        "AND created_at >= now() - interval '30 days'"))).scalar() or 0
+    known = (await db.execute(text(
+        "SELECT DISTINCT lower(metadata->>'host') FROM alerts WHERE source='checkmk' "
+        "AND created_at >= now() - interval '30 days'"))).scalars().all()
+    # Betroffene, die CheckMK überhaupt kennt — nur sie können einen Alert haben.
+    affected_known = [h for h in hosts if any(host_matches(k, [h]) for k in known if k)]
+    per_service: dict[str, dict] = {}
+    for a in rows:
+        meta = a.metadata_ or {}
+        h, svc = (meta.get("host") or "").lower(), meta.get("service") or ""
+        if not h or not svc:
+            continue
+        d = per_service.setdefault(svc, {"hosts": set(), "affected": set(), "first": None})
+        d["hosts"].add(h)
+        if host_matches(h, affected_known):
+            d["affected"].add(h)
+            if d["first"] is None:
+                d["first"] = {"host": h, "titel": a.title, "schwere": a.severity,
+                              "zeit": a.created_at.isoformat()}
+    return related_alerts(per_service, len(affected_known), population)
 
 
 async def _store_triage(db, cluster_id: str, incident_id: str | None, result: dict, ctx: dict):
@@ -310,7 +389,8 @@ async def _notify_one(ev, rt, cfg, base_url: str) -> None:
     incident_id = rt.incident_ids.get(ev.episode.id)
     async with AsyncSessionLocal() as db:
         correlated = await _correlated(rt, ev)
-        checkmk = await _checkmk(db, ctx["hosts"], ev.episode.started_at - timedelta(minutes=15))
+        checkmk, checkmk_hidden = await related_checkmk(
+            db, ctx["hosts"], ev.episode.started_at - timedelta(minutes=15))
         if incident_id and correlated:
             # Für Timeline und Konsolen-Übergabe: was gleichzeitig auffiel.
             from app.models.workflow import Incident
@@ -326,6 +406,7 @@ async def _notify_one(ev, rt, cfg, base_url: str) -> None:
     # gesucht — Flotten-Cluster und Nachholen nach Neustart zeigen den Abschnitt nicht.
     ctx["correlated"] = correlated
     ctx["checkmk"] = checkmk
+    ctx["checkmk_hidden"] = checkmk_hidden
     await deliver(ctx, f"Fehlerausbruch: {short_title(ev.template.template)}", ev.episode.id,
                   incident_id, cfg, correlated, checkmk)
 
@@ -504,7 +585,7 @@ async def on_critical(items: list[dict], cfg) -> None:
         try:
             async with AsyncSessionLocal() as db:
                 since = datetime.fromisoformat(ctx["started_at"]) - timedelta(minutes=15)
-                ctx["checkmk"] = await _checkmk(db, ctx["hosts"], since)
+                ctx["checkmk"], ctx["checkmk_hidden"] = await related_checkmk(db, ctx["hosts"], since)
         except Exception as exc:  # noqa: BLE001 — ohne Recherche geht die Meldung trotzdem
             log.warning("error_clusters: critical checkmk lookup failed: %s", exc)
         run_background(deliver(ctx, it["title"], it["cluster_id"], it["incident_id"], cfg,
@@ -536,6 +617,7 @@ def ctx_from_row(ec, t) -> dict:
         "containers": [{"name": k, "count": v} for k, v in
                        sorted(entities.items(), key=lambda kv: -kv[1])[:50]],
         "hosts": affected_hosts(ec.sources, entities), "docker_hosts": sorted(ec.sources or []),
+        "entity_kind": _entity_kind(entities, ec.sources),
         "graylog_url": None,
     }
 

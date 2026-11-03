@@ -188,7 +188,7 @@ def test_reasons_are_readable():
     v = evaluate(_w([0, 7_300, 7_500], entities=26, sources=3, seen=False),
                  baseline(history, 2 * DAY), history)
     text = " ".join(v.reasons)
-    assert "neues Muster" in text and "26 Container" in text
+    assert "neues Muster" in text and "auf 26 Systemen" in text
 
 
 # ── Episoden ─────────────────────────────────────────────────────────────────
