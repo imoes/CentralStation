@@ -10,6 +10,39 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-05 — Console: live search across all sessions
+
+### What's new
+
+- **A search field above the session list** filters the list while you type, across
+  session names and complete histories.
+  - **What counts as a hit:** a message containing all search words, or a name containing
+    them.
+  - **Each matching session shows:** the number of matching messages and an excerpt with the
+    words marked.
+  - **Clicking a hit** opens the session at the first matching message. Clicking again jumps
+    to the next one. Matching messages are marked, and the words are highlighted.
+  - **Status line:** shows "N / M SITZUNGEN", "KEINE TREFFER" or "mind. 2 Zeichen".
+    Sessions whose history could not be loaded are counted as "nur Name" instead of
+    silently missing.
+  - **Evidence:**
+    - Unit checks of the search logic (hit rule, markdown stripped from the excerpt,
+      overlapping marks merged).
+    - Playwright against the deployed frontend (hal.example.com) with mocked API data:
+      3 sessions → "1 / 3 SITZUNGEN · 1 nur Name"; 3 matching messages marked; 6 words
+      highlighted, including inside agent messages and code; repeated clicks jump to
+      hits 0 → 1 → 2 → 0; Esc restores all 3 sessions.
+
+### What's missing
+
+- **Codex sessions** keep their history only in memory. After a container restart only
+  their name is searchable (same as what the Console can show).
+- **Search runs in the browser** over the histories the Console loads. There is no
+  server-side index, so very large histories cost time on every opening, as they already do
+  today.
+
+---
+
 ## 2026-11-03 — Outbreak mails: only signals with proven relation, hosts named as hosts
 
 ### What changed

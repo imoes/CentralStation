@@ -1000,7 +1000,28 @@ MCP servers:
   + personal connectors (VibeMK, AWX-NG, …)
 ```
 
-### Ticket search (Jira + ServiceDesk)
+### Searching your sessions (live search)
+
+The field **SUCHEN** above the session list filters the list while you type.
+- **Searched:** session names and the full history the Console shows (it loads every
+  session's history when it opens). The search runs in the browser; nothing is sent to the
+  server.
+- **What counts as a hit:** a message that contains **all** search words (case-insensitive,
+  minimum 2 characters), or a session name that does. Words scattered across a long session
+  are not a hit.
+- **Shown per session:** the number of matching messages and an excerpt around the first
+  hit, with the words marked. The status line says "N / M SITZUNGEN".
+  - Sessions whose history could not be loaded are counted as "· N nur Name" (only their
+    name was searched).
+  - "KEINE TREFFER" and "mind. 2 Zeichen" are shown as such.
+- **Jumping to hits:** clicking a hit opens the session, scrolls to the first matching
+  message, and makes it flash. Clicking it again jumps to the next hit. Matching messages
+  have a bar on the left, and the words are highlighted via the CSS Custom Highlight API,
+  without touching the rendered Markdown.
+- **Esc** in the field clears the search.
+- **Not covered:** Codex sessions keep their history only in memory, so after a container
+  restart only their name is searchable.
+
 
 `search_tickets(query, target, project, open_only, max_results)` (MCP) searches both
 instances with free text or a ticket key, `ORDER BY updated DESC`.

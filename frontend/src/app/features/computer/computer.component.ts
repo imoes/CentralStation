@@ -1,5 +1,5 @@
 import {
-  Component, OnInit, OnDestroy, signal, computed,
+  Component, OnInit, OnDestroy, signal, computed, effect,
   ViewChild, ElementRef, HostListener, inject, NgZone, SecurityContext,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
@@ -13,6 +13,7 @@ import { DomSanitizer } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { extractWorkspaceFiles, workspaceRelative } from '../../shared/workspace-files';
+import { MIN_QUERY_LENGTH, SessionHit, searchSessions, searchTerms } from '../../shared/console-search';
 import { marked } from 'marked';
 import { AuthService } from '../../core/auth/auth.service';
 import {
@@ -176,9 +177,36 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
         <div class="session-rail">
           <div class="rail-head">SESSIONS</div>
 
+          <!-- Livesuche: filtert die Liste beim Texample, durchsucht Namen + Verläufe -->
+          <div class="rail-search">
+            <input type="search" class="rail-search-input"
+                   placeholder="SUCHEN"
+                   aria-label="Sitzungen durchsuchen"
+                   [value]="searchQuery()"
+                   (input)="searchQuery.set($any($event.target).value)"
+                   (keydown.escape)="clearSearch(); $event.stopPropagation()">
+            @if (searchQuery().trim()) {
+              <div class="rail-search-status">
+                @if (!searchActive()) {
+                  mind. {{ minQueryLength }} Zeichen
+                } @else if (searchResult().hits.length === 0) {
+                  KEINE TREFFER
+                } @else {
+                  {{ searchResult().hits.length }} / {{ sessions().length }} SITZUNGEN
+                }
+                @if (searchActive() && searchResult().unloaded > 0) {
+                  <span class="rail-search-unloaded"
+                        title="Der Verlauf dieser Sitzungen konnte nicht geladen werden — durchsucht wurde nur ihr Name.">
+                    · {{ searchResult().unloaded }} nur Name
+                  </span>
+                }
+              </div>
+            }
+          </div>
+
           <!-- Scrollable session list -->
           <div class="rail-sessions">
-            @for (s of sessions(); track s.session_id) {
+            @for (s of railSessions(); track s.session_id) {
               @if (editingSid() === s.session_id) {
                 <input class="rail-pill rail-edit"
                        [value]="s.label"
@@ -189,16 +217,30 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
               } @else {
                 <button class="rail-pill"
                         [class.active]="s.session_id === activeTabId()"
-                        (click)="selectTab(s.session_id)"
+                        [class.has-hit]="!!searchHit(s.session_id)"
+                        (click)="searchActive() ? openSearchHit(s.session_id) : selectTab(s.session_id)"
                         (dblclick)="editingSid.set(s.session_id)"
-                        [title]="s.label + ' (Doppelklick zum Umbenennen)'">
+                        [title]="searchActive()
+                          ? s.label + ' — erneut klicken: nächster Treffer'
+                          : s.label + ' (Doppelklick zum Umbenennen)'">
                   {{ s.label }}
                   @if (s.agent_type === 'claude_cli') {
                     <span class="agent-badge agent-claude" title="Claude CLI">CL</span>
                   } @else if (s.agent_type === 'codex_cli') {
                     <span class="agent-badge agent-codex" title="Codex CLI">CO</span>
                   }
-                  @if (s.msg_count > 0) {
+                  @if (searchHit(s.session_id); as hit) {
+                    <span class="msg-badge search-count"
+                          [title]="hit.messageHits.length + ' Nachrichten enthalten alle Suchwörter'">
+                      {{ hit.messageHits.length }}×
+                    </span>
+                    @if (hit.snippet.length) {
+                      <!-- eine Zeile, ohne Leerraum: sonst stünden Lücken um die Treffer -->
+                      <span class="search-snippet">@for (part of hit.snippet; track $index) {@if (part.hit) {<mark>{{ part.text }}</mark>} @else {{{ part.text }}}}</span>
+                    } @else {
+                      <span class="search-snippet">Treffer im Namen</span>
+                    }
+                  } @else if (s.msg_count > 0) {
                     <span class="msg-badge">{{ s.msg_count }}</span>
                   }
                   @if (sessionActivity(s.session_id); as activity) {
@@ -283,9 +325,10 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
           }
 
           <div class="messages" #msgContainer (scroll)="onMessagesScroll()">
-            @for (msg of completedMessages(); track msg) {
+            @for (msg of completedMessages(); track msg; let i = $index) {
               <div class="msg" [class.user]="msg.role === 'user'"
-                               [class.agent]="msg.role === 'assistant'">
+                               [class.agent]="msg.role === 'assistant'"
+                               [class.search-hit]="activeSearchHits().has(i)">
                 <div class="msg-header">
                   <span class="msg-label">
                     {{ msg.role === 'user' ? '▶ NUTZER' : '◎ COMPUTER' }}
@@ -702,6 +745,46 @@ export class ComputerComponent implements OnInit, OnDestroy {
   sessions = signal<HermesSession[]>([]);
   activeTabId = signal<string | null>(null);
   editingSid = signal<string | null>(null);
+
+  // ── Livesuche über alle Sitzungen ──────────────────────────────────
+  // Durchsucht wird, was die Konsole zeigt: Name + geladene Verläufe (die lädt
+  // loadSessions() ohnehin vollständig). Ein Treffer ist eine Nachricht mit ALLEN
+  // Suchwörtern — siehe shared/console-search.ts.
+  readonly minQueryLength = MIN_QUERY_LENGTH;
+  searchQuery = signal('');
+  /** Klein geschriebener Text je Nachrichtenobjekt. Nachrichten sind unveränderlich
+   *  (jedes Streaming-Stück erzeugt ein neues Objekt), also bleibt der Eintrag gültig,
+   *  solange das Objekt lebt — ein Tastendruck wandelt keinen Verlauf neu um. */
+  private _lowerCache = new WeakMap<HermesMessage, string>();
+  searchResult = computed(() =>
+    searchSessions(this.sessions(), searchTerms(this.searchQuery()), m => {
+      let low = this._lowerCache.get(m);
+      if (low === undefined) {
+        low = m.text.toLowerCase();
+        this._lowerCache.set(m, low);
+      }
+      return low;
+    }));
+  searchActive = computed(() => this.searchResult().terms.length > 0);
+  private _hitsBySid = computed(() =>
+    new Map(this.searchResult().hits.map(h => [h.session_id, h])));
+  /** Bei aktiver Suche nur die Sitzungen mit Treffer, sonst alle. */
+  railSessions = computed(() => this.searchActive()
+    ? this.sessions().filter(s => this._hitsBySid().has(s.session_id))
+    : this.sessions());
+  activeSearchHits = computed(() =>
+    new Set(this._hitsBySid().get(this.activeTabId() ?? '')?.messageHits ?? []));
+  /** Welcher Treffer der aktiven Sitzung zuletzt angesprungen wurde. */
+  private _hitCursor = -1;
+
+  /** Suchwörter in den Treffer-Nachrichten markieren — über die CSS Custom
+   *  Highlight API, also ohne das gerenderte Markdown-HTML anzufassen. Läuft nach
+   *  jeder Änderung von Suchtext oder sichtbaren Nachrichten. */
+  private _searchHighlight = effect(() => {
+    const terms = this.searchResult().terms;
+    this.completedMessages();
+    setTimeout(() => this.paintSearchHighlights(terms), 0);
+  });
   inputText = '';
 
   /** Angehängter Ticket-Kontext je Sitzung — bereitgelegt, aber noch nicht gesendet.
@@ -947,6 +1030,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    (globalThis as any).CSS?.highlights?.delete('console-search');
     this._recognition?.abort();
     this.mediaRecorder?.stop();
     this._ttsAudio?.pause();
@@ -1543,6 +1627,68 @@ export class ComputerComponent implements OnInit, OnDestroy {
     } finally {
       this._sessionCreating = false;
     }
+  }
+
+  searchHit(sid: string): SessionHit | undefined {
+    return this.searchActive() ? this._hitsBySid().get(sid) : undefined;
+  }
+
+  clearSearch(): void {
+    this.searchQuery.set('');
+    this._hitCursor = -1;
+  }
+
+  /** Treffer-Sitzung öffnen und zur ersten Treffer-Nachricht springen; ein weiterer
+   *  Klick auf dieselbe Sitzung springt zum nächsten Treffer. */
+  openSearchHit(sid: string): void {
+    const again = sid === this.activeTabId();
+    if (!again) this.selectTab(sid);
+    this._hitCursor = again ? this._hitCursor + 1 : 0;
+    this.scrollToSearchHit(this._hitCursor);
+  }
+
+  /** Wartet kurz, bis der Verlauf gerendert ist (er kann noch nachladen), und
+   *  scrollt dann die n-te Treffer-Nachricht in die Mitte. */
+  private scrollToSearchHit(n: number, attempt = 0): void {
+    setTimeout(() => {
+      const hits = this.msgContainer?.nativeElement.querySelectorAll<HTMLElement>('.msg.search-hit');
+      if (!hits?.length) {
+        if (attempt < 20) this.scrollToSearchHit(n, attempt + 1);
+        return;
+      }
+      const el = hits[n % hits.length];
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      hits.forEach(h => h.classList.remove('search-flash'));
+      void el.offsetWidth;  // Animation neu starten, auch beim selben Element
+      el.classList.add('search-flash');
+    }, attempt ? 100 : 30);
+  }
+
+  private paintSearchHighlights(terms: string[]): void {
+    const registry = (globalThis as any).CSS?.highlights;
+    const HighlightCtor = (globalThis as any).Highlight;
+    if (!registry || !HighlightCtor) return;  // ältere Browser: nur die Blasen-Markierung
+    const root = this.msgContainer?.nativeElement;
+    if (!terms.length || !root) {
+      registry.delete('console-search');
+      return;
+    }
+    const ranges: Range[] = [];
+    root.querySelectorAll('.msg.search-hit .msg-text').forEach(textEl => {
+      const walker = document.createTreeWalker(textEl, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const text = (node.nodeValue ?? '').toLowerCase();
+        for (const t of terms) {
+          for (let i = text.indexOf(t); i >= 0; i = text.indexOf(t, i + t.length)) {
+            const r = document.createRange();
+            r.setStart(node, i);
+            r.setEnd(node, i + t.length);
+            ranges.push(r);
+          }
+        }
+      }
+    });
+    registry.set('console-search', new HighlightCtor(...ranges));
   }
 
   selectTab(sid: string): void {

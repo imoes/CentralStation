@@ -202,6 +202,68 @@
   }
 }
 
+// Livesuche über der Sitzungsliste
+.rail-search {
+  flex-shrink: 0;
+  padding: 0 6px 6px 0;
+}
+
+.rail-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1a0e04;
+  color: #ffcc99;
+  border: 1px solid #5a3a18;
+  border-radius: 0 14px 14px 0;
+  padding: 5px 10px 5px 12px;
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  outline: none;
+
+  &::placeholder { color: #5a3a18; }
+  &:focus { border-color: #ff9933; }
+}
+
+.rail-search-status {
+  font-family: 'Antonio', sans-serif;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  color: #ffcc99;
+  padding: 4px 10px 0 12px;
+}
+
+.rail-search-unloaded {
+  color: #ff9933;
+  cursor: help;
+}
+
+.rail-pill.has-hit {
+  -webkit-line-clamp: 8;
+}
+
+.search-snippet {
+  display: block;
+  margin-top: 3px;
+  font-family: system-ui, sans-serif;
+  font-size: 0.66rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 0.85;
+
+  mark {
+    background: #000;
+    color: #ffcc99;
+    padding: 0 2px;
+    border-radius: 2px;
+  }
+}
+
+.search-count {
+  opacity: 0.9;
+}
+
 .rail-actions {
   flex-shrink: 0;
   display: flex;
@@ -1437,4 +1499,25 @@
   .activity-comment { grid-template-columns: auto 1fr; }
   .activity-comment time { grid-column: 1 / -1; justify-self: start; }
   .panel-bottom .num-cell:nth-of-type(n + 3) { display: none; }
+}
+
+// Treffer der Livesuche: Blase markiert, Suchwörter über ::highlight. Die Regeln
+// stehen auf oberster Ebene — der Nachrichtentext kommt per innerHTML und trägt
+// kein _ngcontent-Attribut, daher ::ng-deep für das Highlight.
+.msg.search-hit .msg-text {
+  box-shadow: inset 3px 0 0 #ffcc99;
+}
+
+.msg.search-flash .msg-text {
+  animation: search-flash 1.2s ease-out;
+}
+
+@keyframes search-flash {
+  0%   { background-color: rgba(255, 204, 153, 0.35); }
+  100% { background-color: transparent; }
+}
+
+::ng-deep ::highlight(console-search) {
+  background-color: #ffcc99;
+  color: #000;
 }
