@@ -10,30 +10,36 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
-## 2026-11-06 — Incident view: "Computer" button, header no longer cramped
+## 2026-11-06 — Incident view: "Prüfschritte" button removed, header no longer cramped
 
-### What changed
+### What was removed
 
-- The hand-off button in the incident view is now just called **Computer** (was "Computer,
-  untersuche das"). Its tooltip no longer promises "Hermes … kann per SSH eingreifen": the console
-  agent is not always Hermes, and it examines without changing anything.
-- The incident panel is 560 px wide instead of 480. Header buttons no longer shrink. A host name
-  too long for the space is shortened with "…", and the full name appears on hover.
+- The **"Prüfschritte (experimentell)"** box, with its "Prüfschritte ausführen" button, is
+  gone from the incident view. The investigation runs through the **"Computer, untersuche
+  das"** button alone, so there are no longer two ways to start the same thing.
+  - The backend endpoint `run-checks` stays, but nothing calls it.
+  - Results of earlier runs are still stored in the incident and passed to the Console
+    hand-off.
 
 ### What was fixed
 
-- In a 480 px panel, the long label squeezed the robot icon into the text. "Ticket erstellen"
-  broke onto two lines, and only 130 px were left for the host name.
-- **Evidence** (Playwright on hal.example.com, mocked incident):
-  - Desktop: buttons are 92 px ("Computer") and 122 px ("Ticket erstellen"), each on one line.
-  - `docker0218.example.com` and `graylog-node03.example.com` are shown in full, not cut off.
-  - The header is 76 px high and does not overflow.
-  - On a 400 px screen the header is also 76 px high, and the host name is cut off with "…".
+- The incident panel is 560 px wide instead of 480. Header buttons no longer shrink. A host
+  name too long for the space is cut off with "…", and the full name appears on hover.
+- Before, in the 480 px panel, the robot icon in "Computer, untersuche das" was squeezed into
+  the text, and "Ticket erstellen" broke onto two lines.
+- The tooltip of the hand-off button no longer promises "Hermes … kann per SSH eingreifen".
+  The console agent is not always Hermes, and it examines without changing anything.
+- **Evidence** (Playwright on hal.example.com, mocked incident that has `planned_checks` and
+  `check_runs`):
+  - The panel contains no "Prüfschritte" text and no run button.
+  - The header shows "Computer, untersuche das", "Ticket erstellen" and close, each on one
+    line. The header is 76 px high.
+  - On a 400 px screen the header is also 76 px high.
 
 ### What's missing
 
-- The feed card still says "Computer, prüfe das". That button starts a different action (a host
-  diagnosis of a single alert, not a hand-off of the incident), so it has a different name.
+- Next to the long button, only about 115 px are left for the host name at 560 px:
+  `docker0218.example.com` is cut off, and the full name appears on hover.
 
 ---
 

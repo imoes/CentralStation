@@ -69,12 +69,6 @@ interface ClusterContext {
   window_hours?: number;
 }
 
-interface CheckStep { host: string; template: string; params?: Record<string, string>; }
-interface CheckResult extends CheckStep {
-  exit_code?: number | null; error?: string | null; message?: string; output?: string;
-  stderr?: string; truncated?: boolean; duration_ms?: number;
-}
-interface CheckRun { at: string; by?: string; origin: string; results: CheckResult[]; }
 interface RecipeSummary {
   id: string; title: string; problem?: string; solution?: string; created_at?: string;
   steps: { template: string; params?: Record<string, string>; host?: string | null; why?: string }[];
@@ -96,10 +90,6 @@ interface IncidentTimeline {
     kind?: string;
     error_cluster?: ClusterContext | null;
     merged_into?: string | null;
-    /** Prüfschritte (experimentell, nur per Knopf) — Backend error_clusters/checks.py */
-    planned_checks?: CheckStep[];
-    planned_checks_origin?: string;
-    check_runs?: CheckRun[];
     /** Bewährtes Rezept aus einem früheren, gelösten Vorfall (services/recipes.py) */
     recipe?: RecipeSummary | null;
     resolution?: { at: string; by?: string; summary: string } | null;
@@ -850,7 +840,7 @@ const SEVERITY_COLOR: Record<string, string> = {
               } @else {
                 <mat-icon>precision_manufacturing</mat-icon>
               }
-              {{ promptCopied() ? 'Übergeben ✓' : 'Computer' }}
+              {{ promptCopied() ? 'Übergeben ✓' : 'Computer, untersuche das' }}
             </button>
             <button mat-stroked-button class="claude-handoff-btn"
                     (click)="createIncidentTicket()"
@@ -948,36 +938,6 @@ const SEVERITY_COLOR: Record<string, string> = {
                           @if (o.writes) { <span class="recipe-writes">schreibend — nur mit Freigabe</span> }</li>
                       }
                     </ul>
-                  }
-                </div>
-              }
-              @if (incidentTimeline()!.incident.planned_checks?.length) {
-                @let inc = incidentTimeline()!.incident;
-                <div class="checks-box">
-                  <div class="checks-head">
-                    <span><b>Prüfschritte</b> <span class="cluster-dim">(experimentell · nur lesend ·
-                      {{ checkOriginLabel(inc.planned_checks_origin) }})</span></span>
-                    <button mat-stroked-button class="checks-run-btn" [disabled]="checksRunning()"
-                            (click)="runIncidentChecks(inc.id)">
-                      <mat-icon>{{ checksRunning() ? 'hourglass_top' : 'play_arrow' }}</mat-icon>
-                      {{ checksRunning() ? 'läuft …' : 'Prüfschritte ausführen' }}
-                    </button>
-                  </div>
-                  <ul class="checks-plan">
-                    @for (st of inc.planned_checks!; track $index) {
-                      <li><code>{{ st.host }}</code> · {{ st.template }} {{ checkParams(st.params) }}</li>
-                    }
-                  </ul>
-                  @if (inc.check_runs?.length) {
-                    @let run = inc.check_runs![inc.check_runs!.length - 1];
-                    <div class="cluster-dim">Letzter Lauf {{ run.at | date:'dd.MM. HH:mm' }} · {{ run.by }}</div>
-                    @for (r of run.results; track $index) {
-                      <details class="checks-result" [class.err]="!!r.error || !!r.exit_code">
-                        <summary>{{ r.host }} · {{ r.template }} {{ checkParams(r.params) }} —
-                          {{ r.error ? 'Fehler: ' + r.error : 'exit ' + r.exit_code }}</summary>
-                        <pre>{{ r.output || r.message || r.stderr || '(keine Ausgabe)' }}</pre>
-                      </details>
-                    }
                   }
                 </div>
               }
@@ -1690,14 +1650,7 @@ const SEVERITY_COLOR: Record<string, string> = {
     .recipe-box.resolved { border-color: var(--mat-sys-primary); }
     .recipe-title { font-weight: 600; margin: 2px 0; }
     .recipe-writes { color: var(--mat-sys-error); font-size: 11px; margin-left: 4px; }
-    .checks-box { margin: 8px 0; padding: 8px; border-radius: 6px; border: 1px dashed var(--mat-sys-outline-variant); }
-    .checks-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
     .checks-plan { margin: 6px 0; padding-left: 18px; font-size: 12px; }
-    .checks-result { margin: 4px 0; font-size: 12px; }
-    .checks-result summary { cursor: pointer; }
-    .checks-result.err summary { color: var(--mat-sys-error); }
-    .checks-result pre { white-space: pre-wrap; max-height: 260px; overflow: auto; font-size: 11px;
-                         background: var(--mat-sys-surface-container); padding: 6px; border-radius: 4px; }
     .cluster-ai ol { margin: 4px 0 0 18px; padding: 0; }
     .cluster-sub { margin-top: 6px; font-size: 12px; font-weight: 600; }
     .cluster-containers { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
@@ -2757,35 +2710,6 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   }
   clusterKindIcon(kind?: string): string {
     return kind === 'fleet' ? 'dns' : kind === 'critical' ? 'report' : 'bubble_chart';
-  }
-
-  checksRunning = signal(false);
-
-  checkOriginLabel(origin?: string): string {
-    switch (origin) {
-      case 'rezept': return 'aus dem bewährten Rezept';
-      case 'triage': return 'aus der KI-Einschätzung';
-      case 'rezept+triage': return 'Rezept + KI-Einschätzung';
-      default: return 'Basisprüfung der Hosts';
-    }
-  }
-
-  checkParams(p?: Record<string, string>): string {
-    const e = Object.entries(p || {});
-    return e.length ? '(' + e.map(([k, v]) => `${k}=${v}`).join(', ') + ')' : '';
-  }
-
-  /** Prüfschritte ausführen (experimentell): nur Lese-Vorlagen über den Prüf-Container. */
-  runIncidentChecks(incidentId: string) {
-    this.checksRunning.set(true);
-    this.http.post<CheckRun>(`${environment.apiUrl}/feed/incidents/${incidentId}/run-checks`, {})
-      .subscribe({
-        next: () => { this.checksRunning.set(false); this.openIncidentTimeline(incidentId); },
-        error: err => {
-          this.checksRunning.set(false);
-          this.snackBar.open(err?.error?.detail || 'Prüfschritte fehlgeschlagen', 'OK', { duration: 5000 });
-        },
-      });
   }
 
   openIncidentTimeline(incidentId: string) {

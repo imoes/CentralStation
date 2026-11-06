@@ -1078,14 +1078,11 @@ The Console agents can look things up on the server itself, in the version insta
 
 ### Check steps and recipes (incidents)
 
-- **Check steps** (experimental, button only): the incident view, opened from the mail
-  link, has "Prüfschritte ausführen".
-  - The steps are, in this order: recipe steps, then the AI assessment's
-    `pruefschritte_auto`, otherwise a basic disk/memory check.
-  - Every step is a `cs_policy` template on a host of this outbreak and runs through the
-    probe runner. Results are stored on the incident and included in the Console
-    handoff.
-  - Switch: `error_clusters.checks_enabled`.
+- **Check steps:** removed from the incident view on 2026-11-06. The investigation runs
+  through **"Computer, untersuche das"** (Console hand-off). The backend endpoint
+  `POST /api/feed/incidents/{id}/run-checks` (switch `error_clusters.checks_enabled`) still
+  exists, but nothing in the interface calls it. Results of earlier runs remain in the
+  incident's `causal_context` and in the Console hand-off.
 - **Recipes:**
   - **Source:** "✓ GELÖST" on a Console session that came from an incident
     (`external_id = incident:<id>`).
