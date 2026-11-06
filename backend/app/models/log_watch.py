@@ -5,7 +5,7 @@ Rolle eines Feldes bestimmt, wie es ausgewertet wird (services/log_watch/catalog
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, Integer, LargeBinary, String, Text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -71,3 +71,27 @@ class RelevanzDefinition(Base):
     begruendung: Mapped[str] = mapped_column(String(1000))
     erstellt_von: Mapped[str] = mapped_column(String(255))
     erstellt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class NetzZustand(Base):
+    """Switch-Durchlauf: Lerner-Zustand (Drain, eigene Instanz) und Fortschritt — eine Zeile.
+
+    In Postgres, damit ein Neustart nicht zu einer neuen Lernphase führt (wie error_clusters).
+    """
+    __tablename__ = "netz_zustand"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    gestartet_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    miner_state: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    letztes_fenster: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NetzMuster(Base):
+    """Ein Switch-Meldungsmuster mit erstem und letztem Auftreten (für „neu“)."""
+    __tablename__ = "netz_muster"
+
+    key: Mapped[str] = mapped_column(String(16), primary_key=True)
+    template: Mapped[str] = mapped_column(Text)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    beispiel: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -193,6 +193,19 @@ async def run_raster() -> None:
             log.warning("Raster firewall: Fenster %s fehlgeschlagen: %s", b, e)
             await _speichere("firewall", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
 
+    # Switches (Graylog nsa/nss/nsc, Level ≤ 4): eigener Musterlerner, gleiches Fenster.
+    if "graylog" in adapter:
+        from app.services.log_watch import switch
+        try:
+            treffer, extra = await switch.fenster(adapter["graylog"].gl, b, b + FENSTER, verz, d)
+            _merke(b, treffer)
+            werte = zaehle(treffer, _kontingent, _stunde(b))
+            werte.update(extra)
+            await _speichere("switch", b, werte)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Raster switch: Fenster %s fehlgeschlagen: %s", b, e)
+            await _speichere("switch", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
+
     # Quellenübergreifend: auf Kopien zählen — im Trockenlauf wird nichts verändert.
     letzte = [copy.deepcopy(t) for z, t in _juengst if z >= jetzt - UEBERGREIFEND - FENSTER]
     vorher = sum(1 for t in letzte if t.relevanz == 3)

@@ -24,7 +24,7 @@ from app.services.log_watch.vokabular import dienst_thema, themen
 KONTINGENT = 5
 #: Mittlere Nachrichtengröße je Quelle in Byte, für die Platzschätzung.
 #: Graylog gemessen 06.11. (Stichprobe 500 Fehlerzeilen); Wazuh/CheckMK geschätzt.
-BYTES_JE_NACHRICHT = {"graylog": 1468, "wazuh": 2500, "checkmk": 800, "firewall": 2600}
+BYTES_JE_NACHRICHT = {"graylog": 1468, "wazuh": 2500, "checkmk": 800, "firewall": 2600, "switch": 600}
 #: Höchstens so viele Hostgruppen-Tags je Nachricht.
 MAX_HG = 3
 #: Themen, die ein Kriterium erfüllen

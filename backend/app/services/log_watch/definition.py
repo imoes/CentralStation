@@ -55,7 +55,7 @@ KRITERIEN: tuple[Kriterium, ...] = (
     Kriterium("N0", NICHT_RELEVANT, "Kein Kriterium erfüllt",
               "Keines der Relevanz-Kriterien trifft zu.", "Standardfall"),
     Kriterium("N1", NICHT_RELEVANT, "Routine", "Bekanntes Muster im üblichen Umfang.",
-              "Graylog-Muster ohne Fehler-Cluster-Ereignis"),
+              "Graylog-Muster ohne Fehler-Cluster-Ereignis; Switch-Muster ohne Signal"),
     Kriterium("N2", NICHT_RELEVANT, "Bekannt und behandelt",
               "Quittiert, in Downtime, offenes Ticket dazu oder bereits als KI-Befund gemeldet "
               "(solange kein neues Relevanz-Kriterium hinzukommt).",
@@ -92,13 +92,15 @@ PARAMETER = {
 }
 
 #: Version der Definition, die dieser Code als Standard mitbringt, und warum es sie gibt.
-CODE_VERSION = 3
+CODE_VERSION = 4
 AENDERUNGEN = {
     1: "Festgelegt mit dem Nutzer am 06.11.2026",
     2: "R6 umfasst Firewall-Bedrohungen (Sinkhole, Stufe ab medium) — Nutzer 06.11.2026: "
        "Firewall- und Switch-Logs werden mit analysiert",
     3: "Firewall: betroffen ist die Seite in einer internen Zone (Parameter firewall_externe_zonen) — "
        "Logikprüfung 06.11.: ein Angriff von außen wurde dem Angreifer statt dem Ziel zugeordnet",
+    4: "Switch-Logs werden analysiert (eigener Musterlerner): bekanntes Switch-Muster ohne Signal ist "
+       "Routine (N1), Hardwarefehler sind Schaden (R5), Syslog-Level ≤ 2 ist ein kritischer Zustand",
 }
 
 def als_daten() -> tuple[list[dict], dict]:

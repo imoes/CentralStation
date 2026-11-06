@@ -1340,6 +1340,28 @@ Reading every line would make no sense; `services/log_watch/firewall.py` splits 
   cluster pass. They are still counted there, but the raster does not rate them a second time as
   Graylog.
 
+### Log watch: switch logs (nsa/nss/nsc, Juniper EX)
+
+Measured 2026-11-06: about 241 000 switch messages per hour, of which level ≤ 4 about 16 700 (about
+1 400 per 5 minutes). The error-cluster detection excludes switches on purpose.
+`services/log_watch/switch.py` gives them their **own pattern learner** (Drain). Its state is stored in
+`netz_zustand`, and the known patterns with first and last sighting in `netz_muster`.
+
+- **Input:** `source:(nsa* OR nss* OR nsc*) AND level:<=4`, every line, every window.
+- **Before learning, the leading device name is removed** ("nsa429 fpc1 … Link 7 DOWN"). Otherwise
+  every switch would get its own pattern, and an outage across many switches would look like many single
+  cases.
+- **"New" (R2) only counts after a 24-hour learning phase.** During it, the verdict carries "Lernphase
+  bis …".
+- **Switch vocabulary** (`vokabular.THEMEN_SWITCH`): link-down (including Juniper `Link N DOWN` and
+  `SNMP_TRAP_LINK_DOWN`), err-disable, stp, schleife, crc, poe, hardware. Hardware (power supply, fan,
+  temperature) counts as damage (R5).
+- **Syslog level ≤ 2** is a critical state (`zustand:crit`, urgent).
+- **A known pattern without a signal is routine (N1)**, as with Graylog (definition version 4).
+- **Hashtags:** `quelle:switch`, `switch:`, `muster:`, `level:`, host tags from CheckMK.
+
+The old network agent (200 messages per hour, judged by LLM) is replaced after a shadow run.
+
 ### Log watch: AI cockpit (dashboard widgets)
 
 The generative dashboard is the **"🪄 KI-Cockpit"**. Besides the existing widget types, the AI can

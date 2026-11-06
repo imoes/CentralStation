@@ -10,6 +10,55 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 8: switch logs (nsa/nss/nsc) are analysed
+
+### What's new
+
+- **Switches get their own pattern learner** (Drain, state in `netz_zustand`, known patterns in
+  `netz_muster`).
+  - It reads all lines with level ≤ 4: about 1 300–1 400 per 5 minutes, complete.
+  - Switches are judged by the same rules and hashtags as every other source.
+  - The error-cluster detection stays unchanged; it excludes switches on purpose.
+- **"New" (R2) only after a 24-hour learning phase.** Until then the verdict says "Lernphase bis …"; the
+  learning phase is never hidden.
+- **Switch vocabulary:** link down, err-disable, spanning tree, loop, CRC, PoE, hardware. Power supply,
+  fan or temperature failures count as damage (R5); syslog level ≤ 2 is a critical state.
+- **Definition version 4:** a known switch pattern without a signal is routine (N1), like Graylog.
+
+### Fixed during the live check (all three found on the real Juniper EX messages)
+
+- **The vocabulary did not know the Juniper wording.** Juniper writes "ex_bcm_linkscan_handler: Link 12
+  DOWN" and "SNMP_TRAP_LINK_DOWN … ifOperStatus down". Both are now recognised, as is Cisco "changed
+  state to down".
+- **The device name in the message gave every switch its own pattern.** For example "nsa429 fpc1 … Link
+  DOWN". An outage across many switches would have looked like many single cases.
+  - The leading device name is now removed before learning.
+  - The learner tables, filled 20 minutes earlier with these wrong patterns, were reset. The learning
+    phase starts again.
+- **UP and DOWN fell into one pattern.** Drain generalises "Link 7 UP" and "Link 7 DOWN" to
+  "Link <NUM> <*>". Topics are now determined per line and are part of the group key, so DOWN lines are
+  counted and judged apart from UP lines.
+
+### Evidence (live, 2026-11-06)
+
+| Window | Lines | Patterns |
+|---|---|---|
+| 18:55 (before the fix) | 1 365, complete | 34, host-specific |
+| 19:00 (after the fix) | 1 325, complete | 26, shared by all switches |
+
+- In both windows everything was routine (N1), as expected in the learning phase.
+- **Tests:** 17 new, among them the Juniper and Cisco wordings, one pattern for three switches, UP/DOWN
+  in one pattern, and the learning phase. The backend suite has 863 passed.
+
+### What's missing
+
+- **The same UP/DOWN effect can occur in the Graylog part.** Topics there also come from pattern and
+  first example. Planned: topics per line in the error-cluster count.
+- **Spikes per switch pattern need a baseline** (hourly counts), which is not built yet.
+- **The old network agent still runs in parallel**; it will be replaced after a shadow run.
+
+---
+
 ## 2026-11-06 — Log watch, part 7: firewall logs (Palo Alto) are analysed
 
 ### What's new

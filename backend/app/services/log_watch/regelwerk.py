@@ -129,7 +129,7 @@ def standard_regeln(p) -> list[Regel]:
         Regel("R3", "R3", "Ausbreitung", FORWARD, {"hat": "signal:ausbreitung"}),
         Regel("R4", "R4", "Anstieg", FORWARD, {"hat": "signal:anstieg"}),
         Regel("R8", "R8", "Ablaufende Frist", FORWARD, {"hat": "signal:frist"}),
-        Regel("N1", "N1", "Routine", BLOCK, {"hat": "quelle:graylog"}),
+        Regel("N1", "N1", "Routine", BLOCK, {"eines_von": ["quelle:graylog", "quelle:switch"]}),
     ]
 
 

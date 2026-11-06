@@ -71,7 +71,30 @@ THEMEN: tuple[Thema, ...] = (
     _t("warteschlange", "Warteschlange",
        r"\bqueue (is )?full\b|\bmessages? (dropped|discarded)\b|\bbacklog\b"),
 )
-THEMA_IDS = frozenset(t.id for t in THEMEN)
+#: Switches (nsa/nss/nsc) — eigene Wortwahl der Hersteller (HPE/Aruba, Cisco, Juniper)
+THEMEN_SWITCH: tuple[Thema, ...] = (
+    _t("link-down", "Verbindung unterbrochen",
+       r"\blink (is )?down\b|\bline protocol on interface \S+, changed state to down\b"
+       r"|\bport \S+ (is )?(now )?(off-line|down)\b|\binterface \S+ (is )?down\b"
+       r"|\binterface \S+, changed state to down\b"
+       # Juniper EX (gemessen 06.11.): „ex_bcm_linkscan_handler: Link 12 DOWN“, SNMP-Trap
+       r"|\bLink \d+ DOWN\b|SNMP_TRAP_LINK_DOWN|\bifOperStatus down\b"),
+    _t("err-disable", "Port abgeschaltet",
+       r"\berr-?disable|\bdisabled (by|due to) (bpdu|loop|port-security|storm)"),
+    _t("stp", "Spanning-Tree-Änderung",
+       r"\btopology change\b|\bTCN\b|\broot (bridge|port) (changed|is)\b|\bspanning[- ]tree\b"),
+    _t("schleife", "Netzwerkschleife", r"\bloop (detected|protect)|\bbroadcast storm\b"),
+    _t("crc", "Übertragungsfehler", r"\bCRC\b|\bFCS errors?\b|\binput errors\b"),
+    _t("poe", "PoE-Fehler", r"\bPoE\b.{0,40}\b(fault|overload|denied|failed)\b"),
+    _t("hardware", "Hardwarefehler",
+       r"\b(power supply|PSU|fan|temperature)\b.{0,40}\b(fail(ed|ure)?|fault|critical|too high|over)\b", 2),
+)
+THEMA_IDS = frozenset(t.id for t in THEMEN + THEMEN_SWITCH)
+
+
+def themen_switch(text: str) -> list[Thema]:
+    """Allgemeine Themen und Switch-Themen — in Vokabular-Reihenfolge."""
+    return themen(text) + [t for t in THEMEN_SWITCH if t.muster.search(text or "")]
 
 
 def themen(text: str) -> list[Thema]:
