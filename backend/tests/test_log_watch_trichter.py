@@ -16,6 +16,10 @@ async def _bauer(host, stunden):
                                      "hostgruppen": ["cue"]}, "lage": {"nachrichten": []}}
 
 
+async def _lage(start, stunden):
+    return {"startfilter": start, "nachrichten": [{"id": "graylog:m1", "text": "OOM"}]}
+
+
 async def _schreiber(zuege):
     PROTOKOLL[:] = zuege
     return len(zuege)
@@ -49,7 +53,7 @@ def test_trichter_bis_befund(monkeypatch):
                                       {"id": "ki:abc", "belege": 2, "verworfen": []}]})
     ki = _FakeKI([[_aufruf("lw_wissen", filter="host:a")], [_aufruf("lw_facetten", filter="host:a")],
                   [_aufruf("lw_befund", titel="t")], [_aufruf("lw_befund", titel="t2")]])
-    erg = asyncio.run(tr.analysiere({"start": "host:a", "anzahl": 7, "hosts": ["a"]}, object(), ki, bauer=_bauer, schreiber=_schreiber))
+    erg = asyncio.run(tr.analysiere({"start": "host:a", "anzahl": 7, "hosts": ["a"]}, object(), ki, bauer=_bauer, schreiber=_schreiber, lage_bauer=_lage))
     assert erg["befund"] == "ki:abc"
     assert [s["werkzeug"] for s in erg["schritte"]] == ["lw_wissen", "lw_facetten", "lw_befund", "lw_befund"]
     assert erg["schritte"][2]["fehler"].startswith("kein geprüfter Beleg")
@@ -58,7 +62,7 @@ def test_trichter_bis_befund(monkeypatch):
 
 def test_ohne_befund_benannt(monkeypatch):
     ki = _FakeKI([[], []])
-    erg = asyncio.run(tr.analysiere({"start": "host:a", "anzahl": 1, "hosts": ["a"]}, object(), ki, bauer=_bauer, schreiber=_schreiber))
+    erg = asyncio.run(tr.analysiere({"start": "host:a", "anzahl": 1, "hosts": ["a"]}, object(), ki, bauer=_bauer, schreiber=_schreiber, lage_bauer=_lage))
     assert erg["kein_befund"] == "KI hat ohne lw_befund geendet"
 
 
@@ -100,10 +104,12 @@ def test_protokoll_und_host_objekt_im_prompt(monkeypatch):
     _rufe(monkeypatch, {"lw_suche": {"gesamt": 3}, "lw_befund": {"id": "ki:abc", "belege": 1, "verworfen": []}})
     ki = _FakeKI([[_aufruf("lw_suche", filter="host:a thema:oom")], [_aufruf("lw_befund", titel="T", befund="B")]])
     erg = asyncio.run(tr.analysiere({"start": "muster:m1", "anzahl": 2, "hosts": ["a"]}, object(), ki,
-                                    bauer=_bauer, schreiber=_schreiber))
+                                    bauer=_bauer, schreiber=_schreiber, lage_bauer=_lage))
     assert erg["befund"] == "ki:abc" and erg["sitzung"]
     assert [z["rolle"] for z in PROTOKOLL] == ["worker", "ki", "werkzeug", "ki", "befund"]
     assert '"netz": "dmz"' in PROTOKOLL[0]["text"]                      # Host-Objekt ist der Prompt
+    assert '"startfilter": "muster:m1"' in PROTOKOLL[0]["text"]          # Lage des FALLS, nicht je Host
+    assert "NICHT erneut mit dem Startfilter" in PROTOKOLL[0]["text"]
     tags = set(PROTOKOLL[0]["hashtags"])
     assert {"host:a", "muster:m1", "ort:MUE-0", "kritikalitaet:prod", "netz:dmz", "hg:cue", "befund:abc"} <= tags
     assert PROTOKOLL[2]["werkzeug"] == "lw_suche" and PROTOKOLL[4]["befund"] == "ki:abc"
@@ -115,5 +121,5 @@ def test_protokoll_auch_bei_fehler(monkeypatch):
         async def __call__(self, *a):
             raise TimeoutError("ReadTimeout")
     erg = asyncio.run(tr.analysiere({"start": "host:a", "anzahl": 1, "hosts": ["a"]}, object(), _Kaputt(),
-                                    bauer=_bauer, schreiber=_schreiber))
+                                    bauer=_bauer, schreiber=_schreiber, lage_bauer=_lage))
     assert erg["fehler"].startswith("TimeoutError") and [z["rolle"] for z in PROTOKOLL] == ["worker"]

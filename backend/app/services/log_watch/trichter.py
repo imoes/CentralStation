@@ -53,9 +53,10 @@ Relevanz 0–3, Hashtags art:wert (host:, thema:, signal:, quelle:, kritikalitae
 Kriterien R1–R8 (relevant) / N0–N6 (nicht relevant) mit Gründen.
 
 Vorgehen als Trichter:
-1. Der Worker hat schon gesucht: du bekommst je betroffenem Host ein Host-Objekt — felder
-   (Stammdaten aus CheckMK), lage (relevante Nachrichten mit ID und Text, Facetten), nachbarschaft
-   (Netzplan-Kanten) und gedaechtnis (frühere Befunde und Gespräche zu diesem Host). Lies es zuerst.
+1. Der Worker hat schon gesucht: du bekommst die Lage des Falls (relevante Nachrichten zum
+   Startfilter mit ID und Text, Facetten, frühere Befunde dazu) und je betroffenem Host ein
+   Host-Objekt — felder (Stammdaten aus CheckMK), nachbarschaft (Netzplan-Kanten) und gedaechtnis
+   (frühere Befunde und Gespräche zu diesem Host). Lies beides zuerst.
    Gibt es im Gedächtnis schon einen Befund zur selben Lage, beziehe dich darauf (Folge-Befund).
 2. Werkzeuge (lw_suche, lw_facetten, lw_netzplan, lw_nachricht, lw_gespraech) nur zum Vertiefen:
    den auffälligsten Hashtag als Filter ergänzen, bis ein kleines, zusammenhängendes Ergebnis bleibt.
@@ -169,7 +170,7 @@ def _hashtags_aus(objekte: list[dict], fall: dict) -> list[str]:
     return sorted(tags)
 
 
-async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=None) -> dict:
+async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=None, lage_bauer=None) -> dict:
     """Eine Analyse für einen Fall {start, anzahl, hosts}: der Worker baut die Host-Objekte (Suche),
     die KI liest sie als Prompt und vertieft mit Werkzeugen; jeder Zug geht ins Gesprächsprotokoll.
     Ergebnis {start, hosts, sitzung, befund|kein_befund|fehler, schritte}."""
@@ -180,14 +181,19 @@ async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=
         from app.services.llm_client import generate_with_tools as llm
     if bauer is None:
         from app.services.log_watch.hostobjekt import baue as bauer
+    if lage_bauer is None:
+        from app.services.log_watch.hostobjekt import fall_lage as lage_bauer
     schreiber = schreiber or gespraech.schreibe
     sitzung = gespraech.neue_sitzung()
+    lage = await lage_bauer(fall["start"], STUNDEN)
     objekte = [await bauer(h, STUNDEN) for h in fall["hosts"][:HOSTS_IM_PROMPT]]
     weitere = fall["hosts"][HOSTS_IM_PROMPT:]
     prompt = (f"Prüfung wahr: {fall['anzahl']} Nachrichten mit Relevanz 3 oder neuem Muster in den letzten "
               f"{STUNDEN} h, noch ohne Analyse. Startfilter: {fall['start']}."
               + (f" Weitere betroffene Hosts ohne Objekt: {', '.join(weitere)}." if weitere else "")
-              + "\n\nHost-Objekte (Suche des Workers):\n"
+              + "\n\nLage des Falls (Suche des Workers zum Startfilter — rufe lw_suche/lw_facetten/lw_wissen "
+              "NICHT erneut mit dem Startfilter auf):\n" + json.dumps(lage, ensure_ascii=False, default=str)
+              + "\n\nHost-Objekte (Felder, Nachbarschaft, Gedächtnis):\n"
               + json.dumps(objekte, ensure_ascii=False, default=str))
     verlauf: list[dict] = [{"rolle": "worker", "text": prompt}]
     ergebnis: dict = {}
