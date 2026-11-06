@@ -24,7 +24,13 @@ SCHALTER = "log_watch.ki_aktiv"
 #: Nachrichten dieser Prüfung lösen eine Analyse aus (Filtersprache)
 AUSLOESER = "(relevanz>=3 OR signal:neu) !quelle:(ki OR konsole)"
 STUNDEN = 2
-HOECHSTENS_JE_LAUF = 2
+#: Fälle je Lauf — gemessen 06.11.: 56–101 s Modellzeit je Fall; mit 2 Fällen je 10 min wuchs die
+#: Warteschlange (20 → 58 Nachrichten in 40 min). ZEIT_BUDGET_S hält einen Lauf unter dem Takt.
+HOECHSTENS_JE_LAUF = 4
+ZEIT_BUDGET_S = 480
+#: Takt des Jobs (scheduler: minute 3-59/10) — Nachrichten, die in diesem Abstand aus dem
+#: Prüffenster fallen, ohne gesehen zu sein, heißen „verfallen“ (benannt, nicht still)
+TAKT = timedelta(minutes=10)
 SCHRITTE = 12
 #: so viel einer Werkzeugantwort geht an die KI (Rest benannt abgeschnitten)
 ANTWORT_MAX = 6000
@@ -101,20 +107,32 @@ async def kandidaten(stunden: float = STUNDEN) -> dict:
     from app.services.log_watch import filter as flt
     from app.services.log_watch.historie import PRAEFIX
     os_client = get_opensearch()
-    seit = (datetime.now(timezone.utc) - timedelta(hours=stunden)).isoformat()
+    seit_dt = datetime.now(timezone.utc) - timedelta(hours=stunden)
+    seit = seit_dt.isoformat()
     res = await os_client.search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
         "size": PRUEF_MAX, "track_total_hits": True, "_source": ["host", "zeit", "hashtags"],
-        "query": {"bool": {"filter": [{"range": {"zeit": {"gte": seit}}}, flt.opensearch(AUSLOESER)],
+        "query": {"bool": {"filter": [{"range": {"zeit": {"gte": (seit_dt - TAKT).isoformat()}}},
+                                      flt.opensearch(AUSLOESER)],
                            "must_not": [{"prefix": {"hashtags": "befund:"}}]}}})
-    nachrichten = [h["_source"] for h in res["hits"]["hits"]]
+    alle = [h["_source"] for h in res["hits"]["hits"]]
     bef = await os_client.search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
         "size": 500, "_source": ["host", "zeit", "ai_provenance.start"],
         "query": {"bool": {"filter": [{"term": {"quelle": "ki"}}, {"range": {"zeit": {"gte": seit}}}]}}})
-    offen = offene(nachrichten, [h["_source"] for h in bef["hits"]["hits"]])
+    offen_alle = offene(alle, [h["_source"] for h in bef["hits"]["hits"]])
+    offen = [n for n in offen_alle if _zeit_iso(n.get("zeit")) >= seit_dt]
     je_host = Counter(n.get("host", "") for n in offen)
     return {"gesamt": len(offen), "gekappt": res["hits"]["total"]["value"] > PRUEF_MAX,
+            # im letzten Takt aus dem Prüffenster gefallen, ohne dass eine Analyse sie sah
+            "verfallen": len(offen_alle) - len(offen),
             "faelle": faelle(offen),
             "hosts": [{"host": h, "anzahl": n} for h, n in je_host.most_common(20)]}
+
+
+def _zeit_iso(s) -> datetime:
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _kurz(erg: dict) -> str:
@@ -178,11 +196,16 @@ async def lauf(erzwingen: bool = False, llm=None) -> dict | None:
         llm_config = await get_active_llm_config(db)
     k = await kandidaten()
     ergebnisse = []
+    beginn = time.monotonic()
     for f in k["faelle"][:HOECHSTENS_JE_LAUF]:
+        if time.monotonic() - beginn > ZEIT_BUDGET_S:
+            ergebnisse.append({"start": f["start"], "hosts": f["hosts"],
+                               "kein_befund": f"Zeitbudget {ZEIT_BUDGET_S} s des Laufs erschöpft — nächster Lauf"})
+            break
         try:
             ergebnisse.append(await analysiere(f, llm_config, llm))
         except Exception as e:  # noqa: BLE001 — ein Fall scheitert, der nächste läuft
             log.warning("Trichter %s: %s", f["start"], e)
             ergebnisse.append({"start": f["start"], "hosts": f["hosts"], "fehler": f"{type(e).__name__}: {str(e)[:300]}"})
-    return {"pruefung": k, "analysen": ergebnisse,
+    return {"pruefung": k, "analysen": ergebnisse, "dauer_s": round(time.monotonic() - beginn, 1),
             "befunde": [e["befund"] for e in ergebnisse if "befund" in e]}

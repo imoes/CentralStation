@@ -66,6 +66,31 @@ const ZUSTAND: Record<string, string> = {
             </details>
           }
         }
+        @case ('lw_ki') {
+          <div class="lw-meta">KI-Analyse · {{ d().zeitraum_h }} h · {{ d().laeufe }} Läufe · KI {{ d().ki_aktiv ? 'an' : 'aus' }}
+            · Kapazität jetzt {{ d().kapazitaet?.faelle_je_lauf }} Fälle je 10 min</div>
+          @if (!d().laeufe) {
+            <div class="lw-leer">Kein Lauf im Zeitraum{{ d().ki_aktiv ? '' : ' — KI-Trichter ist ausgeschaltet' }}</div>
+          } @else {
+            <div class="kpis">
+              <div class="kpi"><b>{{ d().summe?.befunde ?? 0 }}</b><span>Befunde</span></div>
+              <div class="kpi"><b>{{ d().summe?.analysiert ?? 0 }}</b><span>Fälle analysiert</span></div>
+              <div class="kpi" [matTooltip]="'Analyse ohne gültigen Befund (z. B. Zeitbudget, kein Abschluss)'">
+                <b>{{ d().summe?.ohne_befund ?? 0 }}</b><span>ohne Befund</span></div>
+              <div class="kpi" [class.warn]="(d().summe?.verfallen ?? 0) > 0"
+                   matTooltip="Auslösende Nachrichten, die das 2-h-Prüffenster ohne Analyse verlassen haben">
+                <b>{{ d().summe?.verfallen ?? 0 }}</b><span>verfallen</span></div>
+              <div class="kpi"><b>{{ d().modell_s_je_fall ?? '—' }}</b><span>s Modell je Fall</span></div>
+            </div>
+            <div class="ki-kurve">
+              <span class="ki-lbl">Warteschlange<br><b>{{ d().jetzt?.offen }}</b> Nachr. · {{ d().jetzt?.faelle }} Fälle</span>
+              <svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none">
+                <polyline [attr.points]="kiSpark()" fill="none" stroke="currentColor" stroke-width="1.5"></polyline>
+              </svg>
+            </div>
+            <div class="ki-urteil" [class.warn]="kiUrteil().warn">{{ kiUrteil().text }}</div>
+          }
+        }
         @case ('lw_kriterien') {
           <div class="lw-meta">Nachrichten · {{ d().zeitraum_h }} h · Definition v{{ d().definition_v }}</div>
           @if (!kriterienGruppen().length) {
@@ -200,6 +225,20 @@ const ZUSTAND: Record<string, string> = {
     .t-holo .bef.r3 { border-left-color: #4fd6ff; }
     .t-holo .bef.r3 .bef-rel { background: #4fd6ff; }
     .t-classic .bef.r3 { border-left-color: #f59e0b; }
+    .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+    .kpi { display: flex; flex-direction: column; align-items: flex-start; padding: 4px 6px;
+           background: rgba(127,127,127,.08); border-radius: 4px; min-width: 0; }
+    .kpi b { font-size: 18px; font-variant-numeric: tabular-nums; }
+    .kpi span { font-size: 10px; opacity: .65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+    .kpi.warn b { color: #ffcc00; }
+    .ki-kurve { display: grid; grid-template-columns: 130px 1fr; gap: 8px; align-items: center; margin-top: 4px; }
+    .ki-lbl { font-size: 10px; opacity: .75; line-height: 1.3; }
+    .ki-urteil { font-size: 11px; opacity: .8; }
+    .ki-urteil.warn { color: #ffcc00; opacity: 1; }
+    .t-lcars .kpi b, .t-lcars .ki-kurve .spark { color: #FF9933; }
+    .t-lcars .kpi span, .t-lcars .ki-lbl { font-family: 'Antonio','Eurostile',sans-serif; text-transform: uppercase; color: #FFCC66; }
+    .t-holo .kpi b, .t-holo .ki-kurve .spark { color: #4fd6ff; }
+    .t-classic .ki-kurve .spark { color: #60a5fa; }
     .korpus { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .chip { padding: 3px 10px; border-radius: 12px; font-size: 11px; background: rgba(127,127,127,.18); }
     .chip.z-ok { background: rgba(102,204,102,.25); }
@@ -233,6 +272,23 @@ export class LwWidgetComponent {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly d = computed(() => (this.daten() ?? {}) as any);
+
+  readonly kiSpark = computed(() => {
+    const r: { offen: number }[] = this.d().reihe ?? [];
+    const max = Math.max(1, ...r.map(x => x.offen));
+    return r.map((x, i) => `${r.length > 1 ? (i / (r.length - 1)) * 100 : 50},${24 - (x.offen / max) * 22}`).join(' ');
+  });
+
+  /** Lesart der Warteschlange: wächst sie, kommt die KI nicht nach — Grund und Zahl genannt. */
+  readonly kiUrteil = computed(() => {
+    const d = this.d();
+    const v = d.summe?.verfallen ?? 0;
+    const t = d.trend_offen;
+    if (v > 0) return { warn: true, text: `${v} auslösende Nachrichten verfallen ohne Analyse — die KI kommt nicht nach` };
+    if (t != null && t > 0) return { warn: true, text: `Warteschlange +${t} Nachrichten im Zeitraum — wächst` };
+    if (t != null) return { warn: false, text: `Warteschlange ${t} Nachrichten im Zeitraum — die KI kommt nach` };
+    return { warn: false, text: 'Noch zu wenige Läufe für einen Trend' };
+  });
 
   readonly STATUS: Record<string, string> = { offen: 'offen', gestuetzt: 'gestützt', widerlegt: 'widerlegt' };
 

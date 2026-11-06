@@ -10,6 +10,42 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 17: AI analysis statistics in the cockpit; nothing expires silently
+
+### What's new
+
+- **Cockpit tile `lw_ki`, "KI-Analyse: kommt sie nach?"** It shows, per funnel run:
+  - the queue (open messages and cases),
+  - cases analysed, findings, cases without a finding, errors,
+  - **expired** messages,
+  - model seconds per case,
+  - the trend of the queue in plain words ("wächst" / "kommt nach").
+
+  It always comes with `lw_befunde`, because whoever sees findings must also see whether the AI keeps up.
+
+### Fixed
+
+- **Unanalysed messages vanished silently.**
+  - The check looks back 2 h; a case not analysed within that time simply dropped out of the queue.
+  - Each run now counts `verfallen`: trigger messages that left the window in the last cycle without
+    being seen.
+- **The AI did not keep up.**
+  - Measured 21:25–22:05 UTC: the queue went from 20 to 58 messages (23 cases) at 2 cases per 10 min.
+  - Model time per case was 56–101 s, 88.8 s on average over 10 cases.
+  - Now 4 cases per run, with a 480 s time budget so runs never overlap.
+
+### Evidence
+
+- **`lw_ki` computed with the new code over the real runs of the last 6 h:** 5 runs, 10 cases analysed,
+  10 findings, 0 without a finding, 0 errors, queue +9.
+  - "verfallen" is 0 because the older runs did not have the field yet.
+- **Browser check** (Playwright, API mocked with that data): 5 KPIs without overflow; the queue is
+  marked "wächst".
+- **Backend suite:** 926 passed.
+- **Rollout pending** (parts 15–17), blocked by the running Werkbank container.
+
+---
+
 ## 2026-11-06 — Log watch, part 16: the log-watch tools on the MCP server
 
 ### What's new

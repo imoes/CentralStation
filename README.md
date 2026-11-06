@@ -1453,6 +1453,7 @@ place six log-watch widgets. Their data comes from `services/log_watch/cockpit.p
 | `lw_hashtags` | top hashtags of relevant messages, with a factor against the previous period (`null` = new) |
 | `lw_korpus` | field catalog per status, unmatched hosts per reason, last run per source (`ok`/`veraltet`/`fehler`/`nie gelaufen`), definition version, history switch |
 | `lw_befunde` | AI findings as objects: relevance, title, host, time; unfold for the finding, hypotheses with status, checked quotes, the funnel steps and hashtags. Without a finding a named state: how many messages wait and whether the AI funnel is on |
+| `lw_ki` | AI analysis statistics per funnel run: queue (open messages, cases), cases analysed, findings, without finding, errors, expired (left the 2 h check window unseen), model seconds per case, queue trend. Comes with `lw_befunde` |
 | `lw_netzplan` | network graph of the relevant situation (config `filter`, `knoten`, `hours`). Nodes are hashtags of the result (at most 5 per type: host, finding, topic, service, rule, MITRE …), an edge means both hashtags are on the same message, with the count. Clicking a node adds it to the filter chain, a chip removes it; the list on the right is the search result of the same filter |
 
 **Rules:**
@@ -1479,7 +1480,8 @@ The AI only works when a check is true, and it only writes its own analysis.
 
 - **Check** (`trichter.kandidaten`, no AI): messages in the history of the last 2 h matching
   `(relevanz>=3 OR signal:neu) !quelle:(ki OR konsole)` without a `befund:` hashtag, grouped by host.
-- **Funnel** (`trichter.analysiere`): one tool loop per host (at most 2 hosts per run, 12 steps). The
+- **Funnel** (`trichter.analysiere`): one tool loop per case (same `muster:` across hosts, else per host;
+  at most 4 cases per run within a 480 s budget, 12 steps each). The
   model asks earlier knowledge first, reads facets, narrows the filter and ends with `lw_befund`.
   Every step (tool, arguments, hit count, model seconds) is kept in the finding.
 - **Tools** (`werkzeuge.py`, one registry for the funnel and the MCP server):

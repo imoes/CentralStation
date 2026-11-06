@@ -80,6 +80,7 @@ _ALLOWED_CONFIG_KEYS: dict[str, set[str]] = {
     "lw_volumen":   {"hours"},
     "lw_hashtags":  {"hours", "limit"},
     "lw_korpus":    set(),
+    "lw_ki":        {"hours"},
 }
 
 # Default grid size per type (w, h)
@@ -102,6 +103,7 @@ _DEFAULT_SIZE: dict[str, tuple[int, int]] = {
     "lw_volumen":   (6, 4),
     "lw_hashtags":  (4, 4),
     "lw_korpus":    (12, 2),    # Korpus-Gesundheit, schmale volle Zeile
+    "lw_ki":        (6, 4),     # Statistik der KI-Analyse: kommt sie nach?
 }
 
 # Map a bridge forecast/vital metric id to its CheckMK service description.
@@ -458,6 +460,7 @@ NUTZE NUR diese Widget-Typen mit exakt diesen config-Schlüsseln:
 - "lw_kriterien": {"hours":24}  — Warum: relevante/nicht relevante Nachrichten je Kriterium der Relevanz-Definition
 - "lw_volumen": {"hours":24}  — Nachrichten je Quelle (Graylog, Wazuh, CheckMK) und Stunde: gelesen, relevant
 - "lw_hashtags": {"hours":24,"limit":15}  — häufigste Hashtags relevanter Nachrichten mit Trend
+- "lw_ki": {"hours":6}  — Statistik der KI-Analyse: Warteschlange, analysierte Fälle, Befunde, verfallen, Dauer — zeigt, ob die KI nachkommt
 - "lw_korpus": {}  — Gesundheit der Korpora (Läufe je Quelle, Felder, nicht zugeordnete Hosts)
 
 DENKPROZESS — überlege VOR der JSON-Ausgabe (kein Output nötig, nur intern):
@@ -1043,6 +1046,10 @@ def _ensure_log_watch_widgets(specs: list[dict], situation: dict, lang: str) -> 
         vorne.append({"widget_type": "lw_befunde",
                       "title": "KI-Befunde" if lang == "de" else "AI findings",
                       "config": {"hours": 24}})
+        if "lw_ki" not in typen:
+            vorne.append({"widget_type": "lw_ki",
+                          "title": "KI-Analyse: kommt sie nach?" if lang == "de" else "AI analysis: keeping up?",
+                          "config": {"hours": 6}})
     if lw.get("quellen_mit_fehler") and "lw_korpus" not in typen:
         vorne.append({"widget_type": "lw_korpus",
                       "title": "Korpus-Gesundheit" if lang == "de" else "Corpus health",

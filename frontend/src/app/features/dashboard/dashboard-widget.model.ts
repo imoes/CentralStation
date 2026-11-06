@@ -3,7 +3,7 @@ export interface DashboardWidget {
   user_id: string;
   dashboard_id?: string | null;
   widget_type: 'stat' | 'list' | 'donut' | 'bar' | 'ai_summary' | 'top_hosts' | 'timeseries' | 'grafana_panel' | 'forecast' | 'war_room' | 'incidents' | 'gauge' | 'error_clusters'
-    | 'lw_befunde' | 'lw_netzplan' | 'lw_kriterien' | 'lw_volumen' | 'lw_hashtags' | 'lw_korpus';
+    | 'lw_befunde' | 'lw_netzplan' | 'lw_kriterien' | 'lw_volumen' | 'lw_hashtags' | 'lw_korpus' | 'lw_ki';
   title: string;
   gs_x: number;
   gs_y: number;

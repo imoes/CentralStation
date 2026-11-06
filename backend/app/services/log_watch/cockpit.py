@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
-TYPEN = ("lw_befunde", "lw_netzplan", "lw_kriterien", "lw_volumen", "lw_hashtags", "lw_korpus")
+TYPEN = ("lw_befunde", "lw_netzplan", "lw_kriterien", "lw_volumen", "lw_hashtags", "lw_korpus", "lw_ki")
 QUELLEN = ("graylog", "wazuh", "checkmk", "firewall", "switch")
 #: Hashtag-Arten, die in Trends nichts sagen (jede Nachricht hat sie)
 _OHNE_TREND = ("quelle:",)
@@ -38,6 +38,35 @@ def kriterien(zeilen: list[tuple[str, datetime, dict]], definition: list[dict], 
         out.append({"id": kid, "titel": k["titel"], "art": k["art"],
                     "anzahl": sum(je[kid].values()), "je_quelle": dict(je[kid])})
     return {"zeitraum_h": stunden, "einheit": "Nachrichten", "kriterien": out}
+
+
+def ki(zeilen: list[tuple[str, datetime, dict]], stunden: int) -> dict:
+    """Statistik der KI-Analyse je Trichter-Lauf: Warteschlange (offene Nachrichten, Fälle),
+    analysierte Fälle, Befunde, ohne Befund, Fehler, verfallen, Dauer — kommt die KI nach?
+    Zeilen ohne Prüfung (z. B. Fehler eines Laufs) zählen als Fehler, nicht als leerer Lauf."""
+    reihe, summe = [], Counter()
+    modelle: Counter = Counter()
+    for quelle, b, w in sorted(zeilen, key=lambda z: z[1]):
+        if quelle != "ki":
+            continue
+        p = w.get("pruefung") or {}
+        an = w.get("analysen") or []
+        x = {"zeit": b.isoformat(), "offen": p.get("gesamt", 0), "faelle": len(p.get("faelle") or []),
+             "analysiert": len(an), "befunde": len(w.get("befunde") or []),
+             "ohne_befund": sum(1 for a in an if "kein_befund" in a),
+             "fehler": sum(1 for a in an if "fehler" in a) + (1 if "fehler" in w else 0),
+             "verfallen": p.get("verfallen", 0), "dauer_s": w.get("dauer_s"),
+             "modell_s": round(sum(s.get("ki_s") or 0 for a in an for s in a.get("schritte") or []), 1)}
+        reihe.append(x)
+        for k in ("analysiert", "befunde", "ohne_befund", "fehler", "verfallen"):
+            summe[k] += x[k]
+    letzter = reihe[-1] if reihe else None
+    return {"zeitraum_h": stunden, "einheit": "Nachrichten bzw. Fälle je Lauf (alle 10 min)",
+            "laeufe": len(reihe), "reihe": reihe, "summe": dict(summe), "jetzt": letzter,
+            "modell_s_je_fall": (round(sum(x["modell_s"] for x in reihe) / summe["analysiert"], 1)
+                                 if summe["analysiert"] else None),
+            # Beobachtungspunkt: wächst die Warteschlange über den Zeitraum, kommt die KI nicht nach
+            "trend_offen": (reihe[-1]["offen"] - reihe[0]["offen"]) if len(reihe) >= 2 else None}
 
 
 def volumen(zeilen: list[tuple[str, datetime, dict]], stunden: int) -> dict:
@@ -213,6 +242,13 @@ async def daten(db, typ: str, cfg: dict) -> dict:
     if typ == "lw_kriterien":
         d = await aktuelle(db)
         return {**kriterien(await _zeilen(db, seit), d.kriterien, stunden), "definition_v": d.version}
+    if typ == "lw_ki":
+        from app.services.log_watch import trichter
+        from app.services.settings import get_setting
+        an = (await get_setting(db, trichter.SCHALTER) or "").lower() in ("1", "true", "ja")
+        return {**ki(await _zeilen(db, seit), stunden), "ki_aktiv": an,
+                "kapazitaet": {"faelle_je_lauf": trichter.HOECHSTENS_JE_LAUF, "takt_min": 10,
+                               "budget_s": trichter.ZEIT_BUDGET_S}}
     if typ == "lw_volumen":
         return volumen(await _zeilen(db, seit), stunden)
     if typ == "lw_hashtags":

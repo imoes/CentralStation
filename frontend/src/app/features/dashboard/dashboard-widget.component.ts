@@ -285,6 +285,7 @@ import {
               <div echarts [options]="gaugeOptions()" class="chart"></div>
             }
             @case ('lw_befunde') { <cs-lw-widget typ="lw_befunde" [daten]="data()" /> }
+            @case ('lw_ki') { <cs-lw-widget typ="lw_ki" [daten]="data()" /> }
             @case ('lw_netzplan') { <cs-lw-netzplan [daten]="data()" [config]="widget().config" /> }
             @case ('lw_kriterien') { <cs-lw-widget typ="lw_kriterien" [daten]="data()" /> }
             @case ('lw_volumen') { <cs-lw-widget typ="lw_volumen" [daten]="data()" /> }
@@ -558,7 +559,7 @@ export class DashboardWidgetComponent {
       donut: '#99CCFF', timeseries: '#99CCFF',
       war_room: '#cc6666', forecast: '#cc6666',
       lw_kriterien: '#FF9933', lw_befunde: '#FF9933', lw_volumen: '#99CCFF',
-      lw_hashtags: '#FFCC99', lw_netzplan: '#99CCFF', lw_korpus: '#ffcc66',
+      lw_hashtags: '#FFCC99', lw_netzplan: '#99CCFF', lw_korpus: '#ffcc66', lw_ki: '#FF9933',
     };
     return map[this.widget().widget_type] ?? '#FF9933';
   });

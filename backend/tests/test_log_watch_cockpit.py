@@ -129,6 +129,25 @@ def test_befunde_als_objekte_und_benannter_leerstand():
 def test_befunde_stehen_vorne_wenn_es_welche_gibt():
     s = {"log_watch": {"quellen_mit_fehler": [], "befunde_24h": [{"titel": "x", "host": "a", "relevanz": 3}]}}
     specs = _ensure_log_watch_widgets([{"widget_type": "stat", "config": {}}], s, "de")
-    assert [x["widget_type"] for x in specs] == ["lw_befunde", "lw_kriterien", "stat"]
+    assert [x["widget_type"] for x in specs] == ["lw_befunde", "lw_ki", "lw_kriterien", "stat"]
     ohne = _ensure_log_watch_widgets([], {"log_watch": {"quellen_mit_fehler": []}}, "de")
     assert "lw_befunde" not in [x["widget_type"] for x in ohne]
+
+
+def test_ki_statistik_je_lauf_und_trend():
+    from datetime import datetime, timezone
+    from app.services.log_watch.cockpit import ki
+    t = lambda m: datetime(2026, 11, 6, 21, m, tzinfo=timezone.utc)
+    zeilen = [
+        ("ki", t(23), {"pruefung": {"gesamt": 20, "faelle": [{}] * 7, "verfallen": 0}, "dauer_s": 148,
+                       "analysen": [{"befund": "ki:a", "schritte": [{"ki_s": 50}]}, {"befund": "ki:b", "schritte": [{"ki_s": 40}]}],
+                       "befunde": ["ki:a", "ki:b"]}),
+        ("ki", t(33), {"pruefung": {"gesamt": 58, "faelle": [{}] * 23, "verfallen": 3},
+                       "analysen": [{"kein_befund": "x", "schritte": [{"ki_s": 30}]}, {"fehler": "ReadTimeout"}],
+                       "befunde": []}),
+        ("graylog", t(33), {"nachrichten": 5}),
+    ]
+    d = ki(zeilen, 6)
+    assert d["laeufe"] == 2 and d["trend_offen"] == 38
+    assert d["summe"] == {"analysiert": 4, "befunde": 2, "ohne_befund": 1, "fehler": 1, "verfallen": 3}
+    assert d["modell_s_je_fall"] == 30.0 and d["jetzt"]["faelle"] == 23
