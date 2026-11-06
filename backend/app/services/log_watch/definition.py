@@ -31,7 +31,7 @@ class Kriterium:
 KRITERIEN: tuple[Kriterium, ...] = (
     Kriterium("R1", RELEVANT, "Störung in Produktion",
               "Ein Host oder Dienst mit Kritikalität prod, staging oder critical ist gestört.",
-              "CheckMK CRIT; Fehlerausbruch auf einem solchen Host"),
+              "zustand:crit @Produktion"),
     Kriterium("R2", RELEVANT, "Neues Muster", "Ein Fehlermuster tritt zum ersten Mal auf.",
               "Fehler-Cluster-Regel „neu“"),
     Kriterium("R3", RELEVANT, "Ausbreitung", "Derselbe Fehler auf mehreren Hosts zugleich.",
@@ -45,8 +45,8 @@ KRITERIEN: tuple[Kriterium, ...] = (
     Kriterium("R6", RELEVANT, "Sicherheit",
               "Sicherheitsereignis: Wazuh ab Level 7 (MITRE-Taktiken eingeschlossen); "
               "Firewall-Bedrohung mit Sinkhole oder Stufe ab medium.",
-              "Wazuh rule.level ≥ wazuh_level_ab; Firewall: action in firewall_dringend_aktionen "
-              "oder threat_severity in firewall_bedrohung_stufen"),
+              "quelle:wazuh level>=7; quelle:firewall signal:bedrohung (Sinkhole oder Stufe in "
+              "firewall_bedrohung_stufen)"),
     Kriterium("R7", RELEVANT, "Zusammentreffen",
               "Derselbe Host ist zugleich in zwei Quellen auffällig — gemeinsames Auftreten, "
               "keine belegte Ursache.", "quellenübergreifend, 15 min"),
@@ -61,27 +61,33 @@ KRITERIEN: tuple[Kriterium, ...] = (
               "(solange kein neues Relevanz-Kriterium hinzukommt).",
               "CheckMK acknowledged/Downtime; Ticket und Befund: noch nicht angebunden"),
     Kriterium("N3", NICHT_RELEVANT, "Nicht-Produktion", "Host mit Kritikalität test oder dev.",
-              "CheckMK-Kritikalität in nicht_produktion"),
+              "@Nicht-Produktion"),
     Kriterium("N4", NICHT_RELEVANT, "Rauschen",
               "Webscanner-Zugriffe, PAM-Sitzung geöffnet/geschlossen, einzelne Anmeldefehler "
-              "ohne Muster.", "Wazuh-Regeln/-Regelgruppen in rauschen_*"),
+              "ohne Muster.", "@Rauschen"),
     Kriterium("N5", NICHT_RELEVANT, "Selbst erzeugt",
               "Vom Monitoring selbst erzeugt (Check_MK-Checks, Agent-Updates).",
-              "CheckMK-Dienste mit Präfix in selbst_dienste"),
+              "@Selbst-erzeugt"),
     Kriterium("N6", NICHT_RELEVANT, "Stumm geschaltet", "Ein Admin hat das Muster stumm geschaltet.",
               "LogTemplate.muted"),
 )
 
+#: Objekte = gespeicherte Suchen (filter.py), auf die Regeln mit @Name verweisen — wie
+#: Adress-/Applikations-Objekte einer Palo Alto. Eine Quelle der Wahrheit: was früher als
+#: Parameterliste die Regeln speiste, ist jetzt ein Objekt.
+STANDARD_OBJEKTE = {
+    "Produktion": "kritikalitaet:(prod OR staging OR critical)",
+    "Nicht-Produktion": "kritikalitaet:(test OR dev)",
+    # PAM: Sitzung geöffnet/geschlossen; Webscanner (Wazuh ab Level 7, darum vor R6)
+    "Rauschen": "regel:(5501 OR 5502) OR regelgruppe:web_scan",
+    "Selbst-erzeugt": "dienst:Check_MK*",
+    "Routine-Quellen": "quelle:(graylog OR switch)",
+}
+
 PARAMETER = {
-    "relevante_kritikalitaeten": ["prod", "staging", "critical"],
     #: CRIT hier ist dringend (3), sonst auffällig (2)
     "dringende_kritikalitaeten": ["prod", "critical"],
-    "nicht_produktion": ["test", "dev"],
-    "wazuh_level_ab": 7,
     "wazuh_level_dringend": 12,
-    "rauschen_regeln": ["5501", "5502"],              # PAM: session opened / closed
-    "rauschen_regelgruppen": ["web_scan"],
-    "selbst_dienste": ["Check_MK"],
     #: Firewall (Palo Alto): Bedrohung = Stufe hier ODER Aktion in firewall_dringend_aktionen
     "firewall_bedrohung_stufen": ["medium", "high", "critical"],
     #: Sinkhole: ein interner Rechner fragt eine Schadsoftware-Domain an — dringend
@@ -92,7 +98,7 @@ PARAMETER = {
 }
 
 #: Version der Definition, die dieser Code als Standard mitbringt, und warum es sie gibt.
-CODE_VERSION = 4
+CODE_VERSION = 5
 AENDERUNGEN = {
     1: "Festgelegt mit dem Nutzer am 06.11.2026",
     2: "R6 umfasst Firewall-Bedrohungen (Sinkhole, Stufe ab medium) — Nutzer 06.11.2026: "
@@ -101,6 +107,9 @@ AENDERUNGEN = {
        "Logikprüfung 06.11.: ein Angriff von außen wurde dem Angreifer statt dem Ziel zugeordnet",
     4: "Switch-Logs werden analysiert (eigener Musterlerner): bekanntes Switch-Muster ohne Signal ist "
        "Routine (N1), Hardwarefehler sind Schaden (R5), Syslog-Level ≤ 2 ist ein kritischer Zustand",
+    5: "Regeln wie auf einer Firewall: Objekte (gespeicherte Suchen) und Regeln als Filtertexte "
+       "(Nutzer 06.11.: „alles ist ein Objekt“, „das Objektmodell ist auch nur eine Suche“); "
+       "die Parameterlisten der Regeln sind jetzt Objekte",
 }
 
 def als_daten() -> tuple[list[dict], dict]:
@@ -112,8 +121,10 @@ class Definition:
     version: int
     kriterien: list[dict]
     parameter: dict
-    #: Regelwerk (regelwerk.Regel); None → Standardregeln aus den Parametern
+    #: Regelwerk (regelwerk.Regel); None → Standardregeln
     regeln: list | None = None
+    #: Objekte (Name → Filtertext); None → Standardobjekte
+    objekte: dict | None = None
     #: Der Code bringt eine neuere Standard-Version mit, die letzte Version stammt aber von
     #: einem Admin — sie wird nicht überschrieben, der Unterschied ist benannt.
     code_neuer: bool = False
@@ -123,10 +134,12 @@ class Definition:
 
     def __post_init__(self):
         from app.services.log_watch.regelwerk import aus_daten, standard_regeln
+        if self.objekte is None:
+            self.objekte = dict(STANDARD_OBJEKTE)
         if self.regeln is None:
-            self.regeln = standard_regeln(self.p)
+            self.regeln = standard_regeln(self.objekte)
         elif self.regeln and isinstance(self.regeln[0], dict):
-            self.regeln = aus_daten(self.regeln)
+            self.regeln = aus_daten(self.regeln, self.objekte)
 
 
 STANDARD = Definition(CODE_VERSION, *als_daten())
@@ -163,11 +176,13 @@ async def aktuelle(db) -> Definition:
         kriterien, parameter = als_daten()
         neu = CODE_VERSION if row is None else max(row.version + 1, CODE_VERSION)
         row = RelevanzDefinition(version=neu, kriterien=kriterien, parameter=parameter,
+                                 objekte=dict(STANDARD_OBJEKTE),
                                  begruendung=AENDERUNGEN[CODE_VERSION], erstellt_von="system",
                                  erstellt_at=datetime.now(timezone.utc))
         db.add(row)
         await db.commit()
-    return Definition(row.version, row.kriterien, row.parameter, row.regeln, code_neuer)
+    return Definition(row.version, row.kriterien, row.parameter, row.regeln, row.objekte,
+                      code_neuer=code_neuer)
 
 
 def pruefe(kriterien: list[dict], parameter: dict) -> list[str]:

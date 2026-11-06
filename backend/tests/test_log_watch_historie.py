@@ -73,3 +73,11 @@ def test_firewall_zeilen_zaehlen_im_raster_nicht_als_graylog():
     tt.add(Line(ts="t", source="dora", container="", message="m", id="g1"))
     assert tt.count == 2                                   # Fehler-Cluster zählt weiter alles
     assert dict(tt.hosts) == {"dora": 1} and "nfw062.example.com" not in tt.belege
+
+
+def test_vergleichsfelder_der_filtersprache_stehen_im_mapping_und_im_dokument():
+    from app.services.log_watch.filter import FELDER
+    assert all(f in h.MAPPING["properties"] for f in FELDER)      # Suche sieht, was Regeln prüfen
+    t = _t()
+    t.felder = {"level": 9}
+    assert h.dokument(t, "x", ZEIT, "t", {})[1]["level"] == 9

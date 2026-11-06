@@ -10,6 +10,60 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 9: one filter language; objects are saved searches, rules are searches with an action
+
+### What's new
+
+- **One filter language** for the search bar, objects, rules, the network graph and MCP. It covers
+  `art:wert`, `art:(a OR b)`, `art:wert*`, `!`, `OR`, brackets, `level>=7`, `@Objekt` and free text
+  (search only).
+- **One parse tree, two translations:** the rule condition (in memory, per verdict) and the OpenSearch
+  query (search, graph, hit count). Both hit the same messages.
+- **Objects are named filters, as on a Palo Alto firewall:** `Produktion`, `Nicht-Produktion`,
+  `Rauschen`, `Selbst-erzeugt`, `Routine-Quellen`.
+  - The standard rules are filter texts over these objects, e.g. R1 = `zustand:crit @Produktion`.
+  - Objects may reference objects; cycles and unknown objects are rejected with a reason.
+- **Definition version 5:** the parameter lists that used to feed the rules are now objects, so there is
+  one source of truth. The API returns and accepts objects and checks every filter.
+- **Graylog's own pipeline filters are planned as stage 0** of the firewall. Example: `[proc]routing`
+  drops Docker logs that are not errors at the source. They will be shown read-only, what they drop will
+  be counted, and contradictions with our rules will be reported.
+
+### Fixed during the logic check
+
+- **Search and rule saw different fields.** The rule `level>=7` checks a field of the message, but the
+  index mapping of `cs-logs-*` had no `level`. The search would never have matched where the rule
+  fires. `level` is now mapped and written into the document.
+
+### Evidence (live, 2026-11-06)
+
+- **Random test:** 400 filters × 300 messages, rule condition = OpenSearch query, 0 differences.
+- **Live probe against the real OpenSearch:** 150 filters × 200 messages, 0 differences. The probe index
+  was deleted afterwards.
+- **Equivalence of the object-based standard rules with the agreed precedence:** all 8 192
+  combinations hold.
+- **Under version 5 (19:15–19:25 UTC) the picture is unchanged:**
+
+  | Source | Result per window |
+  |---|---|
+  | Wazuh | N4 3 089, R6 148, N0 3 811 |
+  | CheckMK | R1 5 |
+  | Switches | N1 1 334 |
+  | Firewall | **17 relevant: sinkholes for `alpinbilder.de` from `emil.example.com` (9) and 10.0.249.6 (8), both via 8.8.8.8** |
+
+  The firewall finding is relevant and urgent. "emil is infected" does **not** follow from it: two ADMIN_DMZ
+  servers querying Google DNS in bulk are probably DNS forwarders, and the infected client sits behind
+  them. Checking this is the job of the AI funnel.
+- **Tests:** 12 new. The backend suite has 875 passed.
+
+### What's missing
+
+- **No rule editor UI yet.** The Graylog stage 0 is not read yet.
+- **The firewall cannot see which client sits behind a DNS forwarder.** The affected host is then the
+  forwarder, which is named as a hypothesis, not as evidence.
+
+---
+
 ## 2026-11-06 — Log watch, part 8: switch logs (nsa/nss/nsc) are analysed
 
 ### What's new

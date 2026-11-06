@@ -39,6 +39,9 @@ class Regel:
     herkunft: str = "system"          # system | admin | ki
     #: Stufe bei BLOCK: 0 = Rauschen/selbst erzeugt/stumm, 1 = sonst
     stufe_block: int = 1
+    #: Filtertext (filter.py), aus dem `bedingung` übersetzt ist — die Form, die Menschen
+    #: lesen und schreiben; leer nur bei direkt angegebener Bedingung
+    filter: str = ""
 
 
 @dataclass
@@ -58,6 +61,8 @@ def passt(bedingung: dict, tags: set[str], felder: dict) -> bool:
     eine Regel, die nicht greift, als eine, die alles greift)."""
     if "alle" in bedingung:
         return all(passt(k, tags, felder) for k in bedingung["alle"])
+    if "irgendeins" in bedingung:
+        return any(passt(k, tags, felder) for k in bedingung["irgendeins"])
     if "hat" in bedingung:
         return bedingung["hat"] in tags
     if "eines_von" in bedingung:
@@ -103,46 +108,53 @@ def bewerte(regeln: list[Regel], tags: set[str], felder: dict | None = None) -> 
                         [r.id for r in passende if r is not entscheidend], test)
 
 
-def standard_regeln(p) -> list[Regel]:
-    """Standard-Definition als Regelwerk — Reihenfolge = vereinbarter Vorrang
-    (N6 > N2 > N4 > R5/R6 vor N3/N5 > N3/N5 vor übrigen R > R vor N1 > Default N0).
-    `p(name)` liefert Parameter der Definition."""
-    rel = [f"kritikalitaet:{k}" for k in p("relevante_kritikalitaeten")]
-    nicht_prod = [f"kritikalitaet:{k}" for k in p("nicht_produktion")]
-    rauschen = ([f"regel:{r}" for r in p("rauschen_regeln")]
-                + [f"regelgruppe:{g}" for g in p("rauschen_regelgruppen")])
-    selbst = [f"dienst:{d}" for d in p("selbst_dienste")]
-    return [
-        Regel("N6", "N6", "Stumm geschaltet", BLOCK, {"hat": "signal:stumm"}, stufe_block=0),
-        Regel("N2", "N2", "Bekannt und behandelt", BLOCK, {"hat": "signal:behandelt"}),
-        Regel("N4", "N4", "Rauschen", BLOCK, {"eines_von": rauschen}, stufe_block=0),
-        Regel("R5", "R5", "Schaden an Ressourcen", FORWARD, {"hat": "signal:schaden"}),
-        Regel("R6", "R6", "Sicherheit", FORWARD,
-              {"alle": [{"hat": "quelle:wazuh"}, {"feld": "level", "ab": p("wazuh_level_ab")}]}),
-        Regel("R6-FW", "R6", "Firewall-Bedrohung", FORWARD,
-              {"alle": [{"hat": "quelle:firewall"}, {"hat": "signal:bedrohung"}]}),
-        Regel("N3", "N3", "Nicht-Produktion", BLOCK, {"eines_von": nicht_prod}),
-        Regel("N5", "N5", "Selbst erzeugt", BLOCK, {"praefix": selbst}, stufe_block=0),
-        Regel("R1", "R1", "Störung in Produktion", FORWARD,
-              {"alle": [{"hat": "zustand:crit"}, {"eines_von": rel}]}),
-        Regel("R2", "R2", "Neues Muster", FORWARD, {"hat": "signal:neu"}),
-        Regel("R3", "R3", "Ausbreitung", FORWARD, {"hat": "signal:ausbreitung"}),
-        Regel("R4", "R4", "Anstieg", FORWARD, {"hat": "signal:anstieg"}),
-        Regel("R8", "R8", "Ablaufende Frist", FORWARD, {"hat": "signal:frist"}),
-        Regel("N1", "N1", "Routine", BLOCK, {"eines_von": ["quelle:graylog", "quelle:switch"]}),
-    ]
+#: Standardregeln als Filtertexte (filter.py) — Reihenfolge = vereinbarter Vorrang
+#: (N6 > N2 > N4 > R5/R6 vor N3/N5 > N3/N5 vor übrigen R > R vor N1 > Default N0).
+#: (id, kriterium, name, aktion, filter, stufe_block)
+STANDARD_FILTER = (
+    ("N6", "N6", "Stumm geschaltet", BLOCK, "signal:stumm", 0),
+    ("N2", "N2", "Bekannt und behandelt", BLOCK, "signal:behandelt", 1),
+    ("N4", "N4", "Rauschen", BLOCK, "@Rauschen", 0),
+    ("R5", "R5", "Schaden an Ressourcen", FORWARD, "signal:schaden", 1),
+    ("R6", "R6", "Sicherheit", FORWARD, "quelle:wazuh level>=7", 1),
+    ("R6-FW", "R6", "Firewall-Bedrohung", FORWARD, "quelle:firewall signal:bedrohung", 1),
+    ("N3", "N3", "Nicht-Produktion", BLOCK, "@Nicht-Produktion", 1),
+    ("N5", "N5", "Selbst erzeugt", BLOCK, "@Selbst-erzeugt", 0),
+    ("R1", "R1", "Störung in Produktion", FORWARD, "zustand:crit @Produktion", 1),
+    ("R2", "R2", "Neues Muster", FORWARD, "signal:neu", 1),
+    ("R3", "R3", "Ausbreitung", FORWARD, "signal:ausbreitung", 1),
+    ("R4", "R4", "Anstieg", FORWARD, "signal:anstieg", 1),
+    ("R8", "R8", "Ablaufende Frist", FORWARD, "signal:frist", 1),
+    ("N1", "N1", "Routine", BLOCK, "@Routine-Quellen", 1),
+)
+
+
+def standard_regeln(objekte: dict[str, str]) -> list[Regel]:
+    """Standardregeln, übersetzt mit den Objekten der Definition."""
+    from app.services.log_watch.filter import bedingung
+    return [Regel(rid, krit, name, aktion, bedingung(text, objekte), stufe_block=stufe, filter=text)
+            for rid, krit, name, aktion, text, stufe in STANDARD_FILTER]
 
 
 def als_daten(regeln: list[Regel]) -> list[dict]:
     return [asdict(r) for r in regeln]
 
 
-def aus_daten(daten: list[dict]) -> list[Regel]:
-    return [Regel(**{k: d[k] for k in Regel.__dataclass_fields__ if k in d}) for d in daten]
+def aus_daten(daten: list[dict], objekte: dict[str, str] | None = None) -> list[Regel]:
+    """Regeln aus Daten; ein Filtertext wird mit den Objekten (neu) übersetzt."""
+    from app.services.log_watch.filter import bedingung
+    out = []
+    for d in daten:
+        werte = {k: d[k] for k in Regel.__dataclass_fields__ if k in d}
+        if werte.get("filter"):
+            werte["bedingung"] = bedingung(werte["filter"], objekte or {})
+        out.append(Regel(**werte))
+    return out
 
 
-def pruefe(daten: list[dict], kriterien_ids: set[str]) -> list[str]:
+def pruefe(daten: list[dict], kriterien_ids: set[str], objekte: dict[str, str] | None = None) -> list[str]:
     """Fehler eines Regelsatzes — leer heißt gültig."""
+    from app.services.log_watch.filter import FilterFehler, bedingung
     fehler = []
     ids = [d.get("id") for d in daten]
     if len(ids) != len(set(ids)):
@@ -155,15 +167,21 @@ def pruefe(daten: list[dict], kriterien_ids: set[str]) -> list[str]:
             fehler.append(f"{rid}: modus muss aktiv oder test sein")
         if d.get("kriterium") not in kriterien_ids:
             fehler.append(f"{rid}: Kriterium {d.get('kriterium')} gibt es in der Definition nicht")
-        if not isinstance(d.get("bedingung"), dict) or not _wohlgeformt(d["bedingung"]):
+        if d.get("filter"):
+            try:
+                bedingung(d["filter"], objekte or {})
+            except FilterFehler as e:
+                fehler.append(f"{rid}: Filter {d['filter']!r}: {e}")
+        elif not isinstance(d.get("bedingung"), dict) or not _wohlgeformt(d["bedingung"]):
             fehler.append(f"{rid}: Bedingung nicht wohlgeformt")
     return fehler
 
 
 def _wohlgeformt(b: dict) -> bool:
-    if "alle" in b:
-        return isinstance(b["alle"], list) and bool(b["alle"]) and all(
-            isinstance(k, dict) and _wohlgeformt(k) for k in b["alle"])
+    for verbund in ("alle", "irgendeins"):
+        if verbund in b:
+            return isinstance(b[verbund], list) and bool(b[verbund]) and all(
+                isinstance(k, dict) and _wohlgeformt(k) for k in b[verbund])
     if "hat" in b:
         return isinstance(b["hat"], str)
     if "praefix" in b:

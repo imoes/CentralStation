@@ -46,6 +46,8 @@ MAPPING = {
         "host_bekannt": {"type": "boolean"},
         "schluessel": {"type": "keyword"},
         "relevanz": {"type": "byte"},
+        # Vergleichsfelder der Filtersprache (filter.FELDER) — dieselben wie im Regelwerk
+        "level": {"type": "short"},
         # Selektor: genau zwei Werte. „Nur vom Skript beurteilt“ ist kein dritter Wert,
         # sondern steht in `herkunft` (regel) — so ist jeder Fall klassifiziert.
         "urteil": {"type": "keyword"},                     # relevant | nicht_relevant
@@ -98,6 +100,7 @@ def dokument(t: Treffer, quell_id: str, zeit: datetime, text: str, roh: dict) ->
         "definition_v": t.definition_v,
         "gruende": t.gruende, "hashtags": t.hashtags, "text": (text or t.beispiel)[:20000],
         "gruppe_anzahl": t.anzahl, "raster_v": RASTER_V, "roh": _flach(roh),
+        **{k: v for k, v in t.felder.items() if k == "level"},
     }
 
 

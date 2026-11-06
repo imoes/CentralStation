@@ -26,7 +26,7 @@ def entscheide(r: set[str], n: set[str]) -> tuple[str, list[str]]:
         return "relevant", sorted(r)
     return "nicht_relevant", sorted(n & {"N1"}) or ["N0"]
 
-REGELN = rw.standard_regeln(STANDARD.p)
+REGELN = STANDARD.regeln
 
 #: Kriterium → Merkmale, mit denen eine Quelle es ausdrückt
 MERKMALE = {
@@ -100,8 +100,10 @@ def test_bedingungen(bed, tags, felder, erwartet):
 def test_regelsatz_pruefen_und_rundreise():
     daten = rw.als_daten(REGELN)
     ids = {"R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "N0", "N1", "N2", "N3", "N4", "N5", "N6"}
-    assert rw.pruefe(daten, ids) == []
-    assert rw.aus_daten(daten) == REGELN
+    assert rw.pruefe(daten, ids, STANDARD.objekte) == []
+    assert rw.aus_daten(daten, STANDARD.objekte) == REGELN
+    assert rw.pruefe([{**daten[0], "filter": "@Gibtsnicht"}], ids, STANDARD.objekte) == [
+        "N6: Filter '@Gibtsnicht': Objekt @Gibtsnicht gibt es nicht"]
     kaputt = daten + [{"id": "N6", "kriterium": "X9", "aktion": "drop", "modus": "egal",
                        "bedingung": {"feld": "level"}}]
     f = rw.pruefe(kaputt, ids)

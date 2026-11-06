@@ -1362,6 +1362,46 @@ Measured 2026-11-06: about 241 000 switch messages per hour, of which level ≤ 
 
 The old network agent (200 messages per hour, judged by LLM) is replaced after a shadow run.
 
+### Log watch: one filter language: objects are saved searches, rules are searches with an action
+
+`services/log_watch/filter.py` is the single language for the search bar, objects, rules, the network
+graph and the MCP tools.
+
+| Syntax | Meaning | Example |
+|---|---|---|
+| `art:wert` | hashtag | `thema:oom` |
+| `art:(a OR b)` | one of | `kritikalitaet:(prod OR staging)` |
+| `art:wert*` | prefix | `dienst:Check_MK*` |
+| `art:"…"` | value with spaces | `mitre:"Credential Access"` |
+| `level>=7` | field comparison (`level`, `relevanz`) | `quelle:wazuh level>=7` |
+| `@Name` | object | `zustand:crit @Produktion` |
+| `!x` / `NOT x` | not | `!signal:stumm` |
+| space / `OR` / `( )` | and / or / grouping | `(thema:oom OR signal:schaden) quelle:graylog` |
+| word / `"words"` | free text, search only | `"connection refused"` |
+
+- **One parse tree, two translations:**
+  - `als_bedingung`: the rule condition, evaluated in memory per verdict;
+  - `als_opensearch`: the query over `cs-logs-*`.
+
+  They hit the same messages. A random test compares 400 filters × 300 messages. A live probe against
+  the real OpenSearch compared 150 filters × 200 messages and found 0 differences.
+- **Objects are named filters (saved searches)**, as on a Palo Alto firewall. They are versioned with the
+  definition:
+
+  | Object | Filter |
+  |---|---|
+  | `Produktion` | `kritikalitaet:(prod OR staging OR critical)` |
+  | `Nicht-Produktion` | `kritikalitaet:(test OR dev)` |
+  | `Rauschen` | `regel:(5501 OR 5502) OR regelgruppe:web_scan` |
+  | `Selbst-erzeugt` | `dienst:Check_MK*` |
+  | `Routine-Quellen` | `quelle:(graylog OR switch)` |
+
+  Objects may reference objects. A cycle or an unknown object is rejected, with the reason.
+- **Rules are filter texts with an action.** For example R1 = `zustand:crit @Produktion` → FORWARD.
+  Free text is not allowed in rules, because rules check hashtags.
+- **Compared fields are in the index:** `level` is mapped in `cs-logs-*` and written into the document,
+  so search and rule see the same field.
+
 ### Log watch: AI cockpit (dashboard widgets)
 
 The generative dashboard is the **"🪄 KI-Cockpit"**. Besides the existing widget types, the AI can

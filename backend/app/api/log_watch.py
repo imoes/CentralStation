@@ -135,7 +135,8 @@ async def get_definition(_user: CurrentUser, db: Annotated[AsyncSession, Depends
     d = await aktuelle(db)
     if not alle:
         return {"version": d.version, "kriterien": d.kriterien, "parameter": d.parameter,
-                "regeln": regeln_als_daten(d.regeln), "default": {"aktion": "block", "kriterium": "N0"}}
+                "objekte": d.objekte, "regeln": regeln_als_daten(d.regeln),
+                "default": {"aktion": "block", "kriterium": "N0"}, "code_neuer": d.code_neuer}
     rows = (await db.execute(select(RelevanzDefinition)
                              .order_by(RelevanzDefinition.version.desc()))).scalars()
     return [{"version": r.version, "kriterien": r.kriterien, "parameter": r.parameter,
@@ -147,8 +148,10 @@ class DefinitionBody(BaseModel):
     kriterien: list[dict]
     parameter: dict
     begruendung: str
-    #: Regelwerk; fehlt es, gelten die Standardregeln aus den Parametern
+    #: Regelwerk; fehlt es, gelten die Standardregeln
     regeln: list[dict] | None = None
+    #: Objekte (Name → Filtertext); fehlen sie, gelten die Standardobjekte
+    objekte: dict[str, str] | None = None
 
 
 @router.post("/definition", dependencies=[RequireAdmin])
@@ -163,15 +166,24 @@ async def neue_definition(body: DefinitionBody, user: CurrentUser,
     from app.services.log_watch.regelwerk import pruefe as pruefe_regeln
 
     fehler = pruefe(body.kriterien, body.parameter)
+    from app.services.log_watch.definition import STANDARD_OBJEKTE
+    from app.services.log_watch.filter import FilterFehler, aufloesen, lies
+
+    objekte = body.objekte if body.objekte is not None else STANDARD_OBJEKTE
+    for name, text in objekte.items():
+        try:
+            aufloesen(lies(text), objekte, (name,))
+        except FilterFehler as e:
+            fehler.append(f"Objekt @{name}: {e}")
     if body.regeln is not None:
-        fehler += pruefe_regeln(body.regeln, {k.get("id") for k in body.kriterien})
+        fehler += pruefe_regeln(body.regeln, {k.get("id") for k in body.kriterien}, objekte)
     if not body.begruendung.strip():
         fehler.append("Begründung fehlt")
     if fehler:
         raise HTTPException(422, "; ".join(fehler))
     alt = await aktuelle(db)
     row = RelevanzDefinition(version=alt.version + 1, kriterien=body.kriterien,
-                             parameter=body.parameter, regeln=body.regeln,
+                             parameter=body.parameter, regeln=body.regeln, objekte=body.objekte,
                              begruendung=body.begruendung[:1000],
                              erstellt_von=user.email, erstellt_at=datetime.now(timezone.utc))
     db.add(row)

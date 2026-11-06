@@ -68,6 +68,8 @@ class RelevanzDefinition(Base):
     parameter: Mapped[dict] = mapped_column(postgresql.JSONB)
     #: Regelwerk (Firewall-Semantik); None = Standardregeln aus den Parametern
     regeln: Mapped[list | None] = mapped_column(postgresql.JSONB, nullable=True)
+    #: Objekte (Name → Filtertext); None = Standardobjekte
+    objekte: Mapped[dict | None] = mapped_column(postgresql.JSONB, nullable=True)
     begruendung: Mapped[str] = mapped_column(String(1000))
     erstellt_von: Mapped[str] = mapped_column(String(255))
     erstellt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

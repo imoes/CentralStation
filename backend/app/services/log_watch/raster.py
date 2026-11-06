@@ -57,6 +57,9 @@ class Treffer:
     verdraengt: list[str] = field(default_factory=list)
     #: Regeln im Testmodus, die gepasst hätten
     test_treffer: list[str] = field(default_factory=list)
+    #: Felder, die Regeln vergleichen (filter.FELDER, z. B. level) — gehen mit in die Historie,
+    #: damit Suche und Regel dasselbe Feld sehen
+    felder: dict = field(default_factory=dict)
     #: Nachrichten-IDs der Quelle, die die Historie speichern darf (Graylog: erste je Fenster)
     belege: list = field(default_factory=list)
 
@@ -72,7 +75,8 @@ def _urteil(quelle, schluessel, host, bekannt, tags, felder, gruende, anzahl, be
         urteil, st = NICHT_RELEVANT, e.stufe_block
     return Treffer(quelle, schluessel, host, st, gruende, tags, anzahl, beispiel[:500], bekannt,
                    urteil=urteil, kriterien=e.kriterien, definition_v=d.version, regel=e.regel,
-                   verdraengt=e.verdraengt, test_treffer=e.test_treffer, belege=list(belege or []))
+                   verdraengt=e.verdraengt, test_treffer=e.test_treffer, belege=list(belege or []),
+                   felder=dict(felder or {}))
 
 
 def _host_tags(name: str, verz: Hostverzeichnis) -> tuple[str, HostEintrag | None, list[str]]:
@@ -88,10 +92,6 @@ def _host_tags(name: str, verz: Hostverzeichnis) -> tuple[str, HostEintrag | Non
         tags.append(f"kritikalitaet:{e.kritikalitaet}")
     tags += [f"hg:{g}" for g in e.hostgruppen[:MAX_HG]]
     return kanon, e, tags
-
-
-def _nicht_produktion(e: HostEintrag | None, d: Definition) -> bool:
-    return bool(e and e.kritikalitaet.lower() in d.p("nicht_produktion"))
 
 
 def _ohne_doppel(tags: list[str]) -> list[str]:
