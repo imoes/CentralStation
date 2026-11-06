@@ -12,9 +12,10 @@ from app.services.log_watch.raster import Treffer
 ZEIT = datetime(2026, 11, 6, 17, 42, 3, tzinfo=timezone.utc)
 
 
-def _t(rel=2):
-    return Treffer("graylog", "muster:k1", "docker0218.example.com", rel, ["Thema „Speicher“"],
-                   ["quelle:graylog", "host:docker0218.example.com", "thema:oom"], 12, "OOM")
+def _t(urteil="relevant"):
+    return Treffer("graylog", "muster:k1", "docker0218.example.com", 2 if urteil == "relevant" else 1,
+                   ["Thema „Speicher“"], ["quelle:graylog", "host:docker0218.example.com", "thema:oom"],
+                   12, "OOM", urteil=urteil, kriterien=["R5"] if urteil == "relevant" else ["N1"])
 
 
 def test_dokument_felder_und_stabile_id():
@@ -23,6 +24,7 @@ def test_dokument_felder_und_stabile_id():
     assert doc_id == "graylog:abc-123"
     assert d["relevanz"] == 2 and d["raster_v"] == h.RASTER_V
     assert d["urteil"] == "relevant" and d["herkunft"] == "regel"        # Selektor gesetzt
+    assert d["kriterien"] == ["R5"] and d["definition_v"] == 1           # Urteil zitiert Regel
     assert d["hashtags"][2] == "thema:oom" and d["gruppe_anzahl"] == 12
     assert d["roh"] == {"level": 3, "host_groups": "a, b", "o": {"y": "1, 2"}}   # None fällt weg
     assert d["zeit"].startswith("2026-11-06T17:42:03")
@@ -31,7 +33,7 @@ def test_dokument_felder_und_stabile_id():
 
 def test_unter_schwelle_gehoert_nicht_in_die_historie():
     with pytest.raises(ValueError):
-        h.dokument(_t(rel=1), "x", ZEIT, "t", {})
+        h.dokument(_t("nicht_relevant"), "x", ZEIT, "t", {})
 
 
 def test_selektor_urteil_ist_erschoepfend():

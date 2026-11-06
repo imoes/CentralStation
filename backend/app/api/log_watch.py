@@ -119,3 +119,54 @@ async def raster_trockenlauf(db: Annotated[AsyncSession, Depends(get_db)],
     seit = datetime.now(timezone.utc) - timedelta(hours=stunden)
     rows = (await db.execute(select(RasterLauf).where(RasterLauf.fenster_start >= seit))).scalars()
     return zusammenfassung([(r.quelle, r.fenster_start, r.werte) for r in rows], stunden)
+
+
+# ── Relevanz-Definition ───────────────────────────────────────────────────────
+
+@router.get("/definition")
+async def get_definition(_user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)],
+                         alle: bool = Query(False)):
+    """Aktuelle Definition (oder alle Versionen): was relevant ist und was nicht."""
+    from app.models.log_watch import RelevanzDefinition
+    from app.services.log_watch.definition import aktuelle
+
+    d = await aktuelle(db)
+    if not alle:
+        return {"version": d.version, "kriterien": d.kriterien, "parameter": d.parameter}
+    rows = (await db.execute(select(RelevanzDefinition)
+                             .order_by(RelevanzDefinition.version.desc()))).scalars()
+    return [{"version": r.version, "kriterien": r.kriterien, "parameter": r.parameter,
+             "begruendung": r.begruendung, "erstellt_von": r.erstellt_von,
+             "erstellt_at": r.erstellt_at} for r in rows]
+
+
+class DefinitionBody(BaseModel):
+    kriterien: list[dict]
+    parameter: dict
+    begruendung: str
+
+
+@router.post("/definition", dependencies=[RequireAdmin])
+async def neue_definition(body: DefinitionBody, user: CurrentUser,
+                          db: Annotated[AsyncSession, Depends(get_db)]):
+    """Neue Version anlegen. Jede Änderung braucht eine Begründung; nichts wird überschrieben."""
+    from datetime import datetime, timezone
+
+    from app.models.log_watch import RelevanzDefinition
+    from app.services.log_watch.definition import aktuelle, pruefe
+
+    fehler = pruefe(body.kriterien, body.parameter)
+    if not body.begruendung.strip():
+        fehler.append("Begründung fehlt")
+    if fehler:
+        raise HTTPException(422, "; ".join(fehler))
+    alt = await aktuelle(db)
+    row = RelevanzDefinition(version=alt.version + 1, kriterien=body.kriterien,
+                             parameter=body.parameter, begruendung=body.begruendung[:1000],
+                             erstellt_von=user.email, erstellt_at=datetime.now(timezone.utc))
+    db.add(row)
+    db.add(AuditLog(action="log_relevanz_definition", resource_type="relevanz_definition",
+                    resource_id=str(row.version), user_id=user.id,
+                    new_value={"version": row.version, "begruendung": body.begruendung}))
+    await db.commit()
+    return {"version": row.version}

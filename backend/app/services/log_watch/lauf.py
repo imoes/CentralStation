@@ -63,12 +63,39 @@ async def _speichere(quelle: str, b: datetime, werte: dict) -> None:
         await db.commit()
 
 
-async def _verzeichnis():
+async def _grundlagen():
+    """Hostverzeichnis und aktuelle Relevanz-Definition — beides braucht jedes Urteil."""
     from app.core.database import AsyncSessionLocal
+    from app.services.log_watch.definition import aktuelle
     from app.services.log_watch.hosts import verzeichnis
 
     async with AsyncSessionLocal() as db:
-        return await verzeichnis(db)
+        return await verzeichnis(db), await aktuelle(db)
+
+
+#: Ein gespeicherter CheckMK-Zustand gilt nach einem Neustart nur so lange als Vergleich.
+ZUSTAND_GUELTIG = timedelta(hours=2)
+
+
+def gueltiger_zustand(werte: dict | None, alter: timedelta) -> dict[str, str] | None:
+    """Gespeicherten Zustand übernehmen, wenn er jung genug ist — sonst erster Abgleich."""
+    if not werte or alter > ZUSTAND_GUELTIG or not isinstance(werte.get("zustand"), dict):
+        return None
+    return dict(werte["zustand"])
+
+
+async def _letzter_checkmk_zustand(jetzt: datetime) -> dict[str, str] | None:
+    """Nach einem Neustart: Zustand des letzten Abgleichs aus `raster_lauf` — sonst gingen
+    Änderungen während des Neustarts still verloren."""
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.log_watch import RasterLauf
+
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(select(RasterLauf).where(RasterLauf.quelle == "checkmk")
+                                .order_by(RasterLauf.fenster_start.desc()).limit(1))).scalar_one_or_none()
+    return gueltiger_zustand(row.werte, jetzt - row.created_at) if row else None
 
 
 async def graylog_fenster(templates: dict, events: list, kritisch: dict, stumm: set[str],
@@ -78,8 +105,8 @@ async def graylog_fenster(templates: dict, events: list, kritisch: dict, stumm: 
     Darf die Erkennung nie stören: jeder Fehler wird protokolliert und geschluckt.
     """
     try:
-        verz = await _verzeichnis()
-        treffer = bewerte_graylog(templates, events, kritisch, stumm, verz)
+        verz, d = await _grundlagen()
+        treffer = bewerte_graylog(templates, events, kritisch, stumm, verz, d)
         _merke(b, treffer)
         await _speichere("graylog", b, zaehle(treffer, _kontingent, _stunde(b)))
     except Exception:
@@ -109,13 +136,13 @@ async def run_raster() -> None:
     async with AsyncSessionLocal() as db:
         quellen, fehlend = await lade_quellen(db)
     adapter = {q.name: q for q in quellen}
-    verz = await _verzeichnis()
+    verz, d = await _grundlagen()
     jetzt = _jetzt()
 
     b = _boden(jetzt - WAZUH_VERZUG) - FENSTER
     if "wazuh" in adapter:
         try:
-            treffer = bewerte_wazuh(await _wazuh(adapter["wazuh"].w, b), verz)
+            treffer = bewerte_wazuh(await _wazuh(adapter["wazuh"].w, b), verz, d)
             _merke(b, treffer)
             await _speichere("wazuh", b, zaehle(treffer, _kontingent, _stunde(b)))
         except Exception as e:  # noqa: BLE001
@@ -127,15 +154,18 @@ async def run_raster() -> None:
     bc = _boden(jetzt)
     if "checkmk" in adapter:
         try:
+            if _checkmk_vorher is None:
+                _checkmk_vorher = await _letzter_checkmk_zustand(jetzt)
             probleme = await adapter["checkmk"].k.get_problems(include_unknown=True,
                                                                include_handled=True)
-            abgleich = bewerte_checkmk(_checkmk_vorher, probleme, verz)
+            abgleich = bewerte_checkmk(_checkmk_vorher, probleme, verz, d)
             _checkmk_vorher = abgleich.zustand
             _merke(bc, abgleich.treffer)
             werte = zaehle(abgleich.treffer, _kontingent, _stunde(bc))
             werte.update(probleme=len(probleme), behoben=len(abgleich.behoben),
                          erster_abgleich=abgleich.erster,
-                         kritikalitaeten=dict(abgleich.kritikalitaeten))
+                         kritikalitaeten=dict(abgleich.kritikalitaeten),
+                         zustand=abgleich.zustand)
             await _speichere("checkmk", bc, werte)
         except Exception as e:  # noqa: BLE001
             log.warning("Raster checkmk: Abgleich %s fehlgeschlagen: %s", bc, e)
@@ -168,6 +198,7 @@ def zusammenfassung(zeilen: list[tuple[str, datetime, dict]], stunden: int) -> d
         z = je.setdefault(quelle, {"fenster": 0, "fehler": 0, "nachrichten": 0,
                                    "gespeichert_waere": 0, "bytes_waere": 0,
                                    "je_relevanz": Counter(), "tags": Counter(),
+                                   "je_urteil": Counter(), "je_kriterium": Counter(),
                                    "unbekannte_hosts": set(), "extra": Counter()})
         if "fehler" in w:
             z["fehler"] += 1
@@ -184,6 +215,8 @@ def zusammenfassung(zeilen: list[tuple[str, datetime, dict]], stunden: int) -> d
         z["gespeichert_waere"] += w.get("gespeichert_waere", 0)
         z["bytes_waere"] += w.get("bytes_waere", 0)
         z["je_relevanz"].update({k: v for k, v in (w.get("je_relevanz") or {}).items()})
+        z["je_urteil"].update(w.get("je_urteil") or {})
+        z["je_kriterium"].update(w.get("je_kriterium") or {})
         z["tags"].update(dict(w.get("top_hashtags") or []))
         z["unbekannte_hosts"] |= set(w.get("unbekannte_hosts") or [])
         for g, n in (w.get("nicht_zugeordnet") or {}).items():
@@ -202,6 +235,8 @@ def zusammenfassung(zeilen: list[tuple[str, datetime, dict]], stunden: int) -> d
             "abgedeckt_h": round(z["fenster"] * FENSTER.total_seconds() / 3600, 2),
             "nachrichten": z["nachrichten"],
             "je_relevanz": {k: z["je_relevanz"].get(k, 0) for k in ("0", "1", "2", "3")},
+            "je_urteil": dict(z["je_urteil"]),
+            "je_kriterium": dict(sorted(z["je_kriterium"].items())),
             "gespeichert_waere": z["gespeichert_waere"],
             "pro_tag": ({"nachrichten": round(z["nachrichten"] / tage),
                          "gespeichert": round(z["gespeichert_waere"] / tage),

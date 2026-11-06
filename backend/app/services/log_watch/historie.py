@@ -21,16 +21,16 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from app.services.log_watch.definition import NICHT_RELEVANT, RELEVANT
 from app.services.log_watch.embed import DIM
-from app.services.log_watch.raster import SPEICHERN_AB, Treffer
+from app.services.log_watch.raster import Treffer
 
 log = logging.getLogger(__name__)
 
 PRAEFIX = "cs-logs-"
 VORLAGE = "cs-logs"
 SCHALTER = "log_watch.historie_aktiv"
-#: Werte des Selektors `urteil` — erschöpfend
-RELEVANT, NICHT_RELEVANT = "relevant", "nicht_relevant"
+#: Werte des Selektors `urteil` — erschöpfend (eine Quelle der Wahrheit: definition.py)
 URTEILE = (RELEVANT, NICHT_RELEVANT)
 #: Wer geurteilt hat — ein Mensch hat Vorrang vor der KI, die KI vor der Regel
 HERKUNFT = ("regel", "ki", "mensch")
@@ -50,6 +50,8 @@ MAPPING = {
         # sondern steht in `herkunft` (regel) — so ist jeder Fall klassifiziert.
         "urteil": {"type": "keyword"},                     # relevant | nicht_relevant
         "herkunft": {"type": "keyword"},                   # regel | ki | mensch (wer urteilte)
+        "kriterien": {"type": "keyword"},                  # R1…R8 / N0…N6 (definition.py)
+        "definition_v": {"type": "short"},
         "gruende": {"type": "text"},
         "hashtags": {"type": "keyword"},
         "text": {"type": "text", "fields": {"exakt": {"type": "keyword", "ignore_above": 512}}},
@@ -86,13 +88,14 @@ def dokument(t: Treffer, quell_id: str, zeit: datetime, text: str, roh: dict) ->
     Die ID ist `<quelle>:<ID in der Quelle>`: ein zweiter Lauf überschreibt, statt zu
     verdoppeln.
     """
-    if t.relevanz < SPEICHERN_AB:
-        raise ValueError(f"Relevanz {t.relevanz} gehört nicht in die Historie")
+    if t.urteil != RELEVANT:
+        raise ValueError(f"Urteil {t.urteil} ({', '.join(t.kriterien)}) gehört nicht in die Historie")
     return f"{t.quelle}:{quell_id}", {
         "zeit": zeit.astimezone(timezone.utc).isoformat(),
         "quelle": t.quelle, "host": t.host, "host_bekannt": t.host_bekannt,
         "schluessel": t.schluessel, "relevanz": t.relevanz,
-        "urteil": RELEVANT, "herkunft": "regel",
+        "urteil": t.urteil, "herkunft": "regel", "kriterien": t.kriterien,
+        "definition_v": t.definition_v,
         "gruende": t.gruende, "hashtags": t.hashtags, "text": (text or t.beispiel)[:20000],
         "gruppe_anzahl": t.anzahl, "raster_v": RASTER_V, "roh": _flach(roh),
     }

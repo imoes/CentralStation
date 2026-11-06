@@ -212,7 +212,7 @@ class CheckMKConnector(BaseConnector):
                 "host_name", "description", "state",
                 "plugin_output", "acknowledged", "last_state_change",
                 "host_tags", "host_labels", "host_address", "host_filename",
-                "host_groups",
+                "host_groups", "scheduled_downtime_depth", "host_scheduled_downtime_depth",
             ],
         }
         r = await self._request(
@@ -279,6 +279,8 @@ class CheckMKConnector(BaseConnector):
                 "service": ext.get("description", ""),
                 "output": ext.get("plugin_output", ""),
                 "acknowledged": bool(ext.get("acknowledged", 0)),
+                "in_downtime": bool(ext.get("scheduled_downtime_depth", 0)
+                                    or ext.get("host_scheduled_downtime_depth", 0)),
                 "last_state_change": ext.get("last_state_change"),
                 "host_address": ext.get("host_address", ""),
                 "metadata": {

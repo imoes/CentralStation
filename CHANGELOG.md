@@ -10,6 +10,47 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 4: what "relevant" means is defined, and every verdict cites it
+
+### What's new
+
+- **A versioned relevance definition**, agreed with the user: eight relevant criteria (R1–R8) and
+  seven not-relevant ones (N0–N6), with a fixed precedence.
+- **Every verdict cites its criteria**, whether it comes from the raster, the AI or a human, together
+  with the version of the definition.
+- An admin changes the definition by adding a new version with a reason; nothing is overwritten.
+- **The raster now judges by the definition instead of fixed thresholds.** The dry run counts verdicts
+  per criterion, so it shows which rule drives the picture.
+- **CheckMK reports downtime** (`in_downtime`), which counts as handled (N2) like an acknowledgement.
+
+### Fixed during the logic check
+
+- **Noise could never apply.** In the first draft, security (R6) beat noise (N4). N4 only covers Wazuh
+  events from level 7 up, so every web-scanner hit would have stayed relevant. N4 now beats R6.
+- **Acknowledged damage stayed relevant.** The first draft let R5/R6 beat "handled" (N2). That
+  contradicted the decision that acknowledged means handled. N2 now beats every R.
+- **CheckMK lost its baseline on every restart.** A change during a deploy was never seen, and every run
+  after a restart was a "first comparison". The last state is now kept in `raster_lauf` and reloaded if
+  it is younger than 2 hours.
+
+### Evidence (live, 2026-11-06 ~18:05 UTC)
+
+- Definition version 1 was created on first use (author `system`).
+- **Wazuh, one 5-minute window:** 6 699 alerts, of which 141 relevant (all R6), 3 014 noise (N4, PAM
+  sessions) and 3 544 with no criterion (N0).
+  - Under the old fixed threshold, 162 were relevant. The difference is web-scanner hits now
+    correctly counted as noise.
+- **Tests:** 18 new or rewritten, among them a precedence table where every combination of criteria
+  gives exactly one verdict, the definition check, and the CheckMK state across a restart. The backend
+  suite has 824 passed.
+
+### What's missing
+
+- **N2 does not yet cover** "open ticket" or "already reported as an AI finding".
+- **No UI for the definition yet.**
+
+---
+
 ## 2026-11-06 — Log watch, part 3: history index with vector search (prepared)
 
 ### What's new

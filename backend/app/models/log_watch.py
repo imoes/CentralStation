@@ -54,3 +54,18 @@ class RasterLauf(Base):
     quelle: Mapped[str] = mapped_column(String(16), primary_key=True)
     werte: Mapped[dict] = mapped_column(postgresql.JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RelevanzDefinition(Base):
+    """Was relevant ist und was nicht — versioniert (services/log_watch/definition.py).
+
+    Jede Änderung ist eine neue Zeile mit Begründung; Urteile nennen Version und Kriterien.
+    """
+    __tablename__ = "relevanz_definition"
+
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kriterien: Mapped[list] = mapped_column(postgresql.JSONB)
+    parameter: Mapped[dict] = mapped_column(postgresql.JSONB)
+    begruendung: Mapped[str] = mapped_column(String(1000))
+    erstellt_von: Mapped[str] = mapped_column(String(255))
+    erstellt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
