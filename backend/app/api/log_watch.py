@@ -130,9 +130,12 @@ async def get_definition(_user: CurrentUser, db: Annotated[AsyncSession, Depends
     from app.models.log_watch import RelevanzDefinition
     from app.services.log_watch.definition import aktuelle
 
+    from app.services.log_watch.regelwerk import als_daten as regeln_als_daten
+
     d = await aktuelle(db)
     if not alle:
-        return {"version": d.version, "kriterien": d.kriterien, "parameter": d.parameter}
+        return {"version": d.version, "kriterien": d.kriterien, "parameter": d.parameter,
+                "regeln": regeln_als_daten(d.regeln), "default": {"aktion": "block", "kriterium": "N0"}}
     rows = (await db.execute(select(RelevanzDefinition)
                              .order_by(RelevanzDefinition.version.desc()))).scalars()
     return [{"version": r.version, "kriterien": r.kriterien, "parameter": r.parameter,
@@ -144,6 +147,8 @@ class DefinitionBody(BaseModel):
     kriterien: list[dict]
     parameter: dict
     begruendung: str
+    #: Regelwerk; fehlt es, gelten die Standardregeln aus den Parametern
+    regeln: list[dict] | None = None
 
 
 @router.post("/definition", dependencies=[RequireAdmin])
@@ -155,14 +160,19 @@ async def neue_definition(body: DefinitionBody, user: CurrentUser,
     from app.models.log_watch import RelevanzDefinition
     from app.services.log_watch.definition import aktuelle, pruefe
 
+    from app.services.log_watch.regelwerk import pruefe as pruefe_regeln
+
     fehler = pruefe(body.kriterien, body.parameter)
+    if body.regeln is not None:
+        fehler += pruefe_regeln(body.regeln, {k.get("id") for k in body.kriterien})
     if not body.begruendung.strip():
         fehler.append("Begründung fehlt")
     if fehler:
         raise HTTPException(422, "; ".join(fehler))
     alt = await aktuelle(db)
     row = RelevanzDefinition(version=alt.version + 1, kriterien=body.kriterien,
-                             parameter=body.parameter, begruendung=body.begruendung[:1000],
+                             parameter=body.parameter, regeln=body.regeln,
+                             begruendung=body.begruendung[:1000],
                              erstellt_von=user.email, erstellt_at=datetime.now(timezone.utc))
     db.add(row)
     db.add(AuditLog(action="log_relevanz_definition", resource_type="relevanz_definition",

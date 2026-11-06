@@ -5,11 +5,12 @@ Festgelegt mit dem Nutzer am 06.11.2026. Versioniert in `relevanz_definition`; e
 ändert (neue Version mit Begründung), die KI darf Kriterien vorschlagen. Version 1 steht
 hier und wird beim ersten Lesen in die DB übernommen.
 
-Vorrang bei gleicher Herkunft (Mensch > KI > Regel steht darüber):
-  N6 stumm > N2 behandelt > N4 Rauschen > R5/R6 vor N3/N5 > N3/N5 vor übrigen R > jedes R vor N0/N1
+Die maschinelle Form ist das Regelwerk (regelwerk.py, Firewall-Semantik): geordnete Regeln,
+die erste passende entscheidet. Die Standard-Reihenfolge ist der vereinbarte Vorrang
+  N6 stumm > N2 behandelt > N4 Rauschen > R5/R6 vor N3/N5 > N3/N5 vor übrigen R > R vor N1
 N4 steht über R6, weil Rauschen per Definition Sicherheitsereignisse ab Level 7 betrifft
 (Webscanner) — stünde R6 darüber, wäre N4 wirkungslos (Logikprüfung 06.11.).
-N0 „kein Kriterium erfüllt“ macht die Einteilung erschöpfend — kein Fall bleibt ohne Urteil.
+Default-Policy N0 „kein Kriterium erfüllt“ macht die Einteilung erschöpfend.
 """
 from __future__ import annotations
 
@@ -81,31 +82,6 @@ PARAMETER_V1 = {
     "selbst_dienste": ["Check_MK"],
 }
 
-_SCHADEN = {"R5", "R6"}
-_FILTER = {"N3", "N5"}
-
-
-def entscheide(r: set[str], n: set[str]) -> tuple[str, list[str]]:
-    """(Urteil, entscheidende Kriterien) nach dem Vorrang oben. Reine Funktion.
-
-    `r`/`n`: zutreffende Relevanz-/Nicht-Relevanz-Kriterien. Ohne jedes Kriterium: N0.
-    """
-    if "N6" in n:
-        return NICHT_RELEVANT, ["N6"]
-    if "N2" in n:
-        return NICHT_RELEVANT, ["N2"]
-    if "N4" in n:
-        return NICHT_RELEVANT, ["N4"]
-    filter_ = n & _FILTER
-    if filter_:
-        if r & _SCHADEN:
-            return RELEVANT, sorted(r)
-        return NICHT_RELEVANT, sorted(filter_)
-    if r:
-        return RELEVANT, sorted(r)
-    return NICHT_RELEVANT, sorted(n & {"N1"}) or ["N0"]
-
-
 def als_daten() -> tuple[list[dict], dict]:
     return [asdict(k) for k in KRITERIEN_V1], dict(PARAMETER_V1)
 
@@ -115,9 +91,18 @@ class Definition:
     version: int
     kriterien: list[dict]
     parameter: dict
+    #: Regelwerk (regelwerk.Regel); None → Standardregeln aus den Parametern
+    regeln: list | None = None
 
     def p(self, name: str):
         return self.parameter.get(name, PARAMETER_V1.get(name))
+
+    def __post_init__(self):
+        from app.services.log_watch.regelwerk import aus_daten, standard_regeln
+        if self.regeln is None:
+            self.regeln = standard_regeln(self.p)
+        elif self.regeln and isinstance(self.regeln[0], dict):
+            self.regeln = aus_daten(self.regeln)
 
 
 STANDARD = Definition(1, *als_daten())
@@ -140,7 +125,7 @@ async def aktuelle(db) -> Definition:
                                  erstellt_von="system", erstellt_at=datetime.now(timezone.utc))
         db.add(row)
         await db.commit()
-    return Definition(row.version, row.kriterien, row.parameter)
+    return Definition(row.version, row.kriterien, row.parameter, row.regeln)
 
 
 def pruefe(kriterien: list[dict], parameter: dict) -> list[str]:

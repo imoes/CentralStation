@@ -199,6 +199,8 @@ def zusammenfassung(zeilen: list[tuple[str, datetime, dict]], stunden: int) -> d
                                    "gespeichert_waere": 0, "bytes_waere": 0,
                                    "je_relevanz": Counter(), "tags": Counter(),
                                    "je_urteil": Counter(), "je_kriterium": Counter(),
+                                   "je_regel": Counter(), "regel_verdraengt": Counter(),
+                                   "regel_test": Counter(),
                                    "unbekannte_hosts": set(), "extra": Counter()})
         if "fehler" in w:
             z["fehler"] += 1
@@ -217,6 +219,8 @@ def zusammenfassung(zeilen: list[tuple[str, datetime, dict]], stunden: int) -> d
         z["je_relevanz"].update({k: v for k, v in (w.get("je_relevanz") or {}).items()})
         z["je_urteil"].update(w.get("je_urteil") or {})
         z["je_kriterium"].update(w.get("je_kriterium") or {})
+        for k in ("je_regel", "regel_verdraengt", "regel_test"):
+            z[k].update(w.get(k) or {})
         z["tags"].update(dict(w.get("top_hashtags") or []))
         z["unbekannte_hosts"] |= set(w.get("unbekannte_hosts") or [])
         for g, n in (w.get("nicht_zugeordnet") or {}).items():
@@ -237,6 +241,9 @@ def zusammenfassung(zeilen: list[tuple[str, datetime, dict]], stunden: int) -> d
             "je_relevanz": {k: z["je_relevanz"].get(k, 0) for k in ("0", "1", "2", "3")},
             "je_urteil": dict(z["je_urteil"]),
             "je_kriterium": dict(sorted(z["je_kriterium"].items())),
+            "je_regel": dict(sorted(z["je_regel"].items())),
+            "regel_verdraengt": dict(sorted(z["regel_verdraengt"].items())),
+            "regel_test": dict(sorted(z["regel_test"].items())),
             "gespeichert_waere": z["gespeichert_waere"],
             "pro_tag": ({"nachrichten": round(z["nachrichten"] / tage),
                          "gespeichert": round(z["gespeichert_waere"] / tage),

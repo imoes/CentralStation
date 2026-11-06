@@ -1,0 +1,109 @@
+"""Regelwerk der Log-Überwachung (Firewall-Semantik): Auswertung, Gleichwertigkeit mit dem
+bisherigen Vorrang, Testmodus, Verdeckung, Prüfung neuer Regelsätze."""
+import itertools
+
+import pytest
+
+from app.services.log_watch import regelwerk as rw
+from app.services.log_watch.definition import STANDARD
+
+
+def entscheide(r: set[str], n: set[str]) -> tuple[str, list[str]]:
+    """PRÜF-ORAKEL: der mit dem Nutzer vereinbarte Vorrang in seiner ursprünglichen Form
+    (bis 06.11. Produktcode). Das Regelwerk muss für jede Kombination dasselbe Urteil fällen."""
+    if "N6" in n:
+        return "nicht_relevant", ["N6"]
+    if "N2" in n:
+        return "nicht_relevant", ["N2"]
+    if "N4" in n:
+        return "nicht_relevant", ["N4"]
+    filter_ = n & {"N3", "N5"}
+    if filter_:
+        if r & {"R5", "R6"}:
+            return "relevant", sorted(r)
+        return "nicht_relevant", sorted(filter_)
+    if r:
+        return "relevant", sorted(r)
+    return "nicht_relevant", sorted(n & {"N1"}) or ["N0"]
+
+REGELN = rw.standard_regeln(STANDARD.p)
+
+#: Kriterium → Merkmale, mit denen eine Quelle es ausdrückt
+MERKMALE = {
+    "N6": ({"signal:stumm"}, {}), "N2": ({"signal:behandelt"}, {}), "N4": ({"regel:5501"}, {}),
+    "N3": ({"kritikalitaet:test"}, {}), "N5": ({"dienst:Check_MK Discovery"}, {}),
+    "N1": ({"quelle:graylog"}, {}),
+    "R1": ({"zustand:crit", "kritikalitaet:prod"}, {}), "R2": ({"signal:neu"}, {}),
+    "R3": ({"signal:ausbreitung"}, {}), "R4": ({"signal:anstieg"}, {}),
+    "R5": ({"signal:schaden"}, {}), "R6": ({"quelle:wazuh"}, {"level": 9}),
+    "R8": ({"signal:frist"}, {}),
+}
+ALLE = sorted(MERKMALE)
+
+
+def test_gleichwertig_mit_bisherigem_vorrang_fuer_alle_kombinationen():
+    """Alle 2^13 Kombinationen: dasselbe Urteil; die entscheidende Regel ist eines der
+    Kriterien, die der bisherige Vorrang nannte."""
+    for n in range(len(ALLE) + 1):
+        for kombi in itertools.combinations(ALLE, n):
+            tags, felder = set(), {}
+            for k in kombi:
+                tags |= MERKMALE[k][0]
+                felder.update(MERKMALE[k][1])
+            r = {k for k in kombi if k.startswith("R")}
+            nn = {k for k in kombi if k.startswith("N")}
+            alt_urteil, alt_krit = entscheide(r, nn)
+            e = rw.bewerte(REGELN, tags, felder)
+            neu_urteil = "relevant" if e.aktion == rw.FORWARD else "nicht_relevant"
+            assert neu_urteil == alt_urteil, (kombi, alt_krit, e)
+            assert e.kriterien[0] in alt_krit, (kombi, alt_krit, e)
+
+
+def test_default_policy_block_n0():
+    e = rw.bewerte(REGELN, {"quelle:wazuh"}, {"level": 3})
+    assert (e.aktion, e.regel, e.kriterien) == ("block", "default", ["N0"])
+
+
+def test_erste_passende_entscheidet_weitere_gleiche_aktion_zitiert_verdraengte_gezaehlt():
+    e = rw.bewerte(REGELN, {"signal:schaden", "zustand:crit", "kritikalitaet:prod", "quelle:graylog"})
+    assert (e.aktion, e.regel) == ("forward", "R5")
+    assert e.kriterien == ["R5", "R1"]                       # entscheidend zuerst
+    assert e.verdraengt == ["R1", "N1"]                      # passten, entschieden aber nicht
+
+
+def test_testmodus_zaehlt_nur():
+    probe = rw.Regel("K1", "N4", "FTP-Rauschen (Vorschlag)", rw.BLOCK,
+                     {"alle": [{"hat": "regel:11307"}, {"hat": "host:ftpp01-v.zo-intern.de"}]},
+                     modus=rw.TEST, herkunft="ki")
+    e = rw.bewerte([probe] + REGELN, {"quelle:wazuh", "regel:11307", "host:ftpp01-v.zo-intern.de"},
+                   {"level": 10})
+    assert (e.aktion, e.regel, e.test_treffer) == ("forward", "R6", ["K1"])
+
+
+@pytest.mark.parametrize("bed,tags,felder,erwartet", [
+    ({"hat": "a"}, {"a"}, {}, True),
+    ({"eines_von": ["a", "b"]}, {"b"}, {}, True),
+    ({"eines_von": []}, {"b"}, {}, False),
+    ({"praefix": "dienst:Check_MK"}, {"dienst:Check_MK Discovery"}, {}, True),
+    ({"praefix": ["x:", "y:"]}, {"y:1"}, {}, True),
+    ({"praefix": []}, {"y:1"}, {}, False),
+    ({"nicht": {"hat": "a"}}, {"a"}, {}, False),
+    ({"feld": "level", "ab": 7}, set(), {"level": 7}, True),
+    ({"feld": "level", "ab": 7, "bis": 11}, set(), {"level": 12}, False),
+    ({"feld": "level", "ab": 7}, set(), {}, False),          # Feld fehlt: passt nicht
+    ({"unbekannt": 1}, {"a"}, {}, False),                    # unbekannt: passt nie
+])
+def test_bedingungen(bed, tags, felder, erwartet):
+    assert rw.passt(bed, tags, felder) is erwartet
+
+
+def test_regelsatz_pruefen_und_rundreise():
+    daten = rw.als_daten(REGELN)
+    ids = {"R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "N0", "N1", "N2", "N3", "N4", "N5", "N6"}
+    assert rw.pruefe(daten, ids) == []
+    assert rw.aus_daten(daten) == REGELN
+    kaputt = daten + [{"id": "N6", "kriterium": "X9", "aktion": "drop", "modus": "egal",
+                       "bedingung": {"feld": "level"}}]
+    f = rw.pruefe(kaputt, ids)
+    assert "Regel-IDs doppelt" in f and any("forward oder block" in x for x in f)
+    assert any("X9" in x for x in f) and any("wohlgeformt" in x for x in f)

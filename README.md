@@ -1256,6 +1256,49 @@ user on 2026-11-06.
 - **Switch:** writing starts only once the global setting `log_watch.historie_aktiv` is set, after the
   24-hour dry run.
 
+### Log watch: ruleset (firewall semantics: forward / block)
+
+The relevance decision works like a firewall (`services/log_watch/regelwerk.py`). Rules are ordered,
+and **the first matching rule decides FORWARD (relevant) or BLOCK**. If none matches, the **default
+policy BLOCK** applies (N0).
+
+- **What a rule checks:** only hashtags and a few fields, so a rule filters exactly what a person
+  filters in the search. Each source sets what it observes as a signal hashtag:
+
+  | Signal | Meaning |
+  |---|---|
+  | `signal:neu` | new pattern |
+  | `signal:anstieg` | spike |
+  | `signal:ausbreitung` | spread |
+  | `signal:schaden` | damage to resources |
+  | `signal:frist` | expiring deadline |
+  | `signal:behandelt` | acknowledged or in downtime |
+  | `signal:stumm` | muted by an admin |
+  | `signal:dringend` | urgent |
+
+- **Conditions** are JSON, ANDed: `hat`, `eines_von`, `praefix` (string or list), `feld` with `ab`/`bis`
+  (e.g. Wazuh `level` ≥ 7), and `nicht`. An unknown clause never matches.
+- **Standard order** is the agreed precedence:
+
+  N6 stumm → N2 behandelt → N4 Rauschen → R5 Schaden → R6 Sicherheit → N3 Nicht-Produktion → N5 selbst
+  erzeugt → R1 Störung in Produktion → R2 neu → R3 Ausbreitung → R4 Anstieg → R8 Frist → N1 Routine → Default N0.
+
+  A test runs all 8 192 combinations of the criteria against the original precedence and gets the same
+  verdict every time.
+- **The verdict cites** the deciding rule, its criterion first, then further matching criteria with the
+  same action.
+- **Counted per 5-minute window** in `raster_lauf`:
+  - `je_regel`: decisions per rule;
+  - `regel_verdraengt`: the rule matched, but an earlier one decided. A rule that is only ever displaced
+    is shadowed; this is measured, not assumed;
+  - `regel_test`: what rules in test mode would have caught. Test-mode rules never decide.
+- **Rules are part of the versioned definition** (column `regeln`). `GET /api/log-watch/definition`
+  returns them with the default policy. `POST` accepts a new rule set; IDs, actions, modes, criteria and
+  conditions are checked. AI proposals go in as rules in test mode, and an admin activates them.
+- **Performance** (measured 2026-11-06): 5.2 µs per verdict, about 1 060 groups per window, so about
+  5.5 ms. Compiling the rules to C++ (like Varnish VCL) was considered and deferred: rules as data stay
+  verifiable. It comes back up if judging takes more than 50 % of a window.
+
 ### Log watch: AI cockpit (dashboard widgets)
 
 The generative dashboard is the **"🪄 KI-Cockpit"**. Besides the existing widget types, the AI can

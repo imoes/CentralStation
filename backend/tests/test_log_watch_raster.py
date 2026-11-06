@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.log_watch import raster as r
-from app.services.log_watch.definition import KRITERIEN_V1, entscheide
+from app.services.log_watch.definition import KRITERIEN_V1
 from app.services.log_watch.hosts import Hostverzeichnis, norm
 from app.services.log_watch.lauf import zusammenfassung
 from app.services.log_watch.vokabular import THEMA_IDS, dienst_thema, themen
@@ -103,20 +103,7 @@ def test_mehrdeutig_wird_nicht_geraten():
 
 # ── Definition: Vorrang ─────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("r,n,urteil,kriterien", [
-    (set(), set(), "nicht_relevant", ["N0"]),                  # erschöpfend: kein Limbo
-    (set(), {"N1"}, "nicht_relevant", ["N1"]),
-    ({"R2"}, {"N1"}, "relevant", ["R2"]),                      # R schlägt Routine
-    ({"R1", "R4"}, set(), "relevant", ["R1", "R4"]),
-    ({"R2"}, {"N3"}, "nicht_relevant", ["N3"]),                # Nicht-Prod schlägt übrige R
-    ({"R5"}, {"N3"}, "relevant", ["R5"]),                      # Schaden schlägt Nicht-Prod
-    ({"R6"}, {"N4"}, "nicht_relevant", ["N4"]),                # Rauschen schlägt Sicherheit
-    ({"R6"}, {"N3"}, "relevant", ["R6"]),                      # Sicherheit schlägt Nicht-Prod
-    ({"R5", "R6"}, {"N2"}, "nicht_relevant", ["N2"]),          # behandelt schlägt jedes R
-    ({"R5"}, {"N6", "N2"}, "nicht_relevant", ["N6"]),          # stumm schlägt alles
-])
-def test_vorrang(r, n, urteil, kriterien):
-    assert entscheide(r, n) == (urteil, kriterien)
+# Vorrang: bewiesen im Regelwerk-Test (alle Kombinationen gegen das Prüf-Orakel)
 
 
 def test_definition_vollstaendig_und_eindeutig():
@@ -172,8 +159,9 @@ def test_graylog_schaden_kernel_stumm_und_nicht_produktion():
         tts, [_ev("dev", ("new",))], {("kernel-io", "aim012"): object()}, {"laut"}, verz)}
     assert (t["muster:oom"].urteil, t["muster:oom"].kriterien) == ("relevant", ["R5"])
     assert t["muster:io"].kriterien == ["R5"] and t["muster:io"].relevanz == 3   # Kernel-Signatur
-    assert (t["muster:laut"].kriterien, t["muster:laut"].relevanz) == (["N6"], 0)
-    assert (t["muster:dev"].urteil, t["muster:dev"].kriterien) == ("nicht_relevant", ["N3"])
+    assert (t["muster:laut"].kriterien, t["muster:laut"].relevanz) == (["N6", "N1"], 0)   # N6 entscheidet
+    assert (t["muster:dev"].urteil, t["muster:dev"].kriterien) == ("nicht_relevant", ["N3", "N1"])
+    assert t["muster:dev"].verdraengt == ["R2", "N1"]          # R2 passte, N3 entschied vorher
     assert t["muster:devoom"].urteil == "relevant"                                 # R5 schlägt N3
 
 
@@ -236,7 +224,8 @@ def test_checkmk_kriterien_nur_fuer_aenderungen():
     a = r.bewerte_checkmk(vorher, probleme, VERZ)
     t = {x.schluessel: x for x in a.treffer}
     assert len(a.treffer) == 7
-    assert (t["dienst:Filesystem /"].kriterien, t["dienst:Filesystem /"].relevanz) == (["R1", "R5"], 3)
+    assert (t["dienst:Filesystem /"].kriterien, t["dienst:Filesystem /"].relevanz) == (["R5", "R1"], 3)
+    assert t["dienst:Filesystem /"].regel == "R5" and "signal:schaden" in t["dienst:Filesystem /"].hashtags
     assert (t["dienst:HTTP"].kriterien, t["dienst:HTTP"].relevanz) == (["R1"], 2)
     assert t["dienst:Memory"].kriterien == ["N0"] and "(vorher CRITICAL)" in t["dienst:Memory"].gruende[0]
     assert t["dienst:HTTPS Certificate"].kriterien == ["N2"] and "quittiert" in t["dienst:HTTPS Certificate"].gruende
@@ -273,6 +262,7 @@ def test_kontingent_und_zaehle():
                  r.Kontingent(), STUNDE)
     assert z["nachrichten"] == 103 and z["je_urteil"] == {"relevant": 3, "nicht_relevant": 100}
     assert z["je_kriterium"] == {"N0": 100, "R2": 3}
+    assert z["je_regel"] == {"default": 103} and z["regel_verdraengt"] == {} == z["regel_test"]
     assert z["gespeichert_waere"] == 3 and z["bytes_waere"] == 3 * 1468
     assert z["unbekannte_hosts"] == ["x"] and z["nicht_zugeordnet"] == {"unbekannt": 1}
     assert z["top_hashtags"] == [("host:h9", 3)]

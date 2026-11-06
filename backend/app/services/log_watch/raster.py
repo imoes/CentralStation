@@ -1,10 +1,10 @@
 """Raster: den Stream aller drei Quellen per Skript taggen und beurteilen — ohne KI.
 
 Ergebnis je Nachrichtengruppe (Muster × Host, Regel × Agent, Service × Host) ein
-`Treffer` mit Urteil (relevant | nicht_relevant), den Kriterien der Relevanz-Definition,
-auf die es sich stützt (definition.py — R1…R8, N0…N6), einer Stufe 0–3, lesbaren Gründen
-und Hashtags. Hashtags haben genau eine Form, `art:wert`; sie sind zugleich Filter,
-Facette und Netzplan-Knoten (Plan „Netzplan = Suche“).
+`Treffer` mit Hashtags (`art:wert` — zugleich Filter, Facette, Netzplan-Knoten). Was eine
+Quelle beobachtet, setzt sie als Signal-Hashtag (`signal:neu`, `signal:schaden` …); das
+Regelwerk (regelwerk.py, Firewall-Semantik) entscheidet daraus FORWARD (relevant) oder
+BLOCK und nennt die Regel und die Kriterien der Relevanz-Definition (R1…R8, N0…N6).
 
 Stufe: relevant → 2, dringend → 3; nicht relevant → 1, bei Rauschen/selbst erzeugt/stumm
 (N4/N5/N6) → 0. In die Historie geht, was relevant ist; je Gruppe und Stunde höchstens
@@ -16,9 +16,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from app.services.log_watch.definition import (
-    NICHT_RELEVANT, RELEVANT, STANDARD, Definition, entscheide,
-)
+from app.services.log_watch.definition import NICHT_RELEVANT, RELEVANT, STANDARD, Definition
+from app.services.log_watch.regelwerk import FORWARD, bewerte
 from app.services.log_watch.hosts import HostEintrag, Hostverzeichnis, norm
 from app.services.log_watch.vokabular import dienst_thema, themen
 
@@ -31,8 +30,8 @@ MAX_HG = 3
 #: Themen, die ein Kriterium erfüllen
 THEMEN_R5 = frozenset({"oom", "disk-full", "fs-readonly", "kernel-io", "absturz"})
 THEMEN_R8 = frozenset({"cert", "backup"})
-#: Fehler-Cluster-Regel → Kriterium („persistent“ = neues Muster läuft anhaltend)
-REGEL_KRITERIUM = {"new": "R2", "persistent": "R2", "spread": "R3", "spike": "R4"}
+#: Fehler-Cluster-Regel → Signal („persistent“ = neues Muster läuft anhaltend)
+REGEL_SIGNAL = {"new": "neu", "persistent": "neu", "spread": "ausbreitung", "spike": "anstieg"}
 
 
 @dataclass
@@ -49,24 +48,31 @@ class Treffer:
     beispiel: str = ""
     host_bekannt: bool = True
     urteil: str = NICHT_RELEVANT
-    #: entscheidende Kriterien (definition.py), z. B. ["R2", "R5"] oder ["N3"]
+    #: Kriterien (definition.py), entscheidendes zuerst, z. B. ["R5", "R1"] oder ["N3"]
     kriterien: list[str] = field(default_factory=list)
     definition_v: int = 1
+    #: entscheidende Regel des Regelwerks („default“ = Default-Policy)
+    regel: str = "default"
+    #: aktive Regeln, die passten, aber nicht entschieden — für die Verdeckung
+    verdraengt: list[str] = field(default_factory=list)
+    #: Regeln im Testmodus, die gepasst hätten
+    test_treffer: list[str] = field(default_factory=list)
     #: Nachrichten-IDs der Quelle, die die Historie speichern darf (Graylog: erste je Fenster)
     belege: list = field(default_factory=list)
 
 
-def stufe(urteil: str, kriterien: list[str], dringend: bool) -> int:
-    if urteil == RELEVANT:
-        return 3 if dringend else 2
-    return 0 if set(kriterien) & {"N4", "N5", "N6"} else 1
-
-
-def _urteil(quelle, schluessel, host, bekannt, r: set, n: set, dringend: bool, gruende,
-            tags, anzahl, beispiel, d: Definition, belege=None) -> Treffer:
-    u, k = entscheide(r, n)
-    return Treffer(quelle, schluessel, host, stufe(u, k, dringend), gruende, _ohne_doppel(tags),
-                   anzahl, beispiel[:500], bekannt, u, k, d.version, list(belege or []))
+def _urteil(quelle, schluessel, host, bekannt, tags, felder, gruende, anzahl, beispiel,
+            d: Definition, belege=None) -> Treffer:
+    """Das Regelwerk entscheidet; Stufe: FORWARD 2 (dringend 3), BLOCK laut Regel 0/1."""
+    tags = _ohne_doppel(tags)
+    e = bewerte(d.regeln, set(tags), felder)
+    if e.aktion == FORWARD:
+        urteil, st = RELEVANT, 3 if "signal:dringend" in tags else 2
+    else:
+        urteil, st = NICHT_RELEVANT, e.stufe_block
+    return Treffer(quelle, schluessel, host, st, gruende, tags, anzahl, beispiel[:500], bekannt,
+                   urteil=urteil, kriterien=e.kriterien, definition_v=d.version, regel=e.regel,
+                   verdraengt=e.verdraengt, test_treffer=e.test_treffer, belege=list(belege or []))
 
 
 def _host_tags(name: str, verz: Hostverzeichnis) -> tuple[str, HostEintrag | None, list[str]]:
@@ -92,14 +98,18 @@ def _ohne_doppel(tags: list[str]) -> list[str]:
     return list(dict.fromkeys(t for t in tags if t and not t.endswith(":")))
 
 
-def _themen_kriterien(th, r: set, gruende: list) -> None:
+def _themen_signale(th, signale: set, gruende: list) -> None:
     for t in th:
-        if t.id in THEMEN_R5 and "R5" not in r:
-            r.add("R5")
-            gruende.append(f"Thema „{t.text}“ (R5 Schaden an Ressourcen)")
-        elif t.id in THEMEN_R8 and "R8" not in r:
-            r.add("R8")
-            gruende.append(f"Thema „{t.text}“ (R8 ablaufende Frist)")
+        if t.id in THEMEN_R5 and "schaden" not in signale:
+            signale.add("schaden")
+            gruende.append(f"Thema „{t.text}“ (Schaden an Ressourcen)")
+        elif t.id in THEMEN_R8 and "frist" not in signale:
+            signale.add("frist")
+            gruende.append(f"Thema „{t.text}“ (ablaufende Frist)")
+
+
+def _sig(signale: set) -> list[str]:
+    return [f"signal:{x}" for x in sorted(signale)]
 
 
 # ── Graylog ────────────────────────────────────────────────────────────────────
@@ -131,41 +141,34 @@ def bewerte_graylog(templates: dict, events: list, kritisch: dict, stumm: set[st
     for key, tt in templates.items():
         beispiel = tt.examples[0] if tt.examples else ""
         th = themen(f"{tt.template}\n{beispiel}")
-        r: set[str] = set()
+        signale: set[str] = set()
         gruende = ["Fehlerzeile in Graylog"]
-        sofort = False
         ev = ereignis.get(key)
         if ev is not None:
-            r |= {REGEL_KRITERIUM[x] for x in ev.verdict.rules if x in REGEL_KRITERIUM}
+            signale |= {REGEL_SIGNAL[x] for x in ev.verdict.rules if x in REGEL_SIGNAL}
             gruende += list(ev.verdict.reasons) or [
                 "Muster auffällig: " + ", ".join(sorted(ev.verdict.rules))]
-            sofort = ev.verdict.notify == "immediate"
-            if sofort:
+            if ev.verdict.notify == "immediate":
+                signale.add("dringend")
                 gruende.append("Sofort-Meldung der Fehler-Cluster-Erkennung")
-        _themen_kriterien(th, r, gruende)
+        _themen_signale(th, signale, gruende)
+        if key in stumm:
+            signale.add("stumm")
+            gruende.append("Muster stumm geschaltet (Admin)")
         apps = [e for e, _ in tt.entities.most_common() if e and e not in tt.sources][:3]
         hosts = getattr(tt, "hosts", None) or Counter({s: 0 for s in tt.sources})
         belege = getattr(tt, "belege", None) or {}
         for host, n_zeilen in hosts.items():
-            rr, nn, g = set(r), set(), list(gruende)
+            sig, g = set(signale), list(gruende)
             kanon, e, htags = _host_tags(host, verz)
             sigs = krit_je_host.get(norm(host))
             if sigs:
-                rr.add("R5")
+                sig |= {"schaden", "dringend"}
                 g.append("Kritische Kernelmeldung auf diesem Host: " + ", ".join(sorted(set(sigs))))
-            if key in stumm:
-                nn.add("N6")
-                g.append("Muster stumm geschaltet (Admin)")
-            if _nicht_produktion(e, d):
-                nn.add("N3")
-                g.append(f"Host mit Kritikalität {e.kritikalitaet}")
-            if not rr:
-                nn.add("N1")
             tags = (["quelle:graylog", f"muster:{key}"] + htags + [f"app:{a}" for a in apps]
-                    + [f"thema:{t.id}" for t in th])
-            out.append(_urteil("graylog", f"muster:{key}", kanon, e is not None, rr, nn,
-                               sofort or bool(sigs), g, tags, n_zeilen or tt.count, beispiel, d,
-                               belege.get(host)))
+                    + [f"thema:{t.id}" for t in th] + _sig(sig))
+            out.append(_urteil("graylog", f"muster:{key}", kanon, e is not None, tags, {}, g,
+                               n_zeilen or tt.count, beispiel, d, belege.get(host)))
     return out
 
 
@@ -192,26 +195,19 @@ def bewerte_wazuh(zeilen: list[dict], verz: Hostverzeichnis,
                   d: Definition = STANDARD) -> list[Treffer]:
     out = []
     for z in zeilen:
-        r: set[str] = set()
-        n: set[str] = set()
+        signale: set[str] = set()
         gruende = [f"Wazuh-Regel {z['regel']}, Level {z['level']}: {z['beschreibung']}"]
-        if z["level"] >= d.p("wazuh_level_ab"):
-            r.add("R6")
-        if z["regel"] in d.p("rauschen_regeln") or set(z["gruppen"]) & set(d.p("rauschen_regelgruppen")):
-            n.add("N4")
-            gruende.append("bekanntes Rauschen (Regel/Regelgruppe in der Definition)")
         th = themen(z["beschreibung"])
-        _themen_kriterien(th, r, gruende)
+        _themen_signale(th, signale, gruende)
+        if z["level"] >= d.p("wazuh_level_dringend"):
+            signale.add("dringend")
         kanon, e, htags = _host_tags(z["agent"], verz)
-        if _nicht_produktion(e, d):
-            n.add("N3")
-            gruende.append(f"Host mit Kritikalität {e.kritikalitaet}")
         tags = (["quelle:wazuh", f"regel:{z['regel']}"] + htags
                 + [f"regelgruppe:{g}" for g in z["gruppen"][:3]]
-                + [f"mitre:{t}" for t in z["taktiken"]] + [f"thema:{t.id}" for t in th])
-        out.append(_urteil("wazuh", f"regel:{z['regel']}", kanon, e is not None, r, n,
-                           z["level"] >= d.p("wazuh_level_dringend"), gruende, tags, z["anzahl"],
-                           z["beschreibung"], d))
+                + [f"mitre:{t}" for t in z["taktiken"]] + [f"thema:{t.id}" for t in th]
+                + _sig(signale))
+        out.append(_urteil("wazuh", f"regel:{z['regel']}", kanon, e is not None, tags,
+                           {"level": z["level"]}, gruende, z["anzahl"], z["beschreibung"], d))
     return out
 
 
@@ -247,31 +243,25 @@ def bewerte_checkmk(vorher: dict[str, str] | None, probleme: list[dict],
             continue
         crit = ((p.get("metadata") or {}).get("criticality") or "").lower()
         dt = dienst_thema(p["service"])
-        r: set[str] = set()
-        n: set[str] = set()
+        signale: set[str] = set()
         gruende = [f"{p['service']} {sev.upper()}" + (f" auf Host mit Kritikalität {crit}" if crit else "")
                    + (" (neu)" if key not in vorher else f" (vorher {vorher[key].upper()})")]
-        if sev == "critical" and crit in d.p("relevante_kritikalitaeten"):
-            r.add("R1")
         if sev == "critical" and dt in THEMEN_R5:
-            r.add("R5")
+            signale.add("schaden")
         if dt in THEMEN_R8:
-            r.add("R8")
+            signale.add("frist")
+        if sev == "critical" and crit in d.p("dringende_kritikalitaeten"):
+            signale.add("dringend")
         if p.get("acknowledged") or p.get("in_downtime"):
-            n.add("N2")
+            signale.add("behandelt")
             gruende.append("quittiert" if p.get("acknowledged") else "in Downtime")
-        if crit in d.p("nicht_produktion"):
-            n.add("N3")
-        if any(p["service"].startswith(x) for x in d.p("selbst_dienste")):
-            n.add("N5")
-            gruende.append("vom Monitoring selbst erzeugt")
         kanon, e, htags = _host_tags(p["host"], verz)
         th = [t.id for t in themen(p.get("output") or "")]
         tags = (["quelle:checkmk", f"dienst:{p['service']}", f"zustand:{_ZUSTAND_TAG.get(sev, sev)}"]
-                + htags + [f"thema:{t}" for t in ([dt] if dt else []) + th])
-        out.append(_urteil("checkmk", f"dienst:{p['service']}", kanon, e is not None, r, n,
-                           sev == "critical" and crit in d.p("dringende_kritikalitaeten"),
-                           gruende, tags, 1, p.get("output") or "", d))
+                + ([f"kritikalitaet:{crit}"] if crit else []) + htags
+                + [f"thema:{t}" for t in ([dt] if dt else []) + th] + _sig(signale))
+        out.append(_urteil("checkmk", f"dienst:{p['service']}", kanon, e is not None, tags, {},
+                           gruende, 1, p.get("output") or "", d))
     behoben = [k for k in vorher if k not in jetzt]
     return CheckmkAbgleich(out, behoben, jetzt, kritikalitaeten=krit)
 
@@ -328,6 +318,9 @@ def zaehle(treffer: list[Treffer], kontingent: Kontingent, stunde: datetime) -> 
     gruppen_je_rel = Counter()
     je_urteil = Counter()
     je_kriterium = Counter()
+    je_regel = Counter()          # Entscheidungen je Regel (Nachrichten)
+    verdraengt = Counter()        # passte, entschied aber nicht (eine frühere Regel war zuerst)
+    test = Counter()              # Regeln im Testmodus: hätten gepasst
     gespeichert = 0
     tags = Counter()
     #: nicht zugeordnete Hosts je Grund (unbekannt | mehrdeutig | container-id)
@@ -339,6 +332,11 @@ def zaehle(treffer: list[Treffer], kontingent: Kontingent, stunde: datetime) -> 
         je_urteil[t.urteil] += t.anzahl
         for k in t.kriterien:
             je_kriterium[k] += t.anzahl
+        je_regel[t.regel] += t.anzahl
+        for r in t.verdraengt:
+            verdraengt[r] += t.anzahl
+        for r in t.test_treffer:
+            test[r] += t.anzahl
         n = kontingent.nimm(t, stunde)
         gespeichert += n
         byte += n * BYTES_JE_NACHRICHT.get(t.quelle, 1500)
@@ -355,6 +353,9 @@ def zaehle(treffer: list[Treffer], kontingent: Kontingent, stunde: datetime) -> 
         "gruppen_je_relevanz": {str(k): gruppen_je_rel.get(k, 0) for k in range(4)},
         "je_urteil": dict(je_urteil),
         "je_kriterium": dict(sorted(je_kriterium.items())),
+        "je_regel": dict(sorted(je_regel.items())),
+        "regel_verdraengt": dict(sorted(verdraengt.items())),
+        "regel_test": dict(sorted(test.items())),
         "gespeichert_waere": gespeichert,
         "bytes_waere": byte,
         "unbekannte_hosts": sorted(unbekannt.get("unbekannt", set()))[:50],

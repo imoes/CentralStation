@@ -10,6 +10,58 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 6: the relevance decision is a firewall ruleset
+
+### What's new
+
+- **Ordered rules, first match decides FORWARD (relevant) or BLOCK; default policy BLOCK (N0).**
+  - Every source sets what it observes as a hashtag, e.g. `signal:neu`, `signal:schaden` or
+    `signal:behandelt`. A rule checks only hashtags and a few fields, so it filters exactly what a person
+    filters in the search.
+- **Firewall counters per window:**
+  - decisions per rule;
+  - displaced matches (a rule matched, but an earlier one decided);
+  - test-mode hits.
+
+  Rules in test mode never decide. This is where AI proposals go before an admin activates them.
+- **Rules are part of the versioned definition** and can be read and replaced through the API. A new
+  rule set is checked for IDs, actions, modes, criteria and well-formed conditions.
+
+### What changed
+
+- **The precedence function is gone from the product code.** The rule order is the precedence.
+  - The original precedence lives on as the test oracle only, so there is one way to a verdict.
+- **A verdict cites the deciding rule first,** then further matching criteria with the same action.
+  For example, CheckMK CRIT on a full filesystem on prod is now "R5, R1"; before it was sorted "R1, R5".
+
+### Evidence
+
+- **Equivalence:** all 8 192 combinations of the criteria give the same verdict under the rules as
+  under the original precedence, and the deciding rule is always one of the criteria the precedence
+  named.
+- **Live, 2026-11-06 18:20–18:30 UTC, same picture as before the switch:**
+
+  | Source (per 5 min) | Decisions per rule |
+  |---|---|
+  | Wazuh | N4 2 888, R6 148, default 3 473; R6 displaced 11 times (noise at level ≥ 7 decided by N4, as intended) |
+  | CheckMK | R1 2, default 9 |
+  | Graylog | N1 54 370 |
+
+- **Performance:** 5.2 µs per verdict, about 5.5 ms per window. Compiling the rules to C++ (like
+  Varnish) was considered and deferred, with this measurement as the trigger to reconsider.
+- **Tests:** the backend suite has 838 passed. Among them are the equivalence test, the conditions,
+  test mode, displacement and the rule-set check.
+- **Fixed during the switch:** the arguments of a verdict were in the wrong order, so the evidence IDs
+  landed in the `regel` field. The tests caught it before deployment.
+
+### What's missing
+
+- **Firewall logs (Palo Alto, about 2.9 million/h) and switch logs (about 241 000/h)** are not read yet.
+  They are planned: firewall by field counts plus single threats, switches in their own pattern pass.
+- **No UI for rules**, the hit list, or AI proposals yet.
+
+---
+
 ## 2026-11-06 — Log watch, part 5: the dashboard becomes the AI cockpit (backend)
 
 ### What's new
