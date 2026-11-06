@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
@@ -405,3 +407,77 @@ async def generate_text(
     if json_prefill and mode not in ("responses",) and out and not out.lstrip().startswith(("```", "{")):
         out = json_prefill + out
     return out
+
+
+# ── Werkzeugaufrufe (Tool-Calling) — für die KI-Schleife der Log-Überwachung ──
+
+class WerkzeugeNichtUnterstuetzt(LLMInvocationError):
+    """Der konfigurierte API-Modus kann (hier) keine Werkzeugaufrufe — benannt, nicht still."""
+
+
+@dataclass
+class Werkzeugantwort:
+    """Antwort eines Schritts: entweder Werkzeugaufrufe oder Text (oder beides leer = benannt)."""
+    text: str
+    aufrufe: list[dict]             # [{"id", "name", "argumente": dict, "fehler": str|None}]
+    #: Assistenten-Nachricht für den Verlauf (mit tool_calls), unverändert vom Server
+    nachricht: dict
+
+
+def werkzeug_aufrufe(msg: dict) -> list[dict]:
+    """tool_calls einer Chat-Antwort → [{"id","name","argumente","fehler"}]. Ungültiges JSON
+    in den Argumenten ist ein benannter Fehler je Aufruf, kein Abbruch der Schleife."""
+    out = []
+    for i, tc in enumerate(msg.get("tool_calls") or []):
+        fn = tc.get("function") or {}
+        roh = fn.get("arguments")
+        argumente, fehler = {}, None
+        if isinstance(roh, dict):
+            argumente = roh
+        elif roh:
+            try:
+                argumente = json.loads(roh)
+                if not isinstance(argumente, dict):
+                    argumente, fehler = {}, "Argumente sind kein JSON-Objekt"
+            except json.JSONDecodeError as e:
+                fehler = f"Argumente kein gültiges JSON: {e.msg}"
+        out.append({"id": tc.get("id") or f"aufruf_{i}", "name": fn.get("name") or "",
+                    "argumente": argumente, "fehler": fehler})
+    return out
+
+
+async def generate_with_tools(llm_config: Any, messages: list[dict[str, Any]],
+                              tools: list[dict[str, Any]], *,
+                              temperature: float | None = None) -> Werkzeugantwort:
+    """Ein Schritt mit Werkzeugen (OpenAI-Format `tools`). Kein max_tokens (globale Regel).
+
+    `messages` darf Assistenten-Nachrichten mit `tool_calls` und `role: tool`-Antworten
+    enthalten — sie werden unverändert weitergereicht.
+    """
+    mode = (getattr(llm_config, "api_mode", None) or "chat_completions").lower()
+    if mode != "chat_completions":
+        raise WerkzeugeNichtUnterstuetzt(
+            f"Werkzeugaufrufe für API-Modus {mode} sind noch nicht gebaut (nur chat_completions)")
+    headers = {"Content-Type": "application/json"}
+    if getattr(llm_config, "api_key", None):
+        headers["Authorization"] = f"Bearer {llm_config.api_key}"
+    thinking_on = getattr(llm_config, "thinking_mode", False)
+    payload: dict[str, Any] = {
+        "model": llm_config.model, "messages": messages, "tools": tools, "tool_choice": "auto",
+        "chat_template_kwargs": {"enable_thinking": thinking_on},
+    }
+    if temperature is not None:
+        payload["temperature"] = temperature
+    url = _build_api_url(llm_config.base_url, "chat/completions")
+    async with httpx.AsyncClient(timeout=llm_config.timeout_seconds, verify=False) as client:
+        response = await client.post(url, headers=headers, json=payload)
+    if response.status_code >= 400:
+        msg = f"HTTP {response.status_code}: {response.text[:500].strip()}"
+        log.warning("LLM tool call failed [%s]: %s", llm_config.model, msg)
+        raise LLMInvocationError(msg)
+    msg = ((response.json().get("choices") or [{}])[0].get("message")) or {}
+    nachricht = {"role": "assistant", "content": msg.get("content") or ""}
+    if msg.get("tool_calls"):
+        nachricht["tool_calls"] = msg["tool_calls"]
+    return Werkzeugantwort(text=msg.get("content") or "", aufrufe=werkzeug_aufrufe(msg),
+                           nachricht=nachricht)
