@@ -10,6 +10,50 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 15: CheckMK criticality and location actually arrive; network zone and Wazuh tags as hashtags
+
+### Fixed
+
+- **The host directory had no criticality and no location for any host.**
+  - `get_all_hosts` read `attributes.tag_groups`. The REST API delivers tags as `tag_<group>`, and
+    inherited tags only under `effective_attributes`.
+  - Measured 2026-11-06 over all 3 057 CheckMK hosts:
+    - criticality is set directly on 1 199 hosts and inherited by 1 858 (1 823 of them `prod`);
+    - location is set directly on 427 hosts and inherited by 2 630;
+    - in our directory both were empty for all 3 057.
+  - Consequence: `kritikalitaet:`/`ort:` reached only CheckMK messages, never Graylog, Wazuh, firewall
+    or switch messages. N3 ("not production") could never apply to them.
+  - The connector now reads the effective attributes (`host_aus_config`). This also affects the other
+    callers of `get_all_hosts` (`alert_aggregator`, `probe_client`), which now get criticality and
+    location for the first time.
+- **Wazuh rule groups were cut to 3.** In 24 h this dropped, among others, `recon` (7 106 alerts),
+  `syscheck_file` (3 831), `sql_injection` (98) and `attack` (6). Measured over 93 rules: `web_scan`, the
+  basis of N4, was never cut, so N4 was not affected.
+
+### What's new
+
+- **Network zone from the CheckMK folder** as hashtags `netz:dmz|intern` and `netzbereich:<segment>`
+  (e.g. `dmz-ii`, `web-dmz`), on messages from every source.
+  - 167 hosts sit in folders with "dmz" in the path. The tag group `networking` has `dmz` on only 4 of
+    them; the rest are on the default `lan`.
+  - The folder agrees with Wazuh: the only Wazuh label `host.group=dmz` is on haproxy01.example.net in
+    `/kassel/dmz-i`.
+  - No change in CheckMK or Wazuh was needed.
+- **Wazuh features as hashtags:** all `regelgruppe:`, `mitre-technik:` (T-ID), `label:` (agent labels,
+  e.g. `host.group=dmz`), `decoder:`, `logquelle:`.
+- **New graph node types:** `netz`, `netzbereich`, `mitre-technik`, `label`.
+
+### What's missing
+
+- **Rollout pending.** The backend restart is blocked while the Werkbank container
+  `cs-userenv-5bfd1b3f…` runs. The new restart guard aborts instead of interrupting it. Live verification
+  follows after the rollout.
+- **Criticality values the definition does not know:** `offline` (656 hosts) and `install` (2). They now
+  arrive as hashtags, but no criterion names them. Your decision: should `offline` count as
+  not-production (N3)?
+
+---
+
 ## 2026-11-06 — Log watch, part 14: the AI funnel works on cases, and nothing is analysed twice
 
 ### What changed

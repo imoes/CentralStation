@@ -93,6 +93,10 @@ def _host_tags(name: str, verz: Hostverzeichnis) -> tuple[str, HostEintrag | Non
         tags.append(f"ort:{e.ort}")
     if e.kritikalitaet:
         tags.append(f"kritikalitaet:{e.kritikalitaet}")
+    if e.netz:
+        tags.append(f"netz:{e.netz}")
+    if e.netzbereich:
+        tags.append(f"netzbereich:{e.netzbereich}")
     tags += [f"hg:{g}" for g in e.hostgruppen[:MAX_HG]]
     return kanon, e, tags
 
@@ -181,22 +185,41 @@ def wazuh_zeilen(aggs: dict) -> list[dict]:
     """Aggregation `regel` (terms rule.id) › `agent` (terms agent.name › `belege` top_hits) + `info`.
 
     `belege`: die ersten Alert-IDs der Gruppe (_id, Index) — damit holt die Historie genau diese
-    Alerts, statt den Agenten aus dem kanonischen Hostnamen zurückzuraten."""
+    Alerts, statt den Agenten aus dem kanonischen Hostnamen zurückzuraten. Aus denselben Alerts
+    kommen die Merkmale je Alert: Labels des Agents, Decoder, Logquelle."""
     zeilen = []
     for rb in (aggs.get("regel") or {}).get("buckets") or []:
         hits = (((rb.get("info") or {}).get("hits") or {}).get("hits") or [{}])
         rule = ((hits[0] or {}).get("_source") or {}).get("rule") or {}
+        mitre = rule.get("mitre") or {}
         for ab in (rb.get("agent") or {}).get("buckets") or []:
+            bh = ((ab.get("belege") or {}).get("hits") or {}).get("hits") or []
+            quellen = [h.get("_source") or {} for h in bh]
             zeilen.append({
                 "regel": str(rb["key"]), "level": int(rule.get("level") or 0),
                 "beschreibung": rule.get("description") or "",
                 "gruppen": list(rule.get("groups") or []),
-                "taktiken": list((rule.get("mitre") or {}).get("tactic") or []),
+                "taktiken": list(mitre.get("tactic") or []),
+                "techniken": list(mitre.get("id") or []),
+                "labels": sorted({f"{k}={v}" for q in quellen for k, v in _flach_labels(
+                    (q.get("agent") or {}).get("labels") or {}).items()}),
+                "decoder": sorted({(q.get("decoder") or {}).get("name") for q in quellen} - {None, ""}),
+                "logquelle": sorted({q.get("location") for q in quellen} - {None, ""}),
                 "agent": str(ab["key"]), "anzahl": int(ab["doc_count"]),
-                "belege": [(h["_id"], h.get("_index", "")) for h in
-                           (((ab.get("belege") or {}).get("hits") or {}).get("hits") or [])],
+                "belege": [(h["_id"], h.get("_index", "")) for h in bh],
             })
     return zeilen
+
+
+def _flach_labels(d: dict, vor: str = "") -> dict[str, str]:
+    """agent.labels kommt verschachtelt (Schlüssel mit Punkt → Objekt): zurück zu „host.group“."""
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            out.update(_flach_labels(v, f"{vor}{k}."))
+        else:
+            out[f"{vor}{k}"] = str(v)
+    return out
 
 
 def bewerte_wazuh(zeilen: list[dict], verz: Hostverzeichnis,
@@ -211,8 +234,15 @@ def bewerte_wazuh(zeilen: list[dict], verz: Hostverzeichnis,
             signale.add("dringend")
         kanon, e, htags = _host_tags(z["agent"], verz)
         tags = (["quelle:wazuh", f"regel:{z['regel']}"] + htags
-                + [f"regelgruppe:{g}" for g in z["gruppen"][:3]]
-                + [f"mitre:{t}" for t in z["taktiken"]] + [f"thema:{t.id}" for t in th]
+                # alle Gruppen: gekürzt auf 3 fielen in 24 h u. a. recon (7 106 Alerts),
+                # sql_injection (98) und attack (6) weg (gemessen 06.11.)
+                + [f"regelgruppe:{g}" for g in z["gruppen"]]
+                + [f"mitre:{t}" for t in z["taktiken"]]
+                + [f"mitre-technik:{t}" for t in z.get("techniken", [])]
+                + [f"label:{x}" for x in z.get("labels", [])]
+                + [f"decoder:{x}" for x in z.get("decoder", [])]
+                + [f"logquelle:{x}" for x in z.get("logquelle", [])]
+                + [f"thema:{t.id}" for t in th]
                 + _sig(signale))
         out.append(_urteil("wazuh", f"regel:{z['regel']}", kanon, e is not None, tags,
                            {"level": z["level"]}, gruende, z["anzahl"], z["beschreibung"], d,

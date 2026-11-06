@@ -233,7 +233,8 @@ async def _wazuh(w, b: datetime) -> list[dict]:
         "query": {"range": {"timestamp": {"gte": b.isoformat(), "lt": (b + FENSTER).isoformat()}}},
         "aggs": {"regel": {"terms": {"field": "rule.id", "size": 1000}, "aggs": {
             "agent": {"terms": {"field": "agent.name", "size": 500}, "aggs": {
-                "belege": {"top_hits": {"size": KONTINGENT, "_source": False,
+                "belege": {"top_hits": {"size": KONTINGENT,
+                                        "_source": ["agent.labels", "decoder.name", "location"],
                                         "sort": [{"timestamp": "asc"}]}}}},
             "info": {"top_hits": {"size": 1, "_source": ["rule"]}},
         }}},

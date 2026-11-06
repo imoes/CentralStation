@@ -6,6 +6,7 @@ API base: supports
   - <base_url>/<site>/check_mk/api/1.0
   - full API URL directly
 """
+import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -13,6 +14,55 @@ import httpx
 
 from app.schemas.connector import ConnectorTestResult
 from app.services.connectors.base import BaseConnector
+
+
+_DMZ = re.compile(r"dmz", re.I)
+
+
+def host_aus_config(item: dict) -> dict | None:
+    """Ein Eintrag aus host_config (mit effective_attributes) → {hostname, metadata}.
+
+    Gelesen werden die WIRKSAMEN Attribute: Tags erbt ein Host meist vom Ordner. Vorher wurden
+    `attributes.tag_groups` gelesen — die API liefert Tags aber als `tag_<gruppe>`, und geerbte
+    stehen nur in `effective_attributes`: gemessen 06.11. hatten alle 3 057 Hosts leere
+    Kritikalität und leeren Ort (wirksam: 2 142 prod, 1 858 davon geerbt).
+
+    Netzbereich: aus dem Ordnerpfad (Segment mit „dmz“). Der Tag `networking` ist in CheckMK
+    praktisch ungenutzt (4 von 167 Hosts in DMZ-Ordnern); der Ordner ist die gepflegte Angabe.
+    """
+    name = item.get("id", "")
+    if not name:
+        return None
+    ext = item.get("extensions", {}) or {}
+    attrs = ext.get("effective_attributes") or ext.get("attributes") or {}
+    tags: dict = {k[4:]: str(v) for k, v in attrs.items() if k.startswith("tag_") and v not in (None, "")}
+    tags_raw = attrs.get("tag_groups")                     # ältere API-Form: Liste oder dict
+    if isinstance(tags_raw, list):
+        for tg in tags_raw:
+            val = tg.get("value", {})
+            tags.setdefault(tg.get("id", ""), val.get("id", "") if isinstance(val, dict) else str(val or ""))
+    elif isinstance(tags_raw, dict):
+        for k, v in tags_raw.items():
+            tags.setdefault(k, str(v))
+    labels: dict = attrs.get("labels", {}) or {}
+    raw_os = (tags.get("tg-os") or tags.get("operatingsystem") or tags.get("os")
+              or labels.get("cmk/os_family", "") or labels.get("os", ""))
+    ordner = ext.get("folder") or ""
+    dmz = [teil for teil in ordner.split("/") if _DMZ.search(teil)]
+    return {
+        "hostname": name,
+        "metadata": {
+            "os":          _OS_LABEL_MAP.get(raw_os, raw_os),
+            "criticality": tags.get("criticality") or labels.get("criticality", ""),
+            "ve":          tags.get("tg-ve") or tags.get("ve") or labels.get("ve", ""),
+            "location":    tags.get("tg-location") or tags.get("location") or labels.get("location", ""),
+            "ipaddress":   attrs.get("ipaddress", ""),
+            "hostgroups":  [k[3:] for k in labels if k.startswith("hg:")],
+            "folder":      ordner,
+            "netz":        "dmz" if dmz else ("" if not ordner else "intern"),
+            "netzbereich": dmz[-1] if dmz else "",
+        },
+    }
 
 
 _OS_LABEL_MAP: dict[str, str] = {
@@ -133,50 +183,12 @@ class CheckMKConnector(BaseConnector):
         tag_groups can be a list [{id, value:{id}}] or a plain dict, so both are handled.
         """
         try:
-            r = await self._request("GET", "/domain-types/host_config/collections/all")
+            r = await self._request("GET", "/domain-types/host_config/collections/all",
+                                    params={"effective_attributes": "true"})
             r.raise_for_status()
         except Exception:
             return []
-
-        results = []
-        for item in r.json().get("value", []):
-            name = item.get("id", "")
-            if not name:
-                continue
-            ext   = item.get("extensions", {}) or {}
-            attrs = ext.get("attributes", {}) or {}
-
-            # tag_groups: list [{id, value:{id}}]  OR  dict {group_id: tag_id}
-            tags_raw = attrs.get("tag_groups", {})
-            tags: dict = {}
-            if isinstance(tags_raw, list):
-                for tg in tags_raw:
-                    gid = tg.get("id", "")
-                    val = tg.get("value", {})
-                    tags[gid] = val.get("id", "") if isinstance(val, dict) else str(val or "")
-            elif isinstance(tags_raw, dict):
-                tags = tags_raw
-
-            labels: dict = attrs.get("labels", {}) or {}
-
-            raw_os = (
-                tags.get("tg-os") or tags.get("operatingsystem") or tags.get("os")
-                or labels.get("cmk/os_family", "") or labels.get("os", "")
-            )
-            hostgroups = [k[3:] for k in labels if k.startswith("hg:")]
-
-            results.append({
-                "hostname": name,
-                "metadata": {
-                    "os":          _OS_LABEL_MAP.get(raw_os, raw_os),
-                    "criticality": tags.get("criticality") or labels.get("criticality", ""),
-                    "ve":          tags.get("tg-ve") or tags.get("ve") or labels.get("ve", ""),
-                    "location":    tags.get("tg-location") or tags.get("location") or labels.get("location", ""),
-                    "ipaddress":   attrs.get("ipaddress", ""),
-                    "hostgroups":  hostgroups,
-                },
-            })
-        return results
+        return [h for h in (host_aus_config(item) for item in r.json().get("value", [])) if h]
 
     async def get_problems(
         self,

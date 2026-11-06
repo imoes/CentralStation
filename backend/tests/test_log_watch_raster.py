@@ -187,7 +187,28 @@ def test_wazuh_zeilen():
             "level": 10, "description": "sshd: brute force", "groups": ["syslog", "sshd"],
             "mitre": {"tactic": ["Credential Access"]}}}}]}},
         "agent": {"buckets": [{"key": "WEC01", "doc_count": 9}]}}]}}
-    assert r.wazuh_zeilen(aggs) == [{**_wz(), "belege": []}]      # ohne top_hits: keine Belege, benannt leer
+    assert r.wazuh_zeilen(aggs) == [{**_wz(), "techniken": [], "labels": [], "decoder": [], "logquelle": [],
+                                     "belege": []}]      # ohne top_hits: keine Belege, benannt leer
+
+
+def test_wazuh_merkmale_als_hashtags():
+    """Alle Regelgruppen (nicht nur 3), MITRE-Technik, Agent-Labels (verschachtelt → Punkt), Decoder
+    und Logquelle aus den Beleg-Alerts."""
+    aggs = {"regel": {"buckets": [{
+        "key": "31151", "doc_count": 3,
+        "info": {"hits": {"hits": [{"_source": {"rule": {
+            "level": 10, "description": "Multiple web server 400 error codes", "groups":
+                ["web", "accesslog", "web_scan", "recon"], "mitre": {"tactic": ["Discovery"], "id": ["T1595"]}}}}]}},
+        "agent": {"buckets": [{"key": "web01", "doc_count": 3, "belege": {"hits": {"hits": [
+            {"_id": "a1", "_index": "i", "_source": {"agent": {"labels": {"host": {"group": "dmz"}}},
+                                                     "decoder": {"name": "web-accesslog"},
+                                                     "location": "/var/log/httpd/access_log"}}]}}}]}}]}}
+    (z,) = r.wazuh_zeilen(aggs)
+    assert z["labels"] == ["host.group=dmz"] and z["techniken"] == ["T1595"]
+    (t,) = r.bewerte_wazuh([z], VERZ)
+    for tag in ("regelgruppe:recon", "mitre-technik:T1595", "label:host.group=dmz", "decoder:web-accesslog",
+                "logquelle:/var/log/httpd/access_log"):
+        assert tag in t.hashtags, tag
 
 
 def test_wazuh_kriterien():

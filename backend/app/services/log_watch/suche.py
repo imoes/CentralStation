@@ -96,8 +96,8 @@ async def suche(filtertext: str = "", *, stunden: float = 24, limit: int = 20,
 
 #: Hashtag-Arten, die Knoten werden. Nicht: `muster:` (Hash, unlesbar — steht in der Facette),
 #: `hostliste:` (Zustand der Zuordnung), `regelgruppe:` (doppelt zu `regel:`).
-NETZ_ARTEN = ("host", "befund", "thema", "dienst", "regel", "mitre", "zustand", "kritikalitaet",
-              "signal", "quelle", "app", "ort", "gegenstelle")
+NETZ_ARTEN = ("host", "befund", "thema", "dienst", "regel", "mitre", "mitre-technik", "label", "netz", "netzbereich", "zustand",
+              "kritikalitaet", "signal", "quelle", "app", "ort", "gegenstelle")
 #: höchstens so viele Knoten je Art — sonst verdrängen 15 Hosts jedes Thema
 JE_ART = 5
 

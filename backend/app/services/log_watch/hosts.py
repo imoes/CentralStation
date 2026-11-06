@@ -49,6 +49,10 @@ class HostEintrag:
     ort: str = ""
     kritikalitaet: str = ""
     hostgruppen: list[str] = field(default_factory=list)
+    #: Netzbereich aus dem CheckMK-Ordner: dmz | intern ("" = kein Ordner bekannt)
+    netz: str = ""
+    #: das Ordnersegment mit „dmz“ (z. B. dmz-ii, web-dmz) — der genaue Bereich
+    netzbereich: str = ""
 
 
 #: Warum ein Name keinem CheckMK-Host zugeordnet ist — benannt, nicht geraten.
@@ -79,7 +83,8 @@ class Hostverzeichnis:
             md = h.get("metadata") or {}
             e = HostEintrag(name=name, ort=md.get("location") or "",
                             kritikalitaet=md.get("criticality") or "",
-                            hostgruppen=list(md.get("hostgroups") or []))
+                            hostgruppen=list(md.get("hostgroups") or []),
+                            netz=md.get("netz") or "", netzbereich=md.get("netzbereich") or "")
             v.exakt[name.lower().rstrip(".")] = e
             if md.get("ipaddress"):
                 v.exakt[str(md["ipaddress"]).strip()] = e
