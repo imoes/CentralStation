@@ -33,6 +33,10 @@ async def lw_facetten(filter: str = "", stunden: float = 24) -> dict:
     return {k: r[k] for k in ("filter", "zeitraum", "gesamt", "facetten", "fehler") if k in r}
 
 
+async def lw_netzplan(filter: str = "", stunden: float = 24, knoten: int = 15) -> dict:
+    return await s.netzplan(filter, stunden=stunden, knoten=knoten, objekte=await _objekte())
+
+
 async def lw_nachricht(id: str) -> dict:
     """Eine Nachricht der Historie vollständig (mit Originalfeldern `roh`)."""
     from app.core.opensearch import get_opensearch
@@ -92,6 +96,12 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                     "Nur Anzahl und Facetten (Hashtags je Art mit Anzahl) zu einem Filter — für den "
                     "Trichter: welcher Wert fällt auf? " + FILTER_HILFE,
                     _p(filter={"type": "string"}, stunden={"type": "number"}), False),
+    "lw_netzplan": (lw_netzplan,
+                    "Netzplan zum Filter: Knoten = Hashtags des Ergebnisses (Host, Thema, Dienst, Regel …), "
+                    "Kante = beide an derselben Nachricht, mit Anzahl. Zeigt, was zusammen auftritt — "
+                    "keine Ursache. " + FILTER_HILFE,
+                    _p(filter={"type": "string"}, stunden={"type": "number"}, knoten={"type": "integer"}),
+                    False),
     "lw_nachricht": (lw_nachricht, "Eine Nachricht vollständig, mit allen Originalfeldern (roh).",
                      _p(id={"type": "string", "_pflicht": True}), False),
     "lw_wissen": (lw_wissen,

@@ -11,6 +11,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { NgxEchartsDirective } from 'ngx-echarts';
 import { LwWidgetComponent } from './lw-widget.component';
+import { LwNetzplanComponent } from './lw-netzplan.component';
 import {
   DashboardWidget,
   AiSummaryData,
@@ -43,6 +44,7 @@ import {
     MatProgressSpinnerModule,
     MatTooltipModule,
     LwWidgetComponent,
+    LwNetzplanComponent,
     NgxEchartsDirective,
   ],
   template: `
@@ -283,6 +285,7 @@ import {
               <div echarts [options]="gaugeOptions()" class="chart"></div>
             }
             @case ('lw_befunde') { <cs-lw-widget typ="lw_befunde" [daten]="data()" /> }
+            @case ('lw_netzplan') { <cs-lw-netzplan [daten]="data()" [config]="widget().config" /> }
             @case ('lw_kriterien') { <cs-lw-widget typ="lw_kriterien" [daten]="data()" /> }
             @case ('lw_volumen') { <cs-lw-widget typ="lw_volumen" [daten]="data()" /> }
             @case ('lw_hashtags') { <cs-lw-widget typ="lw_hashtags" [daten]="data()" /> }

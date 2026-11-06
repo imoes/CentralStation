@@ -10,7 +10,8 @@ Selektoren (Filter der Suche, Facetten, Netzplan): `quelle, host, hashtags, rele
 herkunft, zeit`. `urteil` hat genau zwei Werte, relevant | nicht_relevant; eine als nicht
 relevant beurteilte Nachricht bleibt als Gegenbeispiel stehen — daran lernt das System.
 
-Spätere KI-Felder (`ai_*`, `befund_ids`) sind im Mapping schon vorgesehen; ein Befund
+KI-Felder (`ai_*`) sind im Mapping vorgesehen; die Verknüpfung Befund ↔ Beleg ist der Hashtag
+`befund:<id>` an beiden (ein Name für ein Ding — `befund_ids` gibt es nicht mehr); ein Befund
 der KI ist selbst ein Dokument mit `quelle: ki` (Plan „Befunde der KI sind Nachrichten“).
 
 Geschrieben wird nur, wenn der Schalter `log_watch.historie_aktiv` gesetzt ist — bis der
@@ -66,7 +67,6 @@ MAPPING = {
         "ai_relevanz": {"type": "byte"},
         "ai_hashtags": {"type": "keyword"},
         "ai_befund": {"type": "text"},
-        "befund_ids": {"type": "keyword"},
         "ai_provenance": {"type": "object", "enabled": False},
     },
 }
@@ -195,3 +195,41 @@ async def nachbetten(limit: int = NACHBETTEN_JE_LAUF) -> dict:
     r = await os_client.bulk(body=body)
     abgelehnt = sum(1 for i in r.get("items", []) if (i.get("update") or {}).get("error"))
     return {"offen": offen, "nachgebettet": len(hits) - abgelehnt, "abgelehnt": abgelehnt}
+
+
+def r7_abfrage(quellen_je_host: dict[str, list[str]], seit: datetime) -> dict:
+    """update_by_query-Body: gespeicherte relevante Nachrichten der Hosts, die im Zeitraum in
+    mindestens zwei Quellen relevant sind, bekommen R7 und Relevanz 3 — wie im Raster
+    (raster.quellenuebergreifend), nur nachträglich, weil die Quellen getrennt schreiben.
+    Gemeinsames Auftreten ist keine Ursache; der Grund sagt das."""
+    return {
+        "query": {"bool": {
+            "filter": [{"terms": {"host": sorted(quellen_je_host)}},
+                       {"terms": {"quelle": sorted({q for qs in quellen_je_host.values() for q in qs})}},
+                       {"term": {"urteil": RELEVANT}},
+                       {"range": {"zeit": {"gte": seit.astimezone(timezone.utc).isoformat()}}}],
+            "must_not": [{"term": {"kriterien": "R7"}}]}},
+        "script": {"lang": "painless", "params": {"q": {h: sorted(q) for h, q in quellen_je_host.items()}},
+                   "source": (
+                       "List qs = params.q.get(ctx._source.host); if (qs == null) { ctx.op = 'noop'; return; }"
+                       " List andere = new ArrayList();"
+                       " for (def x : qs) { if (x != ctx._source.quelle) { andere.add(x); } }"
+                       " if (andere.isEmpty()) { ctx.op = 'noop'; return; }"
+                       " ctx._source.relevanz = 3;"
+                       " if (ctx._source.kriterien == null) { ctx._source.kriterien = []; }"
+                       " ctx._source.kriterien.add('R7');"
+                       " if (ctx._source.gruende == null) { ctx._source.gruende = []; }"
+                       " ctx._source.gruende.add('zugleich relevant in ' + String.join(', ', andere)"
+                       " + ' (selber Zeitraum) — gemeinsames Auftreten, keine Ursache belegt');")},
+    }
+
+
+async def markiere_r7(quellen_je_host: dict[str, list[str]], seit: datetime) -> dict:
+    """R7 an gespeicherte Nachrichten schreiben. {"aktualisiert": n, "hosts": k}."""
+    from app.core.opensearch import get_opensearch
+    if not quellen_je_host:
+        return {"aktualisiert": 0, "hosts": 0}
+    res = await get_opensearch().update_by_query(index=f"{PRAEFIX}*", body=r7_abfrage(quellen_je_host, seit),
+                                                 conflicts="proceed", refresh=True, ignore_unavailable=True)
+    return {"aktualisiert": res.get("updated", 0), "hosts": len(quellen_je_host),
+            "konflikte": res.get("version_conflicts", 0)}

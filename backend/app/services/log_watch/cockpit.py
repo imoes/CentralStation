@@ -194,7 +194,12 @@ async def daten(db, typ: str, cfg: dict) -> dict:
                     "error": "Historie noch nicht aktiv (Trockenlauf) — Befunde und Netzplan "
                              "entstehen erst aus gespeicherten relevanten Nachrichten"}
         if typ == "lw_netzplan":
-            return {"state": "unavailable", "error": "Netzplan noch nicht gebaut"}
+            from app.services.log_watch import suche
+            n = await suche.netzplan(str(cfg.get("filter") or ""), stunden=stunden,
+                                     knoten=int(cfg.get("knoten") or 15), objekte=(await aktuelle(db)).objekte)
+            if "fehler" in n:
+                return {"state": "unavailable", "error": f"Filter: {n['fehler']}"}
+            return {**n, "state": "ok" if n["knoten"] else "empty", "zeitraum_h": stunden}
         from app.core.opensearch import get_opensearch
         from app.services.log_watch import trichter
         from app.services.settings import get_setting

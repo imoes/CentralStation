@@ -64,7 +64,7 @@ async def kandidaten(stunden: float = STUNDEN) -> dict:
     body = {"size": 0, "track_total_hits": True, "query": {"bool": {
         "filter": [{"range": {"zeit": {"gte": (bis - timedelta(hours=stunden)).isoformat()}}},
                    flt.opensearch(AUSLOESER)],
-        "must_not": [{"exists": {"field": "befund_ids"}}]}},
+        "must_not": [{"prefix": {"hashtags": "befund:"}}]}},
         "aggs": {"hosts": {"terms": {"field": "host", "size": 20}}}}
     res = await get_opensearch().search(index=f"{PRAEFIX}*", body=body, ignore_unavailable=True)
     return {"gesamt": res["hits"]["total"]["value"],

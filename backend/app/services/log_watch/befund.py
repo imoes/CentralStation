@@ -7,7 +7,8 @@ der Code prüft und schreibt. Geprüft wird:
   - Hashtags stammen nur aus den Belegen (Identität: kein Begriff, den keine Nachricht trägt),
     dazu `quelle:ki` und `befund:<id>`;
   - Hypothesen tragen einen Status aus HYPOTHESE_STATUS.
-Die Belege bekommen `befund_ids` — im Netzplan ist der Befund so ein Knoten mit Kanten zu ihnen.
+Die Belege bekommen den Hashtag `befund:<id>` — derselbe Name wie am Befund (Identität): der Filter
+`befund:<id>` findet Befund und Belege, im Netzplan ist der Befund ein Knoten mit Kanten zu ihnen.
 """
 from __future__ import annotations
 
@@ -155,10 +156,10 @@ async def schreibe_befund(eingabe: dict, modell: str = "", schritte: list | None
     for b in {b["id"]: b for b in pruefung.gueltig}.values():
         body += [{"update": {"_index": b["index"], "_id": b["id"]}},
                  {"script": {"lang": "painless",
-                             "source": "if (ctx._source.befund_ids == null) { ctx._source.befund_ids = []; }"
-                                       " if (!ctx._source.befund_ids.contains(params.b)) "
-                                       "{ ctx._source.befund_ids.add(params.b); }",
-                             "params": {"b": doc_id}}}]
+                             "source": "if (ctx._source.hashtags == null) { ctx._source.hashtags = []; }"
+                                       " if (!ctx._source.hashtags.contains(params.b)) "
+                                       "{ ctx._source.hashtags.add(params.b); }",
+                             "params": {"b": doc["schluessel"]}}}]
     if body:
         await os_client.bulk(body=body, refresh=True)
     return {"id": doc_id, "belege": len(pruefung.gueltig), "verworfen": pruefung.verworfen,

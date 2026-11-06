@@ -1453,7 +1453,7 @@ place six log-watch widgets. Their data comes from `services/log_watch/cockpit.p
 | `lw_hashtags` | top hashtags of relevant messages, with a factor against the previous period (`null` = new) |
 | `lw_korpus` | field catalog per status, unmatched hosts per reason, last run per source (`ok`/`veraltet`/`fehler`/`nie gelaufen`), definition version, history switch |
 | `lw_befunde` | AI findings as objects: relevance, title, host, time; unfold for the finding, hypotheses with status, checked quotes, the funnel steps and hashtags. Without a finding a named state: how many messages wait and whether the AI funnel is on |
-| `lw_netzplan` | network graph — `unavailable` ("noch nicht gebaut") |
+| `lw_netzplan` | network graph of the relevant situation (config `filter`, `knoten`, `hours`). Nodes are hashtags of the result (at most 5 per type: host, finding, topic, service, rule, MITRE …), an edge means both hashtags are on the same message, with the count. Clicking a node adds it to the filter chain, a chip removes it; the list on the right is the search result of the same filter |
 
 **Rules:**
 - `lw_befunde` comes first whenever there is a finding in 24 h or a message waiting for one.
@@ -1468,7 +1468,7 @@ place six log-watch widgets. Their data comes from `services/log_watch/cockpit.p
 The AI only works when a check is true, and it only writes its own analysis.
 
 - **Check** (`trichter.kandidaten`, no AI): messages in the history of the last 2 h matching
-  `(relevanz>=3 OR signal:neu) !quelle:(ki OR konsole)` without `befund_ids`, grouped by host.
+  `(relevanz>=3 OR signal:neu) !quelle:(ki OR konsole)` without a `befund:` hashtag, grouped by host.
 - **Funnel** (`trichter.analysiere`): one tool loop per host (at most 2 hosts per run, 12 steps). The
   model asks earlier knowledge first, reads facets, narrows the filter and ends with `lw_befund`.
   Every step (tool, arguments, hit count, model seconds) is kept in the finding.
@@ -1480,6 +1480,7 @@ The AI only works when a check is true, and it only writes its own analysis.
   | `lw_facetten` | count + facets only |
   | `lw_nachricht` | one message with all original fields |
   | `lw_wissen` | earlier AI findings and console knowledge (`quelle:ki`/`konsole`) |
+  | `lw_netzplan` | nodes and edges for a filter (what occurs together — no cause) |
   | `lw_definition` | the relevance definition: criteria, objects, rules |
   | `lw_befund` | the only writing tool: files the finding |
 
@@ -1492,8 +1493,15 @@ The AI only works when a check is true, and it only writes its own analysis.
   - hypotheses carry `offen` | `gestuetzt` | `widerlegt`;
   - leftovers of the model's tool-call syntax (`</parameter>` …) are rejected.
 
-  The evidence documents get `befund_ids`.
+  The evidence documents get the same hashtag `befund:<id>` as the finding: one name, so the filter `befund:<id>` finds finding and evidence, and the graph draws the edge.
 - **Search** (`suche.py`): one search over `cs-logs-*`: filter + time → hits and facets per hashtag type.
+  `netzplan()` builds the graph from two aggregations (`terms` over `hashtags`, then `adjacency_matrix`
+  over the chosen nodes), with no documents transferred.
+- **API:** `GET /api/log-watch/suche?filter=&stunden=&limit=&bedeutung=` and
+  `GET /api/log-watch/netzplan?filter=&stunden=&knoten=` (any logged-in user, read-only).
+- **R7 on stored messages:** when a host is relevant in two sources within 20 minutes, the stored relevant
+  messages of that host get R7 and relevance 3 afterwards (`historie.markiere_r7`, `update_by_query`).
+  The reason says "gemeinsames Auftreten, keine Ursache belegt". Findings are not touched.
 - **Switch:** `log_watch.ki_aktiv` (off). Job `log_watch_trichter` runs at minute 3-59/10 and does nothing
   while the switch is off; its result goes to `raster_lauf` row `ki`.
 

@@ -81,3 +81,14 @@ def test_vergleichsfelder_der_filtersprache_stehen_im_mapping_und_im_dokument():
     t = _t()
     t.felder = {"level": 9}
     assert h.dokument(t, "x", ZEIT, "t", {})[1]["level"] == 9
+
+
+def test_r7_nachtraeglich_nur_relevante_der_hosts_ohne_r7():
+    q = h.r7_abfrage({"web01": ["graylog", "wazuh"]}, ZEIT)
+    f = q["query"]["bool"]["filter"]
+    assert {"terms": {"host": ["web01"]}} in f and {"term": {"urteil": "relevant"}} in f
+    assert {"terms": {"quelle": ["graylog", "wazuh"]}} in f            # nie ki/konsole
+    assert q["query"]["bool"]["must_not"] == [{"term": {"kriterien": "R7"}}]   # einmal reicht
+    src = q["script"]["source"]
+    assert "keine Ursache belegt" in src and "ctx._source.relevanz = 3" in src
+    assert q["script"]["params"]["q"] == {"web01": ["graylog", "wazuh"]}

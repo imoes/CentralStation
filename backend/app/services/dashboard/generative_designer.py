@@ -75,7 +75,7 @@ _ALLOWED_CONFIG_KEYS: dict[str, set[str]] = {
     "error_clusters": {"status", "hours", "limit"},
     # KI-Cockpit: Log-Überwachung (services/log_watch/cockpit.py)
     "lw_befunde":   {"hours", "limit"},
-    "lw_netzplan":  {"hours"},
+    "lw_netzplan":  {"hours", "filter", "knoten"},
     "lw_kriterien": {"hours"},
     "lw_volumen":   {"hours"},
     "lw_hashtags":  {"hours", "limit"},
@@ -454,7 +454,7 @@ NUTZE NUR diese Widget-Typen mit exakt diesen config-Schlüsseln:
 - "forecast": {"host":"<host>","service":"<service>","metric_id":"<metric_id>","history_hours":72,"horizon_hours":24}
 - "error_clusters": {"status":"open","hours":24,"limit":3}  — laufende Fehlerausbrüche (Log-Muster über viele Container)
 - "lw_befunde": {"hours":24,"limit":5}  — KI-Befunde der Log-Überwachung als Objekte (Problem, Hypothesen, Belege)
-- "lw_netzplan": {"hours":24}  — Netzplan der relevanten Lage (Hosts, Orte, Themen, Muster)
+- "lw_netzplan": {"hours":24,"filter":"","knoten":15}  — Netzplan der relevanten Lage: Knoten = Hashtags (Host, Thema, Dienst, Regel, Befund …), Kante = gemeinsam an derselben Nachricht; filter in der Filtersprache, z. B. "relevanz>=3"
 - "lw_kriterien": {"hours":24}  — Warum: relevante/nicht relevante Nachrichten je Kriterium der Relevanz-Definition
 - "lw_volumen": {"hours":24}  — Nachrichten je Quelle (Graylog, Wazuh, CheckMK) und Stunde: gelesen, relevant
 - "lw_hashtags": {"hours":24,"limit":15}  — häufigste Hashtags relevanter Nachrichten mit Trend

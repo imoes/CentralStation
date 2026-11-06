@@ -213,3 +213,24 @@ async def get_stufe0(db: Annotated[AsyncSession, Depends(get_db)]):
     return {"knoten": sorted(knoten), "gemessen": letzte.fenster_start if letzte else None,
             "regeln": [{**r, "zaehlung": zaehlung.get(r["titel"])} for r in regeln],
             "widersprueche": stufe0.widersprueche(regeln, THEMEN)}
+
+
+@router.get("/suche")
+async def suche_historie(_user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)],
+                         filter: str = Query("", max_length=2000), stunden: float = Query(24, gt=0, le=24 * 30),
+                         limit: int = Query(20, ge=0, le=200), bedeutung: str = Query("", max_length=500)):
+    """Eine Suche über die Historie: Treffer + Facetten (dieselbe Sicht wie die KI-Werkzeuge)."""
+    from app.services.log_watch import suche
+    from app.services.log_watch.definition import aktuelle
+    return await suche.suche(filter, stunden=stunden, limit=limit, bedeutung=bedeutung,
+                             objekte=(await aktuelle(db)).objekte)
+
+
+@router.get("/netzplan")
+async def netzplan_historie(_user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)],
+                            filter: str = Query("", max_length=2000), stunden: float = Query(24, gt=0, le=24 * 30),
+                            knoten: int = Query(15, ge=2, le=40)):
+    """Netzplan zum Filter: Knoten = Hashtags, Kante = gemeinsam an derselben Nachricht."""
+    from app.services.log_watch import suche
+    from app.services.log_watch.definition import aktuelle
+    return await suche.netzplan(filter, stunden=stunden, knoten=knoten, objekte=(await aktuelle(db)).objekte)

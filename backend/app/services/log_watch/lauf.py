@@ -13,6 +13,7 @@ import logging
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
+from app.services.log_watch.definition import RELEVANT
 from app.services.log_watch.raster import (
     KONTINGENT, Kontingent, Treffer, bewerte_checkmk, bewerte_graylog, bewerte_wazuh,
     quellenuebergreifend, wazuh_zeilen, zaehle,
@@ -355,15 +356,25 @@ async def run_raster() -> None:
             log.warning("Historie: Nachbetten fehlgeschlagen: %s", e)
             await _speichere("historie", bc, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
 
-    # Quellenübergreifend: auf Kopien zählen — im Trockenlauf wird nichts verändert.
-    letzte = [copy.deepcopy(t) for z, t in _juengst if z >= jetzt - UEBERGREIFEND - FENSTER]
+    # Quellenübergreifend: auf Kopien zählen (die Zählung der Fenster bleibt unverändert); bei
+    # aktiver Historie bekommen die gespeicherten Nachrichten derselben Hosts R7 nachträglich.
+    grenze = jetzt - UEBERGREIFEND - FENSTER
+    letzte = [copy.deepcopy(t) for z, t in _juengst if z >= grenze]
     vorher = sum(1 for t in letzte if t.relevanz == 3)
     hosts = quellenuebergreifend(letzte)
-    await _speichere("uebergreifend", bc, {
+    werte = {
         "hosts": sorted(hosts)[:50], "n_hosts": len(hosts),
         "angehoben": sum(1 for t in letzte if t.relevanz == 3) - vorher,
         "zeitraum_min": int(UEBERGREIFEND.total_seconds() // 60),
-    })
+    }
+    if historie_an and hosts:
+        je_host = {h: sorted({t.quelle for t in letzte if t.host == h and t.urteil == RELEVANT})
+                   for h in hosts}
+        try:
+            werte["historie"] = await historie.markiere_r7(je_host, grenze)
+        except Exception as e:  # noqa: BLE001
+            werte["historie"] = {"fehler_text": f"{type(e).__name__}: {str(e)[:300]}"}
+    await _speichere("uebergreifend", bc, werte)
     _kontingent.aufraeumen(_stunde(jetzt) - timedelta(hours=1))
 
 

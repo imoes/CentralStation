@@ -10,6 +10,61 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 13: network graph in the cockpit; R7 reaches stored messages; one name for the finding link
+
+### What's new
+
+- **Network graph tile `lw_netzplan`.**
+  - Nodes are the hashtags of the relevant messages, at most 5 per type: host, finding, topic, service,
+    rule, MITRE and others.
+  - An edge means "on the same message", with the count, never mere closeness in time.
+  - A click on a node adds it to the filter chain; a chip removes it again. The list on the right is
+    the search result for the same filter.
+- **Search and graph API:** `GET /api/log-watch/suche` and `GET /api/log-watch/netzplan`.
+- **New AI tool `lw_netzplan`.**
+
+### What changed
+
+- **R7 is written into the history.** If a host is relevant in two sources within 20 minutes, its stored
+  relevant messages get R7 and relevance 3. The reason says "gemeinsames Auftreten, keine Ursache
+  belegt". Before, only the dry-run count knew about R7.
+- **One name for the link between a finding and its evidence: the hashtag `befund:<id>`.** The field
+  `befund_ids` is gone; the 3 existing documents were migrated. The filter `befund:<id>` now finds the
+  finding together with its evidence, and the graph draws that edge.
+- **Log-watch tiles do not navigate on click.**
+
+### Evidence (live, 2026-11-06)
+
+- **Wazuh fix confirmed:** the raster runs after 21:10 UTC requested 64, found 64 and wrote 64 (Wazuh)
+  and 9/9/9 (CheckMK), with no errors and no missing vector.
+- **R7 script:** tested against the real OpenSearch on a throwaway index (`cs-r7-probe`, deleted
+  afterwards).
+  - Of 5 documents exactly the two relevant web01 messages from Graylog and Wazuh got R7, relevance 3
+    and the reason naming the other source.
+  - Untouched: the finding, the other host and the message judged not relevant.
+  - A second run changed 0 documents.
+- **Graph on the real history:** 96 relevant messages in 24 h gave 15 nodes and 28 edges in 132 ms
+  (4 ms from cache). Strongest edge: `quelle:wazuh — mitre:Credential Access`, 41 messages.
+- **Finding link:** the filter `befund:4408ae1d26` returns 3 documents (the finding and 2 CheckMK
+  evidence messages). Edge `befund:4408ae1d26 — host:mssql05.example.com`: 3.
+- **Browser check** (Playwright, API mocked with real `suche`/`netzplan` output, no login token):
+  - Click on `cue0122.example.com`: chain "host:cue0122.example.com ✕", graph 6 nodes, list
+    12 messages; the page stays on `/dashboard`; no console errors besides the mocked WebSocket.
+  - Found and fixed: with layout gravity 0.08 the unconnected CheckMK part drifted under the list; now
+    0.25. The focus ring was invisible in the light theme.
+- **Backend suite:** 916 passed.
+
+### What's missing
+
+- **The AI funnel is still off.** 9 messages on 5 hosts wait for a finding (srv032 4, cue0110 2,
+  mssql05 1, scv02-v 1, srv030 1, at 21:30 UTC).
+- **Node labels show only the value.** A rule number like "11252" is a rule only by its colour and
+  tooltip.
+- **The `lw_*` tools are not on the MCP server yet.**
+- **Still missing:** pattern memory, console knowledge, corpus search page, rule editor, reports.
+
+---
+
 ## 2026-11-06 — Log watch, part 12: the history is written, and a problem appears as the object of an AI analysis
 
 ### What's new
