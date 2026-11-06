@@ -361,6 +361,11 @@ async def agent(llm=None) -> dict | None:
     k: dict = {}
     belegt_von_anderen = 0
     while time.monotonic() - beginn < AGENT_BUDGET_S:
+        # Schalter vor JEDEM Fall: aus = Flotte läuft leer (laufende Fälle enden, keine neuen) —
+        # so lässt sich ausrollen, ohne eine Analyse abzubrechen
+        async with AsyncSessionLocal() as db:
+            if (await get_setting(db, SCHALTER) or "").lower() not in ("1", "true", "ja"):
+                break
         k = await kandidaten()
         fall = None
         for f in k["faelle"]:
