@@ -70,3 +70,14 @@ def test_faelle_gleiches_muster_ein_fall_ueber_hosts():
          {"host": "cue222", "hashtags": ["muster:m1"]}, {"host": "srv032", "hashtags": ["host:srv032"]}]
     assert tr.faelle(n) == [{"start": "muster:m1", "anzahl": 3, "hosts": ["cue0174", "cue222"]},
                             {"start": "host:srv032", "anzahl": 1, "hosts": ["srv032"]}]
+
+
+def test_runden_parallel_nur_mit_disjunkten_hosts():
+    f = lambda start, *h: {"start": start, "hosts": list(h)}
+    faelle = [f("muster:a", "cue0148", "cue0112"), f("host:cue0148", "cue0148"), f("host:mssql05", "mssql05"),
+              f("host:mon03", "mon03"), f("muster:b", "cue0112")]
+    r = tr.runden(faelle, 2)
+    assert [[x["start"] for x in runde] for runde in r] == [
+        ["muster:a", "host:mssql05"], ["host:cue0148", "host:mon03"], ["muster:b"]]
+    assert sum(len(x) for x in r) == len(faelle)                 # nichts fällt still heraus
+

@@ -26,8 +26,13 @@ AUSLOESER = "(relevanz>=3 OR signal:neu) !quelle:(ki OR konsole)"
 STUNDEN = 2
 #: Fälle je Lauf — gemessen 06.11.: 56–101 s Modellzeit je Fall; mit 2 Fällen je 10 min wuchs die
 #: Warteschlange (20 → 58 Nachrichten in 40 min). ZEIT_BUDGET_S hält einen Lauf unter dem Takt.
-HOECHSTENS_JE_LAUF = 4
-ZEIT_BUDGET_S = 480
+#: 22:23-Lauf mit 4 Fällen: 355 s, Warteschlange trotzdem 58 → 91 (R7 hebt seit Teil 13 auch
+#: gespeicherte Nachrichten auf 3: 47 von 115 Relevanz-3-Nachrichten/h). strata-27b hat 4 Slots
+#: (/slots, gemessen 06.11.) — zwei Fälle zugleich, mit disjunkten Hosts.
+HOECHSTENS_JE_LAUF = 8
+PARALLEL = 2
+#: neue Runden starten nur, solange der Lauf jünger ist — eine Runde dauert gemessen ≤ 180 s
+ZEIT_BUDGET_S = 400
 #: Takt des Jobs (scheduler: minute 3-59/10) — Nachrichten, die in diesem Abstand aus dem
 #: Prüffenster fallen, ohne gesehen zu sein, heißen „verfallen“ (benannt, nicht still)
 TAKT = timedelta(minutes=10)
@@ -184,9 +189,30 @@ async def analysiere(fall: dict, llm_config, llm=None) -> dict:
     return {"start": fall["start"], "hosts": fall["hosts"], "kein_befund": f"nach {SCHRITTE} Schritten kein gültiger Befund", "schritte": schritte}
 
 
+def runden(faelle: list[dict], parallel: int) -> list[list[dict]]:
+    """Fälle → Runden zu höchstens `parallel` Fällen mit disjunkten Hosts (Reihenfolge bleibt).
+    Zwei Fälle desselben Hosts laufen nie gleichzeitig — sonst entstünden zwei Befunde, die
+    voneinander nichts wissen. Rein — testbar."""
+    offen = list(faelle)
+    out: list[list[dict]] = []
+    while offen:
+        runde, belegt, rest = [], set(), []
+        for f in offen:
+            if len(runde) < parallel and not belegt & set(f["hosts"]):
+                runde.append(f)
+                belegt |= set(f["hosts"])
+            else:
+                rest.append(f)
+        out.append(runde)
+        offen = rest
+    return out
+
+
 async def lauf(erzwingen: bool = False, llm=None) -> dict | None:
-    """Ein Trichter-Lauf: Prüfung, dann je Host (höchstens HOECHSTENS_JE_LAUF) eine Analyse.
-    Schalter aus und nicht erzwungen → None."""
+    """Ein Trichter-Lauf: Prüfung, dann höchstens HOECHSTENS_JE_LAUF Fälle, PARALLEL zugleich
+    (disjunkte Hosts), solange das Zeitbudget reicht. Schalter aus und nicht erzwungen → None."""
+    import asyncio
+
     from app.core.database import AsyncSessionLocal
     from app.services.settings import get_active_llm_config, get_setting
     async with AsyncSessionLocal() as db:
@@ -195,17 +221,22 @@ async def lauf(erzwingen: bool = False, llm=None) -> dict | None:
             return None
         llm_config = await get_active_llm_config(db)
     k = await kandidaten()
-    ergebnisse = []
+    ergebnisse: list[dict] = []
     beginn = time.monotonic()
-    for f in k["faelle"][:HOECHSTENS_JE_LAUF]:
-        if time.monotonic() - beginn > ZEIT_BUDGET_S:
-            ergebnisse.append({"start": f["start"], "hosts": f["hosts"],
-                               "kein_befund": f"Zeitbudget {ZEIT_BUDGET_S} s des Laufs erschöpft — nächster Lauf"})
-            break
+
+    async def eins(f: dict) -> dict:
         try:
-            ergebnisse.append(await analysiere(f, llm_config, llm))
-        except Exception as e:  # noqa: BLE001 — ein Fall scheitert, der nächste läuft
+            return await analysiere(f, llm_config, llm)
+        except Exception as e:  # noqa: BLE001 — ein Fall scheitert, die anderen laufen
             log.warning("Trichter %s: %s", f["start"], e)
-            ergebnisse.append({"start": f["start"], "hosts": f["hosts"], "fehler": f"{type(e).__name__}: {str(e)[:300]}"})
+            return {"start": f["start"], "hosts": f["hosts"], "fehler": f"{type(e).__name__}: {str(e)[:300]}"}
+
+    for runde in runden(k["faelle"][:HOECHSTENS_JE_LAUF], PARALLEL):
+        if time.monotonic() - beginn > ZEIT_BUDGET_S:
+            ergebnisse += [{"start": f["start"], "hosts": f["hosts"],
+                            "kein_befund": f"Zeitbudget {ZEIT_BUDGET_S} s des Laufs erschöpft — nächster Lauf"}
+                           for f in runde]
+            break
+        ergebnisse += await asyncio.gather(*(eins(f) for f in runde))
     return {"pruefung": k, "analysen": ergebnisse, "dauer_s": round(time.monotonic() - beginn, 1),
-            "befunde": [e["befund"] for e in ergebnisse if "befund" in e]}
+            "parallel": PARALLEL, "befunde": [e["befund"] for e in ergebnisse if "befund" in e]}
