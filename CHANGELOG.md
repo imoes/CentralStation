@@ -40,9 +40,9 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   sessions) and 3 544 with no criterion (N0).
   - Under the old fixed threshold, 162 were relevant. The difference is web-scanner hits now
     correctly counted as noise.
-- **Tests:** 18 new or rewritten, among them a precedence table where every combination of criteria
-  gives exactly one verdict, the definition check, and the CheckMK state across a restart. The backend
-  suite has 824 passed.
+- **Tests:** 13 new (824 instead of 811), and the raster tests rewritten around the criteria. They
+  include a precedence table where every combination of criteria gives exactly one verdict, the
+  definition check, and the CheckMK state across a restart. The backend suite has 824 passed.
 
 ### What's missing
 
