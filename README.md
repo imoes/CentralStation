@@ -726,7 +726,7 @@ gleichzeitig auffällige Dienste, weitere Muster desselben Ausbruchs und den Gra
 „An Konsole übergeben" setzt am Muster an, nicht nur am Host. Admins können ein Muster dort
 **stummschalten** (protokolliert, umkehrbar).
 
-**Ticket erstellen** (Incident-Ansicht, neben „Computer"): öffnet den gemeinsamen
+**Ticket erstellen** (Incident-Ansicht, neben „Computer, untersuche das"): öffnet den gemeinsamen
 Ticket-Dialog (ServiceDesk/Jira, Projekt, Typ, Priorität aus der Incident-Schwere). Den Entwurf
 schreibt die KI aus demselben Lagebild wie die Konsolen-Übergabe (`feed.incident_briefing`:
 Muster, Belege, Recherche, Einschätzung, Prüfergebnisse, Rezept, Lösungsvermerk) — vor dem
