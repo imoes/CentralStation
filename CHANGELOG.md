@@ -52,7 +52,7 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 - All six widget types return data, or the named "history not active" state.
 - `lw_kriterien` over one hour: R2 103 (Graylog), R6 268 (Wazuh), N0 7 276, N1 Graylog routine.
 - Migration 0057: 3 dashboards renamed, no duplicate.
-- **Tests:** 9 new (cockpit aggregation, designer whitelist and clamping, mandatory "why" widget,
+- **Tests:** 8 new (cockpit aggregation, designer whitelist and clamping, mandatory "why" widget,
   version mixing). The backend suite has 832 passed.
 
 ### What's missing
