@@ -1463,6 +1463,16 @@ place six log-watch widgets. Their data comes from `services/log_watch/cockpit.p
 - Only rows of the current raster version are counted; older rows are reported as `alte_fassung`.
 - The widgets show counts, not host names.
 
+### Log watch: hashtags from host and source fields
+
+- **From CheckMK, on messages from every source:** `host:`, `ort:`, `kritikalitaet:`, `hg:`, and
+  `netz:dmz|intern` with `netzbereich:<folder segment>`.
+  - Effective host attributes are used, including inherited ones (`connectors/checkmk.host_aus_config`).
+  - The network zone comes from the folder path: a segment containing "dmz". The tag group `networking`
+    is practically unused.
+- **From Wazuh:** `regel:`, every `regelgruppe:`, `mitre:` (tactic), `mitre-technik:` (T-ID), `label:`
+  (agent labels as `key=value`), `decoder:`, `logquelle:`.
+
 ### Log watch: AI funnel and findings
 
 The AI only works when a check is true, and it only writes its own analysis.
@@ -1502,7 +1512,7 @@ The AI only works when a check is true, and it only writes its own analysis.
 - **R7 on stored messages:** when a host is relevant in two sources within 20 minutes, the stored relevant
   messages of that host get R7 and relevance 3 afterwards (`historie.markiere_r7`, `update_by_query`).
   The reason says "gemeinsames Auftreten, keine Ursache belegt". Findings are not touched.
-- **Switch:** `log_watch.ki_aktiv` (off). Job `log_watch_trichter` runs at minute 3-59/10 and does nothing
+- **Switch:** `log_watch.ki_aktiv` (on since 2026-11-06 21:21 UTC). Job `log_watch_trichter` runs at minute 3-59/10 and does nothing
   while the switch is off; its result goes to `raster_lauf` row `ki`.
 
 ### Check steps and recipes (incidents)
