@@ -43,7 +43,7 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   `critical` 1. CRIT on `prod` or `critical` is urgent.
 - **Host matching:** 2 846 CheckMK hosts. In the first Graylog window, 40 names could not be matched.
   After matching by address and glued-on domain, 22 remain unknown and 7 are container IDs.
-- **Tests:** 37 new tests. They cover the vocabulary including false hits ("rescue", "timeouts",
+- **Tests:** 38 new tests. They cover the vocabulary including false hits ("rescue", "timeouts",
   "502ms"), the live spellings of host names, every rule per source, the flood brake, and the
   projection. The backend suite has 805 passed.
 
