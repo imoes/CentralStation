@@ -484,8 +484,9 @@ async def _run() -> None:
             except Exception as exc:
                 log.warning("error_clusters: Graylog fetch %s failed: %s", b, exc)
                 return
+            from app.services.log_watch.vokabular import themen_ids
             t = await asyncio.to_thread(tally, fetched.lines, rt.miner, b,
-                                        fetched.total, fetched.complete)
+                                        fetched.total, fetched.complete, themen_ids)
             if not fetched.complete:
                 await _recount_exact(svc, t, b)
             # Massen-Neuheit = Quellenwechsel: so viele neue Muster in EINEM Fenster gab es

@@ -206,6 +206,24 @@ async def run_raster() -> None:
             log.warning("Raster switch: Fenster %s fehlgeschlagen: %s", b, e)
             await _speichere("switch", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
 
+    # Stufe 0 (Graylog-Verwerfregeln): alle 15 min — je Regel wird jeder Knoten befragt.
+    if "graylog" in adapter and bc.minute % 15 == 0:
+        from app.services.log_watch import stufe0
+        from app.services.log_watch.vokabular import THEMEN
+        try:
+            regeln, knoten = await stufe0.lies(adapter["graylog"].gl)
+            zaehlung = await stufe0.zaehle(adapter["graylog"].gl, regeln, knoten)
+            await _speichere("stufe0", bc, {
+                "regeln": [{"titel": r["titel"], "orte": r["orte"], "felder": r["felder"],
+                            "geaendert": r["geaendert"], **zaehlung.get(r["titel"], {})} for r in regeln],
+                "verworfen_pro_stunde": sum(z.get("pro_stunde", 0) for z in zaehlung.values()),
+                "widersprueche": stufe0.widersprueche(regeln, THEMEN),
+                "vollstaendig": all(z.get("vollstaendig") for z in zaehlung.values()),
+            })
+        except Exception as e:  # noqa: BLE001
+            log.warning("Stufe 0: Lesen fehlgeschlagen: %s", e)
+            await _speichere("stufe0", bc, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
+
     # Quellenübergreifend: auf Kopien zählen — im Trockenlauf wird nichts verändert.
     letzte = [copy.deepcopy(t) for z, t in _juengst if z >= jetzt - UEBERGREIFEND - FENSTER]
     vorher = sum(1 for t in letzte if t.relevanz == 3)

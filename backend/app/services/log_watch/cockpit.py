@@ -94,7 +94,7 @@ def hashtags(zeilen: list[tuple[str, datetime, dict]], seit: datetime, limit: in
 
 def korpus(katalog: list[tuple[str, str, int]], zeilen_1h: list[tuple[str, datetime, dict]],
            letzte: dict[str, tuple[datetime, dict]], definition_v: int, historie_aktiv: bool,
-           jetzt: datetime) -> dict:
+           jetzt: datetime, stufe0: dict | None = None) -> dict:
     """Gesundheit der Korpora: Felder je Status, nicht zugeordnete Hosts je Grund, letzter
     Lauf je Quelle (mit Fehler), Definition, Historie."""
     felder: dict[str, Counter] = defaultdict(Counter)
@@ -113,9 +113,18 @@ def korpus(katalog: list[tuple[str, str, int]], zeilen_1h: list[tuple[str, datet
         alter = int((jetzt - b).total_seconds() // 60)
         laeufe[q] = {"zustand": "fehler" if "fehler" in w else ("veraltet" if alter > 30 else "ok"),
                      "fenster": b.isoformat(), "alter_min": alter, "fehler": w.get("fehler")}
+    s0 = None
+    if stufe0 is not None:
+        s0 = ({"zustand": "fehler", "fehler": stufe0["fehler"]} if "fehler" in stufe0 else
+              {"zustand": "ok" if stufe0.get("vollstaendig") else "unvollstaendig",
+               "verworfen_pro_stunde": stufe0.get("verworfen_pro_stunde", 0),
+               "regeln": [{"titel": r["titel"], "pro_stunde": r.get("pro_stunde", 0)}
+                          for r in stufe0.get("regeln", [])]})
     return {"felder": {q: dict(c) for q, c in felder.items()},
             "nicht_zugeordnet": dict(nicht_zugeordnet), "laeufe": laeufe,
-            "definition_v": definition_v, "historie_aktiv": historie_aktiv}
+            "definition_v": definition_v, "historie_aktiv": historie_aktiv,
+            # an der Quelle (Graylog-Pipeline) verworfen — sieht keine Auswertung; None = nie gemessen
+            "stufe0": s0}
 
 
 # ── Abfragen ───────────────────────────────────────────────────────────────────
@@ -163,7 +172,9 @@ async def daten(db, typ: str, cfg: dict) -> dict:
                                   .order_by(RasterLauf.fenster_start.desc()).limit(1))).scalar_one_or_none()
             if r is not None:
                 letzte[q] = (r.fenster_start, r.werte)
+        s0 = (await db.execute(select(RasterLauf).where(RasterLauf.quelle == "stufe0")
+                               .order_by(RasterLauf.fenster_start.desc()).limit(1))).scalar_one_or_none()
         d = await aktuelle(db)
         return korpus(katalog, await _zeilen(db, jetzt - timedelta(hours=1)), letzte, d.version,
-                      await historie.aktiv(db), jetzt)
+                      await historie.aktiv(db), jetzt, s0.werte if s0 else None)
     return {"state": "unavailable", "error": f"unbekannter Widget-Typ {typ}"}

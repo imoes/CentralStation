@@ -10,6 +10,61 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 10: stage 0 (Graylog drop rules) visible and counted; topics per line for Graylog
+
+### What's new
+
+- **Stage 0 of the firewall:** Graylog's own pipeline rules with `drop_message()` are read (read-only),
+  each with source text, pipeline, stage, streams and the fields it checks.
+  - What they drop is counted every 15 minutes, summed over all Graylog nodes. The load balancer spreads
+    requests at random, so the code asks until every node has answered.
+  - The cockpit shows "verworfen an der Quelle".
+- **Contradiction check stage 0 ↔ our topics:** every topic now has a typical example line. The check
+  reads the keep words straight from the Graylog rule text and reports every topic whose line stage 0
+  drops from container logs.
+- **MCP skill `graylog-api`** (skills repo `ac050c9`):
+  - new `graylog_drop_rules` (stage 0 with counts over all nodes);
+  - `graylog_get_pipeline_rules` with `title` (source text) and `nur_verwerfen`;
+  - **`graylog_system_status` repaired**: it read the node list as a dict, but Graylog 5.2 returns a
+    list.
+
+### Fixed
+
+- **Graylog topics per line instead of per pattern.** Drain merges lines with and without a topic (e.g.
+  "upstream answered" / "upstream timed out") into one pattern. Before, the topic came from the pattern
+  and its first example only. The error-cluster count now groups by (host, topics of the line). The
+  error-cluster detection itself is unchanged.
+  - Measured: 12 µs per line, about 0.7 s per window.
+
+### Evidence (live, 2026-11-06 19:45 UTC)
+
+- **Stage 0, complete over 3 of 3 nodes:** 1 085 898 messages/h dropped at the source.
+
+  | Rule | Per hour |
+  |---|---|
+  | `drop_http_success` | 919 470 |
+  | `drop_container_noise` | 163 348 |
+  | `drop_cue_zipline_xml` | 3 080 |
+
+- **Contradiction found:** `drop_container_noise` removes, from container logs, **15 of our 20 topics**
+  whenever the line has no error word: oom, disk-full, fs-readonly, absturz, cert, tls, dns, timeout,
+  conn-refused, conn-reset, auth-fail, zugriff, replikation, drosselung, warteschlange.
+  - Example: "dial tcp …: connect: connection refused" in a container log never reaches us.
+  - **Decision is open (production change in Graylog).**
+- **Graylog with topics per line:** window 19:40 had 54 680 lines in 618 groups; the run took 19 s,
+  12 s before.
+- **Tests:** 6 new, among them "every topic recognises its own example" (the vocabulary is consistent),
+  the contradiction check against the live rule text, and topics per line within one Drain pattern. The
+  backend suite has 881 passed.
+
+### What's missing
+
+- **Decision on the stage 0 contradiction.** Options: extend Graylog's keep list with our topic words,
+  or accept that container logs reach us only with an error word.
+- **Stage 0 is not in the rule editor yet** (no UI).
+
+---
+
 ## 2026-11-06 — Log watch, part 9: one filter language; objects are saved searches, rules are searches with an action
 
 ### What's new

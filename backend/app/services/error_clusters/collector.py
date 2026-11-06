@@ -217,8 +217,11 @@ class TemplateTally:
     hosts: Counter = field(default_factory=Counter)
     #: je Host die ersten Nachrichten (Graylog-ID, Zeit) — was die Historie speichern darf
     belege: dict = field(default_factory=dict)
+    #: Log-Überwachung: je (Host, Themen der Zeile) Anzahl und erste IDs. Themen gehören zur
+    #: Gruppe, weil Drain z. B. „Link 7 UP“ und „Link 7 DOWN“ zu einem Muster zusammenfasst
+    gruppen: dict = field(default_factory=dict)
 
-    def add(self, line: Line) -> None:
+    def add(self, line: Line, themen: tuple = ()) -> None:
         self.count += 1
         self.entities[line.entity] += 1
         if line.source:
@@ -228,6 +231,13 @@ class TemplateTally:
             b = self.belege.setdefault(line.source, [])
             if line.id and len(b) < BELEGE_JE_HOST:
                 b.append((line.id, line.ts))
+            g = self.gruppen.setdefault((line.source, themen), {"anzahl": 0, "belege": [],
+                                                                "beispiel": ""})
+            g["anzahl"] += 1
+            if not g["beispiel"]:
+                g["beispiel"] = line.message.split("\n", 1)[0][:500]
+            if line.id and len(g["belege"]) < BELEGE_JE_HOST:
+                g["belege"].append((line.id, line.ts))
         if len(self.examples) < 5:
             first = line.message.split("\n", 1)[0][:500]
             if first not in self.examples:
@@ -244,8 +254,12 @@ class BucketTally:
 
 
 def tally(lines: list[Line], miner: Miner, bucket_start: datetime,
-          total: int | None = None, complete: bool = True) -> BucketTally:
-    """Jede Zeile einem Muster zuordnen und zählen — keine Deduplizierung."""
+          total: int | None = None, complete: bool = True, einteilen=None) -> BucketTally:
+    """Jede Zeile einem Muster zuordnen und zählen — keine Deduplizierung.
+
+    `einteilen(text) -> tuple` (optional, Log-Überwachung): Themen je Zeile für die Gruppen;
+    die Fehler-Cluster-Erkennung selbst nutzt nur Zählung, Entitäten und Quellen.
+    """
     templates: dict[str, TemplateTally] = {}
     entities: Counter = Counter()
     for line in lines:
@@ -257,7 +271,7 @@ def tally(lines: list[Line], miner: Miner, bucket_start: datetime,
             t = templates[mined.key] = TemplateTally(mined.template)
         else:
             t.template = mined.template      # Drain3 kann ein Muster verallgemeinern
-        t.add(line)
+        t.add(line, einteilen(line.message) if einteilen else ())
         entities[line.entity] += 1
     return BucketTally(bucket_start, templates, entities,
                        total if total is not None else len(lines), complete)

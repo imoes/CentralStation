@@ -1402,6 +1402,35 @@ graph and the MCP tools.
 - **Compared fields are in the index:** `level` is mapped in `cs-logs-*` and written into the document,
   so search and rule see the same field.
 
+### Log watch: stage 0, Graylog's own drop rules
+
+Graylog pipeline rules with `drop_message()` remove messages at the source, before anything is stored.
+The raster never sees them. `services/log_watch/stufe0.py` makes that visible and does so read-only:
+changes in Graylog are production and need approval.
+
+**The three drop rules, measured 2026-11-06:**
+
+| Rule | Where | Drops | Per hour |
+|---|---|---|---|
+| `drop_http_success` | `[proc]routing` stage 6 | `http_response_code < 400` | ≈ 928 000 |
+| `drop_container_noise` | stage 9 | container logs without an error word | ≈ 155 000 |
+| `drop_cue_zipline_xml` | stage 7 | — | ≈ 2 900 |
+| **Total** | | | **≈ 1.09 million** |
+
+- **Counting:** Graylog counts per node, and the load balancer spreads requests across nodes at random.
+  The code keeps asking until every node has answered. A missing node is reported as "unvollständig n/3".
+  It runs every 15 minutes as a `stufe0` row in the dry run.
+- **The cockpit** (`lw_korpus`) shows "verworfen an der Quelle".
+- **Contradiction check** (`stufe0.widersprueche`):
+  - It reads the keep words from the rule text and reports every topic whose typical line (each topic
+    has a `beispiel`) stage 0 would drop from container logs. Example: "connection refused" or
+    "x509: certificate has expired" contain no error word.
+  - Topics stage 0 keeps through a field are excluded (HTTP 5xx via `http_response_code >= 400`).
+- **API (admin):** `GET /api/log-watch/stufe0` returns the rules with source text, location, fields,
+  latest count and contradictions.
+- **MCP skill `graylog-api`:** `graylog_drop_rules` shows the same for exploration;
+  `graylog_get_pipeline_rules` accepts `title` (source text) and `nur_verwerfen`.
+
 ### Log watch: AI cockpit (dashboard widgets)
 
 The generative dashboard is the **"🪄 KI-Cockpit"**. Besides the existing widget types, the AI can

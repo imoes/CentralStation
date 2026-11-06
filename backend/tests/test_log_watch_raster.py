@@ -88,9 +88,7 @@ def test_zuordnen_live_schreibweisen(quelle, host, grund):
 
 
 def test_hashtag_nennt_grund_der_nicht_zuordnung():
-    tt = SimpleNamespace(template="y", count=2, hosts=Counter({"docker151": 1, "4d0c7f89d2a": 1}),
-                         sources={"docker151", "4d0c7f89d2a"}, entities=Counter(), examples=["y"], belege={})
-    t = r.bewerte_graylog({"x": tt}, [], {}, set(), VERZ)
+    t = r.bewerte_graylog({"x": _tt("y", {"docker151": 1, "4d0c7f89d2a": 1})}, [], {}, set(), VERZ)
     tags = {x.host: x.hashtags for x in t}
     assert "hostliste:mehrdeutig" in tags["docker151"]
     assert "hostliste:container-id" in tags["4d0c7f89d2a"]
@@ -116,9 +114,14 @@ def test_definition_vollstaendig_und_eindeutig():
 # ── Graylog ─────────────────────────────────────────────────────────────────────
 
 def _tt(template, hosts, entities=None, examples=None, belege=None):
+    """Wie collector.TemplateTally: Gruppen je (Host, Themen der Zeile)."""
+    from app.services.log_watch.vokabular import themen_ids
+    th = themen_ids(template)
+    gruppen = {(h, th): {"anzahl": n, "belege": (belege or {}).get(h, []), "beispiel": template}
+               for h, n in hosts.items()}
     return SimpleNamespace(template=template, count=sum(hosts.values()), hosts=Counter(hosts),
                            sources=set(hosts), entities=Counter(entities or hosts),
-                           examples=examples or [template], belege=belege or {})
+                           examples=examples or [template], belege=belege or {}, gruppen=gruppen)
 
 
 def _ev(key, rules=("spike",), notify="digest", action="open"):
@@ -300,5 +303,19 @@ def test_checkmk_zustand_ueberlebt_neustart_nur_wenn_jung():
 
 def test_graylog_muster_nur_aus_firewall_zeilen_wird_nicht_bewertet():
     tt = SimpleNamespace(template="THREAT spyware <*>", count=3, hosts=Counter(), sources={"nfw062"},
-                         entities=Counter({"nfw062": 3}), examples=["x"], belege={})
+                         entities=Counter({"nfw062": 3}), examples=["x"], belege={}, gruppen={})
     assert r.bewerte_graylog({"fw": tt}, [], {}, set(), VERZ) == []
+
+
+def test_graylog_themen_je_zeile_trennen_ein_drain_muster():
+    """Ein Drain-Muster mit Zeilen ohne und mit Thema: zwei Gruppen, getrennt beurteilt."""
+    from app.services.error_clusters.collector import Line, TemplateTally
+    from app.services.log_watch.vokabular import themen_ids
+    tt = TemplateTally("upstream <*>")
+    for msg in ("upstream answered", "upstream answered", "upstream timed out (110) while reading"):
+        tt.add(Line(ts="t", source="docker0218", container="", message=msg, id=msg[:4]), themen_ids(msg))
+    t = {tuple(x.hashtags): x for x in r.bewerte_graylog({"k": tt}, [], {}, set(), VERZ)}
+    assert len(t) == 2
+    mit = next(x for x in t.values() if "thema:timeout" in x.hashtags)
+    ohne = next(x for x in t.values() if "thema:timeout" not in x.hashtags)
+    assert (mit.anzahl, ohne.anzahl) == (1, 2) and mit.beispiel.startswith("upstream timed out")

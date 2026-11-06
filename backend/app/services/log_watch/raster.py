@@ -19,7 +19,7 @@ from datetime import datetime
 from app.services.log_watch.definition import NICHT_RELEVANT, RELEVANT, STANDARD, Definition
 from app.services.log_watch.regelwerk import FORWARD, bewerte
 from app.services.log_watch.hosts import HostEintrag, Hostverzeichnis, norm
-from app.services.log_watch.vokabular import dienst_thema, themen
+from app.services.log_watch.vokabular import THEMEN, dienst_thema, themen
 
 KONTINGENT = 5
 #: Mittlere Nachrichtengröße je Quelle in Byte, für die Platzschätzung.
@@ -138,39 +138,37 @@ def bewerte_graylog(templates: dict, events: list, kritisch: dict, stumm: set[st
         krit_je_host.setdefault(norm(host), []).append(sig)
 
     out: list[Treffer] = []
+    alle_themen = {t.id: t for t in THEMEN}
     for key, tt in templates.items():
-        beispiel = tt.examples[0] if tt.examples else ""
-        th = themen(f"{tt.template}\n{beispiel}")
-        signale: set[str] = set()
-        gruende = ["Fehlerzeile in Graylog"]
+        signale_muster: set[str] = set()
+        gruende_muster = ["Fehlerzeile in Graylog"]
         ev = ereignis.get(key)
         if ev is not None:
-            signale |= {REGEL_SIGNAL[x] for x in ev.verdict.rules if x in REGEL_SIGNAL}
-            gruende += list(ev.verdict.reasons) or [
+            signale_muster |= {REGEL_SIGNAL[x] for x in ev.verdict.rules if x in REGEL_SIGNAL}
+            gruende_muster += list(ev.verdict.reasons) or [
                 "Muster auffällig: " + ", ".join(sorted(ev.verdict.rules))]
             if ev.verdict.notify == "immediate":
-                signale.add("dringend")
-                gruende.append("Sofort-Meldung der Fehler-Cluster-Erkennung")
-        _themen_signale(th, signale, gruende)
+                signale_muster.add("dringend")
+                gruende_muster.append("Sofort-Meldung der Fehler-Cluster-Erkennung")
         if key in stumm:
-            signale.add("stumm")
-            gruende.append("Muster stumm geschaltet (Admin)")
+            signale_muster.add("stumm")
+            gruende_muster.append("Muster stumm geschaltet (Admin)")
         apps = [e for e, _ in tt.entities.most_common() if e and e not in tt.sources][:3]
-        hosts = getattr(tt, "hosts", None)
-        if hosts is None:                     # Zählung ohne Host-Aufteilung (alte Form)
-            hosts = Counter({s: 0 for s in tt.sources})
-        belege = getattr(tt, "belege", None) or {}
-        for host, n_zeilen in hosts.items():
-            sig, g = set(signale), list(gruende)
+        # Gruppen je (Host, Themen der Zeile) — collector.TemplateTally.gruppen
+        for (host, themen_ids), g in (getattr(tt, "gruppen", None) or {}).items():
+            th = [alle_themen[i] for i in themen_ids if i in alle_themen]
+            sig, gr = set(signale_muster), list(gruende_muster)
+            _themen_signale(th, sig, gr)
             kanon, e, htags = _host_tags(host, verz)
             sigs = krit_je_host.get(norm(host))
             if sigs:
                 sig |= {"schaden", "dringend"}
-                g.append("Kritische Kernelmeldung auf diesem Host: " + ", ".join(sorted(set(sigs))))
+                gr.append("Kritische Kernelmeldung auf diesem Host: " + ", ".join(sorted(set(sigs))))
             tags = (["quelle:graylog", f"muster:{key}"] + htags + [f"app:{a}" for a in apps]
                     + [f"thema:{t.id}" for t in th] + _sig(sig))
-            out.append(_urteil("graylog", f"muster:{key}", kanon, e is not None, tags, {}, g,
-                               n_zeilen or tt.count, beispiel, d, belege.get(host)))
+            out.append(_urteil("graylog", f"muster:{key}", kanon, e is not None, tags, {}, gr,
+                               g["anzahl"], g.get("beispiel") or (tt.examples[0] if tt.examples else ""),
+                               d, g.get("belege")))
     return out
 
 

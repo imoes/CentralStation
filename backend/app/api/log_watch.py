@@ -192,3 +192,24 @@ async def neue_definition(body: DefinitionBody, user: CurrentUser,
                     new_value={"version": row.version, "begruendung": body.begruendung}))
     await db.commit()
     return {"version": row.version}
+
+
+@router.get("/stufe0", dependencies=[RequireAdmin])
+async def get_stufe0(db: Annotated[AsyncSession, Depends(get_db)]):
+    """Stufe 0: Graylog-Verwerfregeln (live, mit Quelltext) und die letzte Zählung je Regel."""
+    from app.models.log_watch import RasterLauf
+    from app.services.log_watch import stufe0
+    from app.services.log_watch.quellen import lade_quellen
+
+    quellen, fehlend = await lade_quellen(db)
+    gl = next((q.gl for q in quellen if q.name == "graylog"), None)
+    if gl is None:
+        raise HTTPException(503, f"Graylog nicht verfügbar: {fehlend.get('graylog', '?')}")
+    regeln, knoten = await stufe0.lies(gl)
+    letzte = (await db.execute(select(RasterLauf).where(RasterLauf.quelle == "stufe0")
+                               .order_by(RasterLauf.fenster_start.desc()).limit(1))).scalar_one_or_none()
+    zaehlung = {r["titel"]: r for r in ((letzte.werte or {}).get("regeln", []) if letzte else [])}
+    from app.services.log_watch.vokabular import THEMEN
+    return {"knoten": sorted(knoten), "gemessen": letzte.fenster_start if letzte else None,
+            "regeln": [{**r, "zaehlung": zaehlung.get(r["titel"])} for r in regeln],
+            "widersprueche": stufe0.widersprueche(regeln, THEMEN)}

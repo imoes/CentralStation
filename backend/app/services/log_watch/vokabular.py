@@ -19,57 +19,59 @@ class Thema:
     text: str
     muster: re.Pattern
     mindest: int = 0
+    #: typische Zeile — Dokumentation, Test (muss passen) und Widerspruchsprüfung gegen Stufe 0
+    beispiel: str = ""
 
 
-def _t(id_: str, text: str, muster: str, mindest: int = 0) -> Thema:
-    return Thema(id_, text, re.compile(muster, re.IGNORECASE), mindest)
+def _t(id_: str, text: str, muster: str, mindest: int = 0, beispiel: str = "") -> Thema:
+    return Thema(id_, text, re.compile(muster, re.IGNORECASE), mindest, beispiel)
 
 
 THEMEN: tuple[Thema, ...] = (
     _t("oom", "Speicher erschöpft",
-       r"\bout of memory\b|\boom[-_ ]?kill|\bOutOfMemoryError\b|\bcannot allocate memory\b", 2),
+       r"\bout of memory\b|\boom[-_ ]?kill|\bOutOfMemoryError\b|\bcannot allocate memory\b", 2, beispiel='kernel: Out of memory: Killed process 4711 (java)'),
     _t("disk-full", "Datenträger voll",
-       r"\bno space left on device\b|\bENOSPC\b|\bdisk (is )?full\b|\bfile ?system (is )?full\b", 2),
+       r"\bno space left on device\b|\bENOSPC\b|\bdisk (is )?full\b|\bfile ?system (is )?full\b", 2, beispiel='write /data/x: no space left on device'),
     _t("fs-readonly", "Dateisystem schreibgeschützt",
-       r"\bread-only file ?system\b|\bremounting filesystem read-only\b", 2),
+       r"\bread-only file ?system\b|\bremounting filesystem read-only\b", 2, beispiel='EXT4-fs (sda1): Remounting filesystem read-only'),
     _t("kernel-io", "E/A-Fehler",
-       r"\bI/O error\b|\bblk_update_request\b|\bEXT4-fs error\b|\bXFS \(\S+\): .*error\b", 2),
+       r"\bI/O error\b|\bblk_update_request\b|\bEXT4-fs error\b|\bXFS \(\S+\): .*error\b", 2, beispiel='blk_update_request: I/O error, dev sda, sector 12345'),
     _t("absturz", "Prozess abgestürzt",
        r"\bsegfault\b|\bsegmentation fault\b|\bcore dumped\b|\bkernel panic\b"
-       r"|\bkilled by signal\b|\bunexpectedly (exited|terminated)\b", 2),
+       r"|\bkilled by signal\b|\bunexpectedly (exited|terminated)\b", 2, beispiel='nginx[123]: segfault at 0 ip 00007f'),
     _t("crashloop", "Neustart-Schleife",
-       r"\bCrashLoopBackOff\b|\bback-off restarting\b|\brestart(ing)? loop\b"),
+       r"\bCrashLoopBackOff\b|\bback-off restarting\b|\brestart(ing)? loop\b", beispiel='Back-off restarting failed container'),
     _t("cert", "Zertifikat",
        r"\bcertificate (has )?expired\b|\bcertificate (verify|verification) failed\b"
-       r"|\bx509:|\bcert(ificate)? (is )?not yet valid\b"),
+       r"|\bx509:|\bcert(ificate)? (is )?not yet valid\b", beispiel='x509: certificate has expired or is not yet valid'),
     _t("tls", "TLS-Handshake",
-       r"\b(SSL|TLS)[ _-]?(handshake|alert)\b|\bhandshake failure\b|\bSSL routines\b"),
+       r"\b(SSL|TLS)[ _-]?(handshake|alert)\b|\bhandshake failure\b|\bSSL routines\b", beispiel='SSL routines:ssl3_read_bytes:sslv3 alert handshake failure'),
     _t("dns", "Namensauflösung",
        r"\bNXDOMAIN\b|\bSERVFAIL\b|\bname or service not known\b"
-       r"|\btemporary failure in name resolution\b|\bcould not resolve host\b"),
+       r"|\btemporary failure in name resolution\b|\bcould not resolve host\b", beispiel='lookup db01: NXDOMAIN'),
     _t("timeout", "Zeitüberschreitung",
-       r"\btimed out\b|\btime-?out\b|\bdeadline exceeded\b"),
-    _t("conn-refused", "Verbindung abgelehnt", r"\bconnection refused\b|\bECONNREFUSED\b"),
+       r"\btimed out\b|\btime-?out\b|\bdeadline exceeded\b", beispiel='upstream timed out (110) while reading response header'),
+    _t("conn-refused", "Verbindung abgelehnt", r"\bconnection refused\b|\bECONNREFUSED\b", beispiel='dial tcp 10.0.0.5:5432: connect: connection refused'),
     _t("conn-reset", "Verbindung abgebrochen",
-       r"\bconnection reset\b|\bECONNRESET\b|\bbroken pipe\b"),
+       r"\bconnection reset\b|\bECONNRESET\b|\bbroken pipe\b", beispiel='read: connection reset by peer'),
     _t("auth-fail", "Anmeldung fehlgeschlagen",
        r"\bauthentication fail(ed|ure)\b|\binvalid (user|password|credentials)\b"
-       r"|\blogin failed\b|\b401 unauthorized\b|\bpermission denied \(publickey"),
+       r"|\blogin failed\b|\b401 unauthorized\b|\bpermission denied \(publickey", beispiel='pam_unix(sshd:auth): authentication failure; user=root'),
     _t("zugriff", "Zugriff verweigert",
-       r"\bpermission denied\b|\bEACCES\b|\b403 forbidden\b|\baccess denied\b"),
+       r"\bpermission denied\b|\bEACCES\b|\b403 forbidden\b|\baccess denied\b", beispiel='open /etc/app.conf: permission denied'),
     _t("http-5xx", "Serverfehler (HTTP 5xx)",
        r"\b5\d\d (internal server error|bad gateway|service unavailable|gateway time-?out)\b"
-       r"|\bstatus(code)?[=: \"]+5\d\d\b|\" 5\d\d \d"),
+       r"|\bstatus(code)?[=: \"]+5\d\d\b|\" 5\d\d \d", beispiel='"GET /api HTTP/1.1" 502 173'),
     _t("datenbank", "Datenbank",
        r"\btoo many connections\b|\bcould not connect to (server|database)\b|\bSQLSTATE\b"
-       r"|\bORA-\d{5}\b|\bconnection pool (is )?exhausted\b|\bdeadlock\b"),
+       r"|\bORA-\d{5}\b|\bconnection pool (is )?exhausted\b|\bdeadlock\b", beispiel='FATAL: sorry, too many connections'),
     _t("replikation", "Replikation",
-       r"\breplication\b.{0,40}\b(lag|error|broken|stopped|failed)\b"),
+       r"\breplication\b.{0,40}\b(lag|error|broken|stopped|failed)\b", beispiel='replication lag 120s on replica db02'),
     _t("backup", "Sicherung fehlgeschlagen",
-       r"\bbackup\b.{0,40}\b(fail(ed|ure)?|error)\b|\brestic\b.{0,40}\berror\b"),
-    _t("drosselung", "Drosselung", r"\brate limit(ed)?\b|\btoo many requests\b"),
+       r"\bbackup\b.{0,40}\b(fail(ed|ure)?|error)\b|\brestic\b.{0,40}\berror\b", beispiel='backup job nightly failed: exit code 1'),
+    _t("drosselung", "Drosselung", r"\brate limit(ed)?\b|\btoo many requests\b", beispiel='429 Too Many Requests: rate limit exceeded'),
     _t("warteschlange", "Warteschlange",
-       r"\bqueue (is )?full\b|\bmessages? (dropped|discarded)\b|\bbacklog\b"),
+       r"\bqueue (is )?full\b|\bmessages? (dropped|discarded)\b|\bbacklog\b", beispiel='queue is full, messages dropped'),
 )
 #: Switches (nsa/nss/nsc) — eigene Wortwahl der Hersteller (HPE/Aruba, Cisco, Juniper)
 THEMEN_SWITCH: tuple[Thema, ...] = (
@@ -100,6 +102,12 @@ def themen_switch(text: str) -> list[Thema]:
 def themen(text: str) -> list[Thema]:
     """Alle Themen, deren Muster im Text vorkommt — in Vokabular-Reihenfolge."""
     return [t for t in THEMEN if t.muster.search(text or "")]
+
+
+def themen_ids(text: str) -> tuple[str, ...]:
+    """Themen-IDs einer Zeile (für die Gruppen der Fehler-Cluster-Zählung)."""
+    first = (text or "").split("\n", 1)[0]
+    return tuple(t.id for t in THEMEN if t.muster.search(first))
 
 
 #: CheckMK: der Service-Name sagt das Thema, die Ausgabe ist oft nur „95 % used“.
