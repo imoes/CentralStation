@@ -1236,7 +1236,7 @@ user on 2026-11-06.
 - `POST /api/log-watch/definition` (admin): a new version with a reason. Every version must keep all
   criterion IDs, and unknown parameters are rejected.
 
-### Log watch: history `cs-logs-*` (prepared, writing switched off)
+### Log watch: history `cs-logs-*` (active since 2026-11-06 20:44 UTC)
 
 - **Content:** only messages that are relevant, or that were judged to be relevant or not. One document
   per source message.
@@ -1253,8 +1253,17 @@ user on 2026-11-06.
 - **Embeddings:** `https://llm-host03.example.com/embed/v1/embeddings` (override:
   `LOG_WATCH_EMBED_URL`). If embedding fails, the document is still written and the missing vector is
   named in the result.
-- **Switch:** writing starts only once the global setting `log_watch.historie_aktiv` is set, after the
-  24-hour dry run.
+- **Switch:** the global setting `log_watch.historie_aktiv` (on since 2026-11-06 20:44 UTC).
+- **What is written:** per relevant hit exactly the number of messages the flood brake allows
+  (`Treffer.kontingent_n`, the same decision the count uses). The full message is fetched per source:
+  - Graylog, firewall, switches: by the message IDs remembered in the window;
+  - Wazuh: by the alert IDs the aggregation returns per rule × agent (`top_hits`);
+  - CheckMK: the problem itself is the message (ID `host|service|last_state_change`).
+
+  A message missing at the source is not invented. Each run stores `historie` = requested, found,
+  written, rejected, vector missing in its `raster_lauf` row.
+- **Catch-up embedding:** `historie.nachbetten()` embeds up to 200 documents without a vector per raster
+  run (row `historie` in `raster_lauf`).
 
 ### Log watch: ruleset (firewall semantics: forward / block)
 
@@ -1443,13 +1452,50 @@ place six log-watch widgets. Their data comes from `services/log_watch/cockpit.p
 | `lw_volumen` | per source and hour: messages read, relevant, would be stored; coverage (windows seen against expected) and failures |
 | `lw_hashtags` | top hashtags of relevant messages, with a factor against the previous period (`null` = new) |
 | `lw_korpus` | field catalog per status, unmatched hosts per reason, last run per source (`ok`/`veraltet`/`fehler`/`nie gelaufen`), definition version, history switch |
-| `lw_befunde`, `lw_netzplan` | AI findings and network graph; `unavailable` with the reason while the history is off |
+| `lw_befunde` | AI findings as objects: relevance, title, host, time; unfold for the finding, hypotheses with status, checked quotes, the funnel steps and hashtags. Without a finding a named state: how many messages wait and whether the AI funnel is on |
+| `lw_netzplan` | network graph — `unavailable` ("noch nicht gebaut") |
 
 **Rules:**
+- `lw_befunde` comes first whenever there is a finding in 24 h or a message waiting for one.
 - `lw_kriterien` always appears; if the AI leaves it out, code adds it.
+- Log-watch widgets do not open the feed on click (there is no feed query behind them).
 - `lw_korpus` comes first when a source is not running.
 - Only rows of the current raster version are counted; older rows are reported as `alte_fassung`.
 - The widgets show counts, not host names.
+
+### Log watch: AI funnel and findings
+
+The AI only works when a check is true, and it only writes its own analysis.
+
+- **Check** (`trichter.kandidaten`, no AI): messages in the history of the last 2 h matching
+  `(relevanz>=3 OR signal:neu) !quelle:(ki OR konsole)` without `befund_ids`, grouped by host.
+- **Funnel** (`trichter.analysiere`): one tool loop per host (at most 2 hosts per run, 12 steps). The
+  model asks earlier knowledge first, reads facets, narrows the filter and ends with `lw_befund`.
+  Every step (tool, arguments, hit count, model seconds) is kept in the finding.
+- **Tools** (`werkzeuge.py`, one registry for the funnel and later MCP):
+
+  | Tool | Purpose |
+  |---|---|
+  | `lw_suche` | hits + facets for a filter (filter language), time range, optional meaning (kNN) |
+  | `lw_facetten` | count + facets only |
+  | `lw_nachricht` | one message with all original fields |
+  | `lw_wissen` | earlier AI findings and console knowledge (`quelle:ki`/`konsole`) |
+  | `lw_definition` | the relevance definition: criteria, objects, rules |
+  | `lw_befund` | the only writing tool: files the finding |
+
+- **A finding is a document** `quelle:ki`, `herkunft:ki` in `cs-logs-*` (`befund.py`). The code writes
+  it, not the model, and checks first:
+  - every quote must stand verbatim (case and whitespace ignored) in the text of a history document;
+    a finding cannot cite a finding;
+  - without one checked quote there is no finding; the reason goes back to the model;
+  - hashtags only from the evidence, plus `quelle:ki` and `befund:<id>`;
+  - hypotheses carry `offen` | `gestuetzt` | `widerlegt`;
+  - leftovers of the model's tool-call syntax (`</parameter>` …) are rejected.
+
+  The evidence documents get `befund_ids`.
+- **Search** (`suche.py`): one search over `cs-logs-*`: filter + time → hits and facets per hashtag type.
+- **Switch:** `log_watch.ki_aktiv` (off). Job `log_watch_trichter` runs at minute 3-59/10 and does nothing
+  while the switch is off; its result goes to `raster_lauf` row `ki`.
 
 ### Check steps and recipes (incidents)
 

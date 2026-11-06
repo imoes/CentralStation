@@ -282,6 +282,7 @@ import {
             @case ('gauge') {
               <div echarts [options]="gaugeOptions()" class="chart"></div>
             }
+            @case ('lw_befunde') { <cs-lw-widget typ="lw_befunde" [daten]="data()" /> }
             @case ('lw_kriterien') { <cs-lw-widget typ="lw_kriterien" [daten]="data()" /> }
             @case ('lw_volumen') { <cs-lw-widget typ="lw_volumen" [daten]="data()" /> }
             @case ('lw_hashtags') { <cs-lw-widget typ="lw_hashtags" [daten]="data()" /> }

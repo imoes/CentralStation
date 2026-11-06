@@ -60,6 +60,9 @@ class Treffer:
     #: Felder, die Regeln vergleichen (filter.FELDER, z. B. level) — gehen mit in die Historie,
     #: damit Suche und Regel dasselbe Feld sehen
     felder: dict = field(default_factory=dict)
+    #: so viele Nachrichten dieses Treffers darf die Historie aufnehmen (Flutbremse) — EINE
+    #: Entscheidung für Zählung und Speicherung, gesetzt in zaehle()
+    kontingent_n: int = 0
     #: Nachrichten-IDs der Quelle, die die Historie speichern darf (Graylog: erste je Fenster)
     belege: list = field(default_factory=list)
 
@@ -175,7 +178,10 @@ def bewerte_graylog(templates: dict, events: list, kritisch: dict, stumm: set[st
 # ── Wazuh ──────────────────────────────────────────────────────────────────────
 
 def wazuh_zeilen(aggs: dict) -> list[dict]:
-    """Aggregation `regel` (terms rule.id) › `agent` (terms agent.name) + `info` (top_hits)."""
+    """Aggregation `regel` (terms rule.id) › `agent` (terms agent.name › `belege` top_hits) + `info`.
+
+    `belege`: die ersten Alert-IDs der Gruppe (_id, Index) — damit holt die Historie genau diese
+    Alerts, statt den Agenten aus dem kanonischen Hostnamen zurückzuraten."""
     zeilen = []
     for rb in (aggs.get("regel") or {}).get("buckets") or []:
         hits = (((rb.get("info") or {}).get("hits") or {}).get("hits") or [{}])
@@ -187,6 +193,8 @@ def wazuh_zeilen(aggs: dict) -> list[dict]:
                 "gruppen": list(rule.get("groups") or []),
                 "taktiken": list((rule.get("mitre") or {}).get("tactic") or []),
                 "agent": str(ab["key"]), "anzahl": int(ab["doc_count"]),
+                "belege": [(h["_id"], h.get("_index", "")) for h in
+                           (((ab.get("belege") or {}).get("hits") or {}).get("hits") or [])],
             })
     return zeilen
 
@@ -207,7 +215,8 @@ def bewerte_wazuh(zeilen: list[dict], verz: Hostverzeichnis,
                 + [f"mitre:{t}" for t in z["taktiken"]] + [f"thema:{t.id}" for t in th]
                 + _sig(signale))
         out.append(_urteil("wazuh", f"regel:{z['regel']}", kanon, e is not None, tags,
-                           {"level": z["level"]}, gruende, z["anzahl"], z["beschreibung"], d))
+                           {"level": z["level"]}, gruende, z["anzahl"], z["beschreibung"], d,
+                           z.get("belege")))
     return out
 
 
@@ -338,6 +347,7 @@ def zaehle(treffer: list[Treffer], kontingent: Kontingent, stunde: datetime) -> 
         for r in t.test_treffer:
             test[r] += t.anzahl
         n = kontingent.nimm(t, stunde)
+        t.kontingent_n = n
         gespeichert += n
         byte += n * BYTES_JE_NACHRICHT.get(t.quelle, 1500)
         if t.urteil == RELEVANT:

@@ -14,7 +14,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 
 from app.services.log_watch.raster import (
-    Kontingent, Treffer, bewerte_checkmk, bewerte_graylog, bewerte_wazuh,
+    KONTINGENT, Kontingent, Treffer, bewerte_checkmk, bewerte_graylog, bewerte_wazuh,
     quellenuebergreifend, wazuh_zeilen, zaehle,
 )
 
@@ -98,6 +98,107 @@ async def _letzter_checkmk_zustand(jetzt: datetime) -> dict[str, str] | None:
     return gueltiger_zustand(row.werte, jetzt - row.created_at) if row else None
 
 
+# ── Historie: was relevant ist, mit allen Originalfeldern speichern ────────────
+
+async def _bewahre(quelle: str, treffer: list[Treffer], holer) -> dict | None:
+    """Relevante Treffer in die Historie schreiben — genau `kontingent_n` Nachrichten je Treffer
+    (dieselbe Entscheidung wie in der Zählung). `holer(paare)` liefert zu [(Treffer, n)] die
+    vollständigen Nachrichten [(Treffer, quell_id, zeit, text, roh)]. Schalter aus: None."""
+    from app.core.database import AsyncSessionLocal
+    from app.services.log_watch import historie
+
+    async with AsyncSessionLocal() as db:
+        if not await historie.aktiv(db):
+            return None
+    paare = [(t, t.kontingent_n) for t in treffer if t.kontingent_n > 0]
+    if not paare:
+        return {"geschrieben": 0, "fehler": 0, "vektor_fehlt": 0, "angefordert": 0, "gefunden": 0}
+    try:
+        nachrichten = await holer(paare)
+        docs = []
+        for t, qid, zeit, text, roh in nachrichten:
+            doc_id, doc = historie.dokument(t, qid, zeit, text, roh)
+            docs.append((doc_id, zeit, doc))
+        erg = await historie.schreibe(docs)
+        erg.update(angefordert=sum(n for _, n in paare), gefunden=len(nachrichten))
+        return erg
+    except Exception as e:  # noqa: BLE001 — Raster und Zählung laufen weiter
+        log.warning("Historie %s: Schreiben fehlgeschlagen: %s", quelle, e)
+        return {"fehler_text": f"{type(e).__name__}: {str(e)[:300]}"}
+
+
+def _zeit(s, ersatz: datetime) -> datetime:
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return ersatz
+
+
+def _graylog_holer(gl, b: datetime):
+    """Graylog-Nachrichten über ihre IDs nachholen (alle Felder), in Stücken zu 50 IDs."""
+    from app.services.graylog_occurrences import iso
+
+    async def hole(paare):
+        gesucht = [(t, i) for t, n in paare for i, _ts in (t.belege or [])[:n]]
+        gefunden: dict[str, dict] = {}
+        ids = [i for _, i in gesucht]
+        for k in range(0, len(ids), 50):
+            teil = ids[k:k + 50]
+            msgs, _ = await gl.search_window("_id:(" + " OR ".join(f'"{i}"' for i in teil) + ")",
+                                             iso(b - timedelta(minutes=10)), iso(b + timedelta(minutes=15)),
+                                             limit=len(teil))
+            gefunden.update({m.get("_id"): m for m in msgs})
+        out = []
+        for t, i in gesucht:
+            m = gefunden.get(i)
+            if m is None:
+                continue
+            roh = {k: v for k, v in m.items() if not k.startswith("gl2_") and k != "streams"}
+            out.append((t, i, _zeit(m.get("timestamp"), b), str(m.get("message") or t.beispiel), roh))
+        return out
+    return hole
+
+
+def _wazuh_holer(w, b: datetime):
+    """Wazuh-Alerts über die IDs, die die Aggregation je (Regel × Agent) mitgeliefert hat."""
+    async def hole(paare):
+        gesucht = [(t, i) for t, n in paare for i, _idx in (t.belege or [])[:n]]
+        if not gesucht:
+            return []
+        body = {"size": len(gesucht), "query": {"ids": {"values": [i for _, i in gesucht]}}}
+        async with w._client(timeout=120.0) as client:
+            res = await w._query_indexer(client, "wazuh-alerts-*", body)
+        gefunden = {h["_id"]: h.get("_source") or {} for h in (res.get("hits") or {}).get("hits") or []}
+        out = []
+        for t, i in gesucht:
+            src = gefunden.get(i)
+            if src is None:
+                continue
+            text = src.get("full_log") or (src.get("rule") or {}).get("description") or ""
+            out.append((t, i, _zeit(src.get("timestamp"), b), text, src))
+        return out
+    return hole
+
+
+def _checkmk_holer(probleme: list[dict], bc: datetime):
+    """CheckMK: das Problem selbst ist die Nachricht; ID = Host|Service|Zustandswechsel."""
+    je = {(p["host"], p["service"]): p for p in probleme}
+
+    async def hole(paare):
+        out = []
+        for t, _n in paare:
+            dienst = t.schluessel.split(":", 1)[1]
+            p = next((v for (h, s), v in je.items() if s == dienst and (h == t.host or t.host.startswith(h.split(".")[0]))), None)
+            if p is None:
+                continue
+            seit = p.get("last_state_change")
+            zeit = datetime.fromtimestamp(seit, tz=timezone.utc) if isinstance(seit, (int, float)) else bc
+            out.append((t, f"{p['host']}|{p['service']}|{seit}", zeit, p.get("output") or "",
+                        {k: v for k, v in p.items() if k != "metadata"} | {"metadata": p.get("metadata")}))
+        return out
+    return hole
+
+
 async def graylog_fenster(templates: dict, events: list, kritisch: dict, stumm: set[str],
                           b: datetime) -> None:
     """Aufruf aus der Fehler-Cluster-Erkennung je fertigem Fenster (nur im Echtbetrieb).
@@ -108,9 +209,21 @@ async def graylog_fenster(templates: dict, events: list, kritisch: dict, stumm: 
         verz, d = await _grundlagen()
         treffer = bewerte_graylog(templates, events, kritisch, stumm, verz, d)
         _merke(b, treffer)
-        await _speichere("graylog", b, zaehle(treffer, _kontingent, _stunde(b)))
+        werte = zaehle(treffer, _kontingent, _stunde(b))
+        gl = await _graylog_connector()
+        if gl is not None:
+            werte["historie"] = await _bewahre("graylog", treffer, _graylog_holer(gl, b))
+        await _speichere("graylog", b, werte)
     except Exception:
         log.exception("Raster graylog: Fenster %s nicht bewertet", b)
+
+
+async def _graylog_connector():
+    from app.core.database import AsyncSessionLocal
+    from app.services.log_watch.quellen import lade_quellen
+    async with AsyncSessionLocal() as db:
+        quellen, _ = await lade_quellen(db)
+    return next((q.gl for q in quellen if q.name == "graylog"), None)
 
 
 async def _wazuh(w, b: datetime) -> list[dict]:
@@ -118,7 +231,9 @@ async def _wazuh(w, b: datetime) -> list[dict]:
         "size": 0, "track_total_hits": True,
         "query": {"range": {"timestamp": {"gte": b.isoformat(), "lt": (b + FENSTER).isoformat()}}},
         "aggs": {"regel": {"terms": {"field": "rule.id", "size": 1000}, "aggs": {
-            "agent": {"terms": {"field": "agent.name", "size": 500}},
+            "agent": {"terms": {"field": "agent.name", "size": 500}, "aggs": {
+                "belege": {"top_hits": {"size": KONTINGENT, "_source": False,
+                                        "sort": [{"timestamp": "asc"}]}}}},
             "info": {"top_hits": {"size": 1, "_source": ["rule"]}},
         }}},
     }
@@ -144,7 +259,9 @@ async def run_raster() -> None:
         try:
             treffer = bewerte_wazuh(await _wazuh(adapter["wazuh"].w, b), verz, d)
             _merke(b, treffer)
-            await _speichere("wazuh", b, zaehle(treffer, _kontingent, _stunde(b)))
+            werte = zaehle(treffer, _kontingent, _stunde(b))
+            werte["historie"] = await _bewahre("wazuh", treffer, _wazuh_holer(adapter["wazuh"].w, b))
+            await _speichere("wazuh", b, werte)
         except Exception as e:  # noqa: BLE001
             log.warning("Raster wazuh: Fenster %s fehlgeschlagen: %s", b, e)
             await _speichere("wazuh", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
@@ -166,6 +283,7 @@ async def run_raster() -> None:
                          erster_abgleich=abgleich.erster,
                          kritikalitaeten=dict(abgleich.kritikalitaeten),
                          zustand=abgleich.zustand)
+            werte["historie"] = await _bewahre("checkmk", abgleich.treffer, _checkmk_holer(probleme, bc))
             await _speichere("checkmk", bc, werte)
         except Exception as e:  # noqa: BLE001
             log.warning("Raster checkmk: Abgleich %s fehlgeschlagen: %s", bc, e)
@@ -188,6 +306,7 @@ async def run_raster() -> None:
                          verkehr_je_aktion=firewall.zusammen(zaehlung.get("aktion", [])),
                          zonen_abgelehnt=zaehlung.get("zonen", [])[:20],
                          zielland_abgelehnt=zaehlung.get("zielland_abgelehnt", [])[:20])
+            werte["historie"] = await _bewahre("firewall", treffer, _graylog_holer(adapter["graylog"].gl, b))
             await _speichere("firewall", b, werte)
         except Exception as e:  # noqa: BLE001
             log.warning("Raster firewall: Fenster %s fehlgeschlagen: %s", b, e)
@@ -201,6 +320,7 @@ async def run_raster() -> None:
             _merke(b, treffer)
             werte = zaehle(treffer, _kontingent, _stunde(b))
             werte.update(extra)
+            werte["historie"] = await _bewahre("switch", treffer, _graylog_holer(adapter["graylog"].gl, b))
             await _speichere("switch", b, werte)
         except Exception as e:  # noqa: BLE001
             log.warning("Raster switch: Fenster %s fehlgeschlagen: %s", b, e)
@@ -223,6 +343,17 @@ async def run_raster() -> None:
         except Exception as e:  # noqa: BLE001
             log.warning("Stufe 0: Lesen fehlgeschlagen: %s", e)
             await _speichere("stufe0", bc, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
+
+    # Historie: Dokumente, deren Embedding beim Schreiben ausfiel, nachträglich einbetten.
+    from app.services.log_watch import historie
+    async with AsyncSessionLocal() as db:
+        historie_an = await historie.aktiv(db)
+    if historie_an:
+        try:
+            await _speichere("historie", bc, await historie.nachbetten())
+        except Exception as e:  # noqa: BLE001
+            log.warning("Historie: Nachbetten fehlgeschlagen: %s", e)
+            await _speichere("historie", bc, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
 
     # Quellenübergreifend: auf Kopien zählen — im Trockenlauf wird nichts verändert.
     letzte = [copy.deepcopy(t) for z, t in _juengst if z >= jetzt - UEBERGREIFEND - FENSTER]

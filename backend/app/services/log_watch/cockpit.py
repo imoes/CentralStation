@@ -153,6 +153,33 @@ async def _zeilen(db, seit: datetime) -> list[tuple[str, datetime, dict]]:
     return [(r.quelle, r.fenster_start, r.werte) for r in rows]
 
 
+def befunde(hits: list[dict], pruefung: dict, ki_an: bool, stunden: int) -> dict:
+    """KI-Befunde als Objekte: Titel, Relevanz, Hypothesen, geprüfte Belege, Trichter-Schritte.
+    Kein Befund ist ein benannter Zustand mit dem Stand der Prüfung, keine leere Kachel."""
+    items = []
+    for h in hits:
+        s = h.get("_source") or {}
+        pv = s.get("ai_provenance") or {}
+        items.append({
+            "id": h["_id"], "zeit": s.get("zeit"), "host": s.get("host"), "relevanz": s.get("relevanz"),
+            "titel": pv.get("titel") or (s.get("text") or "").split("\n")[0][:120],
+            "befund": s.get("ai_befund") or "", "hashtags": s.get("hashtags") or [],
+            "kriterien": s.get("kriterien") or [], "hypothesen": pv.get("hypothesen") or [],
+            "belege": pv.get("belege") or [], "verworfen": len(pv.get("verworfen") or []),
+            "schritte": [{"werkzeug": x.get("werkzeug"), "filter": (x.get("argumente") or {}).get("filter"),
+                          "gesamt": x.get("gesamt")} for x in pv.get("schritte") or []],
+            "modell": pv.get("modell") or "",
+        })
+    warten = pruefung.get("gesamt", 0)
+    return {"state": "ok" if items else "empty", "befunde": items, "zeitraum_h": stunden,
+            "pruefung": {"wartend": warten, "hosts": pruefung.get("hosts", [])[:5], "ki_aktiv": ki_an},
+            **({} if items else {"grund": (
+                f"Kein KI-Befund in {stunden} h. " + (
+                    f"{warten} Nachrichten (Relevanz 3 oder neues Muster) warten auf Analyse"
+                    + ("" if ki_an else " — KI-Trichter ist ausgeschaltet (log_watch.ki_aktiv)")
+                    if warten else "Die Prüfung ist nicht wahr: nichts mit Relevanz 3 oder neuem Muster."))})}
+
+
 async def daten(db, typ: str, cfg: dict) -> dict:
     """Daten eines `lw_*`-Widgets. Unbekannter Typ oder fehlende Historie: benannt."""
     from app.services.log_watch import historie
@@ -166,7 +193,18 @@ async def daten(db, typ: str, cfg: dict) -> dict:
             return {"state": "unavailable",
                     "error": "Historie noch nicht aktiv (Trockenlauf) — Befunde und Netzplan "
                              "entstehen erst aus gespeicherten relevanten Nachrichten"}
-        return {"state": "unavailable", "error": "noch nicht gebaut"}
+        if typ == "lw_netzplan":
+            return {"state": "unavailable", "error": "Netzplan noch nicht gebaut"}
+        from app.core.opensearch import get_opensearch
+        from app.services.log_watch import trichter
+        from app.services.settings import get_setting
+        res = await get_opensearch().search(index=f"{historie.PRAEFIX}*", ignore_unavailable=True, body={
+            "size": min(int(cfg.get("limit") or 8), 30),
+            "query": {"bool": {"filter": [{"term": {"quelle": "ki"}},
+                                          {"range": {"zeit": {"gte": seit.isoformat()}}}]}},
+            "sort": [{"relevanz": "desc"}, {"zeit": "desc"}], "_source": {"excludes": ["vektor"]}})
+        ki_an = (await get_setting(db, trichter.SCHALTER) or "").lower() in ("1", "true", "ja")
+        return befunde(res["hits"]["hits"], await trichter.kandidaten(), ki_an, stunden)
     if typ == "lw_kriterien":
         d = await aktuelle(db)
         return {**kriterien(await _zeilen(db, seit), d.kriterien, stunden), "definition_v": d.version}

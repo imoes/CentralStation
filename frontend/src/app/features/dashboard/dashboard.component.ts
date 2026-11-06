@@ -1228,6 +1228,9 @@ export class DashboardComponent implements AfterViewInit, OnDestroy {
     if (this.suppressWidgetOpen) return;
     if (this.configMode()) return;
     if (widget.widget_type === 'grafana_panel') return;
+    // Log-Überwachung: keine Feed-Abfrage dahinter (ein Sprung zeigte den ungefilterten Feed),
+    // und der Inhalt ist selbst bedienbar (Befund aufklappen) — ein Klick, eine Wirkung.
+    if (widget.widget_type.startsWith('lw_')) return;
 
     const cfg = widget.config;
     this.router.navigate(['/feed'], {

@@ -10,6 +10,97 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 12: the history is written, and a problem appears as the object of an AI analysis
+
+### What's new
+
+- **The history is active.** Since 20:44 UTC every relevant hit writes the messages the flood brake
+  allows, in full with all original fields and a bge-m3 vector. A run that loses its embedding writes
+  anyway, and `nachbetten()` adds the vector in a later run.
+- **AI funnel** (`trichter.py`). A script check decides when the AI works: relevance 3 or a new pattern,
+  without a finding yet. The model then works through read-only tools to one finding per host.
+- **AI findings are documents** `quelle:ki` in the same history. The code checks every quote against
+  the stored message before writing, and links the evidence (`befund_ids`).
+- **Cockpit tile `lw_befunde`.** It shows the finding as an object: relevance, title, host and time,
+  and unfolded the text, hypotheses with status, checked quotes, the path of the analysis and the
+  hashtags. With findings present it stands first.
+- **One search over the history** (`suche.py`) and **one tool registry** (`werkzeuge.py`) for the funnel
+  and, later, the MCP server.
+
+### What changed
+
+- Wazuh evidence: the aggregation now returns the alert IDs per rule × agent, and the history fetches
+  exactly those. Before, the fetcher guessed the agent from the canonical host name.
+
+### Fixed during the live check
+
+- **Topic `kernel-io` matched application exceptions.**
+  - Of 384 Graylog lines with "I/O error" in 24 h (Graylog MCP search, 2026-11-06 ~21:00 UTC), exactly
+    one was a device error (`Buffer I/O error on dev dm-8`, veeam-proxy01).
+  - The rest were Spring HTTP errors and Jersey response aborts. The very first history document was
+    such a Jersey line, judged R5 "damage".
+  - The pattern now needs the device. That document was deleted (the only one, `graylog:e1b3db81-…`).
+    The case is a regression test.
+- **Wazuh wrote fewer messages than it counted:** window 20:40, 53 requested, 18 found. Cause: the
+  fetcher asked `size=n` per rule and filtered the agent afterwards. It now fetches by ID.
+- **A second quote of the same document disappeared silently.** Each (document, quote) pair is now
+  checked, and a failed one is listed as rejected.
+- **The model's tool-call syntax ended up in a finding** (`…</parameter>\n<parameter=relevanz>\n3`).
+  Such text is now rejected and goes back to the model. The affected finding was deleted with its links
+  and produced again through the checked path (`ki:4408ae1d26`).
+- **Clicking a log-watch tile opened the unfiltered feed,** so unfolding a finding left the cockpit.
+  `lw_*` tiles no longer navigate.
+- **The `schreibe()` docstring promised a catch-up for missing vectors that did not exist.** It exists
+  now (`nachbetten`).
+
+### Evidence (live, 2026-11-06)
+
+- **Raster runs after the switch** (table `raster_lauf`, column `historie`):
+
+  | Run | Requested | Written | Vector missing |
+  |---|---|---|---|
+  | Graylog window 20:40 | 1 | 1 | 0 |
+  | CheckMK 20:50 | 3 | 3 | 0 |
+  | Wazuh 20:40 | 53 | 18 | 0 |
+
+  The Wazuh gap was caused by the old fetcher, fixed above. At 20:54 the history held 20 documents:
+  17 Wazuh at relevance 2, 3 CheckMK at relevance 3.
+- **First funnel runs, started by hand** (switch `log_watch.ki_aktiv` stays off, sample first):
+  - **mon03.example.com → `ki:340fd11830`.**
+    - Steps: wissen 0 → suche 1 → befund. Checked quote: "Active check helper usage: 97.46%
+      (warn/crit at 90.00%/95.00%)(!!)".
+    - The text still contains interpretation without a quote ("Livestatus-Prozess", "akuter
+      Handlungsbedarf"). It was written before the prompt rule "the finding only claims what a quote
+      carries", and is kept as the before example.
+  - **mssql05.example.com → `ki:4408ae1d26`.**
+    - Steps: wissen 0 (5.6 s) → suche 2 (4.4 s) → befund (33.5 s), 45.6 s in total.
+    - Two checked quotes: page life expectancy "2 minutes 26 seconds (warn/crit below 5 minutes 50
+      seconds/5 minutes 0 seconds)", state since 20:45:16 UTC (`last_state_change` 1793997916, checked).
+  - **The first attempt for mssql05 ended in `ReadTimeout`** after 300 s on one model step. The next
+    run needed 6–36 s per step. That the endpoint was busy is a hypothesis; step durations are now
+    stored (`ki_s`).
+- **Browser check** (Playwright against `https://hal.example.com/dashboard`; API mocked with the real
+  `cockpit.daten` output, no login token):
+  - two findings, mssql05 first, relevance 3;
+  - unfolded: the text, 2 open hypotheses, 2 checked quotes, path "wissen · 0 → suche · 1 → Befund";
+  - no horizontal overflow; the page stays on `/dashboard` after the click.
+- **The real cockpit** (dashboard `62e00e26…`, recomposed by `design_dashboard`) has `lw_befunde` at
+  the top.
+- **Backend suite:** 912 passed.
+
+### What's missing
+
+- **The AI funnel runs only by hand.** `log_watch.ki_aktiv` waits for your review of the two findings.
+- **R7 (two sources at once) is not written into stored documents.** The cross-source pass runs after
+  writing.
+- **No MCP wiring yet.** The registry exists; the MCP server does not offer `lw_*` tools.
+- **Titles are not machine-checked.** The rule is in the prompt only. Example: "(20:45, 2h)" in a
+  mssql05 title before the rule.
+- **Still missing:** network graph `lw_netzplan`, pattern memory, console knowledge as
+  `quelle:konsole`, corpus search UI, rule editor, reports.
+
+---
+
 ## 2026-11-06 — Log watch, part 11: the AI cockpit shows the log watch
 
 ### What's new

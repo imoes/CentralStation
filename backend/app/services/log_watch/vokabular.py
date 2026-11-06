@@ -35,7 +35,7 @@ THEMEN: tuple[Thema, ...] = (
     _t("fs-readonly", "Dateisystem schreibgeschützt",
        r"\bread-only file ?system\b|\bremounting filesystem read-only\b", 2, beispiel='EXT4-fs (sda1): Remounting filesystem read-only'),
     _t("kernel-io", "E/A-Fehler",
-       r"\bI/O error\b|\bblk_update_request\b|\bEXT4-fs error\b|\bXFS \(\S+\): .*error\b", 2, beispiel='blk_update_request: I/O error, dev sda, sector 12345'),
+       r"\bI/O error,? (?:on )?dev\b|\bBuffer I/O error\b|\bblk_update_request\b|\bEXT4-fs error\b|\bXFS \(\S+\): .*error\b", 2, beispiel='blk_update_request: I/O error, dev sda, sector 12345'),
     _t("absturz", "Prozess abgestürzt",
        r"\bsegfault\b|\bsegmentation fault\b|\bcore dumped\b|\bkernel panic\b"
        r"|\bkilled by signal\b|\bunexpectedly (exited|terminated)\b", 2, beispiel='nginx[123]: segfault at 0 ip 00007f'),

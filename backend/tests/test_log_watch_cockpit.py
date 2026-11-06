@@ -107,3 +107,28 @@ def test_alte_fassung_wird_ausgewiesen_nicht_gemischt():
                   "vergleich": "kein_vergleich"}]                  # davor nur alte Fassung
     # Konsistenz: kein Hashtag zählt mehr relevante Nachrichten, als es relevante gibt
     assert all(x["anzahl"] <= v["summe"]["relevant"] for x in h)
+
+
+def test_befunde_als_objekte_und_benannter_leerstand():
+    from app.services.log_watch.cockpit import befunde
+    hit = {"_id": "ki:abc", "_source": {"zeit": "2026-11-06T21:00:00Z", "host": "veeam-proxy01", "relevanz": 3,
+           "ai_befund": "dm-8 meldet Lesefehler.", "hashtags": ["thema:kernel-io", "quelle:ki"],
+           "kriterien": ["R5"], "ai_provenance": {"titel": "Plattenfehler", "hypothesen": [
+               {"text": "Platte defekt", "status": "offen"}], "belege": [{"id": "graylog:m1", "zitat": "Buffer I/O"}],
+               "verworfen": [{"id": "x", "grund": "y"}],
+               "schritte": [{"werkzeug": "lw_suche", "argumente": {"filter": "host:veeam-proxy01"}, "gesamt": 4}]}}}
+    d = befunde([hit], {"gesamt": 0, "hosts": []}, True, 24)
+    b = d["befunde"][0]
+    assert d["state"] == "ok" and b["titel"] == "Plattenfehler" and b["verworfen"] == 1
+    assert b["schritte"] == [{"werkzeug": "lw_suche", "filter": "host:veeam-proxy01", "gesamt": 4}]
+    leer = befunde([], {"gesamt": 12, "hosts": [{"host": "a", "anzahl": 12}]}, False, 24)
+    assert leer["state"] == "empty" and "12 Nachrichten" in leer["grund"] and "ausgeschaltet" in leer["grund"]
+    assert "nicht wahr" in befunde([], {"gesamt": 0}, True, 24)["grund"]
+
+
+def test_befunde_stehen_vorne_wenn_es_welche_gibt():
+    s = {"log_watch": {"quellen_mit_fehler": [], "befunde_24h": [{"titel": "x", "host": "a", "relevanz": 3}]}}
+    specs = _ensure_log_watch_widgets([{"widget_type": "stat", "config": {}}], s, "de")
+    assert [x["widget_type"] for x in specs] == ["lw_befunde", "lw_kriterien", "stat"]
+    ohne = _ensure_log_watch_widgets([], {"log_watch": {"quellen_mit_fehler": []}}, "de")
+    assert "lw_befunde" not in [x["widget_type"] for x in ohne]

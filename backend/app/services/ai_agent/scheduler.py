@@ -344,6 +344,18 @@ async def run_log_raster() -> None:
         logger.warning("Log-Raster fehlgeschlagen: %s", e)
 
 
+async def run_log_trichter() -> None:
+    """KI-Trichter der Log-Überwachung (Schalter log_watch.ki_aktiv); Ergebnis in raster_lauf „ki“."""
+    from app.services.log_watch import trichter
+    from app.services.log_watch.lauf import _boden, _speichere
+    try:
+        erg = await trichter.lauf()
+        if erg is not None:
+            await _speichere("ki", _boden(datetime.now(timezone.utc)), erg)
+    except Exception as e:
+        logger.warning("KI-Trichter fehlgeschlagen: %s", e)
+
+
 async def run_incident_housekeeping() -> None:
     """host-Incidents schließen, deren Mitglieder alle erledigt sind (Sicherheitsnetz).
 
@@ -452,6 +464,9 @@ async def start_scheduler() -> None:
                        id="error_clusters_prune", replace_existing=True)
     _scheduler.add_job(run_log_raster, "cron", minute="1-59/5",
                        id="log_watch_raster", replace_existing=True, max_instances=1,
+                       coalesce=True)
+    _scheduler.add_job(run_log_trichter, "cron", minute="3-59/10",
+                       id="log_watch_trichter", replace_existing=True, max_instances=1,
                        coalesce=True)
     _scheduler.add_job(run_field_catalog, "cron", hour=3, minute=45,
                        id="log_watch_field_catalog", replace_existing=True)

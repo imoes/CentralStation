@@ -187,7 +187,7 @@ def test_wazuh_zeilen():
             "level": 10, "description": "sshd: brute force", "groups": ["syslog", "sshd"],
             "mitre": {"tactic": ["Credential Access"]}}}}]}},
         "agent": {"buckets": [{"key": "WEC01", "doc_count": 9}]}}]}}
-    assert r.wazuh_zeilen(aggs) == [_wz()]
+    assert r.wazuh_zeilen(aggs) == [{**_wz(), "belege": []}]      # ohne top_hits: keine Belege, benannt leer
 
 
 def test_wazuh_kriterien():
@@ -319,3 +319,17 @@ def test_graylog_themen_je_zeile_trennen_ein_drain_muster():
     mit = next(x for x in t.values() if "thema:timeout" in x.hashtags)
     ohne = next(x for x in t.values() if "thema:timeout" not in x.hashtags)
     assert (mit.anzahl, ohne.anzahl) == (1, 2) and mit.beispiel.startswith("upstream timed out")
+
+
+def test_kernel_io_nur_mit_geraet():
+    """Echte Zeilen aus Graylog, 06.11.: von 384 „I/O error“ in 24 h war genau eine ein E/A-Fehler
+    eines Geräts — Anwendungs-Ausnahmen sind kein Schaden an Ressourcen (R5)."""
+    from app.services.log_watch.vokabular import themen_ids
+    assert "kernel-io" in themen_ids(
+        "veeam-proxy01 kernel: [7529392.706152] Buffer I/O error on dev dm-8, logical block 5241840")
+    assert "kernel-io" in themen_ids("blk_update_request: I/O error, dev sda, sector 12345")
+    assert "kernel-io" not in themen_ids(
+        "ERROR org.glassfish.jersey.server.ServerRuntime$Responder: An I/O error has occurred while "
+        "writing a response message entity chunk to the container output stream.")
+    assert "kernel-io" not in themen_ids(
+        'org.springframework.web.client.ResourceAccessException: I/O error on GET request for "https://x/"')

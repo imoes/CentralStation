@@ -387,6 +387,11 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
                                    if l.get("zustand") != "ok"],
             "historie_aktiv": ko.get("historie_aktiv", False),
         }
+        if log_watch["historie_aktiv"]:
+            be = await lw_cockpit.daten(db, "lw_befunde", {"hours": 24, "limit": 5})
+            log_watch["befunde_24h"] = [{"titel": b["titel"], "host": b["host"], "relevanz": b["relevanz"]}
+                                        for b in be.get("befunde", [])]
+            log_watch["befund_wartend"] = (be.get("pruefung") or {}).get("wartend", 0)
         source_state["log_watch"] = "available"
     except Exception as e:
         source_state["log_watch"] = "unavailable"
@@ -1033,6 +1038,11 @@ def _ensure_log_watch_widgets(specs: list[dict], situation: dict, lang: str) -> 
         return specs
     typen = {s.get("widget_type") for s in specs}
     vorne: list[dict] = []
+    # Ein Problem als Objekt einer KI-Analyse ist der Kern des Cockpits — steht ganz vorne.
+    if (lw.get("befunde_24h") or lw.get("befund_wartend")) and "lw_befunde" not in typen:
+        vorne.append({"widget_type": "lw_befunde",
+                      "title": "KI-Befunde" if lang == "de" else "AI findings",
+                      "config": {"hours": 24}})
     if lw.get("quellen_mit_fehler") and "lw_korpus" not in typen:
         vorne.append({"widget_type": "lw_korpus",
                       "title": "Korpus-Gesundheit" if lang == "de" else "Corpus health",

@@ -26,6 +26,46 @@ const ZUSTAND: Record<string, string> = {
     <div class="lw" [class.t-lcars]="theme() === 'lcars'" [class.t-holo]="theme() === 'holo'"
          [class.t-classic]="theme() === 'classic'">
       @switch (typ()) {
+        @case ('lw_befunde') {
+          <div class="lw-meta">KI-Befunde · {{ d().zeitraum_h }} h · Prüfung: {{ d().pruefung?.wartend ?? 0 }} wartend
+            · KI {{ d().pruefung?.ki_aktiv ? 'an' : 'aus' }}</div>
+          @if (!befunde().length) {
+            <div class="lw-leer">{{ d().grund }}</div>
+          }
+          @for (b of befunde(); track b.id) {
+            <details class="bef" [class.r3]="b.relevanz >= 3">
+              <summary>
+                <span class="bef-rel" [matTooltip]="'Relevanz ' + b.relevanz + ' von 3'">{{ b.relevanz }}</span>
+                <span class="bef-titel">{{ b.titel }}</span>
+                <span class="bef-host">{{ b.hostKurz }}</span>
+                <span class="bef-zeit">{{ b.zeit | date:'HH:mm' }}</span>
+              </summary>
+              <p class="bef-text">{{ b.befund }}</p>
+              @if (b.hypothesen.length) {
+                <div class="bef-sub">Hypothesen</div>
+                @for (h of b.hypothesen; track $index) {
+                  <div class="hyp"><span class="hyp-st" [class]="'hyp-st st-' + h.status">{{ STATUS[h.status] ?? h.status }}</span>{{ h.text }}</div>
+                }
+              }
+              <div class="bef-sub">Belege · {{ b.belege.length }} {{ b.belege.length === 1 ? 'geprüftes Zitat' : 'geprüfte Zitate' }}@if (b.verworfen) { · {{ b.verworfen }} verworfen }</div>
+              @for (z of b.belege; track $index) {
+                <div class="zitat" [matTooltip]="z.id">„{{ z.zitat }}“ <span class="zitat-q">{{ z.quelle }}</span></div>
+              }
+              <div class="bef-sub">Weg der Analyse</div>
+              <div class="schritte">
+                @for (s of b.schritte; track $index) {
+                  <span class="schritt" [matTooltip]="s.filter || ''">{{ s.werkzeug.replace('lw_', '') }}@if (s.gesamt != null) { · {{ s.gesamt }} }</span>
+                  <span class="pfeil">→</span>
+                }
+                <span class="schritt ende" [matTooltip]="b.modell ? 'Modell ' + b.modell : ''">Befund</span>
+              </div>
+              <div class="tags">
+                @for (t of b.hashtags; track t) { <span class="tag-chip">#{{ t }}</span> }
+                <span class="tag-chip krit">{{ b.kriterien.join(' ') }}</span>
+              </div>
+            </details>
+          }
+        }
         @case ('lw_kriterien') {
           <div class="lw-meta">Nachrichten · {{ d().zeitraum_h }} h · Definition v{{ d().definition_v }}</div>
           @if (!kriterienGruppen().length) {
@@ -130,6 +170,36 @@ const ZUSTAND: Record<string, string> = {
     .tag-trend { text-align: right; opacity: .75; }
     .tag-trend.hoch { color: #ff9933; opacity: 1; font-weight: 700; }
     .tag-trend.neu { color: #99ccff; opacity: 1; }
+    .bef { border-left: 3px solid rgba(127,127,127,.4); padding: 4px 8px; background: rgba(127,127,127,.06); }
+    .bef.r3 { border-left-color: #ff9933; }
+    .bef summary { display: grid; grid-template-columns: 22px 1fr auto 40px; gap: 8px; align-items: center;
+                   cursor: pointer; list-style: none; }
+    .bef summary::-webkit-details-marker { display: none; }
+    .bef-rel { font-weight: 700; text-align: center; border-radius: 4px; background: rgba(127,127,127,.25); }
+    .bef.r3 .bef-rel { background: #ff9933; color: #000; }
+    .bef-titel { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bef-host, .bef-zeit { opacity: .7; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .bef-text { margin: 6px 0; line-height: 1.4; }
+    .bef-sub { font-size: 10px; opacity: .6; text-transform: uppercase; letter-spacing: .04em; margin-top: 6px; }
+    .hyp { display: flex; gap: 6px; align-items: baseline; }
+    .hyp-st { font-size: 10px; padding: 0 6px; border-radius: 8px; background: rgba(127,127,127,.25); white-space: nowrap; }
+    .hyp-st.st-gestuetzt { background: rgba(102,204,102,.3); }
+    .hyp-st.st-widerlegt { background: rgba(255,85,68,.3); text-decoration: line-through; }
+    .zitat { font-family: ui-monospace, monospace; font-size: 11px; opacity: .9; overflow-wrap: anywhere; }
+    .zitat-q { opacity: .55; font-family: inherit; }
+    .schritte { display: flex; flex-wrap: wrap; gap: 4px; }
+    .schritt { font-size: 11px; padding: 1px 8px; border-radius: 10px; background: rgba(153,204,255,.18); }
+    .pfeil { opacity: .45; font-size: 11px; }
+    .schritt.ende { background: rgba(255,153,51,.25); }
+    .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .tag-chip { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: rgba(127,127,127,.15); }
+    .tag-chip.krit { background: rgba(255,153,51,.2); }
+    .t-lcars .bef-titel, .t-lcars .bef-sub { font-family: 'Antonio','Eurostile',sans-serif; text-transform: uppercase; color: #FFCC99; }
+    .t-lcars .bef { border-radius: 0 12px 12px 0; }
+    .t-lcars .schritt { color: #99CCFF; }
+    .t-holo .bef.r3 { border-left-color: #4fd6ff; }
+    .t-holo .bef.r3 .bef-rel { background: #4fd6ff; }
+    .t-classic .bef.r3 { border-left-color: #f59e0b; }
     .korpus { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .chip { padding: 3px 10px; border-radius: 12px; font-size: 11px; background: rgba(127,127,127,.18); }
     .chip.z-ok { background: rgba(102,204,102,.25); }
@@ -163,6 +233,15 @@ export class LwWidgetComponent {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly d = computed(() => (this.daten() ?? {}) as any);
+
+  readonly STATUS: Record<string, string> = { offen: 'offen', gestuetzt: 'gestützt', widerlegt: 'widerlegt' };
+
+  readonly befunde = computed(() =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ((this.d().befunde ?? []) as any[]).map(b => ({
+      ...b, hostKurz: String(b.host ?? '').split('.')[0],
+      hashtags: (b.hashtags ?? []).filter((t: string) => !t.startsWith('befund:') && t !== 'quelle:ki'),
+    })));
 
   readonly kriterienGruppen = computed(() => {
     const ks: { id: string; titel: string; art: string; anzahl: number; je_quelle: Record<string, number> }[] =

@@ -136,7 +136,7 @@ async def schreibe(docs: list[tuple[str, datetime, dict]]) -> dict:
 
     Ein Embedding-Ausfall verhindert das Schreiben nicht: die Dokumente gehen ohne Vektor
     in die Historie und tragen das als benannten Zustand (`vektor_fehlt` im Ergebnis);
-    ein Nachlauf bettet sie später ein.
+    `nachbetten()` holt das in jedem Raster-Lauf nach.
     """
     from app.core.opensearch import get_opensearch
     from app.services.log_watch.embed import EmbeddingFehler, einbetten
@@ -161,3 +161,37 @@ async def schreibe(docs: list[tuple[str, datetime, dict]]) -> dict:
                     len(docs), str(fehler[0]["index"]["error"])[:300])
     return {"geschrieben": len(docs) - len(fehler), "fehler": len(fehler),
             "vektor_fehlt": vektor_fehlt}
+
+
+#: so viele Dokumente ohne Vektor bettet ein Lauf höchstens nach
+NACHBETTEN_JE_LAUF = 200
+
+
+async def nachbetten(limit: int = NACHBETTEN_JE_LAUF) -> dict:
+    """Dokumente ohne Vektor (Embedding war beim Schreiben ausgefallen) einbetten und ergänzen.
+
+    Ergebnis: {"offen": vorher ohne Vektor, "nachgebettet": n} — oder "fehler" mit Grund; die
+    Dokumente bleiben dann ohne Vektor und der nächste Lauf versucht es erneut.
+    """
+    from app.core.opensearch import get_opensearch
+    from app.services.log_watch.embed import EmbeddingFehler, einbetten
+
+    os_client = get_opensearch()
+    res = await os_client.search(index=f"{PRAEFIX}*", body={
+        "size": limit, "_source": ["text"], "track_total_hits": True,
+        "query": {"bool": {"must_not": [{"exists": {"field": "vektor"}}]}}},
+        ignore_unavailable=True)
+    hits = res["hits"]["hits"]
+    offen = res["hits"]["total"]["value"]
+    if not hits:
+        return {"offen": 0, "nachgebettet": 0}
+    try:
+        vektoren = await einbetten([h["_source"].get("text") or "" for h in hits])
+    except EmbeddingFehler as e:
+        return {"offen": offen, "nachgebettet": 0, "fehler": str(e)[:300]}
+    body: list[dict] = []
+    for h, v in zip(hits, vektoren):
+        body += [{"update": {"_index": h["_index"], "_id": h["_id"]}}, {"doc": {"vektor": v}}]
+    r = await os_client.bulk(body=body)
+    abgelehnt = sum(1 for i in r.get("items", []) if (i.get("update") or {}).get("error"))
+    return {"offen": offen, "nachgebettet": len(hits) - abgelehnt, "abgelehnt": abgelehnt}
