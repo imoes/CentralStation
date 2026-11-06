@@ -48,9 +48,15 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 - **Rollout pending.** The backend restart is blocked while the Werkbank container
   `cs-userenv-5bfd1b3f…` runs. The new restart guard aborts instead of interrupting it. Live verification
   follows after the rollout.
-- **Criticality values the definition does not know:** `offline` (656 hosts) and `install` (2). They now
-  arrive as hashtags, but no criterion names them. Your decision: should `offline` count as
-  not-production (N3)?
+- **Criticality `install` (2 hosts)** arrives as a hashtag but no criterion names it.
+
+### Definition v6 (decided 2026-11-06)
+
+- **Not-production (N3) now includes criticality `offline`** (656 hosts): object
+  `Nicht-Produktion = kritikalitaet:(test OR dev OR offline)`.
+- **Damage (R5) and security (R6) still take precedence over N3.** Test: offline + new pattern → N3;
+  offline + damage → R5; install + new pattern → R2.
+- **Takeover:** the latest stored version (v5) came from `system`, so v6 is taken over on the next load.
 
 ---
 

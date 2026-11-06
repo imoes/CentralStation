@@ -109,3 +109,15 @@ def test_regelsatz_pruefen_und_rundreise():
     f = rw.pruefe(kaputt, ids)
     assert "Regel-IDs doppelt" in f and any("forward oder block" in x for x in f)
     assert any("X9" in x for x in f) and any("wohlgeformt" in x for x in f)
+
+
+def test_offline_ist_nicht_produktion_v6():
+    """Definition v6 (Nutzer 06.11.): offline zählt wie test/dev als Nicht-Produktion — R5/R6 bleiben vorne."""
+    from app.services.log_watch.definition import STANDARD
+    from app.services.log_watch.regelwerk import bewerte
+    e = bewerte(STANDARD.regeln, {"kritikalitaet:offline", "signal:neu"}, {})
+    assert e.regel == "N3"
+    e = bewerte(STANDARD.regeln, {"kritikalitaet:offline", "signal:schaden"}, {})
+    assert e.regel == "R5"
+    e = bewerte(STANDARD.regeln, {"kritikalitaet:install", "signal:neu"}, {})
+    assert e.regel == "R2"                                   # install: kein Kriterium, benannt offen

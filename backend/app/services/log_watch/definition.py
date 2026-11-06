@@ -60,7 +60,7 @@ KRITERIEN: tuple[Kriterium, ...] = (
               "Quittiert, in Downtime, offenes Ticket dazu oder bereits als KI-Befund gemeldet "
               "(solange kein neues Relevanz-Kriterium hinzukommt).",
               "CheckMK acknowledged/Downtime; Ticket und Befund: noch nicht angebunden"),
-    Kriterium("N3", NICHT_RELEVANT, "Nicht-Produktion", "Host mit Kritikalität test oder dev.",
+    Kriterium("N3", NICHT_RELEVANT, "Nicht-Produktion", "Host mit Kritikalität test, dev oder offline.",
               "@Nicht-Produktion"),
     Kriterium("N4", NICHT_RELEVANT, "Rauschen",
               "Webscanner-Zugriffe, PAM-Sitzung geöffnet/geschlossen, einzelne Anmeldefehler "
@@ -77,7 +77,7 @@ KRITERIEN: tuple[Kriterium, ...] = (
 #: Parameterliste die Regeln speiste, ist jetzt ein Objekt.
 STANDARD_OBJEKTE = {
     "Produktion": "kritikalitaet:(prod OR staging OR critical)",
-    "Nicht-Produktion": "kritikalitaet:(test OR dev)",
+    "Nicht-Produktion": "kritikalitaet:(test OR dev OR offline)",
     # PAM: Sitzung geöffnet/geschlossen; Webscanner (Wazuh ab Level 7, darum vor R6)
     "Rauschen": "regel:(5501 OR 5502) OR regelgruppe:web_scan",
     "Selbst-erzeugt": "dienst:Check_MK*",
@@ -98,7 +98,7 @@ PARAMETER = {
 }
 
 #: Version der Definition, die dieser Code als Standard mitbringt, und warum es sie gibt.
-CODE_VERSION = 5
+CODE_VERSION = 6
 AENDERUNGEN = {
     1: "Festgelegt mit dem Nutzer am 06.11.2026",
     2: "R6 umfasst Firewall-Bedrohungen (Sinkhole, Stufe ab medium) — Nutzer 06.11.2026: "
@@ -110,6 +110,9 @@ AENDERUNGEN = {
     5: "Regeln wie auf einer Firewall: Objekte (gespeicherte Suchen) und Regeln als Filtertexte "
        "(Nutzer 06.11.: „alles ist ein Objekt“, „das Objektmodell ist auch nur eine Suche“); "
        "die Parameterlisten der Regeln sind jetzt Objekte",
+    6: "Nicht-Produktion umfasst Kritikalität offline (Nutzer 06.11.2026). Anlass: die Kritikalität "
+       "kommt erst jetzt an allen Hosts an (wirksame CheckMK-Tags); 656 Hosts tragen offline, "
+       "das kein Kriterium nannte. install (2 Hosts) bleibt ohne Kriterium, benannt",
 }
 
 def als_daten() -> tuple[list[dict], dict]:
