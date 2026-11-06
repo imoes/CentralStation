@@ -24,7 +24,7 @@ from app.services.log_watch.vokabular import dienst_thema, themen
 KONTINGENT = 5
 #: Mittlere Nachrichtengröße je Quelle in Byte, für die Platzschätzung.
 #: Graylog gemessen 06.11. (Stichprobe 500 Fehlerzeilen); Wazuh/CheckMK geschätzt.
-BYTES_JE_NACHRICHT = {"graylog": 1468, "wazuh": 2500, "checkmk": 800}
+BYTES_JE_NACHRICHT = {"graylog": 1468, "wazuh": 2500, "checkmk": 800, "firewall": 2600}
 #: Höchstens so viele Hostgruppen-Tags je Nachricht.
 MAX_HG = 3
 #: Themen, die ein Kriterium erfüllen
@@ -156,7 +156,9 @@ def bewerte_graylog(templates: dict, events: list, kritisch: dict, stumm: set[st
             signale.add("stumm")
             gruende.append("Muster stumm geschaltet (Admin)")
         apps = [e for e, _ in tt.entities.most_common() if e and e not in tt.sources][:3]
-        hosts = getattr(tt, "hosts", None) or Counter({s: 0 for s in tt.sources})
+        hosts = getattr(tt, "hosts", None)
+        if hosts is None:                     # Zählung ohne Host-Aufteilung (alte Form)
+            hosts = Counter({s: 0 for s in tt.sources})
         belege = getattr(tt, "belege", None) or {}
         for host, n_zeilen in hosts.items():
             sig, g = set(signale), list(gruende)

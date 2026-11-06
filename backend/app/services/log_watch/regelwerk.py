@@ -24,7 +24,8 @@ FORWARD, BLOCK = "forward", "block"
 AKTIV, TEST = "aktiv", "test"
 
 #: Signale, die die Quellen setzen (Hashtag `signal:<name>`) — erschöpfend benannt
-SIGNALE = ("stumm", "behandelt", "schaden", "frist", "neu", "ausbreitung", "anstieg", "dringend")
+SIGNALE = ("stumm", "behandelt", "schaden", "frist", "neu", "ausbreitung", "anstieg", "dringend",
+           "bedrohung")
 
 
 @dataclass(frozen=True)
@@ -103,7 +104,7 @@ def bewerte(regeln: list[Regel], tags: set[str], felder: dict | None = None) -> 
 
 
 def standard_regeln(p) -> list[Regel]:
-    """Version 1 der Definition als Regelwerk — Reihenfolge = bisheriger Vorrang
+    """Standard-Definition als Regelwerk — Reihenfolge = vereinbarter Vorrang
     (N6 > N2 > N4 > R5/R6 vor N3/N5 > N3/N5 vor übrigen R > R vor N1 > Default N0).
     `p(name)` liefert Parameter der Definition."""
     rel = [f"kritikalitaet:{k}" for k in p("relevante_kritikalitaeten")]
@@ -118,6 +119,8 @@ def standard_regeln(p) -> list[Regel]:
         Regel("R5", "R5", "Schaden an Ressourcen", FORWARD, {"hat": "signal:schaden"}),
         Regel("R6", "R6", "Sicherheit", FORWARD,
               {"alle": [{"hat": "quelle:wazuh"}, {"feld": "level", "ab": p("wazuh_level_ab")}]}),
+        Regel("R6-FW", "R6", "Firewall-Bedrohung", FORWARD,
+              {"alle": [{"hat": "quelle:firewall"}, {"hat": "signal:bedrohung"}]}),
         Regel("N3", "N3", "Nicht-Produktion", BLOCK, {"eines_von": nicht_prod}),
         Regel("N5", "N5", "Selbst erzeugt", BLOCK, {"praefix": selbst}, stufe_block=0),
         Regel("R1", "R1", "Störung in Produktion", FORWARD,

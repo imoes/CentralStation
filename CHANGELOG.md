@@ -10,6 +10,55 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 7: firewall logs (Palo Alto) are analysed
+
+### What's new
+
+- **Firewall threats are read one by one and judged like every other source.** These are spyware, virus,
+  vulnerability, wildfire, file, scan, flood and data, without "informational". They are grouped by
+  threat × affected host × action.
+  - Relevant (R6) for a sinkhole or severity medium and above; urgent for a sinkhole or high/critical.
+  - A low-severity threat the firewall already blocked is not relevant, with that reason.
+- **Firewall traffic is only counted** per 5-minute window (per action, zone pair, destination country).
+  It is about 2.7 million messages per hour, so reading it line by line would make no sense.
+- **Relevance definition versions 2 and 3** (taken over automatically, each with a reason): R6 covers
+  firewall threats, and the external zones are a parameter.
+  - A version from the code is only taken over if the last version came from the system.
+  - An admin's version is never overwritten; the difference is named (`code_neuer`).
+
+### Fixed during the logic check (all three found live)
+
+- **The threat query also hit all traffic.** `gim_event_type:palo_threat` is set on every Palo Alto
+  message. The first window hit 188 000 messages per 5 minutes and was cut off at 10 000, so rare
+  sinkholes could have been lost.
+  - Threats are now selected by threat type: about 600 per window, complete.
+- **An attack from outside was attributed to the attacker.** "React Server Components RCE", critical,
+  UNTRUST → WEB_DMZ, was filed under the external source IP.
+  - The affected host is now the side in an internal zone; the other side gets the tag `gegenstelle:`.
+- **Sinkholes would have been judged twice.** They have level 4, so they also run through the
+  error-cluster pass (19 per hour).
+  - Palo Alto messages now belong to the firewall source. The error-cluster detection still counts them
+    unchanged; the raster no longer rates them a second time as Graylog.
+
+### Evidence (live, 2026-11-06 18:35–18:50 UTC)
+
+| Window | Result |
+|---|---|
+| 18:35 | 642 threats, complete; 1 relevant: the critical RCE attempt into WEB_DMZ (rule R6-FW, urgent) |
+| 18:40 | 723 threats, complete; none relevant (no sinkhole, nothing medium or above) |
+
+- Definition: versions 1, 2 and 3 are in the database, each with a reason.
+- **Tests:** 8 new, among them the live cases sinkhole, low-severity drop and RCE from outside, and the
+  rule that threats never come from traffic. The backend suite has 846 passed.
+
+### What's missing
+
+- **No baseline for firewall traffic yet.** Spikes in deny/drop per zone pair or country can be detected
+  once there are 7 days of counts.
+- **Switch logs** are next.
+
+---
+
 ## 2026-11-06 — Log watch, part 6: the relevance decision is a firewall ruleset
 
 ### What's new

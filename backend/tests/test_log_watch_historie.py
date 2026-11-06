@@ -65,3 +65,11 @@ def test_tally_merkt_ids_je_host_bis_zum_kontingent():
     tt.add(Line(ts="t", source="h2", container="", message="m", id=""))   # ohne ID: nicht gemerkt
     assert [i for i, _ in tt.belege["h1"]] == [f"id{i}" for i in range(BELEGE_JE_HOST)]
     assert tt.belege["h2"] == [] and tt.hosts == Counter({"h1": BELEGE_JE_HOST + 3, "h2": 1})
+
+
+def test_firewall_zeilen_zaehlen_im_raster_nicht_als_graylog():
+    tt = TemplateTally("x")
+    tt.add(Line(ts="t", source="nfw062.example.com", container="", message="m", id="f1", art="firewall"))
+    tt.add(Line(ts="t", source="dora", container="", message="m", id="g1"))
+    assert tt.count == 2                                   # Fehler-Cluster zählt weiter alles
+    assert dict(tt.hosts) == {"dora": 1} and "nfw062.example.com" not in tt.belege

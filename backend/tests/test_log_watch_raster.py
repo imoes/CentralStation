@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.log_watch import raster as r
-from app.services.log_watch.definition import KRITERIEN_V1
+from app.services.log_watch.definition import KRITERIEN
 from app.services.log_watch.hosts import Hostverzeichnis, norm
 from app.services.log_watch.lauf import zusammenfassung
 from app.services.log_watch.vokabular import THEMA_IDS, dienst_thema, themen
@@ -107,9 +107,9 @@ def test_mehrdeutig_wird_nicht_geraten():
 
 
 def test_definition_vollstaendig_und_eindeutig():
-    ids = [k.id for k in KRITERIEN_V1]
+    ids = [k.id for k in KRITERIEN]
     assert len(ids) == len(set(ids))
-    assert {k.art for k in KRITERIEN_V1} == {"relevant", "nicht_relevant"}
+    assert {k.art for k in KRITERIEN} == {"relevant", "nicht_relevant"}
     assert {"R1", "R8", "N0", "N6"} <= set(ids)
 
 
@@ -280,12 +280,12 @@ def test_zusammenfassung_rechnet_ueber_abgedeckte_fenster_hoch():
 
 
 def test_neue_definition_wird_geprueft():
-    from app.services.log_watch.definition import PARAMETER_V1, als_daten, pruefe
+    from app.services.log_watch.definition import PARAMETER, als_daten, pruefe
     kriterien, parameter = als_daten()
     assert pruefe(kriterien, parameter) == []
     assert "Kennungen fehlen: R7" in pruefe([k for k in kriterien if k["id"] != "R7"], parameter)
     assert any("art muss" in f for f in pruefe(kriterien[:-1] + [{**kriterien[-1], "art": "egal"}], parameter))
-    assert pruefe(kriterien, {**PARAMETER_V1, "erfunden": 1}) == ["unbekannte Parameter: erfunden"]
+    assert pruefe(kriterien, {**PARAMETER, "erfunden": 1}) == ["unbekannte Parameter: erfunden"]
 
 
 def test_checkmk_zustand_ueberlebt_neustart_nur_wenn_jung():
@@ -296,3 +296,9 @@ def test_checkmk_zustand_ueberlebt_neustart_nur_wenn_jung():
     assert gueltiger_zustand(w, timedelta(hours=3)) is None            # zu alt: erster Abgleich
     assert gueltiger_zustand({"fehler": "x"}, timedelta(minutes=1)) is None
     assert gueltiger_zustand(None, timedelta(0)) is None
+
+
+def test_graylog_muster_nur_aus_firewall_zeilen_wird_nicht_bewertet():
+    tt = SimpleNamespace(template="THREAT spyware <*>", count=3, hosts=Counter(), sources={"nfw062"},
+                         entities=Counter({"nfw062": 3}), examples=["x"], belege={})
+    assert r.bewerte_graylog({"fw": tt}, [], {}, set(), VERZ) == []

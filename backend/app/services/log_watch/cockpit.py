@@ -13,7 +13,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
 TYPEN = ("lw_befunde", "lw_netzplan", "lw_kriterien", "lw_volumen", "lw_hashtags", "lw_korpus")
-QUELLEN = ("graylog", "wazuh", "checkmk")
+QUELLEN = ("graylog", "wazuh", "checkmk", "firewall")
 #: Hashtag-Arten, die in Trends nichts sagen (jede Nachricht hat sie)
 _OHNE_TREND = ("quelle:",)
 

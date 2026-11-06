@@ -173,6 +173,26 @@ async def run_raster() -> None:
     else:
         await _speichere("checkmk", bc, {"fehler": fehlend.get("checkmk", "nicht geladen")})
 
+    # Firewall (Graylog, Palo Alto): Bedrohungen einzeln, Verkehr gezählt — gleiches Fenster
+    # wie Wazuh (Graylog hat ebenfalls Verzug).
+    if "graylog" in adapter:
+        from app.services.log_watch import firewall
+        try:
+            msgs, zaehlung, vollstaendig = await firewall.lies_fenster(adapter["graylog"].gl, b, b + FENSTER)
+            treffer = firewall.bewerte_firewall(
+                firewall.gruppen(msgs, set(d.p("firewall_externe_zonen"))), verz, d)
+            _merke(b, treffer)
+            werte = zaehle(treffer, _kontingent, _stunde(b))
+            werte.update(bedrohungen=len(msgs), vollstaendig=vollstaendig,
+                         verkehr_gesamt=zaehlung.get("gesamt", 0),
+                         verkehr_je_aktion=firewall.zusammen(zaehlung.get("aktion", [])),
+                         zonen_abgelehnt=zaehlung.get("zonen", [])[:20],
+                         zielland_abgelehnt=zaehlung.get("zielland_abgelehnt", [])[:20])
+            await _speichere("firewall", b, werte)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Raster firewall: Fenster %s fehlgeschlagen: %s", b, e)
+            await _speichere("firewall", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
+
     # Quellenübergreifend: auf Kopien zählen — im Trockenlauf wird nichts verändert.
     letzte = [copy.deepcopy(t) for z, t in _juengst if z >= jetzt - UEBERGREIFEND - FENSTER]
     vorher = sum(1 for t in letzte if t.relevanz == 3)

@@ -1299,6 +1299,47 @@ policy BLOCK** applies (N0).
   5.5 ms. Compiling the rules to C++ (like Varnish VCL) was considered and deferred: rules as data stay
   verifiable. It comes back up if judging takes more than 50 % of a window.
 
+### Log watch: firewall logs (Palo Alto)
+
+Measured 2026-11-06: about 2.9 million firewall messages per hour, almost all from `nfw062`.
+
+| Kind | Per hour |
+|---|---|
+| allowed traffic (end/allow) | 2.07 million |
+| URL alerts | 525 000 |
+| drop | 257 000 |
+| deny | 74 000 |
+| spyware | about 4 500 |
+| sinkhole | 18 |
+
+Reading every line would make no sense; `services/log_watch/firewall.py` splits it:
+
+- **Threats are read one by one.** These are the threat types (`pan_log_subtype`): spyware, virus,
+  vulnerability, wildfire, file, scan, flood and data, without "informational", about 600 per
+  5 minutes.
+  - They are grouped by threat × affected host × action, and the ruleset decides as for every source.
+  - Do not select them via `gim_event_type`: "palo_threat" is set on all Palo Alto messages, including
+    traffic.
+- **Affected host** is the side in an internal zone. A connection from an external zone
+  (`firewall_externe_zonen`, default `UNTRUST`) means the target is affected; otherwise the source is.
+  The other side is tagged `gegenstelle:`.
+- **Hashtags:** `quelle:firewall`, `firewall:`, `bedrohung:`, `aktion:`, `schwere:`, `zone:`,
+  `zielzone:`, `zielland:`, `ip:`, `gegenstelle:`.
+- **Verdict** (criterion R6, rule `R6-FW`):
+  - **relevant** for a sinkhole or severity medium and above;
+  - **urgent** for a sinkhole or high/critical;
+  - **not relevant (N0)** for a low-severity threat the firewall already blocked, with the reason
+    "von der Firewall abgewehrt, niedrige Stufe".
+- **Traffic is only counted** per 5-minute window via Graylog pivot:
+  - per subtype/action;
+  - per zone pair for deny/drop;
+  - per destination country for deny/drop.
+
+  The baseline for spikes is building up.
+- **One source per message:** Palo Alto messages with level ≤ 4 (sinkholes) also run through the error
+  cluster pass. They are still counted there, but the raster does not rate them a second time as
+  Graylog.
+
 ### Log watch: AI cockpit (dashboard widgets)
 
 The generative dashboard is the **"🪄 KI-Cockpit"**. Besides the existing widget types, the AI can

@@ -63,7 +63,7 @@ class _ErrorLine:
 
 
 ERROR_LINE = _ErrorLine()
-FIELDS = ["message", "source", "container_name", "timestamp", "level", "log_level",
+FIELDS = ["message", "source", "container_name", "timestamp", "level", "log_level", "pan_log_subtype",
           "application_name", "facility"]
 MAX_RESULT_WINDOW = 10_000
 SPLIT_AT = 9_500
@@ -82,6 +82,9 @@ class Line:
     app: str = ""
     #: Graylog-`_id` — die Log-Überwachung holt darüber die volle Nachricht nach
     id: str = ""
+    #: "firewall" bei Palo-Alto-Meldungen: sie gehören in der Log-Überwachung der Quelle
+    #: firewall (log_watch/firewall.py) und zählen im Raster nicht ein zweites Mal als Graylog
+    art: str = ""
 
     @property
     def entity(self) -> str:
@@ -170,6 +173,7 @@ def _line(m: dict) -> Line:
         message=msg,
         app=str(m.get("application_name") or m.get("facility") or ""),
         id=str(m.get("_id") or ""),
+        art="firewall" if m.get("pan_log_subtype") else "",
     )
 
 
@@ -219,6 +223,7 @@ class TemplateTally:
         self.entities[line.entity] += 1
         if line.source:
             self.sources.add(line.source)
+        if line.source and line.art != "firewall":
             self.hosts[line.source] += 1
             b = self.belege.setdefault(line.source, [])
             if line.id and len(b) < BELEGE_JE_HOST:
