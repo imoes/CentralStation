@@ -838,19 +838,19 @@ const SEVERITY_COLOR: Record<string, string> = {
           <mat-icon>hub</mat-icon>
           @if (incidentTimeline()) {
             <div class="incident-drawer-title">
-              <span class="incident-drawer-host">{{ incidentTimeline()!.incident.primary_host }}</span>
+              <span class="incident-drawer-host" [title]="incidentTimeline()!.incident.primary_host">{{ incidentTimeline()!.incident.primary_host }}</span>
               <span class="incident-drawer-meta">{{ incidentTimeline()!.incident.member_count }} Alerts · {{ incidentTimeline()!.incident.severity | uppercase }}</span>
             </div>
             <button mat-stroked-button class="claude-handoff-btn"
                     [disabled]="copyingPrompt()"
                     (click)="handoffToComputer(incidentTimeline()!.incident.id)"
-                    matTooltip="Incident-Kontext an den Computer-Agenten übergeben — Hermes analysiert und kann per SSH eingreifen">
+                    matTooltip="Incident-Kontext an den Computer übergeben — der Konsolen-Agent untersucht ihn">
               @if (copyingPrompt()) {
                 <mat-spinner diameter="14"></mat-spinner>
               } @else {
                 <mat-icon>precision_manufacturing</mat-icon>
               }
-              {{ promptCopied() ? 'Übergeben ✓' : 'Computer, untersuche das' }}
+              {{ promptCopied() ? 'Übergeben ✓' : 'Computer' }}
             </button>
             <button mat-stroked-button class="claude-handoff-btn"
                     (click)="createIncidentTicket()"
@@ -1645,7 +1645,7 @@ const SEVERITY_COLOR: Record<string, string> = {
       position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 900;
     }
     .incident-drawer {
-      position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100vw);
+      position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw);
       background: var(--mat-sys-surface-container); z-index: 901;
       display: flex; flex-direction: column; box-shadow: -4px 0 24px rgba(0,0,0,.3);
     }
@@ -1655,11 +1655,11 @@ const SEVERITY_COLOR: Record<string, string> = {
       border-bottom: 1px solid var(--mat-sys-outline-variant);
     }
     .incident-drawer-header > mat-icon { color: var(--mat-sys-tertiary); }
-    .incident-drawer-title { display: flex; flex-direction: column; flex: 1; }
-    .incident-drawer-host { font-weight: 700; font-size: 15px; }
-    .incident-drawer-meta { font-size: 12px; opacity: .7; }
+    .incident-drawer-title { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+    .incident-drawer-host { font-weight: 700; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .incident-drawer-meta { font-size: 12px; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .incident-drawer-close { margin-left: auto; }
-    .claude-handoff-btn { font-size: 12px; line-height: 1.2; min-width: 0; padding: 0 12px; color: var(--mat-sys-tertiary); border-color: color-mix(in srgb, var(--mat-sys-tertiary) 45%, transparent); }
+    .claude-handoff-btn { flex-shrink: 0; white-space: nowrap; font-size: 12px; line-height: 1.2; min-width: 0; padding: 0 12px; color: var(--mat-sys-tertiary); border-color: color-mix(in srgb, var(--mat-sys-tertiary) 45%, transparent); }
     .claude-handoff-btn mat-icon { font-size: 16px; height: 16px; width: 16px; margin-right: 4px; }
     .claude-handoff-btn mat-spinner { display: inline-block; margin-right: 4px; }
     :host-context(html.cs-theme-lcars) .claude-handoff-btn { color: #99CCFF; border-color: rgba(153,204,255,.45); }

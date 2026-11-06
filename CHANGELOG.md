@@ -10,6 +10,33 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Incident view: "Computer" button, header no longer cramped
+
+### What changed
+
+- The hand-off button in the incident view is now just called **Computer** (was "Computer,
+  untersuche das"). Its tooltip no longer promises "Hermes … kann per SSH eingreifen": the console
+  agent is not always Hermes, and it examines without changing anything.
+- The incident panel is 560 px wide instead of 480. Header buttons no longer shrink. A host name
+  too long for the space is shortened with "…", and the full name appears on hover.
+
+### What was fixed
+
+- In a 480 px panel, the long label squeezed the robot icon into the text. "Ticket erstellen"
+  broke onto two lines, and only 130 px were left for the host name.
+- **Evidence** (Playwright on hal.example.com, mocked incident):
+  - Desktop: buttons are 92 px ("Computer") and 122 px ("Ticket erstellen"), each on one line.
+  - `docker0218.example.com` and `graylog-node03.example.com` are shown in full, not cut off.
+  - The header is 76 px high and does not overflow.
+  - On a 400 px screen the header is also 76 px high, and the host name is cut off with "…".
+
+### What's missing
+
+- The feed card still says "Computer, prüfe das". That button starts a different action (a host
+  diagnosis of a single alert, not a hand-off of the incident), so it has a different name.
+
+---
+
 ## 2026-11-06 — Open tickets in Jira / Service Desk with one click
 
 ### What's new
