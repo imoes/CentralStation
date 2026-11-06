@@ -14,7 +14,7 @@ import { ThemeService } from '../../core/services/theme.service';
  */
 interface Knoten { id: string; art: string; wert: string; anzahl: number; fokus: boolean }
 interface Kante { a: string; b: string; anzahl: number }
-interface Netz { gesamt: number; knoten: Knoten[]; kanten: Kante[]; zeitraum_h?: number; fehler?: string }
+interface Netz { gesamt: number; knoten: Knoten[]; kanten: Kante[]; zeitraum_h?: number; fehler?: string; ausgeblendet_naben?: string[] }
 interface Treffer { id: string; zeit: string; quelle: string; host: string; relevanz: number; text: string; hashtags: string[] }
 
 const ART_FARBE: Record<string, Record<string, string>> = {
@@ -61,6 +61,9 @@ const ART_FARBE: Record<string, Record<string, string>> = {
               @for (a of arten(); track a) { <span class="leg"><i [style.background]="farbe(a)"></i>{{ a }}</span> }
             </div>
             <div class="np-regel">Kante = beide Hashtags an derselben Nachricht · Zahl = Nachrichten · keine Ursache</div>
+            @if (naben().length) {
+              <div class="np-regel" [matTooltip]="naben().join(', ')">Ausgeblendet (an über 80 % der Nachrichten, sagt nichts über Zusammenhänge): {{ naben().length }}</div>
+            }
           </div>
         </div>
       }
@@ -107,6 +110,7 @@ export class LwNetzplanComponent {
   /** Ohne Auswahl gilt die Antwort des Widget-Datenendpunkts, danach die eigene Suche. */
   readonly netz = computed<Netz | null>(() => this.auswahl().length ? this.geladen() : (this.daten() as Netz));
   readonly filter = computed(() => [this.basis(), ...this.auswahl()].filter(Boolean).join(' '));
+  readonly naben = computed(() => this.netz()?.ausgeblendet_naben ?? []);
   readonly arten = computed(() => [...new Set((this.netz()?.knoten ?? []).map(k => k.art))]);
 
   constructor() {

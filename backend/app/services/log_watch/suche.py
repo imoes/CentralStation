@@ -100,16 +100,23 @@ NETZ_ARTEN = ("host", "befund", "thema", "dienst", "regel", "mitre", "mitre-tech
               "kritikalitaet", "signal", "quelle", "app", "ort", "gegenstelle")
 #: höchstens so viele Knoten je Art — sonst verdrängen 15 Hosts jedes Thema
 JE_ART = 5
+#: Hashtags an mehr als diesem Anteil der Nachrichten sagen über Zusammenhänge nichts (sie
+#: hängen an allem) — gemessen 07.11.: netz:intern stand als Nabe in der Mitte des Netzplans
+NABE_ANTEIL = 0.8
 
 
-def knoten_waehlen(buckets: list[dict], anzahl: int, fokus: set[str] = frozenset()) -> list[dict]:
+def knoten_waehlen(buckets: list[dict], anzahl: int, fokus: set[str] = frozenset(),
+                   gesamt: int = 0) -> list[dict]:
     """Knoten aus terms-Buckets (absteigend): je Art höchstens JE_ART, insgesamt `anzahl`.
-    Hashtags im Filter (`fokus`) sind immer dabei — der Netzplan zeigt, wovon er ausgeht."""
+    Hashtags im Filter (`fokus`) sind immer dabei — der Netzplan zeigt, wovon er ausgeht.
+    Naben (an mehr als NABE_ANTEIL der `gesamt` Nachrichten) fallen weg, außer im Fokus."""
     je_art: dict[str, int] = defaultdict(int)
     out = []
     for b in buckets:
         art, _, wert = b["key"].partition(":")
         if art not in NETZ_ARTEN:
+            continue
+        if gesamt and b["doc_count"] > NABE_ANTEIL * gesamt and b["key"] not in fokus:
             continue
         if b["key"] not in fokus and (je_art[art] >= JE_ART or len(out) >= anzahl):
             continue
@@ -164,7 +171,10 @@ async def netzplan(filtertext: str = "", *, stunden: float = 24, knoten: int = 1
         "size": 0, "track_total_hits": True, "query": q,
         "aggs": {"tags": {"terms": {"field": "hashtags", "size": FACETTEN_TIEFE}}}})
     gesamt = res["hits"]["total"]["value"]
-    k = knoten_waehlen(res["aggregations"]["tags"]["buckets"], max(2, min(knoten, 40)), _fokus(filtertext))
+    buckets = res["aggregations"]["tags"]["buckets"]
+    naben = [b["key"] for b in buckets if gesamt and b["doc_count"] > NABE_ANTEIL * gesamt
+             and b["key"].partition(":")[0] in NETZ_ARTEN]
+    k = knoten_waehlen(buckets, max(2, min(knoten, 40)), _fokus(filtertext), gesamt)
     ids = [x["id"] for x in k]
     kn: list[dict] = []
     if len(ids) >= 2:
@@ -174,5 +184,6 @@ async def netzplan(filtertext: str = "", *, stunden: float = 24, knoten: int = 1
                 f"n{i}": {"term": {"hashtags": t}} for i, t in enumerate(ids)}}}}})
         kn = kanten(adj["aggregations"]["m"]["buckets"], ids)
     return {"filter": filtertext, "gesamt": gesamt, "knoten": k, "kanten": kn,
+            "ausgeblendet_naben": naben,
             "zeitraum": {"seit": seit.isoformat(), "bis": bis.isoformat(), "stunden": stunden},
             "regel": "Kante = beide Hashtags an derselben Nachricht; Zahl = Nachrichten"}

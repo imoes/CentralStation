@@ -52,3 +52,9 @@ def test_netzplan_kanten_aus_adjacency_matrix():
 def test_fokus_aus_dem_filter():
     assert s._fokus("host:a (thema:oom OR thema:dns) !signal:stumm") == {"host:a", "thema:oom", "thema:dns"}
     assert s._fokus("(kaputt") == set()
+
+
+def test_netzplan_naben_fallen_weg_ausser_im_fokus():
+    b = [{"key": "netz:intern", "doc_count": 90}, {"key": "host:a", "doc_count": 30}, {"key": "thema:oom", "doc_count": 10}]
+    assert [x["id"] for x in s.knoten_waehlen(b, 15, set(), gesamt=100)] == ["host:a", "thema:oom"]
+    assert [x["id"] for x in s.knoten_waehlen(b, 15, {"netz:intern"}, gesamt=100)][0] == "netz:intern"

@@ -10,6 +10,45 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 22: the real cockpit shows the core; hub nodes hidden
+
+### Fixed
+
+- **The cockpit core was missing graph and AI fleet whenever the LLM picked `lw_befunde` itself.**
+  - Found on the real cockpit at 23:40 UTC: findings, criteria, error clusters, incidents, top hosts —
+    no graph, no AI fleet.
+  - Cause: both were nested behind the check for `lw_befunde`. Every core tile is now ensured on its
+    own, with a regression test for exactly that case.
+- **A hub node dominated the graph.** `netz:intern` sat on almost every message and therefore at the
+  centre, connected to everything.
+  - Hashtags on more than 80 % of a result's messages carry no information about connections. They are
+    now hidden, except when they are in the filter.
+  - The tile names how many were hidden (`ausgeblendet_naben`).
+
+### Evidence (live, 23:43 UTC)
+
+- **Real cockpit after the fix** (dashboard `62e00e26…`):
+
+  | Position | Tile |
+  |---|---|
+  | (0,0) | findings |
+  | (6,0) | graph of hot spots |
+  | (0,5) | AI fleet |
+  | (6,5) | criteria |
+  | (0,8) | error clusters |
+
+- **Browser check with the real data:**
+  - Five findings at relevance 3, for example "orderserver-Instanzen ORD1–ORD5 auf aomp05-v (prod) alle
+    0 Prozesse" and "vpp0218: /data/backup vollläuft in ~1 T 11 h".
+  - One shows the memory at work: "Core-Dump-Muster … neu nur auf cue0112, cue0111 bereits gedeckt".
+  - AI fleet: 53 findings, 57 cases, 4 without finding, 3 expired, 202 s per case. Queue 116 messages /
+    41 cases: "die KI kommt nicht nach".
+- **Cause of the queue growth (hypothesis):** three drain rollouts slowed the fleet for about 15 minutes
+  in total. Rollouts are now bundled so steady-state operation can be measured.
+- **Backend suite:** 934 passed. The hub filter is not rolled out yet (bundled with the next rollout).
+
+---
+
 ## 2026-11-07 — Log watch, part 21: the AI cockpit gets a fixed core
 
 ### What changed
