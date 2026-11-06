@@ -10,6 +10,41 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 21: the AI cockpit gets a fixed core
+
+### What changed
+
+- **Fixed core of the AI cockpit.** Whenever there is a finding or a message waiting for one, two rows
+  come first, enforced by code:
+  - row 1: **findings** next to the **graph of hot spots** (`relevanz>=3`);
+  - row 2: **AI fleet** ("keeping up?") next to **verdicts per criterion**.
+
+  Running error clusters, corpus health and the AI's own picks follow.
+- **Area budget 110 → 150 cells, now a named constant** (`AREA_BUDGET`). The core takes 96 cells and
+  running error clusters 48. With 110, the core partly dropped out during every outbreak, and `lw_ki`
+  was not in the ranking at all (last place).
+
+### Evidence
+
+- **Test:** with an outbreak and 5 more AI picks, the core still sits at (0,0) / (6,0) / (0,5) / (6,5),
+  followed by the error clusters.
+- **Fleet without `lw_wissen` (first 3 cases after 23:27 UTC):** 131 s model time and 5.3 steps per
+  case, against 247 s and 7.7 before.
+  - The first steps now go deeper (`lw_nachricht`, `lw_gespraech`) instead of into the situation already
+    supplied.
+  - 3 cases is a small sample.
+- **Queue:**
+
+  | Time (UTC) | Messages | Cases | Expired |
+  |---|---|---|---|
+  | 23:10 | 80 | 40 | 2 |
+  | 23:20 | 75 | 38 | 0 |
+  | 23:30 | 67 | 35 | 0 |
+
+- **Backend suite:** 932 passed.
+
+---
+
 ## 2026-11-06 — Log watch, part 20: the fleet in operation; correction to part 18
 
 ### Correction to part 18

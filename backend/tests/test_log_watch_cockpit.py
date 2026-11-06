@@ -129,7 +129,7 @@ def test_befunde_als_objekte_und_benannter_leerstand():
 def test_befunde_stehen_vorne_wenn_es_welche_gibt():
     s = {"log_watch": {"quellen_mit_fehler": [], "befunde_24h": [{"titel": "x", "host": "a", "relevanz": 3}]}}
     specs = _ensure_log_watch_widgets([{"widget_type": "stat", "config": {}}], s, "de")
-    assert [x["widget_type"] for x in specs] == ["lw_befunde", "lw_ki", "lw_kriterien", "stat"]
+    assert [x["widget_type"] for x in specs] == ["lw_befunde", "lw_netzplan", "lw_ki", "lw_kriterien", "stat"]
     ohne = _ensure_log_watch_widgets([], {"log_watch": {"quellen_mit_fehler": []}}, "de")
     assert "lw_befunde" not in [x["widget_type"] for x in ohne]
 
@@ -151,3 +151,19 @@ def test_ki_statistik_flotte_und_warteschlange_getrennt():
     assert d["laeufe"] == 2 and d["messpunkte"] == 2 and d["trend_offen"] == -37
     assert d["summe"] == {"analysiert": 3, "befunde": 1, "ohne_befund": 1, "fehler": 1, "verfallen": 3, "pruef_fehler": 1}
     assert d["modell_s_je_fall"] == 26.7 and d["jetzt"]["faelle"] == 20
+
+
+def test_cockpit_kern_zwei_zeilen_und_bleibt_bei_ausbruch():
+    """Kern: Befunde | Netzplan, KI-Flotte | Kriterien — auch wenn Fehler-Cluster laufen und die
+    KI viele weitere Kacheln vorschlägt."""
+    from app.services.dashboard.generative_designer import _pack_grid
+    s = {"log_watch": {"quellen_mit_fehler": [], "befunde_24h": [{"titel": "x", "host": "a", "relevanz": 3}]},
+         "error_clusters": [{"id": 1}]}
+    vorschlag = [{"widget_type": t, "config": {}} for t in ("stat", "donut", "bar", "top_hosts", "lw_volumen")]
+    specs = _ensure_log_watch_widgets(vorschlag + [{"widget_type": "error_clusters", "config": {}}], s, "de")
+    final = _pack_grid(_validate_widgets(specs, s))
+    typen = [x["widget_type"] for x in final]
+    assert typen[:5] == ["lw_befunde", "lw_netzplan", "lw_ki", "lw_kriterien", "error_clusters"]
+    pos = {x["widget_type"]: (x["gs_x"], x["gs_y"]) for x in final}
+    assert pos["lw_befunde"] == (0, 0) and pos["lw_netzplan"] == (6, 0)
+    assert pos["lw_ki"] == (0, 5) and pos["lw_kriterien"] == (6, 5)

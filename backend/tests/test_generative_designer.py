@@ -1,4 +1,5 @@
 from app.services.dashboard.generative_designer import (
+    AREA_BUDGET,
     _DEFAULT_SIZE,
     _ensure_forecast_widgets,
     _fallback_widgets,
@@ -60,7 +61,7 @@ def test_final_validation_deduplicates_facts_and_respects_hard_budget():
     assert sum(
         _DEFAULT_SIZE[widget["widget_type"]][0] * _DEFAULT_SIZE[widget["widget_type"]][1]
         for widget in widgets
-    ) <= 110
+    ) <= AREA_BUDGET
 
 
 def test_forecast_replaces_timeseries_for_same_metric():
@@ -83,7 +84,7 @@ def test_fallback_passes_the_same_final_validator():
     assert sum(
         _DEFAULT_SIZE[widget["widget_type"]][0] * _DEFAULT_SIZE[widget["widget_type"]][1]
         for widget in final
-    ) <= 110
+    ) <= AREA_BUDGET
 
 
 def test_generation_started_before_source_invalidation_is_rejected():

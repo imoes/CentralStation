@@ -1457,7 +1457,13 @@ place six log-watch widgets. Their data comes from `services/log_watch/cockpit.p
 | `lw_netzplan` | network graph of the relevant situation (config `filter`, `knoten`, `hours`). Nodes are hashtags of the result (at most 5 per type: host, finding, topic, service, rule, MITRE …), an edge means both hashtags are on the same message, with the count. Clicking a node adds it to the filter chain, a chip removes it; the list on the right is the search result of the same filter |
 
 **Rules:**
-- `lw_befunde` comes first whenever there is a finding in 24 h or a message waiting for one.
+- **Core of the AI cockpit** (code-enforced, fixed order). Whenever there is a finding in 24 h or a
+  message waiting for one, two rows come first:
+  - row 1: `lw_befunde` (6×5) and `lw_netzplan` with filter `relevanz>=3` (6×5);
+  - row 2: `lw_ki` (6×3) and `lw_kriterien` (6×3).
+
+  After that come running error clusters, `lw_korpus` when a source is failing, then what the AI picks.
+  Area budget `AREA_BUDGET = 150` cells: the core takes 96, error clusters 48.
 - `lw_kriterien` always appears; if the AI leaves it out, code adds it.
 - Log-watch widgets do not open the feed on click (there is no feed query behind them).
 - `lw_korpus` comes first when a source is not running.

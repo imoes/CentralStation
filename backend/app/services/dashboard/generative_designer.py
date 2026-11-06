@@ -98,12 +98,12 @@ _DEFAULT_SIZE: dict[str, tuple[int, int]] = {
     "forecast":   (6, 6),   # needs room for history + forecast line
     "error_clusters": (12, 4),  # volle Breite, oben: ein Ausbruch ist die Hauptsache
     "lw_befunde":   (6, 5),     # das Problem als Objekt einer KI-Analyse
-    "lw_netzplan":  (6, 6),
-    "lw_kriterien": (6, 4),     # Warum: Urteile je Kriterium
+    "lw_netzplan":  (6, 5),     # neben den Befunden: was zusammen auftritt
+    "lw_kriterien": (6, 3),     # Warum: Urteile je Kriterium (Liste scrollt)
     "lw_volumen":   (6, 4),
     "lw_hashtags":  (4, 4),
     "lw_korpus":    (12, 2),    # Korpus-Gesundheit, schmale volle Zeile
-    "lw_ki":        (6, 4),     # Statistik der KI-Analyse: kommt sie nach?
+    "lw_ki":        (6, 3),     # Statistik der KI-Flotte: kommt sie nach?
 }
 
 # Map a bridge forecast/vital metric id to its CheckMK service description.
@@ -709,6 +709,12 @@ def semantic_widget_key(spec: dict) -> tuple:
     )
 
 
+#: Fläche des generativen Dashboards (Rasterfelder, 12 Spalten). 150 seit 06.11.: der Kern des
+#: KI-Cockpits belegt 96 (Befunde 30, Netzplan 30, KI-Flotte 18, Kriterien 18), laufende
+#: Fehler-Cluster 48 — mit 110 fiel der Kern bei jedem Ausbruch teilweise weg.
+AREA_BUDGET = 150
+
+
 def _validate_widgets(raw_widgets: list, situation: dict, *, enforce_budget: bool = True) -> list[dict]:
     """Keep only well-formed widgets with valid configs; resolve metric widgets
     against the real candidates. Returns clean specs (grid packed later)."""
@@ -809,8 +815,10 @@ def _validate_widgets(raw_widgets: list, situation: dict, *, enforce_budget: boo
         enumerate(clean),
         key=lambda item: (
             {
-                "lw_befunde": -2, "error_clusters": -1, "incidents": 0, "lw_korpus": 0,
-                "lw_kriterien": 1, "lw_netzplan": 1, "lw_hashtags": 5, "lw_volumen": 6,
+                # Kern des KI-Cockpits (zwei Zeilen): Befunde | Netzplan, KI-Flotte | Kriterien
+                "lw_befunde": -6, "lw_netzplan": -5, "lw_ki": -4, "lw_kriterien": -3,
+                "error_clusters": -1, "incidents": 0, "lw_korpus": 0,
+                "lw_hashtags": 5, "lw_volumen": 6,
                 "forecast": 1, "stat": 2, "gauge": 3,
                 "top_hosts": 4, "donut": 5, "bar": 6, "timeseries": 7,
                 "list": 8, "war_room": 9, "ai_summary": 10,
@@ -834,18 +842,17 @@ def _validate_widgets(raw_widgets: list, situation: dict, *, enforce_budget: boo
 
     # Hard area budget. This is the final validator for LLM, fallback and injected
     # forecast widgets alike; there is no overflow allowance.
-    _AREA_BUDGET = 110
     budgeted: list[dict] = []
     area_used = 0
     for spec in deduped:
         w_size, h_size = _DEFAULT_SIZE.get(spec["widget_type"], (4, 3))
         area = w_size * h_size
-        if area_used + area <= _AREA_BUDGET:
+        if area_used + area <= AREA_BUDGET:
             budgeted.append(spec)
             area_used += area
         else:
             log.debug("generative_designer: dropping %s (area=%d, used=%d > budget=%d)",
-                      spec["widget_type"], area, area_used, _AREA_BUDGET)
+                      spec["widget_type"], area, area_used, AREA_BUDGET)
     return budgeted
 
 
@@ -1046,9 +1053,13 @@ def _ensure_log_watch_widgets(specs: list[dict], situation: dict, lang: str) -> 
         vorne.append({"widget_type": "lw_befunde",
                       "title": "KI-Befunde" if lang == "de" else "AI findings",
                       "config": {"hours": 24}})
+        if "lw_netzplan" not in typen:
+            vorne.append({"widget_type": "lw_netzplan",
+                          "title": "Netzplan der Brennpunkte" if lang == "de" else "Graph of hot spots",
+                          "config": {"hours": 6, "filter": "relevanz>=3"}})
         if "lw_ki" not in typen:
             vorne.append({"widget_type": "lw_ki",
-                          "title": "KI-Analyse: kommt sie nach?" if lang == "de" else "AI analysis: keeping up?",
+                          "title": "KI-Flotte: kommt sie nach?" if lang == "de" else "AI fleet: keeping up?",
                           "config": {"hours": 6}})
     if lw.get("quellen_mit_fehler") and "lw_korpus" not in typen:
         vorne.append({"widget_type": "lw_korpus",
