@@ -39,3 +39,18 @@ class FieldCatalog(Base):
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     #: letzte erfolgreiche Messung; None = noch nie gemessen
     gemessen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RasterLauf(Base):
+    """Trockenlauf des Rasters: je 5-min-Fenster und Quelle, was gespeichert WÜRDE.
+
+    Nur Zahlen (raster.zaehle), keine Nachrichten — daraus wird der Platzbedarf
+    hochgerechnet, bevor `cs-logs-*` befüllt wird.
+    """
+    __tablename__ = "raster_lauf"
+
+    fenster_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    #: graylog | wazuh | checkmk | uebergreifend
+    quelle: Mapped[str] = mapped_column(String(16), primary_key=True)
+    werte: Mapped[dict] = mapped_column(postgresql.JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

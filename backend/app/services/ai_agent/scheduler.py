@@ -335,6 +335,15 @@ async def run_field_catalog() -> None:
             logger.warning("Feldkatalog fehlgeschlagen: %s", e)
 
 
+async def run_log_raster() -> None:
+    """Raster der Log-Überwachung für Wazuh und CheckMK (Graylog läuft in error_clusters)."""
+    from app.services.log_watch.lauf import run_raster
+    try:
+        await run_raster()
+    except Exception as e:
+        logger.warning("Log-Raster fehlgeschlagen: %s", e)
+
+
 async def run_incident_housekeeping() -> None:
     """host-Incidents schließen, deren Mitglieder alle erledigt sind (Sicherheitsnetz).
 
@@ -441,6 +450,9 @@ async def start_scheduler() -> None:
                        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=60))
     _scheduler.add_job(run_error_cluster_prune, "cron", hour=3, minute=15,
                        id="error_clusters_prune", replace_existing=True)
+    _scheduler.add_job(run_log_raster, "cron", minute="1-59/5",
+                       id="log_watch_raster", replace_existing=True, max_instances=1,
+                       coalesce=True)
     _scheduler.add_job(run_field_catalog, "cron", hour=3, minute=45,
                        id="log_watch_field_catalog", replace_existing=True)
     _scheduler.add_job(run_score_housekeeping, "cron", hour=2, minute=0,

@@ -510,6 +510,12 @@ async def _run() -> None:
                         ev.episode.notified_entities = 0
                         ev.episode.notified_at = None
             found = critical.scan(fetched.lines)
+            if report:
+                # Raster der Log-Überwachung: dieselben Zeilen, kein zweiter Abruf.
+                # graylog_fenster schluckt eigene Fehler — die Erkennung läuft weiter.
+                from app.services.log_watch import lauf as raster_lauf
+                stumm = {k for k, ti in rt.store.templates.items() if ti.muted}
+                await raster_lauf.graylog_fenster(t.templates, events, found, stumm, b)
             crit: list[dict] = []
             async with AsyncSessionLocal() as db:
                 await _persist(db, rt, t)

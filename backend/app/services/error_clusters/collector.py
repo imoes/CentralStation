@@ -204,12 +204,15 @@ class TemplateTally:
     entities: Counter = field(default_factory=Counter)
     sources: set = field(default_factory=set)
     examples: list[str] = field(default_factory=list)    # bis 5 Rohzeilen (erste Zeile)
+    #: Zeilen je Host (Quelle) — für das Raster der Log-Überwachung (Muster × Host)
+    hosts: Counter = field(default_factory=Counter)
 
     def add(self, line: Line) -> None:
         self.count += 1
         self.entities[line.entity] += 1
         if line.source:
             self.sources.add(line.source)
+            self.hosts[line.source] += 1
         if len(self.examples) < 5:
             first = line.message.split("\n", 1)[0][:500]
             if first not in self.examples:

@@ -172,6 +172,7 @@ class CheckMKConnector(BaseConnector):
                     "criticality": tags.get("criticality") or labels.get("criticality", ""),
                     "ve":          tags.get("tg-ve") or tags.get("ve") or labels.get("ve", ""),
                     "location":    tags.get("tg-location") or tags.get("location") or labels.get("location", ""),
+                    "ipaddress":   attrs.get("ipaddress", ""),
                     "hostgroups":  hostgroups,
                 },
             })

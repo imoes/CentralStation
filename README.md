@@ -1123,6 +1123,73 @@ filters and the network graph later work only on fields and their values.
   - `PUT` / `DELETE /api/log-watch/fields/{quelle}/{feld}/rolle`
 - **Schedule:** daily at 03:45 (`log_watch_field_catalog`). Table `field_catalog` (migration 0054).
 
+### Log watch: raster (tagging the stream; dry run)
+
+The raster tags and rates the stream of all three sources by script, without AI.
+
+**Output:** one `Treffer` per message group, with relevance, reasons and hashtags. A group is
+pattern × host for Graylog, rule × agent for Wazuh, and service × host for CheckMK.
+
+**Relevance:**
+
+| Value | Meaning | What happens |
+|---|---|---|
+| 0 | routine | stays in the source |
+| 1 | normal | stays in the source |
+| 2 | conspicuous | becomes history |
+| 3 | urgent | becomes history and goes to the AI |
+
+**Hashtags** have exactly one form, `art:wert`, in one field. They are at the same time the filter, the
+facet and the network-graph node:
+
+| Kind | Meaning |
+|---|---|
+| `quelle:` | source |
+| `host:` | canonical name from CheckMK |
+| `ort:` | location |
+| `hg:` | host group |
+| `app:` | container |
+| `muster:` | Drain pattern |
+| `regel:`, `regelgruppe:`, `mitre:` | Wazuh rule, rule group, MITRE tactic |
+| `dienst:`, `zustand:` | CheckMK service and state |
+| `thema:` | fixed vocabulary, `services/log_watch/vokabular.py` |
+| `hostliste:` | why a name has no CheckMK host: `unbekannt`, `mehrdeutig` or `container-id` |
+
+**Rules per source** (`services/log_watch/raster.py`):
+
+- **Graylog:** runs inside the 5-minute pass of the error-cluster detection. The lines are already
+  fetched and assigned to patterns there, so there is no second fetch.
+  - An error line is 1.
+  - A pattern rule (new, spike, spread) is 2; an immediate report is 3.
+  - A critical kernel signature on the host is 3.
+  - The themes `oom`, `disk-full`, `fs-readonly`, `kernel-io` and `absturz` are at least 2.
+  - A muted pattern is 0.
+- **Wazuh:** `rule.level` ≥ 12 → 3, 7–11 → 2, 4–6 → 1, otherwise 0.
+- **CheckMK:** only changes count as messages: a new problem or a different state.
+  - CRIT is 2; CRIT on criticality `prod` or `critical` is 3; WARN or UNKNOWN is 1.
+  - An acknowledged problem is at most 1.
+  - The first comparison after a start counts as the existing state, not as new.
+  - A vanished problem is counted as `behoben`.
+- **Across sources:** a host that is relevant in two sources within 15 minutes rises to 3. The reason
+  says explicitly "common occurrence, no cause established".
+- **Flood brake:** at most 5 stored messages per source × group × host × hour; the rest is only
+  counted.
+
+**Host names** (`services/log_watch/hosts.py`) work like name variants in the research tool. The
+canonical name is the CheckMK host. A name is matched in this order:
+1. exact name or IP;
+2. short name without leading zeros (`aim012` = `aim12`);
+3. short name with a glued-on domain removed (`cue0104REDACTED-CREDENTIAL`).
+
+A short name that fits several hosts is not guessed.
+
+**Dry run:** for now the raster only counts and stores nothing.
+- One row per 5-minute window and source in `raster_lauf`.
+- Wazuh and CheckMK run in the job `log_watch_raster` every 5 minutes.
+- `GET /api/log-watch/raster/trockenlauf?stunden=24` (admin) returns, per source, the messages, the
+  relevance distribution, what would be stored per day (messages and MB), the top hashtags and the
+  unmatched hosts.
+
 ### Check steps and recipes (incidents)
 
 - **Check steps:** removed from the incident view on 2026-11-06. The investigation runs

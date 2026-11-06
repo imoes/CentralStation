@@ -10,6 +10,54 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 2: the raster tags the stream (dry run)
+
+### What's new
+
+- **The raster rates and tags every message group of Graylog, Wazuh and CheckMK by script, without
+  AI.** Each group gets a relevance (0 routine, 1 normal, 2 conspicuous, 3 urgent), the reasons for it,
+  and hashtags in a single form, `art:wert`.
+  - Examples: `host:`, `ort:`, `thema:oom`, `muster:…`, `regel:…`, `mitre:…`, `dienst:…`.
+  - A hashtag is at the same time the filter, the facet and later the network-graph node.
+- **Graylog adds no load.** It is rated inside the existing 5-minute pass of the error-cluster
+  detection; Wazuh and CheckMK run in their own 5-minute job.
+- **One name per host across all three sources.** The canonical name is the CheckMK host. The raster
+  matches spelling variants, IP addresses and glued-on domains to it.
+  - A name it cannot match is named, not guessed: `hostliste:unbekannt`, `hostliste:mehrdeutig` or
+    `hostliste:container-id`.
+- **Across sources:** a host relevant in two sources within 15 minutes rises to urgent. The reason
+  states "common occurrence, no cause established".
+- **Dry run first:** nothing is stored yet; every window is only counted. `GET
+  /api/log-watch/raster/trockenlauf` projects, per source, how many messages and MB per day the
+  history would take.
+
+### Evidence (live, first windows 2026-11-06 ~17:30–17:45 UTC)
+
+| Source | One 5-minute window | Would be stored |
+|---|---|---|
+| Graylog | 56 962 error lines in 757 groups; 755 normal, 2 conspicuous (theme `absturz` on cue0148) | 2 |
+| Wazuh | 8 073 alerts; 7 155 routine, 738 normal, 180 conspicuous | 69 (flood brake) |
+| CheckMK | 322 problems on the first comparison, counted as the existing state, not as new | — |
+
+- **CheckMK criticalities actually present:** `prod` 208, `staging` 55, `test` 46, `dev` 12,
+  `critical` 1. CRIT on `prod` or `critical` is urgent.
+- **Host matching:** 2 846 CheckMK hosts. In the first Graylog window, 40 names could not be matched.
+  After matching by address and glued-on domain, 22 remain unknown and 7 are container IDs.
+- **Tests:** 37 new tests. They cover the vocabulary including false hits ("rescue", "timeouts",
+  "502ms"), the live spellings of host names, every rule per source, the flood brake, and the
+  projection. The backend suite has 805 passed.
+
+### What's missing
+
+- **24 hours of dry run** are needed before the history (`cs-logs-*`) is filled. The volume decides
+  whether the flood brake and thresholds hold.
+- **22 Graylog sources CheckMK does not know** (service names such as `cueapi`, SD-WAN devices). They
+  are visible as `hostliste:unbekannt`; no alias table for them yet.
+- **Pattern memory** (AI verdicts per pattern) is still missing, as are the vector index, the AI
+  funnel, findings as messages, and the network graph.
+
+---
+
 ## 2026-11-06 — Log watch, part 1: field catalog for Graylog, Wazuh and CheckMK
 
 ### What's new

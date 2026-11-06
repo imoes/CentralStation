@@ -105,3 +105,17 @@ async def reset_rolle(quelle: str, feld: str, user: CurrentUser,
                     new_value={"quelle": quelle, "feld": feld, "rolle": r.rolle}))
     await db.commit()
     return _zeile(r)
+
+
+@router.get("/raster/trockenlauf", dependencies=[RequireAdmin])
+async def raster_trockenlauf(db: Annotated[AsyncSession, Depends(get_db)],
+                             stunden: int = Query(24, ge=1, le=24 * 7)):
+    """Was das Raster in den letzten `stunden` gespeichert HÄTTE, je Quelle und pro Tag."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.log_watch import RasterLauf
+    from app.services.log_watch.lauf import zusammenfassung
+
+    seit = datetime.now(timezone.utc) - timedelta(hours=stunden)
+    rows = (await db.execute(select(RasterLauf).where(RasterLauf.fenster_start >= seit))).scalars()
+    return zusammenfassung([(r.quelle, r.fenster_start, r.werte) for r in rows], stunden)
