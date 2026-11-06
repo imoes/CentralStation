@@ -1482,7 +1482,7 @@ The AI only works when a check is true, and it only writes its own analysis.
 - **Funnel** (`trichter.analysiere`): one tool loop per host (at most 2 hosts per run, 12 steps). The
   model asks earlier knowledge first, reads facets, narrows the filter and ends with `lw_befund`.
   Every step (tool, arguments, hit count, model seconds) is kept in the finding.
-- **Tools** (`werkzeuge.py`, one registry for the funnel and later MCP):
+- **Tools** (`werkzeuge.py`, one registry for the funnel and the MCP server):
 
   | Tool | Purpose |
   |---|---|
@@ -1504,6 +1504,9 @@ The AI only works when a check is true, and it only writes its own analysis.
   - leftovers of the model's tool-call syntax (`</parameter>` …) are rejected.
 
   The evidence documents get the same hashtag `befund:<id>` as the finding: one name, so the filter `befund:<id>` finds finding and evidence, and the graph draws the edge.
+- **MCP server:** `lw_suche`, `lw_facetten`, `lw_netzplan`, `lw_nachricht`, `lw_wissen` and
+  `lw_definition` are MCP tools, calling the same functions. `lw_befund` is not: only the funnel files
+  findings, after checking the quotes. The console agents' prompt (`userenv/main.py`) lists the tools.
 - **Search** (`suche.py`): one search over `cs-logs-*`: filter + time → hits and facets per hashtag type.
   `netzplan()` builds the graph from two aggregations (`terms` over `hashtags`, then `adjacency_matrix`
   over the chosen nodes), with no documents transferred.

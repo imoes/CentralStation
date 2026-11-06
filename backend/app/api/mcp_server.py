@@ -2276,3 +2276,55 @@ async def jira_get_transitions(issue_key: str) -> dict:
         }
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+# ── Log-Überwachung: dieselben Werkzeuge wie der KI-Trichter (services/log_watch/werkzeuge.py) ──
+# Nur lesend. lw_befund (Befund ablegen) bleibt dem Trichter vorbehalten — er prüft die Belege;
+# die Konsolen-KI handelt nicht und schreibt keine Befunde.
+
+@mcp.tool()
+async def lw_suche(filter: str = "", stunden: float = 24, limit: int = 20, bedeutung: str = "") -> dict:
+    """Relevante Lognachrichten der Historie (Graylog, Wazuh, CheckMK, Firewall, Switches, KI-Befunde)
+    suchen: Treffer (id, zeit, host, relevanz, hashtags, text, gruende) und Facetten je Hashtag-Art.
+
+    Filtersprache: art:wert (host:docker0218, thema:oom, quelle:wazuh, netz:dmz, signal:neu,
+    befund:<id>), art:(a OR b), art:wert*, !art:wert, OR, Klammern, level>=7, relevanz>=3, @Objekt,
+    "freier Text". bedeutung: Text → bedeutungsähnliche Nachrichten (Vektorsuche)."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_suche(filter, stunden, max(0, min(limit, 100)), bedeutung)
+
+
+@mcp.tool()
+async def lw_facetten(filter: str = "", stunden: float = 24) -> dict:
+    """Anzahl und Facetten (Hashtags je Art mit Anzahl) zu einem Filter — welcher Wert fällt auf?"""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_facetten(filter, stunden)
+
+
+@mcp.tool()
+async def lw_netzplan(filter: str = "", stunden: float = 24, knoten: int = 15) -> dict:
+    """Netzplan zum Filter: Knoten = Hashtags des Ergebnisses (Host, Thema, Dienst, Regel, Netz, Befund …),
+    Kante = beide an derselben Nachricht, mit Anzahl. Zeigt gemeinsames Auftreten, keine Ursache."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_netzplan(filter, stunden, max(2, min(knoten, 40)))
+
+
+@mcp.tool()
+async def lw_nachricht(id: str) -> dict:
+    """Eine Nachricht der Historie vollständig, mit allen Originalfeldern (roh)."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_nachricht(id)
+
+
+@mcp.tool()
+async def lw_wissen(filter: str = "", bedeutung: str = "", stunden: float = 24 * 30) -> dict:
+    """Frühere KI-Befunde und Konsolen-Wissen zu einem Filter oder nach Bedeutung."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_wissen(filter, bedeutung, stunden)
+
+
+@mcp.tool()
+async def lw_definition() -> dict:
+    """Die geltende Relevanz-Definition: Kriterien R1–R8 / N0–N6, Objekte, Regeln (erste passende entscheidet)."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_definition()

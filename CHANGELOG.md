@@ -10,6 +10,28 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 16: the log-watch tools on the MCP server
+
+### What's new
+
+- **Six read-only MCP tools:** `lw_suche`, `lw_facetten`, `lw_netzplan`, `lw_nachricht`, `lw_wissen` and
+  `lw_definition`. They call the same functions as the AI funnel, so there is one path.
+  - The console AI and external agents now search the tagged history, its facets and the graph, and read
+    earlier findings.
+  - `lw_befund` is deliberately not an MCP tool. Findings are written only by the funnel, which checks
+    every quote; the console AI stays read-only.
+- **The console agents' prompt** (`userenv/main.py`) lists the new tools. They apply to new Workbench
+  sessions; running ones keep their old image.
+
+### Evidence
+
+- **Test:** every read-only registry tool is an MCP tool, and `lw_befund` is not (found via the AST of
+  `mcp_server.py`).
+- **Backend suite:** 925 passed.
+- **Live MCP check:** pending, together with the rollout of parts 15/16.
+
+---
+
 ## 2026-11-06 — Log watch, part 15: CheckMK criticality and location actually arrive; network zone and Wazuh tags as hashtags
 
 ### Fixed

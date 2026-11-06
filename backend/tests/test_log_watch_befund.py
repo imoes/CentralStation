@@ -84,3 +84,13 @@ def test_rufe_benennt_fehler():
     assert "unbekanntes Werkzeug" in asyncio.run(wz.rufe("rm_rf", {}))["fehler"]
     assert "unbekannte Argumente" in asyncio.run(wz.rufe("lw_facetten", {"x": 1}))["fehler"]
     assert "Pflichtargumente fehlen" in asyncio.run(wz.rufe("lw_nachricht", {}))["fehler"]
+
+
+def test_mcp_bietet_die_lesenden_lw_werkzeuge_aber_nicht_lw_befund():
+    import ast, pathlib
+    quelle = pathlib.Path("app/api/mcp_server.py").read_text()
+    namen = {n.name for n in ast.parse(quelle).body if isinstance(n, ast.AsyncFunctionDef)
+             and any(getattr(getattr(d, "func", None), "attr", "") == "tool" for d in n.decorator_list)}
+    lesend = {n for n, (_, _, _, schreibt) in wz.REGISTRY.items() if not schreibt}
+    assert lesend <= namen                         # jedes lesende Werkzeug auch im MCP
+    assert "lw_befund" not in namen                # Befunde schreibt nur der Trichter
