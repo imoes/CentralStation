@@ -11,6 +11,7 @@ from app.models.remediation import RemediationProposal, PlaybookDraft
 from app.models.remote_exec import RemoteExecLog
 from app.models.recipe import Recipe
 from app.models.critical_event import CriticalEvent
+from app.models.log_watch import FieldCatalog
 from app.models.error_cluster import (
     LogTemplate, LogTemplateBucket, LogTemplateHourly, EntityBucket, ErrorCluster,
     ErrorClusterState,
@@ -33,4 +34,5 @@ __all__ = [
     "RemoteExecLog",
     "Recipe",
     "CriticalEvent",
+    "FieldCatalog",
 ]

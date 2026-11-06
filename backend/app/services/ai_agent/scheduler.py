@@ -324,6 +324,17 @@ async def run_error_cluster_prune() -> None:
             logger.warning("error_clusters prune failed: %s", e)
 
 
+async def run_field_catalog() -> None:
+    """Feldkatalog der Log-Überwachung fortschreiben (Feldliste + Messung bei Graylog)."""
+    from app.core.database import AsyncSessionLocal
+    from app.services.log_watch.catalog import aktualisiere
+    async with AsyncSessionLocal() as db:
+        try:
+            await aktualisiere(db)
+        except Exception as e:
+            logger.warning("Feldkatalog fehlgeschlagen: %s", e)
+
+
 async def run_incident_housekeeping() -> None:
     """host-Incidents schließen, deren Mitglieder alle erledigt sind (Sicherheitsnetz).
 
@@ -430,6 +441,8 @@ async def start_scheduler() -> None:
                        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=60))
     _scheduler.add_job(run_error_cluster_prune, "cron", hour=3, minute=15,
                        id="error_clusters_prune", replace_existing=True)
+    _scheduler.add_job(run_field_catalog, "cron", hour=3, minute=45,
+                       id="log_watch_field_catalog", replace_existing=True)
     _scheduler.add_job(run_score_housekeeping, "cron", hour=2, minute=0,
                        id="score_housekeeping", replace_existing=True)
     _scheduler.add_job(run_feed_housekeeping, "cron", hour=3, minute=0,

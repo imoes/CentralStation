@@ -10,6 +10,59 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 1: field catalog for Graylog, Wazuh and CheckMK
+
+### What's new
+
+- **A catalog of every field in all three sources**, with type, coverage, cardinality, example values
+  and a role. The role decides how a field is used later: entity (becomes a `#host:` hashtag and a
+  graph node), category, identifier, measurement, free text or ignored.
+  - This is the base for the log watch: scripts tag the stream, only relevant messages are kept as
+    history, and the AI filters that history.
+- **Measured in the source, nothing copied.** Graylog counts by pivot, Wazuh on its indexer, and
+  CheckMK over the current problems.
+- **Admin API** to read the catalog, measure again, and set or reset a field's role. A daily job runs
+  at 03:45.
+
+### Evidence (live, 2026-11-06)
+
+| Source | Fields | Active in the window | Window |
+|---|---|---|---|
+| Graylog | 1 191 | 488 | 15 min ≈ 1.9 million messages |
+| Wazuh | 673 | 161 | 24 h ≈ 2.0 million alerts |
+| CheckMK | 64 | 64 | 310 current problems |
+
+- 0 fields unmeasured. All 597 hashtag candidates have example values; 312 of them come from a sample
+  because Graylog refuses their value list.
+- The run takes 145 s.
+- Tests: 52 new tests for roles, all three adapters and the update logic. The backend suite has 767
+  passed.
+
+### What was fixed during the live run
+
+- **Text fields broke whole blocks.** Three pure text fields (`message`, `full_message`, `PeerNameCN`)
+  made Graylog reject blocks of 50 fields each, leaving 150 fields unmeasured.
+  - Text fields are now counted via `_exists_`.
+  - A rejected block is split in half until the culprit stands alone.
+- **Too many values became candidate hashtags.** Ports (62 000 values), bytes, durations and numbered
+  timestamps were classed as identifiers.
+  - They are now measurements or ignored.
+  - Anything with more than 5 000 values is not a hashtag.
+- **`(Empty Value)` showed up as a value.** That is Graylog's marker for "missing" and is now dropped.
+
+### What's missing
+
+- **Host names are spelled differently per source** (`WEC01`/`wec01`, `aim012`/`aim12`, short name vs
+  FQDN). The common `#host:` hashtag needs normalisation against the CheckMK host list; that is part of
+  the raster, the next step.
+- **The Graylog field `servicename` is partly mis-parsed** (values such as "Starting", "2026]"). The
+  catalog shows it; fixing it belongs in the Graylog extractor, not here.
+- **No UI for the catalog yet**, only the API.
+- **Still to come:** the raster (tagging, relevance, and history in `cs-logs-*`), the pattern memory,
+  the AI funnel, and the network graph.
+
+---
+
 ## 2026-11-06 — Incident view: "Prüfschritte" button removed, header no longer cramped
 
 ### What was removed

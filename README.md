@@ -1076,6 +1076,53 @@ The Console agents can look things up on the server itself, in the version insta
 - **Results are cached** (man pages 6 h, search and capabilities 1 h).
 - **Errors are named:** `host_unknown`, `not_configured`, `no_manpage`, `ssh_failed`.
 
+### Log watch: field catalog (Graylog, Wazuh, CheckMK)
+
+First building block of the log watch modelled on the research tool
+(`~/Dev/code/recherche-stack`):
+- Scripts classify the stream of all three sources.
+- Only messages tagged as relevant are kept as history.
+- The AI filters that history until a relevant result remains.
+
+The field catalog comes first. Every field of every source is known with its role, because hashtags,
+filters and the network graph later work only on fields and their values.
+
+- **Measured in the source, nothing copied.** One adapter per source
+  (`backend/app/services/log_watch/quellen/`), all with the same interface:
+  - **Graylog:** `/api/views/fields`, counted by Views pivot (`count`, `card`) over 15 min of all
+    messages.
+    - Pure text fields (not *enumerable*) are counted via `_exists_`.
+    - A block Graylog rejects is split in half until the offending field stands alone.
+    - Where Graylog refuses the value list, example values come from a 200-message sample and are
+      marked `stichprobe`.
+  - **Wazuh:** the union of the mappings of the last 7 `wazuh-alerts-*` daily indices, counted on the
+    indexer (`exists` filter, `cardinality`, `terms`) over 24 h.
+  - **CheckMK:** the current service problems with their columns and host labels.
+    - Columns take the names used by the other sources (`description` → `service`).
+    - Label keys containing a host name (`cmk/piggyback_source_<host>`) become one field with the host
+      as its value.
+- **Roles** (`catalog.bestimme_rolle`):
+
+  | Role | Meaning |
+  |---|---|
+  | `entitaet` | host, container, agent, service, IP → later `#host:`-style hashtags and graph nodes |
+  | `kategorie` | ≤ 50 values: level, state, HTTP code |
+  | `kennung` | rule ID, check, ≤ 5 000 values |
+  | `messwert` | port, bytes, duration, counter |
+  | `freitext` | message text |
+  | `ignorieren` | IDs, timestamps, nearly-unique values, or more than 5 000 values |
+  | `unbekannt` | no values in the window |
+
+  The name decides first, then the measurement; every role carries a reason.
+- **Status of a field:** `aktiv`, `ohne_werte`, `nicht_gemessen` (the source refused, which is not the
+  same as empty) or `verschwunden` (the source no longer knows the field; it stays in the catalog).
+- **Admin overrides:** a role set by an admin is never overwritten by a measurement and can be reset.
+- **API** (admin):
+  - `GET /api/log-watch/fields?quelle=&rolle=&status=`
+  - `POST /api/log-watch/fields/refresh?quelle=`
+  - `PUT` / `DELETE /api/log-watch/fields/{quelle}/{feld}/rolle`
+- **Schedule:** daily at 03:45 (`log_watch_field_catalog`). Table `field_catalog` (migration 0054).
+
 ### Check steps and recipes (incidents)
 
 - **Check steps:** removed from the incident view on 2026-11-06. The investigation runs
