@@ -47,7 +47,7 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   - Older rows are listed as `alte_fassung`, not silently dropped.
   - After the fix: 268 relevant, top hashtag 209, stored 94.
 
-### Evidence (live, 2026-11-06 ~18:20 UTC)
+### Evidence (live, 2026-11-06 ~18:15 UTC)
 
 - All six widget types return data, or the named "history not active" state.
 - `lw_kriterien` over one hour: R2 103 (Graylog), R6 268 (Wazuh), N0 7 276, N1 Graylog routine.
