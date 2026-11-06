@@ -31,6 +31,7 @@ from app.api.deps import CurrentUser, get_db
 from app.models.workflow import ComputerSession, UserPreference, WorkSession
 from app.models.connector import ConnectorConfig
 from app.services.codex_models import extract_codex_model_ids
+from app.core.jira_links import browse_url
 
 router = APIRouter(prefix="/computer", tags=["computer"])
 log = logging.getLogger(__name__)
@@ -843,6 +844,7 @@ async def create_session(
         )).scalar_one_or_none()
         if not connector:
             raise HTTPException(status_code=404, detail="Jira connector not found")
+        ticket_base_url = connector.base_url
         existing = (await db.execute(
             select(ComputerSession).where(
                 ComputerSession.user_id == user.id,
@@ -856,11 +858,7 @@ async def create_session(
                 "label": existing.label,
                 "external_id": existing.external_id,
                 "agent_type": existing.agent_type,
-                "ticket_ref": {
-                    "connector_id": str(existing.ticket_connector_id),
-                    "issue_id": existing.ticket_issue_id,
-                    "key": existing.ticket_key,
-                },
+                "ticket_ref": _ticket_ref_payload(existing, base_url=connector.base_url),
                 "context_hash": existing.context_hash,
                 "has_activity_snapshot": bool(existing.ticket_activity_snapshot),
                 "context_synced_at": existing.context_synced_at.isoformat() if existing.context_synced_at else None,
@@ -1078,6 +1076,7 @@ async def create_session(
             "connector_id": str(body.ticket_connector_id),
             "issue_id": body.ticket_issue_id,
             "key": body.ticket_key,
+            "url": browse_url(ticket_base_url, body.ticket_key),
         } if body.ticket_connector_id else None),
         "context_hash": body.context_hash or None,
         "has_activity_snapshot": False,
@@ -1099,6 +1098,12 @@ async def list_sessions(
         .where(ComputerSession.user_id == user.id)
         .order_by(ComputerSession.last_activity_at.desc(), ComputerSession.created_at.desc())
     )).scalars().all()
+    # Instanz je Ticket-Sitzung — für den Link nach Jira/Service Desk.
+    connector_ids = {r.ticket_connector_id for r in rows if r.ticket_connector_id}
+    base_urls = dict((await db.execute(
+        select(ConnectorConfig.id, ConnectorConfig.base_url)
+        .where(ConnectorConfig.id.in_(connector_ids))
+    )).all()) if connector_ids else {}
     return [
         {
             "session_id": r.id,
@@ -1109,11 +1114,7 @@ async def list_sessions(
             "external_id": r.external_id,
             "resolved": r.resolved,
             "agent_type": r.agent_type,
-            "ticket_ref": ({
-                "connector_id": str(r.ticket_connector_id),
-                "issue_id": r.ticket_issue_id,
-                "key": r.ticket_key,
-            } if r.ticket_connector_id and r.ticket_issue_id else None),
+            "ticket_ref": _ticket_ref_payload(r, base_url=base_urls.get(r.ticket_connector_id)),
             "context_hash": r.context_hash,
             "has_activity_snapshot": bool(r.ticket_activity_snapshot),
             "context_synced_at": r.context_synced_at.isoformat() if r.context_synced_at else None,
@@ -1122,11 +1123,23 @@ async def list_sessions(
     ]
 
 
-def _ticket_ref_payload(session: ComputerSession, detail: dict | None = None) -> dict:
+def _ticket_ref_payload(
+    session: ComputerSession,
+    detail: dict | None = None,
+    base_url: str | None = None,
+) -> dict | None:
+    """Ticketbezug einer Sitzung, wie ihn die Konsole bekommt — überall dieselbe Form.
+
+    `url` ist der Link in Jira/Service Desk; None, wenn die Instanz nicht bekannt ist.
+    """
+    if not session.ticket_connector_id or not session.ticket_issue_id:
+        return None
+    key = (detail or {}).get("key") or session.ticket_key
     return {
         "connector_id": str(session.ticket_connector_id),
         "issue_id": session.ticket_issue_id,
-        "key": (detail or {}).get("key") or session.ticket_key,
+        "key": key,
+        "url": browse_url(base_url, key),
     }
 
 
@@ -1196,6 +1209,7 @@ def _ticket_activity_payload(
     session: ComputerSession,
     detail: dict,
     current_user_ids: list[str] | set[str] | None = None,
+    base_url: str | None = None,
 ) -> dict:
     from app.services.ticket_activity import build_ticket_snapshot, diff_ticket_activity
 
@@ -1209,7 +1223,7 @@ def _ticket_activity_payload(
     )
     return {
         "session_id": session.id,
-        "ticket_ref": _ticket_ref_payload(session, detail),
+        "ticket_ref": _ticket_ref_payload(session, detail, base_url),
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "issue_updated_at": snapshot.get("issue_updated_at"),
         "snapshot": snapshot,
@@ -1271,7 +1285,7 @@ async def list_ticket_activity(
         if not connector or current_user_ids is None:
             return {
                 "session_id": session.id,
-                "ticket_ref": _ticket_ref_payload(session),
+                "ticket_ref": _ticket_ref_payload(session, base_url=connector.base_url if connector else None),
                 "state": "unavailable",
                 "comment_change_count": 0,
                 "new_comments": [],
@@ -1285,12 +1299,12 @@ async def list_ticket_activity(
         try:
             async with semaphore:
                 detail = await _fetch_ticket_detail(connector, session.ticket_issue_id)
-            return _ticket_activity_payload(session, detail, current_user_ids)
+            return _ticket_activity_payload(session, detail, current_user_ids, connector.base_url)
         except Exception as exc:  # one unavailable Jira must not hide other sessions
             log.warning("Ticket activity check failed for session %s: %s", session.id[:8], exc)
             return {
                 "session_id": session.id,
-                "ticket_ref": _ticket_ref_payload(session),
+                "ticket_ref": _ticket_ref_payload(session, base_url=connector.base_url if connector else None),
                 "state": "unavailable",
                 "comment_change_count": 0,
                 "new_comments": [],
@@ -1329,7 +1343,7 @@ async def ticket_activity_context(
         log.warning("Ticket activity context failed for session %s: %s", sid[:8], exc)
         raise HTTPException(status_code=503, detail="Jira-Quelle nicht erreichbar") from exc
 
-    payload = _ticket_activity_payload(session, detail, current_user_ids)
+    payload = _ticket_activity_payload(session, detail, current_user_ids, connector.base_url)
     if payload["state"] != "changed":
         return {**payload, "prompt": "", "context_hash": session.context_hash}
 

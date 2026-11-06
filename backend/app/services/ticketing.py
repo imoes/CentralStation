@@ -15,6 +15,7 @@ from __future__ import annotations
 import json as _json
 import logging
 import re
+from app.core.jira_links import browse_url
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -269,8 +270,7 @@ async def create_jira_issue(
             return {"ok": False, "error": str(e2)[:200]}
 
     jira_key = result.get("key", "")
-    base = (conn.base_url or "").rstrip("/")
-    url = f"{base}/browse/{jira_key}" if jira_key and base else None
+    url = browse_url(conn.base_url, jira_key)
     out = {"ok": True, "jira_key": jira_key, "url": url, "issue_type": (issue_type or "").strip()}
     if assignee_login:
         out["assignee"] = assignee_login
@@ -415,7 +415,6 @@ async def search_tickets(db: AsyncSession, user_id, query: str, *, target: str |
         except Exception as exc:  # noqa: BLE001
             notes.append(f"{label}: {str(exc)[:160]}")
             continue
-        base = conn.base_url.rstrip("/")
         for i in issues:
             f = i.get("fields") or {}
             desc = f.get("description")
@@ -427,7 +426,7 @@ async def search_tickets(db: AsyncSession, user_id, query: str, *, target: str |
                 "assignee": (f.get("assignee") or {}).get("displayName"),
                 "reporter": (f.get("reporter") or {}).get("displayName"),
                 "created": f.get("created"), "updated": f.get("updated"),
-                "instance": label, "url": f"{base}/browse/{i.get('key')}",
+                "instance": label, "url": browse_url(conn.base_url, i.get("key")),
                 "match": snippet(desc if isinstance(desc, str) else f.get("summary"), query),
             })
     results.sort(key=lambda r: r.get("updated") or "", reverse=True)

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_db
+from app.core.jira_links import browse_url
 from app.models.connector import ConnectorConfig
 from app.models.workflow import UserJiraQuery
 
@@ -92,6 +93,7 @@ async def my_tickets(
                             "connector_id": str(conn.id),
                             "issue_id": issue_id,
                             "base_url": conn.base_url,
+                            "url": browse_url(conn.base_url, key),
                         }
                         merged[identity] = issue
             except Exception as e:
@@ -135,6 +137,7 @@ async def get_issue_detail(
                 "connector_id": str(conn.id),
                 "issue_id": str(detail.get("id") or issue_key),
                 "base_url": conn.base_url,
+                "url": browse_url(conn.base_url, detail.get("key") or issue_key),
             }
             return detail
         except Exception as e:

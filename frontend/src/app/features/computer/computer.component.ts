@@ -18,6 +18,7 @@ import { marked } from 'marked';
 import { AuthService } from '../../core/auth/auth.service';
 import {
   ComputerService,
+  SessionTicketRef,
   TicketActivity,
   TicketActivitySnapshot,
   TicketReference,
@@ -105,7 +106,7 @@ interface HermesSession {
   external_id?: string;
   /** True after the user clicked "✓ GELÖST" and the learning comment was saved. */
   resolved?: boolean;
-  ticket_ref?: { connector_id: string; issue_id: string; key: string } | null;
+  ticket_ref?: SessionTicketRef | null;
   context_hash?: string | null;
   has_activity_snapshot?: boolean;
   context_synced_at?: string | null;
@@ -277,6 +278,12 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
             @if (activeSession()?.resolved) {
               <span class="rail-pill resolved-pill">✓ RESOLVED</span>
             }
+            @if (activeSession()?.ticket_ref?.url; as ticketUrl) {
+              <a class="rail-pill jira-pill" [href]="ticketUrl" target="_blank" rel="noopener"
+                 [title]="activeSession()!.ticket_ref!.key + ' in Jira / Service Desk öffnen'">
+                ↗ {{ activeSession()!.ticket_ref!.key }}
+              </a>
+            }
             @if (activeMessages().length > 0) {
               <button class="rail-pill ticket-pill" (click)="createTicket()"
                       title="Create Jira ticket from this conversation">
@@ -393,7 +400,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                   <section class="ticket-activity ticket-activity--warning" aria-live="polite">
                     <mat-icon>cloud_off</mat-icon>
                     <div class="ticket-activity-content">
-                      <strong>{{ activity.ticket_ref.key }} · Quelle nicht erreichbar</strong>
+                      <strong>@if (activity.ticket_ref.url) {<a class="ticket-key-link" [href]="activity.ticket_ref.url" target="_blank" rel="noopener" title="In Jira / Service Desk öffnen">{{ activity.ticket_ref.key }}</a>} @else {{{ activity.ticket_ref.key }}} · Quelle nicht erreichbar</strong>
                       <span>Der letzte bekannte Stand bleibt erhalten. Es wurde nichts als gelesen markiert.</span>
                     </div>
                     <button class="activity-later" (click)="dismissActivity(activity)" title="Hinweis einklappen">Später</button>
@@ -402,7 +409,7 @@ function parseFeedMarker(text: string): { cleanText: string; params: Record<stri
                   <section class="ticket-activity" aria-live="polite">
                     <div class="ticket-activity-heading">
                       <div>
-                        <strong>{{ activity.ticket_ref.key }} · Neue Aktivität</strong>
+                        <strong>@if (activity.ticket_ref.url) {<a class="ticket-key-link" [href]="activity.ticket_ref.url" target="_blank" rel="noopener" title="In Jira / Service Desk öffnen">{{ activity.ticket_ref.key }}</a>} @else {{{ activity.ticket_ref.key }}} · Neue Aktivität</strong>
                         <span>
                           {{ activity.comment_change_count }} Kommentaränderung{{ activity.comment_change_count === 1 ? '' : 'en' }}
                           @if (activity.ticket_changed) { · Ticketdaten geändert }
@@ -955,7 +962,7 @@ export class ComputerComponent implements OnInit, OnDestroy {
       const list: Array<{
         session_id: string; label: string; msg_count: number;
         agent_type?: string; external_id?: string | null; resolved?: boolean;
-        ticket_ref?: { connector_id: string; issue_id: string; key: string } | null;
+        ticket_ref?: SessionTicketRef | null;
         context_hash?: string | null;
         has_activity_snapshot?: boolean;
         context_synced_at?: string | null;

@@ -33,9 +33,18 @@ export interface TicketFieldChange {
   after: string | null;
 }
 
+/** Ticketbezug einer Konsolen-Sitzung, wie ihn das Backend liefert. `url` öffnet den
+ *  Vorgang in Jira/Service Desk; null, wenn die Instanz nicht bekannt ist. */
+export interface SessionTicketRef {
+  connector_id: string;
+  issue_id: string;
+  key: string;
+  url?: string | null;
+}
+
 export interface TicketActivity {
   session_id: string;
-  ticket_ref: { connector_id: string; issue_id: string; key: string };
+  ticket_ref: SessionTicketRef;
   state: 'current' | 'changed' | 'unavailable';
   checked_at: string;
   issue_updated_at?: string;

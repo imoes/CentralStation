@@ -41,6 +41,8 @@ interface JiraIssue {
     connector_id: string;
     issue_id: string;
     base_url?: string;
+    /** Link auf den Vorgang in Jira/Service Desk (vom Backend gebaut). */
+    url?: string | null;
   };
   fields: {
     summary: string;
@@ -197,14 +199,25 @@ export class JqlQueryDialogComponent {
               </header>
               <div class="ticket-board-cards">
                 @for (issue of column.issues; track issueIdentity(issue)) {
-                  <button class="ticket-board-card" (click)="openSession(issue)">
-                    <span class="ticket-board-key">{{ issue.key }}</span>
-                    <strong>{{ issue.fields.summary }}</strong>
-                    <span class="ticket-board-meta">
-                      {{ issue.fields.status.name }}
-                      @if (issue.fields.assignee?.displayName) { · {{ issue.fields.assignee?.displayName }} }
-                    </span>
-                  </button>
+                  <!-- Karte = Knopf (Arbeitsdialog) + Link nach Jira daneben: ein Link
+                       darf nicht in einem <button> stecken. -->
+                  <div class="ticket-board-card-wrap">
+                    <button class="ticket-board-card" (click)="openSession(issue)">
+                      <span class="ticket-board-key">{{ issue.key }}</span>
+                      <strong>{{ issue.fields.summary }}</strong>
+                      <span class="ticket-board-meta">
+                        {{ issue.fields.status.name }}
+                        @if (issue.fields.assignee?.displayName) { · {{ issue.fields.assignee?.displayName }} }
+                      </span>
+                    </button>
+                    @if (issue._centralstation?.url; as url) {
+                      <a class="ticket-board-open" [href]="url" target="_blank" rel="noopener"
+                         [matTooltip]="issue.key + ' in Jira / Service Desk öffnen'"
+                         [attr.aria-label]="issue.key + ' in Jira / Service Desk öffnen'">
+                        <mat-icon>open_in_new</mat-icon>
+                      </a>
+                    }
+                  </div>
                 } @empty {
                   <span class="ticket-board-empty">Keine Vorgänge</span>
                 }
@@ -252,6 +265,14 @@ export class JqlQueryDialogComponent {
                         {{ issue.fields.status?.name }}
                       </span>
                       <span class="updated-label">{{ issue.fields.updated | date:'dd.MM. HH:mm' }}</span>
+                      @if (issue._centralstation?.url; as url) {
+                        <a mat-icon-button class="jira-btn" [href]="url" target="_blank" rel="noopener"
+                           (click)="$event.stopPropagation()"
+                           [matTooltip]="issue.key + ' in Jira / Service Desk öffnen'"
+                           [attr.aria-label]="issue.key + ' in Jira / Service Desk öffnen'">
+                          <mat-icon>open_in_new</mat-icon>
+                        </a>
+                      }
                       <button mat-icon-button class="console-btn"
                               [disabled]="openingInConsole().has(issueIdentity(issue))"
                               (click)="openInConsole(issue, $event)"
@@ -355,6 +376,11 @@ export class JqlQueryDialogComponent {
     .ticket-board-card { display:flex; flex-direction:column; gap:5px; width:100%; padding:10px; border:1px solid var(--mat-sys-outline-variant); border-radius:8px; background:var(--mat-sys-surface); color:var(--mat-sys-on-surface); text-align:left; cursor:pointer; }
     .ticket-board-card:hover, .ticket-board-card:focus-visible { border-color:var(--mat-sys-primary); outline:none; }
     .ticket-board-key { color:var(--mat-sys-primary); font:600 11px/1.2 monospace; }
+    .ticket-board-card-wrap { position:relative; }
+    .ticket-board-card-wrap .ticket-board-card { padding-right:34px; }
+    .ticket-board-open { position:absolute; top:6px; right:6px; display:flex; padding:3px; border-radius:6px; color:var(--mat-sys-on-surface-variant); }
+    .ticket-board-open:hover, .ticket-board-open:focus-visible { color:var(--mat-sys-primary); background:var(--mat-sys-surface-container-high); }
+    .ticket-board-open mat-icon { font-size:16px; width:16px; height:16px; }
     .ticket-board-meta, .ticket-board-empty { color:var(--mat-sys-on-surface-variant); font-size:11px; }
     @media (max-width:900px) {
       .ticket-board { grid-template-columns:1fr; }

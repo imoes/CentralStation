@@ -10,6 +10,44 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Open tickets in Jira / Service Desk with one click
+
+### What's new
+
+- **My Tickets:** every list row and board card has a ↗ icon that opens the ticket in its own
+  instance (Jira or Service Desk) in a new tab. Clicking the row still opens the work dialog,
+  as before.
+- **Console:** a session that belongs to a ticket shows a **↗ KEY** pill in the action rail.
+  The ticket key in the "Neue Aktivität" banner is clickable.
+
+### What changed
+
+- **Contract:** `/api/jira-view/my-tickets` and `/api/jira-view/issue/{key}` deliver
+  `_centralstation.url`. `/api/computer/sessions` (and session creation, ticket activity)
+  delivers `ticket_ref.url`. When the instance is unknown, the value is `null`, never a
+  broken link.
+- **Link rule in one place:** `app/core/jira_links.browse_url()`. Before, six places built
+  the link by hand, some with and some without stripping the trailing `/`.
+- **Evidence:**
+  - Unit tests for `browse_url`: trailing slash, missing parts → `null`, key encoded. The
+    backend suite has 715 passed.
+  - Live in the backend against real data: 49 sessions, 7 with a ticket. The links point to
+    `jira.example.org` and `servicedesk.example.com` respectively. My Tickets delivers
+    `https://jira.example.org/browse/JCUE-6364`, among others.
+  - Playwright on hal.example.com with mocked data:
+    - the click opens a new tab at `servicedesk.example.com/…/browse/IMIT-136367`;
+    - the work dialog does not open as well;
+    - board links are present;
+    - the Console pill "↗ IMIT-136367" has the same width as the other pills.
+
+### What's missing
+
+- **Ticket keys inside chat text** (e.g. "see IMIT-1234" in an agent answer) are not linked.
+  The same key can exist in more than one instance, and from the text alone it is not clear
+  which one is meant.
+
+---
+
 ## 2026-11-05 — Console: live search across all sessions
 
 ### What's new

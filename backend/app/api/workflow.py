@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_db
+from app.core.jira_links import browse_url
 from app.models.workflow import ComputerSession, WorkSession
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
@@ -83,17 +84,14 @@ class AnalyzeMailRequest(BaseModel):
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 
 def _to_dict(s: WorkSession, jira_base_url: str | None = None) -> dict:
-    browse_url = (
-        f"{jira_base_url.rstrip('/')}/browse/{s.jira_key}"
-        if jira_base_url and s.jira_key else None
-    )
+    jira_browse_url = browse_url(jira_base_url, s.jira_key)
     return {
         "id": str(s.id),
         "user_id": str(s.user_id),
         "jira_key": s.jira_key,
         "jira_issue_id": s.jira_issue_id,
         "jira_connector_id": str(s.jira_connector_id) if s.jira_connector_id else None,
-        "jira_browse_url": browse_url,
+        "jira_browse_url": jira_browse_url,
         "alert_id": str(s.alert_id) if s.alert_id else None,
         "computer_session_id": s.computer_session_id,
         "gitlab_project_id": s.gitlab_project_id,

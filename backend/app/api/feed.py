@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_db
+from app.core.jira_links import browse_url
 from app.models.alert import Alert
 from app.models.audit import AuditLog
 from app.models.workflow import FeedSearch, UserPreference
@@ -1694,8 +1695,7 @@ async def create_ticket(
         raise HTTPException(502, f"Jira-Ticket konnte nicht erstellt werden: {str(e)[:200]}")
 
     jira_key = result.get("key", "")
-    base = (conn.base_url or "").rstrip("/")
-    url = f"{base}/browse/{jira_key}" if jira_key and base else None
+    url = browse_url(conn.base_url, jira_key)
 
     # Record in the collaboration timeline
     try:

@@ -202,6 +202,21 @@
   }
 }
 
+// Link auf das Ticket einer Ticket-Sitzung — <a> im Pillen-Stil
+a.rail-pill.jira-pill {
+  background: #6699cc;
+  text-decoration: none;
+  box-sizing: border-box;  // wie die <button>-Pillen, sonst 8 px breiter
+
+  &:hover { background: #88aadd; }
+}
+
+.ticket-key-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 // Livesuche über der Sitzungsliste
 .rail-search {
   flex-shrink: 0;

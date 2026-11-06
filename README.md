@@ -805,6 +805,17 @@ ersten 5-min-Lauf gemeldet, das Dauerrauschen nie; 4 Sofort-Mails in 48 h.
 - **JQL templates**: default templates preinstalled, customizable
 - **AI JQL generator**: free text → optimized JQL (`POST /api/preferences/jira-queries/generate`)
 - **Widget display**: selected JQL queries appear as a widget on the Jira page
+- **Open in Jira / Service Desk with one click**: the ↗ icon on every list row and board
+  card opens the ticket in its own instance, in a new tab. Clicking the row still opens the
+  work dialog. The link comes from the backend (`_centralstation.url`, built from the instance
+  the ticket was found in), so a key that exists in both Jira and Service Desk still leads to
+  the right one.
+- **Console:** a Console session that belongs to a ticket shows a **↗ KEY** pill in the
+  action rail. The key in the "Neue Aktivität" banner is a link too
+  (`ticket_ref.url` in `/api/computer/sessions`).
+- **One rule for the link:** `app/core/jira_links.browse_url(base_url, key)` →
+  `<base>/browse/<KEY>`. Every place that links a ticket (incidents, ticket creation, ticket
+  search, kanban, work sessions, My Tickets, Console) uses it.
 
 ### ITIL work sessions
 

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, RequireAnyStaff
 from app.core.database import get_db
+from app.core.jira_links import browse_url
 from app.models.kanban import KanbanCard
 from app.schemas.kanban import KanbanCardCreate, KanbanCardMove, KanbanCardResponse, KanbanCardUpdate
 
@@ -440,14 +441,13 @@ async def get_card_jira_detail(
         try:
             detail = await jira.get_issue_detail(card.jira_key)
             detail["has_jira"] = True
-            detail["jira_browse_url"] = f"{jira_base}/browse/{card.jira_key}"
+            detail["jira_browse_url"] = browse_url(jira_base, card.jira_key)
             return detail
         except Exception as e:
             last_error = str(e)
 
-    first_base = connectors[0].base_url.rstrip("/")
     return {"has_jira": True, "error": last_error, "key": card.jira_key,
-            "jira_browse_url": f"{first_base}/browse/{card.jira_key}"}
+            "jira_browse_url": browse_url(connectors[0].base_url, card.jira_key)}
 
 
 @router.post("/{card_id}/jira-comment", dependencies=[RequireAnyStaff])
