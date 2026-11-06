@@ -1256,6 +1256,26 @@ user on 2026-11-06.
 - **Switch:** writing starts only once the global setting `log_watch.historie_aktiv` is set, after the
   24-hour dry run.
 
+### Log watch: AI cockpit (dashboard widgets)
+
+The generative dashboard is the **"🪄 KI-Cockpit"**. Besides the existing widget types, the AI can
+place six log-watch widgets. Their data comes from `services/log_watch/cockpit.py`, via the same
+`GET /api/dashboard-widgets/{id}/data`.
+
+| Type | Content |
+|---|---|
+| `lw_kriterien` | verdicts per criterion of the relevance definition and per source ("why") |
+| `lw_volumen` | per source and hour: messages read, relevant, would be stored; coverage (windows seen against expected) and failures |
+| `lw_hashtags` | top hashtags of relevant messages, with a factor against the previous period (`null` = new) |
+| `lw_korpus` | field catalog per status, unmatched hosts per reason, last run per source (`ok`/`veraltet`/`fehler`/`nie gelaufen`), definition version, history switch |
+| `lw_befunde`, `lw_netzplan` | AI findings and network graph; `unavailable` with the reason while the history is off |
+
+**Rules:**
+- `lw_kriterien` always appears; if the AI leaves it out, code adds it.
+- `lw_korpus` comes first when a source is not running.
+- Only rows of the current raster version are counted; older rows are reported as `alte_fassung`.
+- The widgets show counts, not host names.
+
 ### Check steps and recipes (incidents)
 
 - **Check steps:** removed from the incident view on 2026-11-06. The investigation runs

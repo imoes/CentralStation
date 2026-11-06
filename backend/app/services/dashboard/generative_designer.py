@@ -57,7 +57,7 @@ COLS = 12  # GridStack columns
 # column alone — uniquely identifies the generative singleton, so the scheduler
 # and the dashboard-list filter never touch a user's hand-built dashboard even
 # if its mode column was mislabelled by an earlier version.
-GENERATIVE_DASHBOARD_NAME = "🪄 KI-Lagebild"
+GENERATIVE_DASHBOARD_NAME = "🪄 KI-Cockpit"
 
 # Widget types the designer may emit and the config keys each accepts.
 _ALLOWED_CONFIG_KEYS: dict[str, set[str]] = {
@@ -73,6 +73,13 @@ _ALLOWED_CONFIG_KEYS: dict[str, set[str]] = {
     "timeseries": {"data_source", "host", "hosts", "service", "metric_id", "graph_index", "hours", "unit"},
     "forecast":   {"host", "service", "metric_id", "graph_index", "history_hours", "horizon_hours", "unit"},
     "error_clusters": {"status", "hours", "limit"},
+    # KI-Cockpit: Log-Überwachung (services/log_watch/cockpit.py)
+    "lw_befunde":   {"hours", "limit"},
+    "lw_netzplan":  {"hours"},
+    "lw_kriterien": {"hours"},
+    "lw_volumen":   {"hours"},
+    "lw_hashtags":  {"hours", "limit"},
+    "lw_korpus":    set(),
 }
 
 # Default grid size per type (w, h)
@@ -89,6 +96,12 @@ _DEFAULT_SIZE: dict[str, tuple[int, int]] = {
     "timeseries": (6, 6),
     "forecast":   (6, 6),   # needs room for history + forecast line
     "error_clusters": (12, 4),  # volle Breite, oben: ein Ausbruch ist die Hauptsache
+    "lw_befunde":   (6, 5),     # das Problem als Objekt einer KI-Analyse
+    "lw_netzplan":  (6, 6),
+    "lw_kriterien": (6, 4),     # Warum: Urteile je Kriterium
+    "lw_volumen":   (6, 4),
+    "lw_hashtags":  (4, 4),
+    "lw_korpus":    (12, 2),    # Korpus-Gesundheit, schmale volle Zeile
 }
 
 # Map a bridge forecast/vital metric id to its CheckMK service description.
@@ -360,6 +373,25 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
         source_state["error_clusters"] = "unavailable"
         log.debug("gather_situation: error_clusters failed: %s", e)
 
+    # Log-Überwachung (KI-Cockpit): Urteile der letzten Stunde, Kriterien, Läufe der Quellen.
+    log_watch: dict = {}
+    try:
+        from app.services.log_watch import cockpit as lw_cockpit
+        kr = await lw_cockpit.daten(db, "lw_kriterien", {"hours": 1})
+        ko = await lw_cockpit.daten(db, "lw_korpus", {})
+        log_watch = {
+            "relevant_1h": sum(k["anzahl"] for k in kr.get("kriterien", []) if k["art"] == "relevant"),
+            "kriterien_1h": [{"id": k["id"], "titel": k["titel"], "anzahl": k["anzahl"]}
+                             for k in kr.get("kriterien", [])][:8],
+            "quellen_mit_fehler": [q for q, l in (ko.get("laeufe") or {}).items()
+                                   if l.get("zustand") != "ok"],
+            "historie_aktiv": ko.get("historie_aktiv", False),
+        }
+        source_state["log_watch"] = "available"
+    except Exception as e:
+        source_state["log_watch"] = "unavailable"
+        log.debug("gather_situation: log_watch failed: %s", e)
+
     return {
         "severity_counts": sev_counts,
         "severity_summary": severity_summary,
@@ -372,6 +404,7 @@ async def gather_situation(db: Any, user_id: str | None = None) -> dict:
         "top_recommendations": top_recommendations,
         "open_incidents": open_incidents,
         "error_clusters": error_clusters,
+        "log_watch": log_watch,
         "as_of": datetime.now(timezone.utc).isoformat(),
         "source_state": source_state,
     }
@@ -415,6 +448,12 @@ NUTZE NUR diese Widget-Typen mit exakt diesen config-Schlüsseln:
 - "timeseries": {"data_source":"checkmk","host":"<host>","service":"<service>","metric_id":"<metric_id>","hours":4}
 - "forecast": {"host":"<host>","service":"<service>","metric_id":"<metric_id>","history_hours":72,"horizon_hours":24}
 - "error_clusters": {"status":"open","hours":24,"limit":3}  — laufende Fehlerausbrüche (Log-Muster über viele Container)
+- "lw_befunde": {"hours":24,"limit":5}  — KI-Befunde der Log-Überwachung als Objekte (Problem, Hypothesen, Belege)
+- "lw_netzplan": {"hours":24}  — Netzplan der relevanten Lage (Hosts, Orte, Themen, Muster)
+- "lw_kriterien": {"hours":24}  — Warum: relevante/nicht relevante Nachrichten je Kriterium der Relevanz-Definition
+- "lw_volumen": {"hours":24}  — Nachrichten je Quelle (Graylog, Wazuh, CheckMK) und Stunde: gelesen, relevant
+- "lw_hashtags": {"hours":24,"limit":15}  — häufigste Hashtags relevanter Nachrichten mit Trend
+- "lw_korpus": {}  — Gesundheit der Korpora (Läufe je Quelle, Felder, nicht zugeordnete Hosts)
 
 DENKPROZESS — überlege VOR der JSON-Ausgabe (kein Output nötig, nur intern):
 1. Was ist das DRINGENDSTE Problem? Welcher Widget-Typ zeigt es am deutlichsten?
@@ -433,6 +472,9 @@ REGELN:
 - Stabile Metriken ignorieren: KEINE timeseries/forecast für Disk/RAM außerhalb forecast_candidates.
 - top_recommendations: Empfehlungen auf spezifische Hosts → passende list/top_hosts priorisieren.
 - error_clusters: Wenn offene Fehler-Cluster vorhanden, MUSS ein Widget type="error_clusters" GANZ OBEN erscheinen
+- log_watch: Dies ist das KI-Cockpit. Ein Widget type="lw_kriterien" MUSS erscheinen. Wenn
+  log_watch.relevant_1h > 0: zusätzlich "lw_hashtags". Wenn log_watch.quellen_mit_fehler nicht leer:
+  "lw_korpus" oben. Wenn log_watch.historie_aktiv: "lw_befunde" und "lw_netzplan" prominent.
 - open_incidents: Wenn offene Incidents vorhanden, MUSS ein Widget type="incidents" oben erscheinen
   (gs_w=12, gs_h=3). Incidents sind cross-source-korrelierte Alert-Gruppen — höchste Priorität.
 
@@ -714,6 +756,11 @@ def _validate_widgets(raw_widgets: list, situation: dict, *, enforce_budget: boo
             cfg["status"] = cfg.get("status") if cfg.get("status") in ("open", "all") else "open"
             cfg["hours"] = min(max(int(cfg.get("hours") or 24), 1), 24 * 14)
             cfg["limit"] = min(max(int(cfg.get("limit") or 3), 1), 10)
+        elif wtype.startswith("lw_"):
+            if "hours" in _ALLOWED_CONFIG_KEYS[wtype]:
+                cfg["hours"] = min(max(int(cfg.get("hours") or 24), 1), 24 * 7)
+            if "limit" in _ALLOWED_CONFIG_KEYS[wtype]:
+                cfg["limit"] = min(max(int(cfg.get("limit") or 10), 1), 25)
         elif wtype == "forecast":
             key = (cfg.get("host"), cfg.get("service"), cfg.get("metric_id"))
             if key not in forecast_keys:
@@ -754,7 +801,9 @@ def _validate_widgets(raw_widgets: list, situation: dict, *, enforce_budget: boo
         enumerate(clean),
         key=lambda item: (
             {
-                "error_clusters": -1, "incidents": 0, "forecast": 1, "stat": 2, "gauge": 3,
+                "lw_befunde": -2, "error_clusters": -1, "incidents": 0, "lw_korpus": 0,
+                "lw_kriterien": 1, "lw_netzplan": 1, "lw_hashtags": 5, "lw_volumen": 6,
+                "forecast": 1, "stat": 2, "gauge": 3,
                 "top_hosts": 4, "donut": 5, "bar": 6, "timeseries": 7,
                 "list": 8, "war_room": 9, "ai_summary": 10,
             }.get(item[1]["widget_type"], 20),
@@ -922,6 +971,7 @@ async def design_dashboard(db: Any, user_id: str) -> dict:
     # point of collecting the metrics in the first place.
     specs = _ensure_forecast_widgets(specs, situation, lang)
     specs = _ensure_error_cluster_widgets(specs, situation, lang)
+    specs = _ensure_log_watch_widgets(specs, situation, lang)
     specs = _validate_widgets(specs, situation, enforce_budget=True)
 
     # Expand short host mentions (e.g. "nsa242") in the rationale to their FQDN
@@ -973,6 +1023,25 @@ def _expand_host_mentions(rationale: str, hosts: list[str]) -> str:
         # \b<short>\b but NOT already followed by a dot (i.e. not part of an FQDN).
         rationale = _re.sub(rf'\b{_re.escape(short)}\b(?!\.)', fqdn, rationale)
     return rationale
+
+
+def _ensure_log_watch_widgets(specs: list[dict], situation: dict, lang: str) -> list[dict]:
+    """Das KI-Cockpit zeigt immer, WARUM die Lage so ist (Urteile je Kriterium) — auch wenn
+    das LLM es weglässt. Läuft eine Quelle nicht, steht die Korpus-Gesundheit davor."""
+    lw = situation.get("log_watch")
+    if not lw:
+        return specs
+    typen = {s.get("widget_type") for s in specs}
+    vorne: list[dict] = []
+    if lw.get("quellen_mit_fehler") and "lw_korpus" not in typen:
+        vorne.append({"widget_type": "lw_korpus",
+                      "title": "Korpus-Gesundheit" if lang == "de" else "Corpus health",
+                      "config": {}})
+    if "lw_kriterien" not in typen:
+        vorne.append({"widget_type": "lw_kriterien",
+                      "title": "Warum: Urteile je Kriterium" if lang == "de" else "Why: verdicts per criterion",
+                      "config": {"hours": 24}})
+    return vorne + specs
 
 
 def _ensure_error_cluster_widgets(specs: list[dict], situation: dict, lang: str) -> list[dict]:

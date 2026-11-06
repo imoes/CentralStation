@@ -1085,4 +1085,9 @@ async def get_widget_data(
             c["series"] = await series(db, c["key"], now - timedelta(hours=2), now)
         return {"clusters": clusters, "total": len(clusters)}
 
+    elif w.widget_type.startswith("lw_"):
+        # KI-Cockpit: Log-Überwachung — dieselben Zahlen wie Trockenlauf und Suche.
+        from app.services.log_watch.cockpit import daten as lw_daten
+        return await lw_daten(db, w.widget_type, cfg)
+
     return {}

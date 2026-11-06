@@ -10,6 +10,60 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 5: the dashboard becomes the AI cockpit (backend)
+
+### What's new
+
+- **Six new widget types** that the AI places on the generative dashboard, which is now called **"🪄
+  KI-Cockpit"**:
+
+  | Widget | Shows |
+  |---|---|
+  | `lw_kriterien` | why: verdicts per criterion and source |
+  | `lw_volumen` | messages per source and hour: read, relevant, would be stored |
+  | `lw_hashtags` | most frequent hashtags of relevant messages, with trend |
+  | `lw_korpus` | corpus health: fields, unmatched hosts, last run per source |
+  | `lw_befunde` | AI findings as objects |
+  | `lw_netzplan` | the network graph |
+
+  - `lw_befunde` and `lw_netzplan` say "history not active yet (dry run)" until the history is filled;
+    they never show an empty tile.
+- **The cockpit always shows why.** If the AI leaves out `lw_kriterien`, code adds it. If a source is
+  not running, `lw_korpus` comes first.
+- **Numbers carry unit, period and origin.** Host names appear only in the admin API; the widgets show
+  counts.
+
+### What changed
+
+- **The generative dashboard is renamed** from "🪄 KI-Lagebild" to "🪄 KI-Cockpit". The name is the key
+  the dashboard is found by, so the existing rows are renamed by migration 0057. Changing only the
+  constant would have created a second, empty dashboard.
+
+### Fixed during the live check
+
+- **Rows from before the definition mixed with new ones.** In the hour window, Wazuh showed 731 hashtag
+  hits for 268 relevant messages, and "would be stored" (426) was larger than "relevant".
+  - The aggregation now counts only rows of the current raster version.
+  - Older rows are listed as `alte_fassung`, not silently dropped.
+  - After the fix: 268 relevant, top hashtag 209, stored 94.
+
+### Evidence (live, 2026-11-06 ~18:20 UTC)
+
+- All six widget types return data, or the named "history not active" state.
+- `lw_kriterien` over one hour: R2 103 (Graylog), R6 268 (Wazuh), N0 7 276, N1 Graylog routine.
+- Migration 0057: 3 dashboards renamed, no duplicate.
+- **Tests:** 9 new (cockpit aggregation, designer whitelist and clamping, mandatory "why" widget,
+  version mixing). The backend suite has 832 passed.
+
+### What's missing
+
+- **The frontend does not render the `lw_*` widgets yet.**
+- **The host page is still labelled "Server-Cockpit"**; the rename to "Host-Cockpit" is in the frontend
+  step.
+- **Findings, the network graph and the MCP tools** need the history and the tool registry.
+
+---
+
 ## 2026-11-06 — Log watch, part 4: what "relevant" means is defined, and every verdict cites it
 
 ### What's new
