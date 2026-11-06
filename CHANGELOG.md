@@ -42,7 +42,8 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 - **Browser check** (Playwright, API mocked with that data): 5 KPIs without overflow; the queue is
   marked "wächst".
 - **Backend suite:** 926 passed.
-- **Rollout pending** (parts 15–17), blocked by the running Werkbank container.
+- **Rolled out 22:13:52 UTC** (commit `7991cd9`) after the Werkbank container was stopped. Live:
+  `lw_ki` shows 5 runs, 10 findings, queue trend +9.
 
 ---
 
@@ -64,7 +65,8 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 - **Test:** every read-only registry tool is an MCP tool, and `lw_befund` is not (found via the AST of
   `mcp_server.py`).
 - **Backend suite:** 925 passed.
-- **Live MCP check:** pending, together with the rollout of parts 15/16.
+- **Live (22:14 UTC):** the MCP server lists `lw_definition`, `lw_facetten`, `lw_nachricht`,
+  `lw_netzplan`, `lw_suche` and `lw_wissen`.
 
 ---
 
@@ -103,9 +105,29 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What's missing
 
-- **Rollout pending.** The backend restart is blocked while the Werkbank container
-  `cs-userenv-5bfd1b3f…` runs. The new restart guard aborts instead of interrupting it. Live verification
-  follows after the rollout.
+- **Rolled out 22:13:52 UTC.** The new restart guard had blocked it while the Werkbank container ran; the
+  container was stopped at your request.
+- **Host directory, live:** 3 057 entries.
+  - Criticality: prod 2 142, offline 656, test 122, staging 87, dev 30, critical 18, install 2.
+  - Location empty: 0 (before: 3 057).
+  - Network zone: intern 2 890, dmz 167.
+  - Definition v6 active.
+- **Fresh history documents (last 15 min at 22:16 UTC):** 96 documents. These hashtag types appear on
+  them:
+
+  | Hashtag type | Documents |
+  |---|---|
+  | `regelgruppe:` | 151 occurrences |
+  | `kritikalitaet:` | 54 |
+  | `decoder:` | 51 |
+  | `logquelle:` | 51 |
+  | `ort:` | 48 |
+  | `netz:` | 48 |
+  | `mitre-technik:` | 28 |
+  | `netzbereich:` | 9 |
+  | `label:` | 0 (that window had no alert from the one labelled agent) |
+
+  Part of these documents was written before 22:14 with the old code, so the counts are a lower bound.
 - **Criticality `install` (2 hosts)** arrives as a hashtag but no criterion names it.
 
 ### Definition v6 (decided 2026-11-06)
