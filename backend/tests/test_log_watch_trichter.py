@@ -123,3 +123,9 @@ def test_protokoll_auch_bei_fehler(monkeypatch):
     erg = asyncio.run(tr.analysiere({"start": "host:a", "anzahl": 1, "hosts": ["a"]}, object(), _Kaputt(),
                                     bauer=_bauer, schreiber=_schreiber, lage_bauer=_lage))
     assert erg["fehler"].startswith("TimeoutError") and [z["rolle"] for z in PROTOKOLL] == ["worker"]
+
+
+def test_trichter_bietet_lw_wissen_nicht_an():
+    """Gedächtnis steht im Prompt — lw_wissen wäre ein zweiter Weg zum selben Ergebnis."""
+    namen = [t["function"]["name"] for t in tr.wz.openai_tools(tr.TRICHTER_WERKZEUGE)]
+    assert "lw_wissen" not in namen and "lw_befund" in namen and set(namen) <= set(tr.wz.REGISTRY)

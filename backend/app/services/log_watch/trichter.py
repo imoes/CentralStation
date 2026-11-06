@@ -58,7 +58,8 @@ Vorgehen als Trichter:
    Host-Objekt — felder (Stammdaten aus CheckMK), nachbarschaft (Netzplan-Kanten) und gedaechtnis
    (frühere Befunde und Gespräche zu diesem Host). Lies beides zuerst.
    Gibt es im Gedächtnis schon einen Befund zur selben Lage, beziehe dich darauf (Folge-Befund).
-2. Werkzeuge (lw_suche, lw_facetten, lw_netzplan, lw_nachricht, lw_gespraech) nur zum Vertiefen:
+2. Werkzeuge (lw_suche, lw_facetten, lw_netzplan, lw_nachricht, lw_gespraech) nur zum Vertiefen
+   über die Lage hinaus (anderer Filter, anderer Zeitraum, eine Nachricht vollständig):
    den auffälligsten Hashtag als Filter ergänzen, bis ein kleines, zusammenhängendes Ergebnis bleibt.
 3. Mit lw_befund abschließen — immer, auch wenn nichts Relevantes bleibt (dann Relevanz 0 oder 1 und
    kurz, warum).
@@ -153,6 +154,13 @@ def _kurz(erg: dict) -> str:
     return s if len(s) <= ANTWORT_MAX else s[:ANTWORT_MAX] + f' … [abgeschnitten, {len(s)} Zeichen]'
 
 
+#: Werkzeuge des Trichters. Nicht lw_wissen: frühere Befunde und Gespräche stehen schon im Prompt
+#: (Lage des Falls, Gedächtnis je Host) — zwei Wege zum selben Ergebnis nahm die KI beide
+#: (gemessen 06.11.: alle 6 Sitzungen nach dem Deploy begannen trotzdem mit lw_wissen).
+#: Für die Konsole bleibt lw_wissen über MCP; zum Nachlesen bleibt lw_gespraech.
+TRICHTER_WERKZEUGE = ["lw_suche", "lw_facetten", "lw_netzplan", "lw_nachricht", "lw_gespraech",
+                      "lw_definition", "lw_befund"]
+
 #: so viele Hosts eines Falls bekommen ein Host-Objekt im Prompt (der Rest wird genannt)
 HOSTS_IM_PROMPT = 3
 
@@ -215,7 +223,7 @@ async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=
 
 async def _schleife(fall: dict, llm_config, llm, prompt: str, verlauf: list[dict]) -> dict:
     nachrichten = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
-    tools = wz.openai_tools()
+    tools = wz.openai_tools(TRICHTER_WERKZEUGE)
     schritte: list[dict] = []
     erinnert = False
     for _ in range(SCHRITTE):
