@@ -167,3 +167,12 @@ def test_cockpit_kern_zwei_zeilen_und_bleibt_bei_ausbruch():
     pos = {x["widget_type"]: (x["gs_x"], x["gs_y"]) for x in final}
     assert pos["lw_befunde"] == (0, 0) and pos["lw_netzplan"] == (6, 0)
     assert pos["lw_ki"] == (0, 5) and pos["lw_kriterien"] == (6, 5)
+
+
+def test_kern_auch_wenn_das_llm_lw_befunde_selbst_waehlt():
+    """Regression 06.11.: das LLM wählte lw_befunde, Netzplan und KI-Flotte fehlten im echten Cockpit."""
+    s = {"log_watch": {"quellen_mit_fehler": [], "befunde_24h": [{"titel": "x", "host": "a", "relevanz": 3}]}}
+    llm = [{"widget_type": "lw_befunde", "config": {"hours": 24}}, {"widget_type": "lw_kriterien", "config": {}},
+           {"widget_type": "error_clusters", "config": {}}, {"widget_type": "incidents", "config": {}}]
+    typen = {x["widget_type"] for x in _ensure_log_watch_widgets(llm, s, "de")}
+    assert {"lw_befunde", "lw_netzplan", "lw_ki", "lw_kriterien"} <= typen

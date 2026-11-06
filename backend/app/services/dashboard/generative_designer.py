@@ -1048,19 +1048,19 @@ def _ensure_log_watch_widgets(specs: list[dict], situation: dict, lang: str) -> 
         return specs
     typen = {s.get("widget_type") for s in specs}
     vorne: list[dict] = []
-    # Ein Problem als Objekt einer KI-Analyse ist der Kern des Cockpits — steht ganz vorne.
-    if (lw.get("befunde_24h") or lw.get("befund_wartend")) and "lw_befunde" not in typen:
-        vorne.append({"widget_type": "lw_befunde",
-                      "title": "KI-Befunde" if lang == "de" else "AI findings",
-                      "config": {"hours": 24}})
-        if "lw_netzplan" not in typen:
-            vorne.append({"widget_type": "lw_netzplan",
-                          "title": "Netzplan der Brennpunkte" if lang == "de" else "Graph of hot spots",
-                          "config": {"hours": 6, "filter": "relevanz>=3"}})
-        if "lw_ki" not in typen:
-            vorne.append({"widget_type": "lw_ki",
-                          "title": "KI-Flotte: kommt sie nach?" if lang == "de" else "AI fleet: keeping up?",
-                          "config": {"hours": 6}})
+    # Kern des Cockpits: ein Problem als Objekt einer KI-Analyse, daneben was zusammen auftritt,
+    # darunter ob die KI nachkommt. JEDES Kernstück einzeln prüfen — geschachtelt hinter
+    # lw_befunde fehlten Netzplan und KI-Flotte, sobald das LLM lw_befunde selbst wählte
+    # (gemessen 06.11. am echten Cockpit).
+    if lw.get("befunde_24h") or lw.get("befund_wartend"):
+        kern = (
+            ("lw_befunde", "KI-Befunde", "AI findings", {"hours": 24}),
+            ("lw_netzplan", "Netzplan der Brennpunkte", "Graph of hot spots", {"hours": 6, "filter": "relevanz>=3"}),
+            ("lw_ki", "KI-Flotte: kommt sie nach?", "AI fleet: keeping up?", {"hours": 6}),
+        )
+        for typ, de, en, cfg in kern:
+            if typ not in typen:
+                vorne.append({"widget_type": typ, "title": de if lang == "de" else en, "config": cfg})
     if lw.get("quellen_mit_fehler") and "lw_korpus" not in typen:
         vorne.append({"widget_type": "lw_korpus",
                       "title": "Korpus-Gesundheit" if lang == "de" else "Corpus health",
