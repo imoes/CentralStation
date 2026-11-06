@@ -36,7 +36,7 @@ def test_trichter_bis_befund(monkeypatch):
                                       {"id": "ki:abc", "belege": 2, "verworfen": []}]})
     ki = _FakeKI([[_aufruf("lw_wissen", filter="host:a")], [_aufruf("lw_facetten", filter="host:a")],
                   [_aufruf("lw_befund", titel="t")], [_aufruf("lw_befund", titel="t2")]])
-    erg = asyncio.run(tr.analysiere("a", 7, object(), ki))
+    erg = asyncio.run(tr.analysiere({"start": "host:a", "anzahl": 7, "hosts": ["a"]}, object(), ki))
     assert erg["befund"] == "ki:abc"
     assert [s["werkzeug"] for s in erg["schritte"]] == ["lw_wissen", "lw_facetten", "lw_befund", "lw_befund"]
     assert erg["schritte"][2]["fehler"].startswith("kein geprüfter Beleg")
@@ -45,7 +45,7 @@ def test_trichter_bis_befund(monkeypatch):
 
 def test_ohne_befund_benannt(monkeypatch):
     ki = _FakeKI([[], []])
-    erg = asyncio.run(tr.analysiere("a", 1, object(), ki))
+    erg = asyncio.run(tr.analysiere({"start": "host:a", "anzahl": 1, "hosts": ["a"]}, object(), ki))
     assert erg["kein_befund"] == "KI hat ohne lw_befund geendet"
 
 
@@ -53,3 +53,20 @@ def test_systemprompt_statisch_und_ausloeser_lesbar():
     assert not re.search(r"\d{4}-\d{2}-\d{2}|\{|\}", tr.SYSTEM)
     q = flt.opensearch(tr.AUSLOESER)
     assert {"range": {"relevanz": {"gte": 3.0}}} in q["bool"]["filter"][0]["bool"]["should"]
+
+
+def test_offene_eine_analyse_hat_gesehen_was_ihr_start_bis_dahin_traf():
+    n = [{"host": "a", "zeit": "2026-11-06T21:19:06Z", "hashtags": ["host:a", "muster:m1"]},
+         {"host": "b", "zeit": "2026-11-06T21:19:07Z", "hashtags": ["host:b", "muster:m1"]},
+         {"host": "a", "zeit": "2026-11-06T21:40:00Z", "hashtags": ["host:a", "muster:m1"]},   # nach dem Befund
+         {"host": "c", "zeit": "2026-11-06T21:01:00Z", "hashtags": ["host:c"]}]
+    befunde = [{"host": "a", "zeit": "2026-11-06T21:33:45Z", "ai_provenance": {"start": "muster:m1"}},
+               {"host": "c", "zeit": "2026-11-06T21:24:21Z"}]          # alt, ohne Start → host:c
+    assert [x["zeit"][11:19] for x in tr.offene(n, befunde)] == ["21:40:00"]
+
+
+def test_faelle_gleiches_muster_ein_fall_ueber_hosts():
+    n = [{"host": "cue0174", "hashtags": ["muster:m1"]}, {"host": "cue222", "hashtags": ["muster:m1"]},
+         {"host": "cue222", "hashtags": ["muster:m1"]}, {"host": "srv032", "hashtags": ["host:srv032"]}]
+    assert tr.faelle(n) == [{"start": "muster:m1", "anzahl": 3, "hosts": ["cue0174", "cue222"]},
+                            {"start": "host:srv032", "anzahl": 1, "hosts": ["srv032"]}]

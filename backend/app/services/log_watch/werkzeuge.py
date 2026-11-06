@@ -68,12 +68,13 @@ async def lw_definition() -> dict:
 
 
 async def lw_befund(titel: str, befund: str, relevanz: int, belege: list, hypothesen: list | None = None,
-                    hashtags: list | None = None, _modell: str = "", _schritte: list | None = None) -> dict:
+                    hashtags: list | None = None, _modell: str = "", _schritte: list | None = None,
+                    _start: str = "") -> dict:
     from app.services.log_watch.befund import BefundAbgelehnt, schreibe_befund
     try:
         return await schreibe_befund({"titel": titel, "befund": befund, "relevanz": relevanz,
                                       "belege": belege, "hypothesen": hypothesen or [],
-                                      "hashtags": hashtags or []}, _modell, _schritte)
+                                      "hashtags": hashtags or []}, _modell, _schritte, start=_start)
     except BefundAbgelehnt as e:
         return {"abgelehnt": str(e)}
 

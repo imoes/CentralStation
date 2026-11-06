@@ -36,7 +36,8 @@ Relevanz 0–3, Hashtags art:wert (host:, thema:, signal:, quelle:, kritikalitae
 Kriterien R1–R8 (relevant) / N0–N6 (nicht relevant) mit Gründen.
 
 Vorgehen als Trichter:
-1. Zuerst lw_wissen mit dem Host-Filter: gibt es schon einen Befund oder gelöstes Konsolen-Wissen?
+1. Zuerst lw_wissen mit dem Startfilter und je betroffenem Host (host:…): gibt es schon einen Befund
+   oder gelöstes Konsolen-Wissen?
    Wenn ja und die Lage ist unverändert, beziehe dich darauf.
 2. lw_facetten bzw. lw_suche mit breitem Filter, Facetten lesen.
 3. Den auffälligsten Hashtag als Filter ergänzen, erneut suchen — bis ein kleines, zusammenhängendes
@@ -55,21 +56,65 @@ Regeln:
   Zitat (nicht das Suchfenster); Befund ≤ 8 Sätze mit Zahlen und Zeitraum."""
 
 
+#: so viele auslösende Nachrichten liest die Prüfung je Lauf (mehr wären ein Rückstau, benannt)
+PRUEF_MAX = 2000
+
+
+def _start_von(befund: dict) -> str:
+    """Startfilter einer Analyse; ältere Befunde ohne gespeicherten Start: der Host."""
+    return (befund.get("ai_provenance") or {}).get("start") or f"host:{befund.get('host', '')}"
+
+
+def offene(nachrichten: list[dict], befunde: list[dict]) -> list[dict]:
+    """Auslösende Nachrichten, die noch keine Analyse gesehen hat. Rein — testbar.
+
+    Eine Analyse hat alles gesehen, was ihr Startfilter (ein Hashtag) bis zu ihrem Zeitpunkt
+    traf: eine Nachricht ist erledigt, wenn ein späterer Befund mit einem Start existiert, den
+    sie trägt. Ohne diese Regel stand jede nicht zitierte Nachricht im nächsten Lauf wieder an
+    (gemessen 06.11.: cue0149, cue0174, cue222 erneut wartend, alle älter als ihr Befund)."""
+    starts = [(_start_von(b), b.get("zeit") or "") for b in befunde]
+    return [n for n in nachrichten
+            if not any(st in (n.get("hashtags") or []) and z >= (n.get("zeit") or "") for st, z in starts)]
+
+
+def faelle(offen: list[dict]) -> list[dict]:
+    """Offene Nachrichten → Fälle. Gleiches Muster = ein Fall über alle Hosts (ein Problem, ein
+    Befund — gemessen 06.11.: derselbe ExifTool-Fehler auf cue0174 und cue222 gab zwei Befunde);
+    ohne Muster (Wazuh, CheckMK) je Host. Größter Fall zuerst."""
+    je: dict[str, dict] = {}
+    for n in offen:
+        tags = n.get("hashtags") or []
+        muster = sorted(t for t in tags if t.startswith("muster:"))
+        start = muster[0] if muster else f"host:{n.get('host', '')}"
+        f = je.setdefault(start, {"start": start, "anzahl": 0, "hosts": set()})
+        f["anzahl"] += 1
+        f["hosts"].add(n.get("host", ""))
+    out = [{**f, "hosts": sorted(f["hosts"])} for f in je.values()]
+    return sorted(out, key=lambda f: (-f["anzahl"], f["start"]))
+
+
 async def kandidaten(stunden: float = STUNDEN) -> dict:
-    """Prüfung: Hosts mit auslösenden Nachrichten ohne Befund. {gesamt, hosts:[{host, anzahl}]}."""
+    """Prüfung: offene auslösende Nachrichten, als Fälle. {gesamt, faelle, hosts, gekappt}."""
+    from collections import Counter
+
     from app.core.opensearch import get_opensearch
     from app.services.log_watch import filter as flt
     from app.services.log_watch.historie import PRAEFIX
-    bis = datetime.now(timezone.utc)
-    body = {"size": 0, "track_total_hits": True, "query": {"bool": {
-        "filter": [{"range": {"zeit": {"gte": (bis - timedelta(hours=stunden)).isoformat()}}},
-                   flt.opensearch(AUSLOESER)],
-        "must_not": [{"prefix": {"hashtags": "befund:"}}]}},
-        "aggs": {"hosts": {"terms": {"field": "host", "size": 20}}}}
-    res = await get_opensearch().search(index=f"{PRAEFIX}*", body=body, ignore_unavailable=True)
-    return {"gesamt": res["hits"]["total"]["value"],
-            "hosts": [{"host": b["key"], "anzahl": b["doc_count"]}
-                      for b in res["aggregations"]["hosts"]["buckets"]]}
+    os_client = get_opensearch()
+    seit = (datetime.now(timezone.utc) - timedelta(hours=stunden)).isoformat()
+    res = await os_client.search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
+        "size": PRUEF_MAX, "track_total_hits": True, "_source": ["host", "zeit", "hashtags"],
+        "query": {"bool": {"filter": [{"range": {"zeit": {"gte": seit}}}, flt.opensearch(AUSLOESER)],
+                           "must_not": [{"prefix": {"hashtags": "befund:"}}]}}})
+    nachrichten = [h["_source"] for h in res["hits"]["hits"]]
+    bef = await os_client.search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
+        "size": 500, "_source": ["host", "zeit", "ai_provenance.start"],
+        "query": {"bool": {"filter": [{"term": {"quelle": "ki"}}, {"range": {"zeit": {"gte": seit}}}]}}})
+    offen = offene(nachrichten, [h["_source"] for h in bef["hits"]["hits"]])
+    je_host = Counter(n.get("host", "") for n in offen)
+    return {"gesamt": len(offen), "gekappt": res["hits"]["total"]["value"] > PRUEF_MAX,
+            "faelle": faelle(offen),
+            "hosts": [{"host": h, "anzahl": n} for h, n in je_host.most_common(20)]}
 
 
 def _kurz(erg: dict) -> str:
@@ -77,16 +122,17 @@ def _kurz(erg: dict) -> str:
     return s if len(s) <= ANTWORT_MAX else s[:ANTWORT_MAX] + f' … [abgeschnitten, {len(s)} Zeichen]'
 
 
-async def analysiere(host: str, anzahl: int, llm_config, llm=None) -> dict:
-    """Eine Werkzeug-Schleife für einen Host. Ergebnis {host, befund|kein_befund|fehler, schritte}."""
+async def analysiere(fall: dict, llm_config, llm=None) -> dict:
+    """Eine Werkzeug-Schleife für einen Fall {start, anzahl, hosts}.
+    Ergebnis {start, hosts, befund|kein_befund|fehler, schritte}."""
     if llm is None:
         from app.services.llm_client import generate_with_tools as llm
     nachrichten = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content": (
-            f"Prüfung wahr: {anzahl} Nachrichten mit Relevanz 3 oder neuem Muster auf Host {host} in den "
-            f"letzten {STUNDEN} h, noch ohne Befund. Startfilter: host:{host}. Untersuche und lege den "
-            f"Befund ab.")},
+            f"Prüfung wahr: {fall['anzahl']} Nachrichten mit Relevanz 3 oder neuem Muster in den letzten "
+            f"{STUNDEN} h, noch ohne Analyse. Startfilter: {fall['start']} — betroffene Hosts: "
+            f"{', '.join(fall['hosts'])}. Untersuche und lege den Befund ab.")},
     ]
     tools = wz.openai_tools()
     schritte: list[dict] = []
@@ -98,7 +144,7 @@ async def analysiere(host: str, anzahl: int, llm_config, llm=None) -> dict:
         nachrichten.append(antwort.nachricht)
         if not antwort.aufrufe:
             if erinnert:
-                return {"host": host, "kein_befund": "KI hat ohne lw_befund geendet",
+                return {"start": fall["start"], "hosts": fall["hosts"], "kein_befund": "KI hat ohne lw_befund geendet",
                         "text": antwort.text[:1000], "schritte": schritte}
             erinnert = True
             nachrichten.append({"role": "user", "content": "Schließe mit lw_befund ab."})
@@ -108,16 +154,16 @@ async def analysiere(host: str, anzahl: int, llm_config, llm=None) -> dict:
                 erg = {"fehler": a["fehler"]}
             elif a["name"] == "lw_befund":
                 erg = await wz.rufe(a["name"], a["argumente"], _modell=getattr(llm_config, "model", ""),
-                                    _schritte=list(schritte))
+                                    _schritte=list(schritte), _start=fall["start"])
             else:
                 erg = await wz.rufe(a["name"], a["argumente"])
             schritte.append({"werkzeug": a["name"], "argumente": a["argumente"], "ki_s": ki_s,
                              "gesamt": erg.get("gesamt"), "fehler": erg.get("fehler") or erg.get("abgelehnt")})
             if a["name"] == "lw_befund" and "id" in erg:
-                return {"host": host, "befund": erg["id"], "belege": erg["belege"],
+                return {"start": fall["start"], "hosts": fall["hosts"], "befund": erg["id"], "belege": erg["belege"],
                         "verworfen": erg["verworfen"], "schritte": schritte}
             nachrichten.append({"role": "tool", "tool_call_id": a["id"], "content": _kurz(erg)})
-    return {"host": host, "kein_befund": f"nach {SCHRITTE} Schritten kein gültiger Befund", "schritte": schritte}
+    return {"start": fall["start"], "hosts": fall["hosts"], "kein_befund": f"nach {SCHRITTE} Schritten kein gültiger Befund", "schritte": schritte}
 
 
 async def lauf(erzwingen: bool = False, llm=None) -> dict | None:
@@ -132,11 +178,11 @@ async def lauf(erzwingen: bool = False, llm=None) -> dict | None:
         llm_config = await get_active_llm_config(db)
     k = await kandidaten()
     ergebnisse = []
-    for h in k["hosts"][:HOECHSTENS_JE_LAUF]:
+    for f in k["faelle"][:HOECHSTENS_JE_LAUF]:
         try:
-            ergebnisse.append(await analysiere(h["host"], h["anzahl"], llm_config, llm))
-        except Exception as e:  # noqa: BLE001 — ein Host scheitert, der nächste läuft
-            log.warning("Trichter %s: %s", h["host"], e)
-            ergebnisse.append({"host": h["host"], "fehler": f"{type(e).__name__}: {str(e)[:300]}"})
+            ergebnisse.append(await analysiere(f, llm_config, llm))
+        except Exception as e:  # noqa: BLE001 — ein Fall scheitert, der nächste läuft
+            log.warning("Trichter %s: %s", f["start"], e)
+            ergebnisse.append({"start": f["start"], "hosts": f["hosts"], "fehler": f"{type(e).__name__}: {str(e)[:300]}"})
     return {"pruefung": k, "analysen": ergebnisse,
             "befunde": [e["befund"] for e in ergebnisse if "befund" in e]}

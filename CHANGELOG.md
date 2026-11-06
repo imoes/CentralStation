@@ -10,6 +10,47 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 14: the AI funnel works on cases, and nothing is analysed twice
+
+### What changed
+
+- **The AI funnel works on cases, not on hosts.** Messages with the same pattern (`muster:`) form one case
+  across all hosts, so one problem gets one finding. Wazuh and CheckMK messages, which carry no pattern,
+  form one case per host.
+- **Every finding stores its start filter** (`ai_provenance.start`). A waiting message counts as seen when
+  a later finding has a start filter the message carries. The rule is "an analysis has seen everything its
+  start filter matched up to its time".
+- **The model asks earlier knowledge** with the start filter and with each affected host.
+
+### Fixed
+
+- **Already analysed messages stood in the queue again.**
+  - Measured 21:34 UTC: cue0174 (6), cue0149 (4) and cue222 (4) waited again. Every one of these messages
+    was older than its host's finding; they only lacked a quote in it.
+  - Each run would have analysed the same problem anew.
+- **One problem, two findings.**
+  - The same ExifTool error in the digicol image pipeline appeared on cue0174 and cue222 within the same
+    5 s (22:19:05–09 local time) with the same two patterns (`muster:99e826e2…`, `muster:c30f48fb…`).
+  - It produced `ki:934bdfd296` and `ki:e470308875`, because the funnel worked per host and asked earlier
+    knowledge only by host.
+
+### Evidence (live)
+
+- **Queue:** 27 messages before the fix, 14 after it (21:37 UTC). The re-listed hosts are gone.
+  mon03 (4) stays: those messages are newer than its finding from 21:00.
+- **Funnel runs:**
+
+  | Run | Model endpoint | Findings |
+  |---|---|---|
+  | 21:23 | `/qwen35b` | cue0149, srv032 |
+  | 21:34 | `/qwen27b` (strata) | cue0174, cue222 |
+
+  All quotes were checked and none was rejected.
+- **Wazuh after the fetch-by-ID fix:** 216 requested, 216 written (4 runs).
+- **Backend suite:** 918 passed.
+
+---
+
 ## 2026-11-06 — Log watch, part 13: network graph in the cockpit; R7 reaches stored messages; one name for the finding link
 
 ### What's new

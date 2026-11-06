@@ -70,7 +70,7 @@ def pruefe_belege(belege: list[dict], dokumente: dict[str, dict]) -> Pruefung:
 
 
 def baue(eingabe: dict, pruefung: Pruefung, jetzt: datetime, modell: str = "",
-         schritte: list | None = None) -> tuple[str, dict]:
+         schritte: list | None = None, start: str = "") -> tuple[str, dict]:
     """(Dokument-ID, Dokument) des Befunds. Wirft BefundAbgelehnt mit Grund."""
     titel = str(eingabe.get("titel") or "").strip()
     text = str(eingabe.get("befund") or "").strip()
@@ -118,6 +118,8 @@ def baue(eingabe: dict, pruefung: Pruefung, jetzt: datetime, modell: str = "",
         "gruppe_anzahl": len(belegt),
         "ai_provenance": {
             "titel": titel, "modell": modell, "hypothesen": hypothesen,
+            # Startfilter der Analyse: alles, was er bis jetzt traf, gilt als gesehen (trichter.offene)
+            "start": start,
             "belege": [{k: b[k] for k in ("id", "zitat", "host", "quelle", "zeit")} for b in pruefung.gueltig],
             "verworfen": pruefung.verworfen, "schritte": schritte or [],
         },
@@ -136,7 +138,7 @@ async def lies_dokumente(ids: list[str]) -> dict[str, dict]:
 
 
 async def schreibe_befund(eingabe: dict, modell: str = "", schritte: list | None = None,
-                          jetzt: datetime | None = None) -> dict:
+                          jetzt: datetime | None = None, start: str = "") -> dict:
     """Prüfen, einbetten, schreiben, Belege verknüpfen. Ergebnis {id, belege, verworfen} oder
     BefundAbgelehnt."""
     from app.core.opensearch import get_opensearch
@@ -145,7 +147,7 @@ async def schreibe_befund(eingabe: dict, modell: str = "", schritte: list | None
     jetzt = jetzt or datetime.now(timezone.utc)
     belege = [b for b in (eingabe.get("belege") or []) if isinstance(b, dict)]
     pruefung = pruefe_belege(belege, await lies_dokumente([str(b.get("id")) for b in belege]))
-    doc_id, doc = baue(eingabe, pruefung, jetzt, modell, schritte)
+    doc_id, doc = baue(eingabe, pruefung, jetzt, modell, schritte, start)
     try:
         (doc["vektor"],) = await einbetten([doc["text"]])
     except EmbeddingFehler:
