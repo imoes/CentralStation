@@ -10,6 +10,41 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 20: the fleet in operation; correction to part 18
+
+### Correction to part 18
+
+Part 18 justified the host object as the prompt with a saving: "19.9 s of 62.2 s model time spent
+gathering the situation". **Measured, that saving did not happen:**
+
+- **First run with host objects (22:53):**
+  - 256–294 s and 7–12 steps per case; before, 140–254 s.
+  - Prompts were 6 000–20 000 characters.
+  - 3 of 4 cases started with `muster:`, while the situation in the object was searched per host. The
+    model therefore still called `lw_wissen`/`lw_suche`/`lw_facetten` with the pattern.
+- **Fix:** the situation now sits once on the case, from its start filter (`hostobjekt.fall_lage`).
+  The hosts carry only fields, neighbourhood and memory. Prompts are now mostly 3 100–4 100 characters.
+- **Even after that, all 6 measured sessions started with `lw_wissen`.** Memory in the prompt plus a
+  tool for the same memory are two ways to one result, and the model took both. The funnel no longer
+  offers `lw_wissen`; the console keeps it via MCP, and `lw_gespraech` stays for reading further back.
+- **The real bottleneck is the last step, writing the finding:** 104–161 s, about 60 % of a case's
+  model time. Three agents share strata's compute.
+
+### Evidence for the fleet (live)
+
+- **3 agents at once on disjoint cases**, each with its own lease (e.g. 23:22: vpp0242, mon03,
+  `muster:16016f9a…`).
+- **Throughput:** 6 analyses in 11 minutes after the rollout (about 33/h). Before: 18 findings in
+  46 minutes (about 23/h) with sequential or pairwise runs.
+- **Queue:** 23:10 80 messages / 40 cases, 2 expired (named for the first time); 23:20 75 / 38,
+  0 expired.
+- **Drain before a rollout:** with the switch off, agents finish their case. At 23:06:23 3 leases were
+  open; at 23:13:57 none. Rolled out 23:14:16, fleet back on. No analysis was cut off.
+- **Last 2 h** (`lw_ki`, live): 39 cases analysed, 35 findings, 0 errors.
+- **Backend suite:** 931 passed.
+
+---
+
 ## 2026-11-06 — Log watch, part 19: the AI works as a fleet of agents
 
 ### What's new
