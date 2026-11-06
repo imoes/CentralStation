@@ -10,6 +10,36 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 19: the AI works as a fleet of agents
+
+### What's new
+
+- **Agent fleet** (your decision 2026-11-06: at most 3 agents, only the configured model).
+  - Because the context lives in the database, any agent can take any case.
+  - Every minute one agent may start, at most 3 at once.
+  - Each agent takes the next free case until the queue is empty or its 480 s budget is used up.
+- **Leases in Postgres** (`ki_lease`, migration 0061). A case leases all its hosts or none. The work is
+  serial per conversation (host) and parallel across conversations. A crashed agent's lease ends after
+  900 s.
+- **Queue measured separately**, every 10 minutes (row `ki-pruefung`: open, cases, expired). The curve
+  has points even when no agent works, and `verfallen` counts once per cycle instead of once per agent.
+
+### Fixed
+
+- **Deferred cases counted as "without finding".** In the parallel run of 22:43 two cases were never
+  started because of the time budget, yet counted as `ohne_befund`. An agent now only takes a case it
+  still has budget for.
+
+### Evidence
+
+- **Parallel run of 22:43** (2 at once, before the fleet):
+  - 6 findings in 463 s, against 4 in 355–379 s with 1 at a time.
+  - 140–254 s per case, against 62–161 s, because the parallel requests share strata's compute.
+  - Queue 77 messages / 37 cases.
+- **Backend suite:** 930 passed. Live check after the rollout.
+
+---
+
 ## 2026-11-06 — Log watch, part 18: the agentic mode gets a conversation history; its prompt is a search result
 
 ### What's new

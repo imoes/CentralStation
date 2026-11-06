@@ -67,10 +67,10 @@ const ZUSTAND: Record<string, string> = {
           }
         }
         @case ('lw_ki') {
-          <div class="lw-meta">KI-Analyse · {{ d().zeitraum_h }} h · {{ d().laeufe }} Läufe · KI {{ d().ki_aktiv ? 'an' : 'aus' }}
-            · Kapazität jetzt {{ d().kapazitaet?.faelle_je_lauf }} Fälle je 10 min</div>
-          @if (!d().laeufe) {
-            <div class="lw-leer">Kein Lauf im Zeitraum{{ d().ki_aktiv ? '' : ' — KI-Trichter ist ausgeschaltet' }}</div>
+          <div class="lw-meta">KI-Flotte · {{ d().zeitraum_h }} h · {{ d().laeufe }} Agent-Einsätze · KI {{ d().ki_aktiv ? 'an' : 'aus' }}
+            · höchstens {{ d().kapazitaet?.agenten }} Agenten zugleich</div>
+          @if (!d().laeufe && !d().messpunkte) {
+            <div class="lw-leer">Kein Einsatz und kein Messpunkt im Zeitraum{{ d().ki_aktiv ? '' : ' — KI-Flotte ist ausgeschaltet' }}</div>
           } @else {
             <div class="kpis">
               <div class="kpi"><b>{{ d().summe?.befunde ?? 0 }}</b><span>Befunde</span></div>
@@ -78,7 +78,7 @@ const ZUSTAND: Record<string, string> = {
               <div class="kpi" [matTooltip]="'Analyse ohne gültigen Befund (z. B. Zeitbudget, kein Abschluss)'">
                 <b>{{ d().summe?.ohne_befund ?? 0 }}</b><span>ohne Befund</span></div>
               <div class="kpi" [class.warn]="(d().summe?.verfallen ?? 0) > 0"
-                   matTooltip="Auslösende Nachrichten, die das 2-h-Prüffenster ohne Analyse verlassen haben">
+                   matTooltip="Auslösende Nachrichten, die das 2-h-Prüffenster ohne Analyse verlassen haben (einmal je 10-min-Messpunkt gezählt)">
                 <b>{{ d().summe?.verfallen ?? 0 }}</b><span>verfallen</span></div>
               <div class="kpi"><b>{{ d().modell_s_je_fall ?? '—' }}</b><span>s Modell je Fall</span></div>
             </div>

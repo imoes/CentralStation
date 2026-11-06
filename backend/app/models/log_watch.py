@@ -97,3 +97,19 @@ class NetzMuster(Base):
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     beispiel: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class KiLease(Base):
+    """Agentenflotte: ein Host gehört während einer Analyse genau einem Agenten.
+
+    Je Gespräch (Host) seriell, über Gespräche parallel — zwei Agenten am selben Host schrieben
+    zwei Befunde, die voneinander nichts wissen. Ein Fall belegt alle seine Hosts oder keinen;
+    `bis` löst den Lease eines abgestürzten Agenten (benannt abgelaufen, nicht still).
+    """
+    __tablename__ = "ki_lease"
+
+    host: Mapped[str] = mapped_column(String(255), primary_key=True)
+    agent: Mapped[str] = mapped_column(String(64), index=True)
+    fall: Mapped[str] = mapped_column(String(255))
+    seit: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    bis: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

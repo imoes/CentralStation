@@ -1481,7 +1481,15 @@ The AI only works when a check is true, and it only writes its own analysis.
 - **Check** (`trichter.kandidaten`, no AI): messages in the history of the last 2 h matching
   `(relevanz>=3 OR signal:neu) !quelle:(ki OR konsole)` without a `befund:` hashtag, grouped by host.
 - **Funnel** (`trichter.analysiere`): one tool loop per case (same `muster:` across hosts, else per host;
-  at most 4 cases per run within a 480 s budget, 12 steps each). The
+  12 steps at most).
+- **Agent fleet** (`trichter.agent`). The context lives in the database (host object by search, protocol
+  by search), so any agent can take any case.
+  - Every minute one agent may start, at most 3 at once (`AGENTEN`), all on the configured model.
+  - An agent takes the next free case until the queue is empty or its 480 s budget is used up.
+  - Per conversation (host) the work is serial, across conversations parallel. A case leases all its
+    hosts in `ki_lease` atomically, or none of them. A lease left by a crashed agent ends after 900 s.
+  - The queue is measured separately every 10 minutes (row `ki-pruefung`: open, cases, expired), so
+    `verfallen` counts once per cycle and not once per agent. The
   model asks earlier knowledge first, reads facets, narrows the filter and ends with `lw_befund`.
   Every step (tool, arguments, hit count, model seconds) is kept in the finding.
 - **Host object as prompt** (`hostobjekt.py`). Before the model works, the worker searches and hands
@@ -1536,7 +1544,7 @@ The AI only works when a check is true, and it only writes its own analysis.
 - **R7 on stored messages:** when a host is relevant in two sources within 20 minutes, the stored relevant
   messages of that host get R7 and relevance 3 afterwards (`historie.markiere_r7`, `update_by_query`).
   The reason says "gemeinsames Auftreten, keine Ursache belegt". Findings are not touched.
-- **Switch:** `log_watch.ki_aktiv` (on since 2026-11-06 21:21 UTC). Job `log_watch_trichter` runs at minute 3-59/10 and does nothing
+- **Switch:** `log_watch.ki_aktiv` (on since 2026-11-06 21:21 UTC). Job `log_watch_trichter` starts an agent every minute (at most 3 at once) and does nothing
   while the switch is off; its result goes to `raster_lauf` row `ki`.
 
 ### Check steps and recipes (incidents)

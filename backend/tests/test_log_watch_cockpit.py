@@ -134,20 +134,20 @@ def test_befunde_stehen_vorne_wenn_es_welche_gibt():
     assert "lw_befunde" not in [x["widget_type"] for x in ohne]
 
 
-def test_ki_statistik_je_lauf_und_trend():
+def test_ki_statistik_flotte_und_warteschlange_getrennt():
     from datetime import datetime, timezone
     from app.services.log_watch.cockpit import ki
-    t = lambda m: datetime(2026, 11, 6, 21, m, tzinfo=timezone.utc)
+    t = lambda m: datetime(2026, 11, 6, 23, m, tzinfo=timezone.utc)
     zeilen = [
-        ("ki", t(23), {"pruefung": {"gesamt": 20, "faelle": [{}] * 7, "verfallen": 0}, "dauer_s": 148,
-                       "analysen": [{"befund": "ki:a", "schritte": [{"ki_s": 50}]}, {"befund": "ki:b", "schritte": [{"ki_s": 40}]}],
-                       "befunde": ["ki:a", "ki:b"]}),
-        ("ki", t(33), {"pruefung": {"gesamt": 58, "faelle": [{}] * 23, "verfallen": 3},
-                       "analysen": [{"kein_befund": "x", "schritte": [{"ki_s": 30}]}, {"fehler": "ReadTimeout"}],
-                       "befunde": []}),
-        ("graylog", t(33), {"nachrichten": 5}),
+        ("ki-pruefung", t(0), {"offen": 77, "faelle": 37, "verfallen": 0}),
+        ("ki", t(1), {"analysen": [{"befund": "ki:a", "schritte": [{"ki_s": 50}]}, {"kein_befund": "x", "schritte": [{"ki_s": 30}]}],
+                      "befunde": ["ki:a"]}),
+        ("ki", t(2), {"analysen": [{"fehler": "ReadTimeout"}], "befunde": []}),
+        ("ki-pruefung", t(10), {"offen": 40, "faelle": 20, "verfallen": 3}),
+        ("ki-pruefung", t(20), {"fehler": "Timeout"}),
+        ("graylog", t(5), {"nachrichten": 5}),
     ]
     d = ki(zeilen, 6)
-    assert d["laeufe"] == 2 and d["trend_offen"] == 38
-    assert d["summe"] == {"analysiert": 4, "befunde": 2, "ohne_befund": 1, "fehler": 1, "verfallen": 3}
-    assert d["modell_s_je_fall"] == 30.0 and d["jetzt"]["faelle"] == 23
+    assert d["laeufe"] == 2 and d["messpunkte"] == 2 and d["trend_offen"] == -37
+    assert d["summe"] == {"analysiert": 3, "befunde": 1, "ohne_befund": 1, "fehler": 1, "verfallen": 3, "pruef_fehler": 1}
+    assert d["modell_s_je_fall"] == 26.7 and d["jetzt"]["faelle"] == 20

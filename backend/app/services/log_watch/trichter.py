@@ -26,6 +26,12 @@ AUSLOESER = "(relevanz>=3 OR signal:neu) !quelle:(ki OR konsole)"
 STUNDEN = 2
 #: Fälle je Lauf — gemessen 06.11.: 56–101 s Modellzeit je Fall; mit 2 Fällen je 10 min wuchs die
 #: Warteschlange (20 → 58 Nachrichten in 40 min). ZEIT_BUDGET_S hält einen Lauf unter dem Takt.
+#: Agentenflotte (Nutzer 06.11.: höchstens 3, nur das eingestellte Modell — strata-27b hat 4 Slots,
+#: einer bleibt anderen Nutzern). Ein Agent nimmt Fälle, solange er jünger als AGENT_BUDGET_S ist;
+#: LEASE_S löst den Lease eines abgestürzten Agenten (Fall gemessen ≤ 254 s).
+AGENTEN = 3
+AGENT_BUDGET_S = 480
+LEASE_S = 900
 #: 22:23-Lauf mit 4 Fällen: 355 s, Warteschlange trotzdem 58 → 91 (R7 hebt seit Teil 13 auch
 #: gespeicherte Nachrichten auf 3: 47 von 115 Relevanz-3-Nachrichten/h). strata-27b hat 4 Slots
 #: (/slots, gemessen 06.11.) — zwei Fälle zugleich, mit disjunkten Hosts.
@@ -295,3 +301,80 @@ async def lauf(erzwingen: bool = False, llm=None) -> dict | None:
         ergebnisse += await asyncio.gather(*(eins(f) for f in runde))
     return {"pruefung": k, "analysen": ergebnisse, "dauer_s": round(time.monotonic() - beginn, 1),
             "parallel": PARALLEL, "befunde": [e["befund"] for e in ergebnisse if "befund" in e]}
+
+
+# ── Agentenflotte: Kontext steht in der DB, also kann jeder Agent jeden Fall nehmen ────────────
+
+async def belege(fall: dict, agent: str) -> bool:
+    """Alle Hosts des Falls für `agent` belegen — atomar alle oder keinen. Abgelaufene Leases
+    (abgestürzter Agent) werden vorher gelöst."""
+    from datetime import datetime as _dt
+
+    from sqlalchemy import text
+
+    from app.core.database import AsyncSessionLocal
+    jetzt = _dt.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        await db.execute(text("DELETE FROM ki_lease WHERE bis < :j"), {"j": jetzt})
+        r = await db.execute(text(
+            "INSERT INTO ki_lease (host, agent, fall, seit, bis) "
+            "SELECT h, :a, :f, :j, :b FROM unnest(CAST(:hosts AS text[])) AS h "
+            "ON CONFLICT (host) DO NOTHING RETURNING host"),
+            {"a": agent, "f": fall["start"], "j": jetzt, "b": jetzt + timedelta(seconds=LEASE_S),
+             "hosts": list(fall["hosts"])})
+        if len(r.fetchall()) != len(set(fall["hosts"])):
+            await db.rollback()
+            return False
+        await db.commit()
+        return True
+
+
+async def gib_frei(agent: str) -> None:
+    from sqlalchemy import text
+
+    from app.core.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        await db.execute(text("DELETE FROM ki_lease WHERE agent = :a"), {"a": agent})
+        await db.commit()
+
+
+async def agent(llm=None) -> dict | None:
+    """Ein Agent der Flotte: nimmt den nächsten freien Fall (Lease auf seine Hosts), analysiert,
+    gibt frei — bis die Warteschlange leer ist oder sein Budget um. Schalter aus → None."""
+    import socket
+
+    from app.core.database import AsyncSessionLocal
+    from app.services.settings import get_active_llm_config, get_setting
+    async with AsyncSessionLocal() as db:
+        if (await get_setting(db, SCHALTER) or "").lower() not in ("1", "true", "ja"):
+            return None
+        llm_config = await get_active_llm_config(db)
+    name = f"{socket.gethostname()[:20]}-{uuid_kurz()}"
+    beginn = time.monotonic()
+    ergebnisse: list[dict] = []
+    k: dict = {}
+    belegt_von_anderen = 0
+    while time.monotonic() - beginn < AGENT_BUDGET_S:
+        k = await kandidaten()
+        fall = None
+        for f in k["faelle"]:
+            if await belege(f, name):
+                fall = f
+                break
+            belegt_von_anderen += 1
+        if fall is None:
+            break
+        try:
+            ergebnisse.append(await analysiere(fall, llm_config, llm))
+        except Exception as e:  # noqa: BLE001
+            log.warning("Agent %s, Fall %s: %s", name, fall["start"], e)
+            ergebnisse.append({"start": fall["start"], "hosts": fall["hosts"], "fehler": f"{type(e).__name__}: {str(e)[:300]}"})
+        finally:
+            await gib_frei(name)
+    return {"agent": name, "pruefung": k, "analysen": ergebnisse, "dauer_s": round(time.monotonic() - beginn, 1),
+            "belegt_von_anderen": belegt_von_anderen, "befunde": [e["befund"] for e in ergebnisse if "befund" in e]}
+
+
+def uuid_kurz() -> str:
+    import uuid
+    return uuid.uuid4().hex[:6]

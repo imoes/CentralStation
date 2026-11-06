@@ -41,31 +41,35 @@ def kriterien(zeilen: list[tuple[str, datetime, dict]], definition: list[dict], 
 
 
 def ki(zeilen: list[tuple[str, datetime, dict]], stunden: int) -> dict:
-    """Statistik der KI-Analyse je Trichter-Lauf: Warteschlange (offene Nachrichten, Fälle),
-    analysierte Fälle, Befunde, ohne Befund, Fehler, verfallen, Dauer — kommt die KI nach?
-    Zeilen ohne Prüfung (z. B. Fehler eines Laufs) zählen als Fehler, nicht als leerer Lauf."""
+    """Statistik der KI-Flotte. Zwei Quellen, getrennt gemessen:
+    - `ki-pruefung` (alle 10 min ein Messpunkt): Warteschlange — offene Nachrichten, Fälle, verfallen;
+    - `ki` (je Agent-Einsatz): analysierte Fälle, Befunde, ohne Befund, Fehler, Modellzeit.
+    So zählt „verfallen“ einmal je Takt, nicht je Agent, und die Kurve hat auch ohne Arbeit Punkte."""
     reihe, summe = [], Counter()
-    modelle: Counter = Counter()
+    einsaetze, modell_s, analysiert = 0, 0.0, 0
     for quelle, b, w in sorted(zeilen, key=lambda z: z[1]):
-        if quelle != "ki":
-            continue
-        p = w.get("pruefung") or {}
-        an = w.get("analysen") or []
-        x = {"zeit": b.isoformat(), "offen": p.get("gesamt", 0), "faelle": len(p.get("faelle") or []),
-             "analysiert": len(an), "befunde": len(w.get("befunde") or []),
-             "ohne_befund": sum(1 for a in an if "kein_befund" in a),
-             "fehler": sum(1 for a in an if "fehler" in a) + (1 if "fehler" in w else 0),
-             "verfallen": p.get("verfallen", 0), "dauer_s": w.get("dauer_s"),
-             "modell_s": round(sum(s.get("ki_s") or 0 for a in an for s in a.get("schritte") or []), 1)}
-        reihe.append(x)
-        for k in ("analysiert", "befunde", "ohne_befund", "fehler", "verfallen"):
-            summe[k] += x[k]
-    letzter = reihe[-1] if reihe else None
-    return {"zeitraum_h": stunden, "einheit": "Nachrichten bzw. Fälle je Lauf (alle 10 min)",
-            "laeufe": len(reihe), "reihe": reihe, "summe": dict(summe), "jetzt": letzter,
-            "modell_s_je_fall": (round(sum(x["modell_s"] for x in reihe) / summe["analysiert"], 1)
-                                 if summe["analysiert"] else None),
-            # Beobachtungspunkt: wächst die Warteschlange über den Zeitraum, kommt die KI nicht nach
+        if quelle == "ki-pruefung" and "fehler" not in w:
+            reihe.append({"zeit": b.isoformat(), "offen": w.get("offen", 0), "faelle": w.get("faelle", 0),
+                          "verfallen": w.get("verfallen", 0)})
+            summe["verfallen"] += w.get("verfallen", 0)
+        elif quelle == "ki-pruefung":
+            summe["pruef_fehler"] += 1
+        elif quelle == "ki":
+            einsaetze += 1
+            an = w.get("analysen") or []
+            summe["analysiert"] += len(an)
+            summe["befunde"] += len(w.get("befunde") or [])
+            summe["ohne_befund"] += sum(1 for a in an if "kein_befund" in a)
+            summe["fehler"] += sum(1 for a in an if "fehler" in a)
+            modell_s += sum(s.get("ki_s") or 0 for a in an for s in a.get("schritte") or [])
+            analysiert += len(an)
+    for k in ("analysiert", "befunde", "ohne_befund", "fehler", "verfallen"):
+        summe.setdefault(k, 0)
+    return {"zeitraum_h": stunden, "einheit": "Nachrichten bzw. Fälle; Messpunkt alle 10 min",
+            "laeufe": einsaetze, "messpunkte": len(reihe), "reihe": reihe, "summe": dict(summe),
+            "jetzt": reihe[-1] if reihe else None,
+            "modell_s_je_fall": round(modell_s / analysiert, 1) if analysiert else None,
+            # Beobachtungspunkt: wächst die Warteschlange über den Zeitraum, kommt die Flotte nicht nach
             "trend_offen": (reihe[-1]["offen"] - reihe[0]["offen"]) if len(reihe) >= 2 else None}
 
 
@@ -247,8 +251,7 @@ async def daten(db, typ: str, cfg: dict) -> dict:
         from app.services.settings import get_setting
         an = (await get_setting(db, trichter.SCHALTER) or "").lower() in ("1", "true", "ja")
         return {**ki(await _zeilen(db, seit), stunden), "ki_aktiv": an,
-                "kapazitaet": {"faelle_je_lauf": trichter.HOECHSTENS_JE_LAUF, "takt_min": 10,
-                               "budget_s": trichter.ZEIT_BUDGET_S}}
+                "kapazitaet": {"agenten": trichter.AGENTEN, "budget_s": trichter.AGENT_BUDGET_S}}
     if typ == "lw_volumen":
         return volumen(await _zeilen(db, seit), stunden)
     if typ == "lw_hashtags":

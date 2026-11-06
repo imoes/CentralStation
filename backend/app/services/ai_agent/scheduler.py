@@ -345,15 +345,35 @@ async def run_log_raster() -> None:
 
 
 async def run_log_trichter() -> None:
-    """KI-Trichter der Log-Überwachung (Schalter log_watch.ki_aktiv); Ergebnis in raster_lauf „ki“."""
+    """Ein Agent der KI-Flotte (Schalter log_watch.ki_aktiv). Jede Minute darf einer starten,
+    höchstens trichter.AGENTEN zugleich (max_instances); Ergebnis je Agent in raster_lauf „ki“,
+    Schlüssel = seine Startsekunde."""
     from app.services.log_watch import trichter
-    from app.services.log_watch.lauf import _boden, _speichere
+    from app.services.log_watch.lauf import _speichere
+    start = datetime.now(timezone.utc).replace(microsecond=0)
     try:
-        erg = await trichter.lauf()
-        if erg is not None:
-            await _speichere("ki", _boden(datetime.now(timezone.utc)), erg)
+        erg = await trichter.agent()
+        if erg is not None and (erg["analysen"] or erg["belegt_von_anderen"]):
+            await _speichere("ki", start, erg)
     except Exception as e:
-        logger.warning("KI-Trichter fehlgeschlagen: %s", e)
+        logger.warning("KI-Agent fehlgeschlagen: %s", e)
+
+
+async def run_log_ki_pruefung() -> None:
+    """Warteschlange der KI-Flotte messen: alle 10 min genau ein Messpunkt (offen, Fälle,
+    verfallen) — getrennt von den Agenten, damit „verfallen“ nicht je Agent mehrfach zählt."""
+    from app.services.log_watch import trichter
+    from app.services.log_watch.lauf import _speichere
+    b = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    b = b - timedelta(minutes=b.minute % 10)
+    try:
+        k = await trichter.kandidaten()
+        await _speichere("ki-pruefung", b, {"offen": k["gesamt"], "faelle": len(k["faelle"]),
+                                            "verfallen": k["verfallen"], "gekappt": k["gekappt"],
+                                            "groesste": k["faelle"][:5]})
+    except Exception as e:
+        logger.warning("KI-Prüfung fehlgeschlagen: %s", e)
+        await _speichere("ki-pruefung", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
 
 
 async def run_incident_housekeeping() -> None:
@@ -465,8 +485,11 @@ async def start_scheduler() -> None:
     _scheduler.add_job(run_log_raster, "cron", minute="1-59/5",
                        id="log_watch_raster", replace_existing=True, max_instances=1,
                        coalesce=True)
-    _scheduler.add_job(run_log_trichter, "cron", minute="3-59/10",
-                       id="log_watch_trichter", replace_existing=True, max_instances=1,
+    _scheduler.add_job(run_log_ki_pruefung, "cron", minute="*/10",
+                       id="log_watch_ki_pruefung", replace_existing=True, max_instances=1, coalesce=True)
+    from app.services.log_watch.trichter import AGENTEN
+    _scheduler.add_job(run_log_trichter, "interval", minutes=1,
+                       id="log_watch_trichter", replace_existing=True, max_instances=AGENTEN,
                        coalesce=True)
     _scheduler.add_job(run_field_catalog, "cron", hour=3, minute=45,
                        id="log_watch_field_catalog", replace_existing=True)
