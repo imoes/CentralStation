@@ -515,7 +515,7 @@ const SEVERITY_COLOR: Record<string, string> = {
               <span class="lh-sev" [attr.data-sev]="item.severity">{{ item.severity | uppercase }}</span>
               @if (itemHostLabel(item)) {
                 <span class="lh-dot">·</span>
-                <span class="lh-host host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Server Cockpit öffnen'">{{ itemHostLabel(item) }}</span>
+                <span class="lh-host host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Host-Cockpit öffnen'">{{ itemHostLabel(item) }}</span>
               }
               @if (item.location_name) {
                 <span class="lh-dot">·</span>
@@ -583,7 +583,7 @@ const SEVERITY_COLOR: Record<string, string> = {
                     </span>
                   }
                   @if (itemHostLabel(item)) {
-                    <span class="host-tag host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Server Cockpit öffnen'">
+                    <span class="host-tag host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Host-Cockpit öffnen'">
                       <mat-icon style="font-size:12px;height:12px;width:12px">dns</mat-icon>
                       {{ itemHostLabel(item) }}
                     </span>

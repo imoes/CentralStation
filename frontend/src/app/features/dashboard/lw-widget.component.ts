@@ -1,0 +1,235 @@
+import { CommonModule, DecimalPipe } from '@angular/common';
+import { Component, computed, inject, input } from '@angular/core';
+import { MatTooltipModule } from '@angular/material/tooltip';
+import { ThemeService } from '../../core/services/theme.service';
+
+/**
+ * KI-Cockpit: Widgets der Log-Überwachung (lw_*). Daten aus
+ * backend services/log_watch/cockpit.py — jede Zahl trägt Einheit und Zeitraum.
+ * Gezeichnet mit CSS statt Diagrammbibliothek (Deference: Inhalt vor Chrom).
+ * „Nicht verfügbar“ (z. B. Historie noch im Trockenlauf) zeigt der Rahmen
+ * (dashboard-widget), nicht diese Komponente.
+ */
+const QUELLE: Record<string, string> = {
+  graylog: 'Graylog', wazuh: 'Wazuh', checkmk: 'CheckMK', firewall: 'Firewall', switch: 'Switches',
+};
+const ZUSTAND: Record<string, string> = {
+  ok: 'läuft', veraltet: 'veraltet', fehler: 'Fehler', 'nie gelaufen': 'nie gelaufen',
+  unvollstaendig: 'unvollständig',
+};
+
+@Component({
+  selector: 'cs-lw-widget',
+  standalone: true,
+  imports: [CommonModule, DecimalPipe, MatTooltipModule],
+  template: `
+    <div class="lw" [class.t-lcars]="theme() === 'lcars'" [class.t-holo]="theme() === 'holo'"
+         [class.t-classic]="theme() === 'classic'">
+      @switch (typ()) {
+        @case ('lw_kriterien') {
+          <div class="lw-meta">Nachrichten · {{ d().zeitraum_h }} h · Definition v{{ d().definition_v }}</div>
+          @if (!kriterienGruppen().length) {
+            <div class="lw-leer">Noch keine Urteile im Zeitraum</div>
+          }
+          <!-- Je Gruppe eine eigene Skala: Routine (Millionen) drückte sonst jeden Grund für
+               Relevanz (Hunderte) auf null — gemessen 06.11. -->
+          @for (g of kriterienGruppen(); track g.art) {
+            <div class="grp-head" [class.rel]="g.art === 'relevant'">
+              <span>{{ g.art === 'relevant' ? 'Relevant' : 'Nicht relevant' }}</span>
+              <span class="bar-num">{{ g.summe | number }}</span>
+            </div>
+            @for (k of g.kriterien; track k.id) {
+              <div class="bar-row" [matTooltip]="k.tooltip">
+                <span class="bar-id" [class.rel]="k.art === 'relevant'">{{ k.id }}</span>
+                <span class="bar-label">{{ k.titel }}</span>
+                <span class="bar-track"><span class="bar-fill" [class.rel]="k.art === 'relevant'"
+                      [style.width.%]="k.anteil"></span></span>
+                <span class="bar-num">{{ k.anzahl | number }}</span>
+              </div>
+            }
+          }
+        }
+        @case ('lw_volumen') {
+          <div class="lw-meta">je Quelle · letzte {{ d().zeitraum_h }} h · Fenster gesehen/erwartet</div>
+          <div class="vol-head"><span></span><span>gelesen</span><span>relevant</span><span>Verlauf relevant</span><span>Fenster</span></div>
+          @for (q of volumen(); track q.quelle) {
+            <div class="vol-row">
+              <span class="vol-q">{{ q.name }}</span>
+              <span class="vol-n">{{ q.gelesen | number }}</span>
+              <span class="vol-n rel">{{ q.relevant | number }}</span>
+              <svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none">
+                <polyline [attr.points]="q.spark" fill="none" stroke="currentColor" stroke-width="1.5"></polyline>
+              </svg>
+              <span class="vol-n" [class.warn]="q.luecke" [matTooltip]="q.fensterTip">
+                {{ q.fenster }}/{{ q.erwartet }}@if (q.fehler) { · {{ q.fehler }}✗ }
+              </span>
+            </div>
+          }
+        }
+        @case ('lw_hashtags') {
+          <div class="lw-meta">{{ d().einheit }} · {{ d().zeitraum_h }} h · Faktor gegen die {{ d().zeitraum_h }} h davor</div>
+          @if (!hashtags().length) {
+            <div class="lw-leer">Keine relevanten Nachrichten im Zeitraum</div>
+          }
+          @for (h of hashtags(); track h.tag) {
+            <div class="tag-row">
+              <span class="tag">#{{ h.tag }}</span>
+              <span class="tag-n">{{ h.anzahl | number }}</span>
+              <span class="tag-trend" [class.neu]="h.vergleich === 'neu'" [class.hoch]="(h.faktor ?? 0) >= 2"
+                    [matTooltip]="h.vergleich === 'kein_vergleich' ? 'Kein Vergleich: im Zeitraum davor keine Messung dieser Quelle' : h.vergleich === 'neu' ? 'Im Zeitraum davor gemessen, dort nicht vorgekommen' : 'vorher ' + h.vorher">
+                {{ h.vergleich === 'faktor' ? '×' + h.faktor : h.vergleich === 'neu' ? 'neu' : '—' }}
+              </span>
+            </div>
+          }
+        }
+        @case ('lw_korpus') {
+          <div class="korpus">
+            @for (q of laeufe(); track q.quelle) {
+              <span class="chip" [class]="'chip z-' + q.klasse" [matTooltip]="q.tip">{{ q.name }} · {{ q.zustand }}</span>
+            }
+            @if (stufe0(); as s) {
+              <span class="chip" [class.z-fehler]="s.zustand === 'fehler'" [matTooltip]="s.tip">
+                Stufe 0 · {{ s.text }}
+              </span>
+            }
+            @for (n of nichtZugeordnet(); track n.grund) {
+              <span class="chip z-info" matTooltip="Quellnamen ohne CheckMK-Host (Grund benannt, nicht geraten)">
+                Hosts {{ n.grund }}: {{ n.anzahl }}
+              </span>
+            }
+            <span class="chip z-info">Definition v{{ d().definition_v }}</span>
+            <span class="chip" [class.z-info]="!d().historie_aktiv" [class.z-ok]="d().historie_aktiv">
+              Historie {{ d().historie_aktiv ? 'aktiv' : 'Trockenlauf' }}
+            </span>
+          </div>
+        }
+      }
+    </div>
+  `,
+  styles: [`
+    .lw { display: flex; flex-direction: column; gap: 4px; font-size: 12px; height: 100%; overflow: auto; }
+    .lw-meta { font-size: 10px; opacity: .65; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+    .lw-leer { opacity: .6; padding: 12px 0; }
+    .grp-head { display: flex; justify-content: space-between; font-size: 11px; font-weight: 700;
+                text-transform: uppercase; margin-top: 4px; opacity: .8; }
+    .grp-head.rel { opacity: 1; }
+    .bar-row { display: grid; grid-template-columns: 30px minmax(90px, 1fr) 2fr 64px; gap: 6px; align-items: center; }
+    .bar-id { font-weight: 700; opacity: .7; }
+    .bar-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bar-track { height: 8px; background: rgba(127,127,127,.15); border-radius: 4px; overflow: hidden; }
+    .bar-fill { display: block; height: 100%; background: rgba(127,127,127,.55); border-radius: 4px; }
+    .bar-num, .vol-n, .tag-n { text-align: right; font-variant-numeric: tabular-nums; }
+    .vol-head, .vol-row { display: grid; grid-template-columns: 72px 90px 70px 1fr 70px; gap: 6px; align-items: center; }
+    .vol-head { font-size: 10px; opacity: .55; text-transform: uppercase; }
+    .vol-head span:not(:first-child) { text-align: right; }
+    .vol-head span:nth-child(4) { text-align: left; }
+    .spark { width: 100%; height: 22px; }
+    .vol-n.warn { color: #ffcc00; }
+    .tag-row { display: grid; grid-template-columns: 1fr 70px 48px; gap: 6px; align-items: center; }
+    .tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tag-trend { text-align: right; opacity: .75; }
+    .tag-trend.hoch { color: #ff9933; opacity: 1; font-weight: 700; }
+    .tag-trend.neu { color: #99ccff; opacity: 1; }
+    .korpus { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .chip { padding: 3px 10px; border-radius: 12px; font-size: 11px; background: rgba(127,127,127,.18); }
+    .chip.z-ok { background: rgba(102,204,102,.25); }
+    .chip.z-veraltet { background: rgba(255,204,0,.28); }
+    .chip.z-fehler { background: rgba(255,85,68,.32); }
+    .chip.z-nie { background: rgba(127,127,127,.3); text-decoration: line-through; }
+    .chip.z-info { background: rgba(153,204,255,.2); }
+
+    /* LCARS: Struktur in Antonio/uppercase, Zahlen und Tags lesbar */
+    .t-lcars .bar-fill.rel, .t-lcars .bar-id.rel { background: #FF9933; color: #FF9933; }
+    .t-lcars .bar-id.rel { background: none; }
+    .t-lcars .bar-fill:not(.rel) { background: #FFCC99; opacity: .55; }
+    .t-lcars .vol-q, .t-lcars .bar-label, .t-lcars .lw-meta { font-family: 'Antonio','Eurostile',sans-serif; text-transform: uppercase; color: #FFCC66; }
+    .t-lcars .vol-n.rel, .t-lcars .spark { color: #FF9933; }
+    .t-lcars .chip { font-family: 'Antonio','Eurostile',sans-serif; text-transform: uppercase; border-radius: 0 12px 12px 0; }
+    .t-lcars .tag { color: #99CCFF; }
+    /* Holo */
+    .t-holo .bar-fill.rel, .t-holo .spark, .t-holo .vol-n.rel { background: #4fd6ff; color: #4fd6ff; }
+    .t-holo .spark { background: none; }
+    .t-holo .bar-id.rel { color: #4fd6ff; }
+    /* Classic */
+    .t-classic .bar-fill.rel { background: #60a5fa; }
+    .t-classic .bar-id.rel, .t-classic .vol-n.rel, .t-classic .spark { color: #60a5fa; }
+  `],
+})
+export class LwWidgetComponent {
+  readonly typ = input.required<string>();
+  readonly daten = input.required<unknown>();
+  private readonly themeSvc = inject(ThemeService);
+  readonly theme = computed(() => this.themeSvc.theme());
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly d = computed(() => (this.daten() ?? {}) as any);
+
+  readonly kriterienGruppen = computed(() => {
+    const ks: { id: string; titel: string; art: string; anzahl: number; je_quelle: Record<string, number> }[] =
+      this.d().kriterien ?? [];
+    return (['relevant', 'nicht_relevant'] as const)
+      .map(art => {
+        const teil = ks.filter(k => k.art === art);
+        const max = Math.max(1, ...teil.map(k => k.anzahl));
+        return {
+          art, summe: teil.reduce((s, k) => s + k.anzahl, 0),
+          kriterien: teil.map(k => ({
+            ...k,
+            anteil: Math.max(1, Math.round((k.anzahl / max) * 100)),
+            tooltip: Object.entries(k.je_quelle).map(([q, n]) => `${QUELLE[q] ?? q} ${n}`).join(', '),
+          })),
+        };
+      })
+      .filter(g => g.kriterien.length);
+  });
+
+  readonly volumen = computed(() => {
+    const qs = this.d().quellen ?? {};
+    return Object.keys(QUELLE).filter(q => qs[q]).map(q => {
+      const x = qs[q];
+      const reihe: { relevant?: number }[] = x.reihe ?? [];
+      const werte = reihe.map(r => r.relevant ?? 0);
+      const max = Math.max(1, ...werte);
+      const spark = werte.map((v, i) =>
+        `${werte.length > 1 ? (i / (werte.length - 1)) * 100 : 50},${24 - (v / max) * 22}`).join(' ');
+      return {
+        quelle: q, name: QUELLE[q], gelesen: x.summe?.gelesen ?? 0, relevant: x.summe?.relevant ?? 0,
+        spark, fenster: x.fenster, erwartet: x.fenster_erwartet, fehler: x.fehler,
+        luecke: x.fenster < x.fenster_erwartet,
+        fensterTip: `${x.fenster} von ${x.fenster_erwartet} 5-min-Fenstern ausgewertet` +
+          (x.fehler ? `, ${x.fehler} mit Fehler` : '') + (x.alte_fassung ? `, ${x.alte_fassung} alte Fassung` : ''),
+      };
+    });
+  });
+
+  readonly hashtags = computed(() =>
+    (this.d().hashtags ?? []) as { tag: string; anzahl: number; vorher: number; faktor: number | null; vergleich: string }[]);
+
+  readonly laeufe = computed(() => {
+    const l = this.d().laeufe ?? {};
+    return Object.keys(QUELLE).filter(q => l[q]).map(q => {
+      const x = l[q];
+      return {
+        quelle: q, name: QUELLE[q], zustand: ZUSTAND[x.zustand] ?? x.zustand,
+        klasse: x.zustand === 'nie gelaufen' ? 'nie' : x.zustand,
+        tip: x.fehler ? `Fehler: ${x.fehler}` : x.alter_min != null ? `letztes Fenster vor ${x.alter_min} min` : '',
+      };
+    });
+  });
+
+  readonly stufe0 = computed(() => {
+    const s = this.d().stufe0;
+    if (!s) return null;
+    if (s.zustand === 'fehler') return { zustand: 'fehler', text: 'Fehler', tip: s.fehler };
+    const n = Math.round((s.verworfen_pro_stunde ?? 0) / 1000);
+    return {
+      zustand: s.zustand,
+      text: `${n.toLocaleString('de-DE')} Tsd./h verworfen` + (s.zustand === 'unvollstaendig' ? ' (unvollständig)' : ''),
+      tip: 'An der Quelle (Graylog-Pipeline) verworfen — sieht keine Auswertung: ' +
+        (s.regeln ?? []).map((r: { titel: string; pro_stunde: number }) => `${r.titel} ${r.pro_stunde}/h`).join(', '),
+    };
+  });
+
+  readonly nichtZugeordnet = computed(() =>
+    Object.entries(this.d().nicht_zugeordnet ?? {}).map(([grund, anzahl]) => ({ grund, anzahl })));
+}

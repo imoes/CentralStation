@@ -75,3 +75,15 @@ def test_widerspruch_stufe0_verwirft_themen_ohne_fehlerwort():
     # behalten: Zeile enthält ein Behalte-Wort, oder Stufe 0 behält per Feld (HTTP ≥ 400)
     assert not ({"kernel-io", "crashloop", "datenbank", "backup", "http-5xx"} & w)
     assert s0.widersprueche([{"titel": "x", "quelltext": "rule x when true then drop_message(); end"}], THEMEN) == []
+
+
+def test_zaehlregel_aus_vokabular_und_verwerfbedingung():
+    import re
+    from app.services.log_watch.vokabular import THEMEN
+    betroffen = [t for t in THEMEN if t.id in {x["thema"] for x in s0.widersprueche([CONTAINER_NOISE], THEMEN)}]
+    rx = re.compile(s0.themen_regex(betroffen))
+    assert all(rx.match(t.beispiel.lower()) for t in betroffen)            # jedes Beispiel passt
+    assert not rx.match("get /api/items 200 12ms user=4711")                 # Routine nicht
+    regel = s0.zaehlregel(CONTAINER_NOISE["quelltext"], betroffen)
+    assert regel.startswith('rule "count_topic_would_drop"') and "drop_message" not in regel
+    assert 'has_field("container_name")' in regel and 'set_field("_topic_would_drop", "1")' in regel

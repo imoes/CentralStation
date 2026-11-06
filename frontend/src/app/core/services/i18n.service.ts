@@ -292,7 +292,7 @@ const TRANSLATIONS: Record<AppLanguage, Record<string, string>> = {
     'dashboard.prompt_label': 'Prompt',
     'dashboard.create_widget': 'Create widget',
     'dashboard.new_dashboard': 'New dashboard',
-    'dashboard.ai_situation_report': 'AI-Composed Situation Report',
+    'dashboard.ai_situation_report': 'AI Cockpit',
     'dashboard.regenerate': 'Regenerate',
     'dashboard.incident_detected': 'INCIDENT DETECTED',
     'dashboard.war_room_message': 'The AI agent has detected a critical incident. Please open the War Room widget for details.',
@@ -343,7 +343,7 @@ const TRANSLATIONS: Record<AppLanguage, Record<string, string>> = {
     'cockpit.source_label': 'SOURCE',
     'cockpit.loading_alerts': 'LOADING MESSAGES…',
     'cockpit.no_alerts': 'No messages for this host.',
-    'cockpit.footer_label': 'CENTRALSTATION · SERVER COCKPIT',
+    'cockpit.footer_label': 'CENTRALSTATION · HOST COCKPIT',
 
     // ── Kanban ────────────────────────────────────────────────────────────
     'kanban.edit_card': 'Edit ticket',
@@ -820,7 +820,7 @@ const TRANSLATIONS: Record<AppLanguage, Record<string, string>> = {
     'dashboard.prompt_label': 'Prompt',
     'dashboard.create_widget': 'Widget erstellen',
     'dashboard.new_dashboard': 'Neues Dashboard',
-    'dashboard.ai_situation_report': 'KI-Lagebild',
+    'dashboard.ai_situation_report': 'KI-Cockpit',
     'dashboard.regenerate': 'Neu generieren',
     'dashboard.incident_detected': 'INCIDENT DETECTED',
     'dashboard.war_room_message': 'Der KI-Agent hat einen kritischen Vorfall erkannt. Bitte öffne den War-Room-Widget für Details.',
@@ -871,7 +871,7 @@ const TRANSLATIONS: Record<AppLanguage, Record<string, string>> = {
     'cockpit.source_label': 'QUELLE',
     'cockpit.loading_alerts': 'LADE MELDUNGEN…',
     'cockpit.no_alerts': 'Keine Meldungen für diesen Host.',
-    'cockpit.footer_label': 'CENTRALSTATION · SERVER COCKPIT',
+    'cockpit.footer_label': 'CENTRALSTATION · HOST COCKPIT',
 
     // ── Kanban ────────────────────────────────────────────────────────────
     'kanban.edit_card': 'Ticket bearbeiten',

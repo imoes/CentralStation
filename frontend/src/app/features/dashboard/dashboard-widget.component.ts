@@ -10,6 +10,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { NgxEchartsDirective } from 'ngx-echarts';
+import { LwWidgetComponent } from './lw-widget.component';
 import {
   DashboardWidget,
   AiSummaryData,
@@ -41,6 +42,7 @@ import {
     MatIconModule,
     MatProgressSpinnerModule,
     MatTooltipModule,
+    LwWidgetComponent,
     NgxEchartsDirective,
   ],
   template: `
@@ -280,6 +282,10 @@ import {
             @case ('gauge') {
               <div echarts [options]="gaugeOptions()" class="chart"></div>
             }
+            @case ('lw_kriterien') { <cs-lw-widget typ="lw_kriterien" [daten]="data()" /> }
+            @case ('lw_volumen') { <cs-lw-widget typ="lw_volumen" [daten]="data()" /> }
+            @case ('lw_hashtags') { <cs-lw-widget typ="lw_hashtags" [daten]="data()" /> }
+            @case ('lw_korpus') { <cs-lw-widget typ="lw_korpus" [daten]="data()" /> }
             @case ('error_clusters') {
               @if (!errorClustersData()?.clusters?.length) {
                 <div class="empty">
@@ -547,6 +553,8 @@ export class DashboardWidgetComponent {
       stat: '#ffcc66', top_hosts: '#ffcc66', bar: '#ffcc66',
       donut: '#99CCFF', timeseries: '#99CCFF',
       war_room: '#cc6666', forecast: '#cc6666',
+      lw_kriterien: '#FF9933', lw_befunde: '#FF9933', lw_volumen: '#99CCFF',
+      lw_hashtags: '#FFCC99', lw_netzplan: '#99CCFF', lw_korpus: '#ffcc66',
     };
     return map[this.widget().widget_type] ?? '#FF9933';
   });

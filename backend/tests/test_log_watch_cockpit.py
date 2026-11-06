@@ -45,8 +45,17 @@ def test_hashtags_trend_neu_ist_benannt_und_quelle_fehlt():
     z = [("wazuh", T0, _w(tags=[["thema:oom", 2], ["quelle:wazuh", 9]])),
          ("wazuh", seit, _w(tags=[["thema:oom", 6], ["mitre:Impact", 3], ["quelle:wazuh", 9]]))]
     d = c.hashtags(z, seit)
-    assert d["hashtags"] == [{"tag": "thema:oom", "anzahl": 6, "vorher": 2, "faktor": 3.0},
-                             {"tag": "mitre:Impact", "anzahl": 3, "vorher": 0, "faktor": None}]
+    assert d["hashtags"] == [
+        {"tag": "thema:oom", "anzahl": 6, "vorher": 2, "faktor": 3.0, "vergleich": "faktor"},
+        {"tag": "mitre:Impact", "anzahl": 3, "vorher": 0, "faktor": None, "vergleich": "neu"}]
+
+
+def test_hashtags_ohne_vergleichszeitraum_sind_nicht_neu():
+    """Gemessen 06.11.: nach einem Fassungswechsel stand jeder Hashtag auf „neu“."""
+    seit = T0 + timedelta(hours=1)
+    alt = {"nachrichten": 5, "top_hashtags": [["mitre:Impact", 9]]}          # alte Fassung
+    z = [("wazuh", T0, alt), ("wazuh", seit, _w(tags=[["mitre:Impact", 3]]))]
+    assert c.hashtags(z, seit)["hashtags"][0]["vergleich"] == "kein_vergleich"
 
 
 def test_korpus_laeufe_ok_veraltet_fehler_nie():
@@ -94,6 +103,7 @@ def test_alte_fassung_wird_ausgewiesen_nicht_gemischt():
     v = c.volumen(z, 1)["quellen"]["wazuh"]
     assert v["summe"] == {"gelesen": 100, "relevant": 10, "gespeichert": 10} and v["alte_fassung"] == 1
     h = c.hashtags(z, T0)["hashtags"]
-    assert h == [{"tag": "mitre:Impact", "anzahl": 10, "vorher": 0, "faktor": None}]
+    assert h == [{"tag": "mitre:Impact", "anzahl": 10, "vorher": 0, "faktor": None,
+                  "vergleich": "kein_vergleich"}]                  # davor nur alte Fassung
     # Konsistenz: kein Hashtag zählt mehr relevante Nachrichten, als es relevante gibt
     assert all(x["anzahl"] <= v["summe"]["relevant"] for x in h)

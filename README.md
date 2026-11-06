@@ -18,7 +18,7 @@ assists with the entire ITIL-compliant work documentation using AI.
 3. [CheckMK as the Single Source of Truth](#checkmk-as-the-single-source-of-truth)
 4. [Feature Overview](#feature-overview)
 5. [Operations Cockpit (Dashboard)](#operations-cockpit-dashboard)
-6. [Server Cockpit (Host Detail Panel)](#server-cockpit-host-detail-panel)
+6. [Host-Cockpit (Host Detail Panel)](#host-cockpit-host-detail-panel)
 7. [News Feed](#news-feed)
 8. [OpenSearch Searches (FeedSearches)](#opensearch-searches-feedsearches)
 9. [Alert Aggregation and Enrichment](#alert-aggregation-and-enrichment)
@@ -241,7 +241,7 @@ Since OS/location/VE/criticality are CheckMK-native concepts, the filter accesse
 |---------|------------|
 | **Operations Cockpit** | Dual-Mode Dashboard (Klassisch/Generativ), Widget-Typen: Stat, Liste, Donut, Balken, Zeitreihe, Forecast, KI-Lagebericht, Top-Hosts, War Room; klickbare Charts; Pin/Reset im generativen Modus; Hostname in Top-Hosts klickbar |
 | **Generatives Dashboard** | KI komponiert situativ ein maßgeschneidertes Dashboard — analysiert Findings, Worklist, Vitals + Forecast-Kandidaten; Rationale als Lage-Briefing; Neu-Generieren-Button + WS-Eskalation-Trigger; CUE-Produktionshosts priorisiert |
-| **Server Cockpit** | Klick auf Hostnamen im News Feed öffnet `/cockpit/:hostname` in neuem Fenster; LCARS-Design; Hero-Gauges (CPU/RAM/Disk) + Sparklines; **Voll-Service-Liste** aller CheckMK-Checks mit Status + Summary; hierarchische Filter-Chips (FEHLER/WARN/CRIT/UNKNOWN); Klick auf Service → on-demand 24h-Graph; Font Roboto; Navbar wird ausgeblendet |
+| **Host-Cockpit** (bis 06.11.2026 „Server Cockpit“) | Klick auf Hostnamen im News Feed öffnet `/cockpit/:hostname` in neuem Fenster; LCARS-Design; Hero-Gauges (CPU/RAM/Disk) + Sparklines; **Voll-Service-Liste** aller CheckMK-Checks mit Status + Summary; hierarchische Filter-Chips (FEHLER/WARN/CRIT/UNKNOWN); Klick auf Service → on-demand 24h-Graph; Font Roboto; Navbar wird ausgeblendet |
 | **Brücke (Bridge)** | Star-Trek-LCARS-Cockpit unter `/bridge`; drei Themes (Classic/Holo/LCARS); Prioritäten-Worklist, Fleet-Vitals, Forecasts, Sektoren, Live-Logs; Primärer-Incident-Panel; Font Roboto |
 | **Adaptives Alert-Scoring** | Deterministisches Basis-Scoring (Severity/Novelty/Alter/Flapping/Cross-Source); adaptiver Lern-Feedback-Loop (Jira-Tickets, Acks, Ignorieren → `alert_score_adjustments`); Score-Delta-Verfall |
 | **Fehler-Cluster & Incidents** | Erkennt Ausbrüche selbständig: jede Graylog-Fehlerzeile zählt, Drain3-Muster mit eigener Grundlast, Regeln für neu/Spitze/Ausbreitung, CheckMK-Flotten-Ausfälle; ein Vorfall = ein Incident = eine Mail mit KI-Einschätzung; Widget im KI-Lagebild |
@@ -375,9 +375,9 @@ A toggle button in the dashboard header switches between two modes:
 
 ---
 
-## Server Cockpit (Host Detail Panel)
+## Host-Cockpit (Host Detail Panel)
 
-Ein Klick auf einen Servernamen im **News Feed** öffnet das Server Cockpit in einem eigenständigen Browser-Fenster (`window.open`, Route `/cockpit/:hostname`). Das Fenster hat kein Navigationsmenü — es ist ein vollbildiges LCARS-Dashboard für genau einen Host.
+Ein Klick auf einen Servernamen im **News Feed** öffnet das Host-Cockpit in einem eigenständigen Browser-Fenster (`window.open`, Route `/cockpit/:hostname`). Das Fenster hat kein Navigationsmenü — es ist ein vollbildiges LCARS-Dashboard für genau einen Host.
 
 ### Layout
 

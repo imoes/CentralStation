@@ -10,6 +10,57 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 11: the AI cockpit shows the log watch
+
+### What's new
+
+- **Four cockpit widgets drawn in the frontend** (`frontend/.../dashboard/lw-widget.component.ts`,
+  theme-aware LCARS/Holo/Classic, CSS instead of a chart library):
+
+  | Widget | Shows |
+  |---|---|
+  | **Why** | relevant and not relevant per criterion, each group with its own scale and total |
+  | **Volume per source** | read / relevant / trend of relevant / windows seen against expected |
+  | **Hashtag trends** | with the comparison state |
+  | **Corpus health** | run state per source, stage 0 "dropped at the source", unmatched hosts, definition version, history switch |
+
+- **AI findings and the network graph** show the named state "history not active yet (dry run)", not an
+  empty tile.
+
+### What changed
+
+- **Names:** the dashboard header reads "KI-Cockpit" / "AI Cockpit"; the host page reads "Host-Cockpit"
+  (was "Server Cockpit"), including the tooltip in the news feed and the README.
+- **Hashtag trend, the comparison is named:**
+  - `faktor` when both periods were measured;
+  - `neu` when the earlier period was measured and the tag did not occur in it;
+  - `kein_vergleich` when the earlier period has no measurement of that source.
+
+### Fixed during the visual and logic check
+
+- **Every hashtag showed "neu".** The comparison period held no windows of the current raster version.
+  Claiming "new" without a comparison is false; it now reads "—" with the reason.
+- **Routine pushed every reason for relevance to zero.** "Why" had one scale for everything:
+  N1 routine at 1.27 million made the relevant bars (hundreds) invisible. Each group now has its own
+  scale.
+  - Live: relevant 4 689 (R6 security largest, then R3 spread and R2 new pattern), not relevant
+    1 440 105.
+
+### Evidence
+
+- **Playwright on hal.example.com with real cockpit data from the backend as API mock** (no real
+  login): all four widgets render. "Findings" shows the reason. Corpus health shows all five sources as
+  "läuft", stage 0 "1.086 Tsd./h verworfen", "Hosts unbekannt: 44", "Definition v5" and "Historie
+  Trockenlauf".
+- **Tests:** the backend suite has 883 passed. `ng build` succeeds.
+
+### What's missing
+
+- **Click from a widget into the search.** It comes with the corpus search.
+- **No AI findings yet** (they need the history and the AI funnel).
+
+---
+
 ## 2026-11-06 — Log watch, part 10: stage 0 (Graylog drop rules) visible and counted; topics per line for Graylog
 
 ### What's new

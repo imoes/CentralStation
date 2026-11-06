@@ -115,3 +115,28 @@ def widersprueche(regeln: list[dict], themen) -> list[dict]:
                 out.append({"regel": r["titel"], "thema": t.id, "thema_text": t.text,
                             "beispiel": t.beispiel, "behaelt_nur_mit": woerter})
     return out
+
+
+# ── Graylog-Regeltext aus unserem Vokabular (eine Quelle für Graylog und Raster) ──
+
+def themen_regex(themen) -> str:
+    """Ein Java-kompatibler Ausdruck aus den Mustern der Themen (für Graylogs regex()).
+
+    `(?is).*(?:…).*` passt für find() wie für matches(); die Muster nutzen nur \\b, \\S, \\d,
+    Gruppen und Wiederholungen — in Java gleichbedeutend.
+    """
+    return "(?is).*(?:" + "|".join(f"(?:{t.muster.pattern})" for t in themen) + ").*"
+
+
+def zaehlregel(verwerf_quelltext: str, themen, name: str = "count_topic_would_drop") -> str:
+    """Zählregel für Schritt 1: Bedingung = Verwerf-Bedingung UND Themen-Ausdruck; Aktion setzt
+    nur ein Feld an einer Nachricht, die ohnehin verworfen wird — keine Wirkung auf Daten, aber
+    ihr Trefferzähler misst, wie viele Themen-Zeilen heute an Stufe 0 verloren gehen."""
+    m = re.search(r"\bwhen\b(.*)\bthen\b", verwerf_quelltext, re.S)
+    if not m:
+        raise ValueError("Verwerf-Regel ohne when … then")
+    bedingung = m.group(1).strip()
+    muster = themen_regex(themen).replace("\\", "\\\\").replace('"', '\\"')
+    return (f'rule "{name}"\nwhen\n  ({bedingung})\n'
+            f'  AND regex("{muster}", to_string($message._msg_lc)).matches == true\n'
+            f'then\n  set_field("_topic_would_drop", "1");\nend')

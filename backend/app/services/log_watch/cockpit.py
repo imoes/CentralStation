@@ -74,21 +74,37 @@ def volumen(zeilen: list[tuple[str, datetime, dict]], stunden: int) -> dict:
 
 def hashtags(zeilen: list[tuple[str, datetime, dict]], seit: datetime, limit: int = 15) -> dict:
     """Häufigste Hashtags relevanter Nachrichten im Zeitraum, mit Faktor gegen den gleich
-    langen Zeitraum davor (> 1 = steigt). `vorher = 0` heißt neu — benannt als Faktor None."""
+    langen Zeitraum davor (> 1 = steigt).
+
+    `vergleich` je Hashtag, erschöpfend: „faktor“ (beide Zeiträume gemessen), „neu“ (davor
+    gemessen, dort nicht vorgekommen), „kein_vergleich“ (der Zeitraum davor hat keine Fenster
+    dieser Quelle in aktueller Fassung — „neu“ wäre eine falsche Behauptung; gemessen 06.11.:
+    nach einem Fassungswechsel stand jeder Hashtag auf „neu“)."""
     jetzt: Counter = Counter()
     vorher: Counter = Counter()
-    for _q, b, w in zeilen:
+    vorher_gemessen: set[str] = set()          # Quellen mit Fenstern im Vergleichszeitraum
+    quelle_je_tag: dict[str, str] = {}
+    for q, b, w in zeilen:
         if not aktuelle_fassung(w):
             continue
+        if b < seit:
+            vorher_gemessen.add(q)
         ziel = jetzt if b >= seit else vorher
         for tag, n in w.get("top_hashtags") or []:
             if not tag.startswith(_OHNE_TREND):
                 ziel[tag] += n
+                if ziel is jetzt:
+                    quelle_je_tag.setdefault(tag, q)
     out = []
     for tag, n in jetzt.most_common(limit):
         v = vorher.get(tag, 0)
-        out.append({"tag": tag, "anzahl": n, "vorher": v,
-                    "faktor": round(n / v, 1) if v else None})
+        if v:
+            vergleich, faktor = "faktor", round(n / v, 1)
+        elif quelle_je_tag.get(tag) in vorher_gemessen:
+            vergleich, faktor = "neu", None
+        else:
+            vergleich, faktor = "kein_vergleich", None
+        out.append({"tag": tag, "anzahl": n, "vorher": v, "faktor": faktor, "vergleich": vergleich})
     return {"einheit": "relevante Nachrichten", "hashtags": out}
 
 
