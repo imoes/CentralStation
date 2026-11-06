@@ -93,6 +93,13 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("cs-logs template setup deferred: %s", exc)
+        # Gesprächsprotokoll des agentischen Modus: cs-gespraech-* (strikt, eigener Index)
+        try:
+            from app.services.log_watch import gespraech
+            await gespraech.stelle_bereit()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("cs-gespraech template setup deferred: %s", exc)
         yield
         stop_scheduler()
         await close_redis()

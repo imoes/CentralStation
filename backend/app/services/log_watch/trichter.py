@@ -47,17 +47,18 @@ Relevanz 0–3, Hashtags art:wert (host:, thema:, signal:, quelle:, kritikalitae
 Kriterien R1–R8 (relevant) / N0–N6 (nicht relevant) mit Gründen.
 
 Vorgehen als Trichter:
-1. Zuerst lw_wissen mit dem Startfilter und je betroffenem Host (host:…): gibt es schon einen Befund
-   oder gelöstes Konsolen-Wissen?
-   Wenn ja und die Lage ist unverändert, beziehe dich darauf.
-2. lw_facetten bzw. lw_suche mit breitem Filter, Facetten lesen.
-3. Den auffälligsten Hashtag als Filter ergänzen, erneut suchen — bis ein kleines, zusammenhängendes
-   Ergebnis übrig bleibt (oder nichts Relevantes).
-4. Mit lw_befund abschließen — immer, auch wenn nichts Relevantes bleibt (dann Relevanz 0 oder 1 und
+1. Der Worker hat schon gesucht: du bekommst je betroffenem Host ein Host-Objekt — felder
+   (Stammdaten aus CheckMK), lage (relevante Nachrichten mit ID und Text, Facetten), nachbarschaft
+   (Netzplan-Kanten) und gedaechtnis (frühere Befunde und Gespräche zu diesem Host). Lies es zuerst.
+   Gibt es im Gedächtnis schon einen Befund zur selben Lage, beziehe dich darauf (Folge-Befund).
+2. Werkzeuge (lw_suche, lw_facetten, lw_netzplan, lw_nachricht, lw_gespraech) nur zum Vertiefen:
+   den auffälligsten Hashtag als Filter ergänzen, bis ein kleines, zusammenhängendes Ergebnis bleibt.
+3. Mit lw_befund abschließen — immer, auch wenn nichts Relevantes bleibt (dann Relevanz 0 oder 1 und
    kurz, warum).
 
 Regeln:
-- Belege: nur IDs aus lw_suche-Treffern und ein wörtliches Zitat (≥ 8 Zeichen) aus deren Text.
+- Belege: nur IDs aus der Lage oder aus lw_suche-Treffern und ein wörtliches Zitat (≥ 8 Zeichen)
+  aus deren Text.
 - Der Befund-Text behauptet nur, was ein Zitat trägt (Werte, Schwellen, Zeiten). Deutungen darüber
   hinaus („Verzögerung“, „Ausfall droht“) gehören als Hypothese in hypothesen, nicht in den Befund.
 - Ursachen sind Hypothesen mit Status offen/gestuetzt/widerlegt. Zeitliche Nähe allein ist kein Beleg
@@ -145,18 +146,63 @@ def _kurz(erg: dict) -> str:
     return s if len(s) <= ANTWORT_MAX else s[:ANTWORT_MAX] + f' … [abgeschnitten, {len(s)} Zeichen]'
 
 
-async def analysiere(fall: dict, llm_config, llm=None) -> dict:
-    """Eine Werkzeug-Schleife für einen Fall {start, anzahl, hosts}.
-    Ergebnis {start, hosts, befund|kein_befund|fehler, schritte}."""
+#: so viele Hosts eines Falls bekommen ein Host-Objekt im Prompt (der Rest wird genannt)
+HOSTS_IM_PROMPT = 3
+
+
+def _hashtags_aus(objekte: list[dict], fall: dict) -> list[str]:
+    """Hashtags für die Gesprächszüge: Felder der Hosts (wie an den Nachrichten) und der Fall."""
+    tags = {fall["start"]}
+    for o in objekte:
+        f = o.get("felder") or {}
+        for art, feld in (("ort", "ort"), ("kritikalitaet", "kritikalitaet"), ("netz", "netz"),
+                          ("netzbereich", "netzbereich")):
+            if f.get(feld):
+                tags.add(f"{art}:{f[feld]}")
+        tags |= {f"hg:{g}" for g in (f.get("hostgruppen") or [])[:5]}
+    return sorted(tags)
+
+
+async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=None) -> dict:
+    """Eine Analyse für einen Fall {start, anzahl, hosts}: der Worker baut die Host-Objekte (Suche),
+    die KI liest sie als Prompt und vertieft mit Werkzeugen; jeder Zug geht ins Gesprächsprotokoll.
+    Ergebnis {start, hosts, sitzung, befund|kein_befund|fehler, schritte}."""
+    import json
+
+    from app.services.log_watch import gespraech
     if llm is None:
         from app.services.llm_client import generate_with_tools as llm
-    nachrichten = [
-        {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": (
-            f"Prüfung wahr: {fall['anzahl']} Nachrichten mit Relevanz 3 oder neuem Muster in den letzten "
-            f"{STUNDEN} h, noch ohne Analyse. Startfilter: {fall['start']} — betroffene Hosts: "
-            f"{', '.join(fall['hosts'])}. Untersuche und lege den Befund ab.")},
-    ]
+    if bauer is None:
+        from app.services.log_watch.hostobjekt import baue as bauer
+    schreiber = schreiber or gespraech.schreibe
+    sitzung = gespraech.neue_sitzung()
+    objekte = [await bauer(h, STUNDEN) for h in fall["hosts"][:HOSTS_IM_PROMPT]]
+    weitere = fall["hosts"][HOSTS_IM_PROMPT:]
+    prompt = (f"Prüfung wahr: {fall['anzahl']} Nachrichten mit Relevanz 3 oder neuem Muster in den letzten "
+              f"{STUNDEN} h, noch ohne Analyse. Startfilter: {fall['start']}."
+              + (f" Weitere betroffene Hosts ohne Objekt: {', '.join(weitere)}." if weitere else "")
+              + "\n\nHost-Objekte (Suche des Workers):\n"
+              + json.dumps(objekte, ensure_ascii=False, default=str))
+    verlauf: list[dict] = [{"rolle": "worker", "text": prompt}]
+    ergebnis: dict = {}
+    try:
+        ergebnis = await _schleife(fall, llm_config, llm, prompt, verlauf)
+    except Exception as e:  # noqa: BLE001 — das Protokoll wird trotzdem geschrieben
+        ergebnis = {"start": fall["start"], "hosts": fall["hosts"], "fehler": f"{type(e).__name__}: {str(e)[:300]}",
+                    "schritte": []}
+    finally:
+        from datetime import datetime as _dt
+        try:
+            befund_tag = [f"befund:{ergebnis['befund'].split(':', 1)[1]}"] if ergebnis.get("befund") else []
+            await schreiber(gespraech.zuege(sitzung, fall, _hashtags_aus(objekte, fall) + befund_tag, verlauf,
+                                            _dt.now(timezone.utc)))
+        except Exception as e:  # noqa: BLE001 — Protokoll-Ausfall benannt, Analyse bleibt gültig
+            ergebnis["protokoll_fehler"] = f"{type(e).__name__}: {str(e)[:200]}"
+    return {**ergebnis, "sitzung": sitzung}
+
+
+async def _schleife(fall: dict, llm_config, llm, prompt: str, verlauf: list[dict]) -> dict:
+    nachrichten = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
     tools = wz.openai_tools()
     schritte: list[dict] = []
     erinnert = False
@@ -165,12 +211,17 @@ async def analysiere(fall: dict, llm_config, llm=None) -> dict:
         antwort = await llm(llm_config, nachrichten, tools)
         ki_s = round(time.monotonic() - t0, 1)
         nachrichten.append(antwort.nachricht)
+        verlauf.append({"rolle": "ki", "ki_s": ki_s, "modell": getattr(llm_config, "model", None),
+                        "text": (antwort.text or "") + "".join(
+                            f"\n→ {a['name']}({json.dumps(a['argumente'], ensure_ascii=False)[:500]})"
+                            for a in antwort.aufrufe)})
         if not antwort.aufrufe:
             if erinnert:
                 return {"start": fall["start"], "hosts": fall["hosts"], "kein_befund": "KI hat ohne lw_befund geendet",
                         "text": antwort.text[:1000], "schritte": schritte}
             erinnert = True
             nachrichten.append({"role": "user", "content": "Schließe mit lw_befund ab."})
+            verlauf.append({"rolle": "worker", "text": "Schließe mit lw_befund ab."})
             continue
         for a in antwort.aufrufe:
             if a["fehler"]:
@@ -183,8 +234,12 @@ async def analysiere(fall: dict, llm_config, llm=None) -> dict:
             schritte.append({"werkzeug": a["name"], "argumente": a["argumente"], "ki_s": ki_s,
                              "gesamt": erg.get("gesamt"), "fehler": erg.get("fehler") or erg.get("abgelehnt")})
             if a["name"] == "lw_befund" and "id" in erg:
+                verlauf.append({"rolle": "befund", "befund": erg["id"], "werkzeug": a["name"],
+                                "text": str(a["argumente"].get("titel", "")) + "\n" + str(a["argumente"].get("befund", ""))})
                 return {"start": fall["start"], "hosts": fall["hosts"], "befund": erg["id"], "belege": erg["belege"],
                         "verworfen": erg["verworfen"], "schritte": schritte}
+            verlauf.append({"rolle": "werkzeug", "werkzeug": a["name"], "argumente": a["argumente"],
+                            "text": _kurz(erg)})
             nachrichten.append({"role": "tool", "tool_call_id": a["id"], "content": _kurz(erg)})
     return {"start": fall["start"], "hosts": fall["hosts"], "kein_befund": f"nach {SCHRITTE} Schritten kein gültiger Befund", "schritte": schritte}
 

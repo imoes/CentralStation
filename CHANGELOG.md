@@ -10,6 +10,44 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 18: the agentic mode gets a conversation history; its prompt is a search result
+
+### What's new
+
+- **Conversation protocol per host** (your design, 2026-11-06).
+  - Every step of an analysis is stored in `cs-gespraech-*`: the worker's prompt, AI turns with
+    model seconds, tool calls and results, and the finding.
+  - Loading the protocol is a search, `host:<name>`. It returns every conversation about the host, for
+    any problem.
+  - The steps carry the host's fields as hashtags (`ort:`, `kritikalitaet:`, `netz:`, `hg:`) plus the
+    case and `befund:<id>`.
+  - The protocol is written even when an analysis fails.
+- **The worker searches first; the model reads the result as its prompt.** It gets one host object per
+  affected host:
+  - master data from CheckMK;
+  - the situation: relevant messages with ID and quotable text, plus facets;
+  - graph edges;
+  - memory: earlier findings and conversations.
+
+  Tools are only for going deeper.
+- **New tool `lw_gespraech`** in the funnel registry and on the MCP server.
+
+### Evidence
+
+- **Why the worker searches first** (measured on the 20 findings so far): every analysis began with
+  `lw_wissen`, followed by `lw_suche` (14×) or `lw_facetten` (6×). That cost 19.9 s of 62.2 s model time
+  before the finding step.
+- **Tests:**
+  - The protocol of an analysis has the steps worker → ki → werkzeug → ki → befund, in one session,
+    numbered in order.
+  - The prompt contains the host object.
+  - The steps carry `host:`, `muster:`, `ort:`, `kritikalitaet:`, `netz:`, `hg:` and `befund:`.
+  - When the model fails, the worker's step is still stored.
+  - Unknown roles are rejected.
+- **Backend suite:** 930 passed.
+
+---
+
 ## 2026-11-06 — Log watch, part 17: AI analysis statistics in the cockpit; nothing expires silently
 
 ### What's new

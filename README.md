@@ -1484,6 +1484,24 @@ The AI only works when a check is true, and it only writes its own analysis.
   at most 4 cases per run within a 480 s budget, 12 steps each). The
   model asks earlier knowledge first, reads facets, narrows the filter and ends with `lw_befund`.
   Every step (tool, arguments, hit count, model seconds) is kept in the finding.
+- **Host object as prompt** (`hostobjekt.py`). Before the model works, the worker searches and hands
+  over one object per affected host (at most 3):
+  - `felder`: CheckMK master data, or "not in CheckMK" with the reason;
+  - `lage`: relevant messages with ID and text to quote, plus facets;
+  - `nachbarschaft`: graph edges of the host;
+  - `gedaechtnis`: earlier findings and the conversation protocol of the last sessions.
+
+  Before this, every analysis spent its first steps (`lw_wissen` → `lw_suche`/`lw_facetten`) gathering
+  exactly this: measured on 20 findings, 19.9 s of 62.2 s model time.
+- **Conversation protocol** (`gespraech.py`, index `cs-gespraech-YYYY.MM`, strict):
+  - Every step of an analysis is one document: the worker's prompt, AI turns, tool results, the
+    finding, and later human notes.
+  - Each step carries session, step number, role, case, hosts, model and model seconds.
+  - Each step also carries the hashtags of the host fields, the case and `befund:<id>`.
+  - Loading is a search: `host:<name>` returns every conversation about that host, whatever the
+    problem; `netz:dmz` returns conversations about DMZ hosts.
+  - It has its own index because the steps are not messages about the network and would distort the
+    graph and the statistics.
 - **Tools** (`werkzeuge.py`, one registry for the funnel and the MCP server):
 
   | Tool | Purpose |
@@ -1494,6 +1512,7 @@ The AI only works when a check is true, and it only writes its own analysis.
   | `lw_wissen` | earlier AI findings and console knowledge (`quelle:ki`/`konsole`) |
   | `lw_netzplan` | nodes and edges for a filter (what occurs together — no cause) |
   | `lw_definition` | the relevance definition: criteria, objects, rules |
+  | `lw_gespraech` | conversation protocols of earlier analyses for a filter (e.g. `host:x`) |
   | `lw_befund` | the only writing tool: files the finding |
 
 - **A finding is a document** `quelle:ki`, `herkunft:ki` in `cs-logs-*` (`befund.py`). The code writes

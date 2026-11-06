@@ -37,6 +37,16 @@ async def lw_netzplan(filter: str = "", stunden: float = 24, knoten: int = 15) -
     return await s.netzplan(filter, stunden=stunden, knoten=knoten, objekte=await _objekte())
 
 
+async def lw_gespraech(filter: str, tage: float = 7, sitzungen: int = 3) -> dict:
+    """Gesprächsprotokoll(e) früherer Analysen zum Filter (z. B. host:x) — Laden ist eine Suche."""
+    from app.services.log_watch import filter as flt
+    from app.services.log_watch import gespraech
+    try:
+        return {"filter": filter, "sitzungen": await gespraech.lade(filter, tage=tage, sitzungen=max(1, min(sitzungen, 10)))}
+    except flt.FilterFehler as e:
+        return {"filter": filter, "fehler": str(e)}
+
+
 async def lw_nachricht(id: str) -> dict:
     """Eine Nachricht der Historie vollständig (mit Originalfeldern `roh`)."""
     from app.core.opensearch import get_opensearch
@@ -103,6 +113,11 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                     "keine Ursache. " + FILTER_HILFE,
                     _p(filter={"type": "string"}, stunden={"type": "number"}, knoten={"type": "integer"}),
                     False),
+    "lw_gespraech": (lw_gespraech,
+                     "Gesprächsprotokolle früherer Analysen (Züge von Worker, KI, Werkzeugen, Befund, Mensch) "
+                     "zum Filter, z. B. host:x oder muster:y. " + FILTER_HILFE,
+                     _p(filter={"type": "string", "_pflicht": True}, tage={"type": "number"},
+                        sitzungen={"type": "integer"}), False),
     "lw_nachricht": (lw_nachricht, "Eine Nachricht vollständig, mit allen Originalfeldern (roh).",
                      _p(id={"type": "string", "_pflicht": True}), False),
     "lw_wissen": (lw_wissen,

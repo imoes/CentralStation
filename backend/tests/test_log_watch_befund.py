@@ -94,3 +94,14 @@ def test_mcp_bietet_die_lesenden_lw_werkzeuge_aber_nicht_lw_befund():
     lesend = {n for n, (_, _, _, schreibt) in wz.REGISTRY.items() if not schreibt}
     assert lesend <= namen                         # jedes lesende Werkzeug auch im MCP
     assert "lw_befund" not in namen                # Befunde schreibt nur der Trichter
+
+
+def test_gespraech_rollen_erschoepfend_und_index():
+    from datetime import datetime, timezone
+    from app.services.log_watch import gespraech as g
+    jetzt = datetime(2026, 11, 6, 22, 50, tzinfo=timezone.utc)
+    z = g.zuege("s1", {"start": "host:a", "hosts": ["a"]}, ["netz:dmz"], [{"rolle": "ki", "text": "x"}], jetzt)
+    assert z[0]["hashtags"] == ["host:a", "netz:dmz"] and g.index_name(jetzt) == "cs-gespraech-2026.11"
+    assert set(z[0]) <= set(g.MAPPING["properties"])
+    with pytest.raises(ValueError, match="unbekannt"):
+        g.zuege("s1", {"start": "host:a", "hosts": ["a"]}, [], [{"rolle": "erfunden"}], jetzt)

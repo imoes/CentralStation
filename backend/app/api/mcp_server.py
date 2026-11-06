@@ -2328,3 +2328,11 @@ async def lw_definition() -> dict:
     """Die geltende Relevanz-Definition: Kriterien R1–R8 / N0–N6, Objekte, Regeln (erste passende entscheidet)."""
     from app.services.log_watch import werkzeuge
     return await werkzeuge.lw_definition()
+
+
+@mcp.tool()
+async def lw_gespraech(filter: str, tage: float = 7, sitzungen: int = 3) -> dict:
+    """Gesprächsprotokolle früherer KI-Analysen zum Filter (z. B. host:cue0148.example.com): je Sitzung
+    die Züge von Worker (Host-Objekt), KI, Werkzeugen und Befund — laden heißt suchen."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_gespraech(filter, tage, sitzungen)
