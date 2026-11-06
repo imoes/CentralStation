@@ -10,6 +10,40 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-06 — Log watch, part 3: history index with vector search (prepared)
+
+### What's new
+
+- **Index template `cs-logs`** for the history of relevant messages:
+  - original fields as `flat_object`;
+  - hashtags, reasons and the text;
+  - the selectors `urteil` (`relevant` | `nicht_relevant`) and `herkunft` (`regel` | `ki` |
+    `mensch`);
+  - a bge-m3 vector for search by meaning.
+- **Embedding client** for the llama.cpp endpoint (bge-m3, 1 024 dimensions).
+- **The error-cluster pass now remembers the Graylog IDs** of the first five messages per pattern ×
+  host. The history fetches exactly those messages in full instead of copying everything.
+
+### Evidence (live, 2026-11-06)
+
+- Graylog returns `_id` even with a reduced field list. Fetching one message by ID gave 37 fields.
+- **Probe index** with three real messages and real vectors, deleted afterwards:
+  - the template applies: `knn_vector`/1 024 and `flat_object`;
+  - search by meaning works across languages: the German "Speicher voll, Prozess vom Kernel beendet"
+    finds the English OOM message first (0.902 against 0.861 and 0.839);
+  - a field inside `roh` is searchable.
+- **Tests:** 6 new, for the document (fits the strict mapping, stable ID, no relevance below 2), the
+  checked embedding response, the exhaustive selector, and IDs per host up to the quota. The backend
+  suite has 811 passed.
+
+### What's missing
+
+- **Writing is switched off** until the dry run has measured the volume per day.
+- **What "relevant" means in our network is not defined yet.** The rules today are a proposal; the
+  definition comes first, and every verdict will cite it.
+
+---
+
 ## 2026-11-06 — Log watch, part 2: the raster tags the stream (dry run)
 
 ### What's new

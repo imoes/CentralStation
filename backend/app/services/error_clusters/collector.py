@@ -67,6 +67,8 @@ FIELDS = ["message", "source", "container_name", "timestamp", "level", "log_leve
           "application_name", "facility"]
 MAX_RESULT_WINDOW = 10_000
 SPLIT_AT = 9_500
+#: Nachrichten-IDs je Muster × Host und Fenster (= Kontingent der Historie je Stunde)
+BELEGE_JE_HOST = 5
 MAX_PARTS = 8          # bis 80 000 Zeilen je 5 min vollständig; darüber Untergrenze
 
 
@@ -78,6 +80,8 @@ class Line:
     message: str
     #: Programm laut Syslog (application_name/facility) — z. B. "kernel" (critical.py)
     app: str = ""
+    #: Graylog-`_id` — die Log-Überwachung holt darüber die volle Nachricht nach
+    id: str = ""
 
     @property
     def entity(self) -> str:
@@ -165,6 +169,7 @@ def _line(m: dict) -> Line:
         container=container,
         message=msg,
         app=str(m.get("application_name") or m.get("facility") or ""),
+        id=str(m.get("_id") or ""),
     )
 
 
@@ -206,6 +211,8 @@ class TemplateTally:
     examples: list[str] = field(default_factory=list)    # bis 5 Rohzeilen (erste Zeile)
     #: Zeilen je Host (Quelle) — für das Raster der Log-Überwachung (Muster × Host)
     hosts: Counter = field(default_factory=Counter)
+    #: je Host die ersten Nachrichten (Graylog-ID, Zeit) — was die Historie speichern darf
+    belege: dict = field(default_factory=dict)
 
     def add(self, line: Line) -> None:
         self.count += 1
@@ -213,6 +220,9 @@ class TemplateTally:
         if line.source:
             self.sources.add(line.source)
             self.hosts[line.source] += 1
+            b = self.belege.setdefault(line.source, [])
+            if line.id and len(b) < BELEGE_JE_HOST:
+                b.append((line.id, line.ts))
         if len(self.examples) < 5:
             first = line.message.split("\n", 1)[0][:500]
             if first not in self.examples:

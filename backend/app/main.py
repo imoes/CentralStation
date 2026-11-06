@@ -86,6 +86,13 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("Knowledge index setup deferred: %s", exc)
+        # Log-Überwachung: Vorlage der Historie cs-logs-* (Vektorfeld, flat_object)
+        try:
+            from app.services.log_watch.historie import stelle_bereit
+            await stelle_bereit()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("cs-logs template setup deferred: %s", exc)
         yield
         stop_scheduler()
         await close_redis()

@@ -1190,6 +1190,26 @@ A short name that fits several hosts is not guessed.
   relevance distribution, what would be stored per day (messages and MB), the top hashtags and the
   unmatched hosts.
 
+### Log watch: history `cs-logs-*` (prepared, writing switched off)
+
+- **Content:** only messages that are relevant, or that were judged to be relevant or not. One document
+  per source message.
+  - Original fields under `roh` (`flat_object`: every field searchable without 1 191 mapped Graylog
+    fields).
+  - Hashtags, reasons, the text, and a bge-m3 vector (`vektor`, 1 024 dimensions, Lucene HNSW, cosine).
+- **Selectors** (filters, facets, graph): `quelle`, `host`, `hashtags`, `relevanz`, `zeit`, plus:
+  - `urteil` with exactly two values, `relevant` | `nicht_relevant`;
+  - `herkunft` with `regel` | `ki` | `mensch`, saying who judged.
+
+  A message judged not relevant stays in the history as a counter-example.
+- **Daily indices** `cs-logs-YYYY.MM.DD` from the index template `cs-logs` (created at startup). The
+  document ID is `<quelle>:<ID in the source>`, so a second run overwrites instead of duplicating.
+- **Embeddings:** `https://llm-host03.example.com/embed/v1/embeddings` (override:
+  `LOG_WATCH_EMBED_URL`). If embedding fails, the document is still written and the missing vector is
+  named in the result.
+- **Switch:** writing starts only once the global setting `log_watch.historie_aktiv` is set, after the
+  24-hour dry run.
+
 ### Check steps and recipes (incidents)
 
 - **Check steps:** removed from the incident view on 2026-11-06. The investigation runs
