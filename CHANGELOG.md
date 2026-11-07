@@ -29,6 +29,17 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   counts lines **saved by the topic expression alone**: the drop condition without the topic branch, AND
   the topic expression. It sets no field. The rule name in Graylog stays `count_topic_would_drop`.
   - It is not a drop rule, so neither the stage 0 list nor the cockpit lists it, and no label had to change.
+- **Rule incidents are no longer closed by the old member check.** `resolve_inactive_host_incidents` closed every
+  host incident without members. Incidents from the I-HOST rule are created without members, so each was
+  closed in the next 15-min run and the cooldown reopened it later. Rule incidents are now closed only by
+  `schliesse_ruhige`, after a quiet window.
+  - Evidence, DB 07.11.: all 7 I-HOST incidents between 13:24 and 13:54 had 0 members and `resolved_at` at
+    the next housekeeping (13:34:31, 13:49:31, 14:04:31).
+- **Cockpit, stage 0: "… /h durch Themen gerettet"** next to "verworfen". This is the hit counter of the Graylog
+  rule `count_topic_rescued` (renamed by the peer session at 14:05 UTC, ID `6aef2ff7…`), measured on every node.
+  "nicht gemessen" if the rule is missing.
+  - Evidence, live 14:05: 3 of 3 nodes, 4/h. The 15-min rate is still ramping up after the rule was created;
+    the peer measured ≈ 36/h.
 - **Hermes system prompt lists `lw_gespraech`, `lw_feld`, `web_suche`, `web_seite`.** Claude and Codex console
   sessions see these tools from the MCP server itself.
   - Evidence: a user transcript in the console container shows `deferred_tools_delta` at 13:23:16 UTC adding
@@ -40,7 +51,6 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 - The Hermes prompt change reaches a console only after a userenv image rebuild and the next container start.
   Hermes loads its tool list at startup.
-- The "saved by topics" counter (≈ 36/h, peer measurement) is not yet shown in the cockpit.
 - The dead rule `mark_would_drop_container` is in no pipeline. Deleting it is a Graylog change and needs
   approval.
 

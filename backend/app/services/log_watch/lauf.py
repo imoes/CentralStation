@@ -344,12 +344,16 @@ async def run_raster() -> None:
         try:
             regeln, knoten = await stufe0.lies(adapter["graylog"].gl)
             zaehlung = await stufe0.zaehle(adapter["graylog"].gl, regeln, knoten)
+            zaehler = await stufe0.lies_zaehlregeln(adapter["graylog"].gl)
+            gezaehlt = await stufe0.zaehle(adapter["graylog"].gl, zaehler, knoten)
             await _speichere("stufe0", bc, {
                 "regeln": [{"titel": r["titel"], "orte": r["orte"], "felder": r["felder"],
                             "geaendert": r["geaendert"], **zaehlung.get(r["titel"], {})} for r in regeln],
                 "verworfen_pro_stunde": sum(z.get("pro_stunde", 0) for z in zaehlung.values()),
                 "widersprueche": stufe0.widersprueche(regeln, THEMEN),
                 "themen_ausdruck": stufe0.themen_ausdruck_stand(regeln, THEMEN),
+                # Zählregeln: Name → {pro_stunde, vollstaendig …}; fehlt eine, steht sie nicht da (nie gemessen)
+                "zaehler": {z["art"]: gezaehlt.get(z["titel"], {}) for z in zaehler},
                 "vollstaendig": all(z.get("vollstaendig") for z in zaehlung.values()),
             })
         except Exception as e:  # noqa: BLE001

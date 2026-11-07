@@ -85,7 +85,7 @@ def test_zaehlregel_aus_vokabular_und_verwerfbedingung():
     assert all(rx.match(t.beispiel.lower()) for t in betroffen)            # jedes Beispiel passt
     assert not rx.match("get /api/items 200 12ms user=4711")                 # Routine nicht
     regel = s0.zaehlregel(CONTAINER_NOISE["quelltext"], betroffen)
-    assert regel.startswith('rule "count_topic_would_drop"') and "drop_message" not in regel
+    assert regel.startswith('rule "count_topic_rescued"') and "drop_message" not in regel
     assert 'has_field("container_name")' in regel and "set_field" not in regel   # zählt nur
 
 
@@ -119,3 +119,8 @@ def test_zaehlregel_zaehlt_die_durch_themen_geretteten():
     # der Themen-Zweig ist aus dem Behalten-Block entfernt und steht genau einmal als UND-Bedingung da
     assert regel.count("regex(") == 1 and "AND regex(" in regel
     assert "set_field" not in regel and "drop_message" not in regel
+
+
+def test_zaehlregeln_nach_titel():
+    regeln = [{"id": "1", "title": "count_topic_rescued"}, {"id": "2", "title": "drop_http_success"}]
+    assert s0.zaehl_regeln(regeln) == [{"id": "1", "titel": "count_topic_rescued", "art": "gerettet"}]

@@ -418,9 +418,13 @@ export class LwWidgetComponent {
     const n = Math.round((s.verworfen_pro_stunde ?? 0) / 1000);
     return {
       zustand: s.zustand,
-      text: `${n.toLocaleString('de-DE')} Tsd./h verworfen` + (s.zustand === 'unvollstaendig' ? ' (unvollständig)' : ''),
+      text: `${n.toLocaleString('de-DE')} Tsd./h verworfen` + (s.zustand === 'unvollstaendig' ? ' (unvollständig)' : '') +
+        (s.gerettet_pro_stunde != null ? ` · ${s.gerettet_pro_stunde.toLocaleString('de-DE')}/h durch Themen gerettet` : ''),
       tip: 'An der Quelle (Graylog-Pipeline) verworfen — sieht keine Auswertung: ' +
-        (s.regeln ?? []).map((r: { titel: string; pro_stunde: number }) => `${r.titel} ${r.pro_stunde}/h`).join(', '),
+        (s.regeln ?? []).map((r: { titel: string; pro_stunde: number }) => `${r.titel} ${r.pro_stunde}/h`).join(', ') +
+        (s.gerettet_pro_stunde != null
+          ? `. Durch Themen gerettet: Container-Zeilen, die nur der Themen-Ausdruck vor dem Verwerfen bewahrt (count_topic_rescued)`
+          : '. Durch Themen gerettet: nicht gemessen'),
     };
   });
 

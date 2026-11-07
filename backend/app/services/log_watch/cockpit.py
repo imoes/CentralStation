@@ -170,6 +170,8 @@ def korpus(katalog: list[tuple[str, str, int]], zeilen_1h: list[tuple[str, datet
         s0 = ({"zustand": "fehler", "fehler": stufe0["fehler"]} if "fehler" in stufe0 else
               {"zustand": "ok" if stufe0.get("vollstaendig") else "unvollstaendig",
                "verworfen_pro_stunde": stufe0.get("verworfen_pro_stunde", 0),
+               # None = nicht gemessen (Zählregel fehlt in Graylog oder Lauf vor 07.11. 14:05)
+               "gerettet_pro_stunde": ((stufe0.get("zaehler") or {}).get("gerettet") or {}).get("pro_stunde"),
                "regeln": [{"titel": r["titel"], "pro_stunde": r.get("pro_stunde", 0)}
                           for r in stufe0.get("regeln", [])]})
     return {"felder": {q: dict(c) for q, c in felder.items()},

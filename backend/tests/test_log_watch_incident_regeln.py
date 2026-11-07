@@ -117,3 +117,12 @@ def test_bremsen_aus_dem_backtest():
     assert asyncio.run(ir.freigabe(host, alt_aktiv, jetzt)) is None
     assert "nicht mehr aktiv" in asyncio.run(ir.freigabe(host, ruhig, jetzt))
     assert ir.jaccard({"a", "b"}, {"b", "c"}) == 1 / 3 and ir.jaccard(set(), {"a"}) == 0.0
+
+
+def test_regel_incident_wird_nicht_vom_mitglieder_abgleich_geschlossen():
+    """Gemessen 07.11.: I-HOST-Incidents (ohne Mitglieder) schloss resolve_inactive_host_incidents nach ≤ 15 min."""
+    from types import SimpleNamespace
+    from app.services.error_clusters.incident import von_regel
+    regel = SimpleNamespace(causal_context=[{"type": "error_cluster", "regel": "I-HOST", "schluessel": "host:a"}])
+    alt = SimpleNamespace(causal_context=[{"type": "error_cluster", "hosts": ["a"]}])
+    assert von_regel(regel) and not von_regel(alt) and not von_regel(SimpleNamespace(causal_context=None))

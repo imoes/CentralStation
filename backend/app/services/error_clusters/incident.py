@@ -69,6 +69,12 @@ def cluster_context(inc: Incident) -> dict | None:
     return None
 
 
+def von_regel(inc: Incident) -> bool:
+    """Incident einer Incident-Regel (log_watch.incident_regeln): ohne Mitglieder angelegt, geschlossen
+    von schliesse_ruhige nach einem ruhigen Fenster — nicht vom Mitglieder-Abgleich."""
+    return bool((cluster_context(inc) or {}).get("regel"))
+
+
 def host_matches(host: str, cluster_hosts: list[str]) -> bool:
     """FQDN gegen Kurznamen: "mu-img-docker19.example.com" ≙ "mu-img-docker19"."""
     h = host.lower()
@@ -320,6 +326,7 @@ async def close_recovered(active_external_ids: set[str], db: AsyncSession) -> tu
 
 async def resolve_inactive_host_incidents(db: AsyncSession) -> int:
     """host-Incidents schließen, deren Mitglieder alle erledigt sind (Sicherheitsnetz).
+    Regel-Incidents (von_regel) schließt incident_regeln.schliesse_ruhige, nicht dieser Abgleich.
 
     Übergreifende Cluster schließt ihre Episode (60 min Ruhe), nicht dieser Abgleich.
     """
@@ -332,6 +339,9 @@ async def resolve_inactive_host_incidents(db: AsyncSession) -> int:
     from app.services.feed_index import search_by_query
     resolved = 0
     for inc in incidents:
+        # gemessen 07.11.: jeder I-HOST-Incident (0 Mitglieder) wurde im nächsten 15-min-Lauf geschlossen
+        if von_regel(inc):
+            continue
         try:
             mem = await db.execute(select(IncidentMember.external_id)
                                    .where(IncidentMember.incident_id == inc.id))

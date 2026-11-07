@@ -16,6 +16,9 @@ import re
 METRIK = "org.graylog.plugins.pipelineprocessor.ast.Rule.{id}.matched"
 #: höchstens so viele Anfragen je Regel, um alle Knoten zu erreichen
 VERSUCHE = 15
+#: Zählregeln (kein drop_message): ihr Trefferzähler ist die Messung. count_topic_rescued = Container-Zeilen,
+#: die allein der Themen-Ausdruck vor drop_container_noise bewahrt (seit 07.11. 14:05 UTC, Peer graylog)
+ZAEHLREGELN = {"count_topic_rescued": "gerettet"}
 _FELD = re.compile(r'has_field\("([^"]+)"\)|\$message\.(\w+)')
 
 
@@ -65,6 +68,18 @@ async def lies(gl) -> tuple[list[dict], set[str]]:
         knoten = {n["node_id"] for n in
                   (await c.get(f"{gl.base_url}/api/system/cluster/nodes", headers=h)).json().get("nodes", [])}
     return verwerf_regeln(pipelines, regeln, verbindungen, streams), knoten
+
+
+def zaehl_regeln(regeln: list[dict]) -> list[dict]:
+    """Die Zählregeln aus ZAEHLREGELN, die es in Graylog gibt (id + titel + art)."""
+    return [{"id": r.get("id"), "titel": r.get("title"), "art": ZAEHLREGELN[r.get("title")]}
+            for r in regeln if r.get("title") in ZAEHLREGELN]
+
+
+async def lies_zaehlregeln(gl) -> list[dict]:
+    async with gl._client(timeout=60.0) as c:
+        regeln = (await c.get(f"{gl.base_url}/api/system/pipelines/rule", headers=gl._headers())).json()
+    return zaehl_regeln(regeln)
 
 
 async def zaehle(gl, regeln: list[dict], knoten: set[str]) -> dict[str, dict]:
@@ -158,8 +173,8 @@ def themen_regex(themen) -> str:
     return "(?is).*(?:" + "|".join(f"(?:{t.muster.pattern})" for t in themen) + ").*"
 
 
-def zaehlregel(verwerf_quelltext: str, themen, name: str = "count_topic_would_drop") -> str:
-    """Zählregel „durch Themen gerettet“ (Bedeutung seit 07.11. 13:54 UTC, Name in Graylog unverändert):
+def zaehlregel(verwerf_quelltext: str, themen, name: str = "count_topic_rescued") -> str:
+    """Zählregel „durch Themen gerettet“ (in Graylog seit 07.11. 14:05 UTC):
     Bedingung = Verwerf-Bedingung OHNE den Themen-Zweig UND Themen-Ausdruck — also die Zeilen, die
     allein der Themen-Ausdruck vor dem Verwerfen bewahrt. Setzt kein Feld (die Zeilen bleiben ja
     erhalten); gemessen wird nur ihr Trefferzähler."""
