@@ -154,6 +154,10 @@ interface Treffer { treffer: number; verdraengt: number; test: number; letzter: 
           <div><b>Vorschau</b> ({{ v.stunden }} h, {{ v.geprueft | number }} vom Regelwerk beurteilte Nachrichten@if (v.gekappt) {, gekappt}):
             <b>{{ v.geaendert | number }}</b> Urteil(e) würden sich ändern.
             @for (w of wechsel(v); track w[0]) { <span class="chip">{{ w[0] }}: {{ w[1] }}</span> }</div>
+          @if (testTreffer(v).length) {
+            <div>Regeln im Testmodus hätten getroffen:
+              @for (w of testTreffer(v); track w[0]) { <span class="chip">{{ w[0] }}: {{ w[1] | number }}</span> }</div>
+          }
           @for (b of v.beispiele; track b.id) {
             <div class="bsp">{{ b.vorher.aktion }} ({{ b.vorher.regel }}) → <b>{{ b.nachher.aktion }} ({{ b.nachher.regel }})</b> · {{ b.host }} · {{ b.text }}</div>
           }
@@ -182,6 +186,9 @@ interface Treffer { treffer: number; verdraengt: number; test: number; letzter: 
     .rw-tab input:hover, .rw-tab input:focus, .neu-obj input, .begr { border-color: var(--mat-sys-outline-variant); }
     .rw-tab select option { color: initial; }
     td.filter { min-width: 280px; font-family: monospace; }
+    td:nth-child(3) { min-width: 170px; }
+    td:nth-child(5) select { min-width: 92px; }
+    td:nth-child(6) select { min-width: 64px; }
     td.id { font-family: monospace; white-space: nowrap; }
     td.z, th.z { text-align: right; font-variant-numeric: tabular-nums; }
     td.warn { color: var(--mat-sys-tertiary); font-weight: 600; }
@@ -241,17 +248,22 @@ export class RegelwerkComponent implements OnInit {
   readonly kriterien = computed(() => this.def()?.kriterien ?? []);
   readonly objektNamen = computed(() => Object.keys(this.objekte()).sort());
   readonly istAdmin = computed(() => this.auth.userRole() === 'admin');
+  /** neue, entfernte, inhaltlich geänderte Regeln + 1, wenn sich die Reihenfolge der BESTEHENDEN ändert
+   *  (eine eingefügte Regel verschiebt die übrigen — das ist keine Änderung an ihnen) + geänderte Objekte */
   readonly aenderungen = computed(() => {
     this.stand();
     const o = this.original();
     if (!o) return 0;
-    const alt = new Map(o.regeln.map((r, i) => [r.id, { r, i }]));
+    const alt = new Map(o.regeln.map(r => [r.id, r]));
+    const neuIds = new Set(this.entwurf().map(r => r.id));
     let n = 0;
-    this.entwurf().forEach((r, i) => {
+    for (const r of this.entwurf()) {
       const a = alt.get(r.id);
-      if (!a || a.i !== i || JSON.stringify(this.vergleich(a.r)) !== JSON.stringify(this.vergleich(r))) n++;
-    });
-    n += o.regeln.filter(r => !this.entwurf().some(x => x.id === r.id)).length;
+      if (!a || JSON.stringify(this.vergleich(a)) !== JSON.stringify(this.vergleich(r))) n++;
+    }
+    n += o.regeln.filter(r => !neuIds.has(r.id)).length;
+    const reihe = (l: Regel[]) => l.map(r => r.id).filter(id => alt.has(id) && neuIds.has(id)).join(',');
+    if (reihe(o.regeln) !== reihe(this.entwurf())) n++;
     const ob = this.objekte();
     for (const k of new Set([...Object.keys(ob), ...Object.keys(o.objekte)])) if (ob[k] !== o.objekte[k]) n++;
     return n;
@@ -286,6 +298,7 @@ export class RegelwerkComponent implements OnInit {
   t(id: string): Treffer { return this.treffer()[id] ?? { treffer: 0, verdraengt: 0, test: 0, letzter: null }; }
   mindestText(r: Regel): string { return Object.entries(r.mindestens ?? {}).map(([k, v]) => `${v} ${k}`).join(', ') || '—'; }
   wechsel(v: any): [string, number][] { return Object.entries(v.je_wechsel ?? {}) as [string, number][]; }
+  testTreffer(v: any): [string, number][] { return Object.entries(v.test_treffer ?? {}) as [string, number][]; }
 
   private vergleich(r: Regel) {
     return { name: r.name, filter: r.filter, aktion: r.aktion, kriterium: r.kriterium, modus: r.modus };

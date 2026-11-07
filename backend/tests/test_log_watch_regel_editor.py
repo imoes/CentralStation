@@ -34,3 +34,11 @@ def test_vorschau_zeigt_geaenderte_urteile_nur_fuer_regel_urteile():
     assert v["geprueft"] == 2 and v["geaendert"] == 1
     assert v["beispiele"][0]["id"] == "a" and v["beispiele"][0]["nachher"] == {"aktion": "block", "regel": "A1"}
     assert list(v["je_wechsel"]) == ["R5 → A1"]
+
+
+def test_vorschau_zaehlt_testtreffer_neuer_regeln():
+    daten = als_daten(STANDARD.regeln)
+    neu = aus_daten([{"id": "A1", "kriterium": "N4", "name": "Probe", "aktion": "block", "bedingung": {},
+                      "filter": "thema:oom", "modus": "test"}] + daten, STANDARD.objekte)
+    v = re_.vorschau(STANDARD.regeln, neu, [{"hashtags": ["thema:oom", "signal:schaden"]}, {"hashtags": ["thema:dns"]}])
+    assert v["geaendert"] == 0 and v["test_treffer"] == {"A1": 1}

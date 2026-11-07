@@ -47,7 +47,7 @@ def vorschau(alt: list, neu: list, docs: list[dict]) -> dict:
     """Urteile der Historie unter dem alten und dem neuen Regelsatz. Nur Dokumente, die das Regelwerk
     allein beurteilt hat (herkunft regel) — KI und Mensch haben Vorrang und ändern sich nicht. Rein."""
     from app.services.log_watch.regelwerk import bewerte
-    geaendert, beispiele = Counter(), []
+    geaendert, beispiele, test = Counter(), [], Counter()
     geprueft = 0
     for d in docs:
         if (d.get("herkunft") or "regel") != "regel":
@@ -56,6 +56,7 @@ def vorschau(alt: list, neu: list, docs: list[dict]) -> dict:
         tags = set(d.get("hashtags") or [])
         felder = {k: d[k] for k in ("level", "relevanz") if d.get(k) is not None}
         a, b = bewerte(alt, tags, felder), bewerte(neu, tags, felder)
+        test.update(b.test_treffer)                    # „hätte N Treffer“ der Regeln im Testmodus
         if (a.aktion, a.regel) == (b.aktion, b.regel):
             continue
         geaendert[f"{a.regel} → {b.regel}"] += 1
@@ -65,4 +66,5 @@ def vorschau(alt: list, neu: list, docs: list[dict]) -> dict:
                               "nachher": {"aktion": b.aktion, "regel": b.regel}})
     return {"geprueft": geprueft, "geaendert": sum(geaendert.values()),
             "je_wechsel": dict(geaendert.most_common()), "beispiele": beispiele,
+            "test_treffer": dict(test.most_common()),
             "grenze": "nur gespeicherte (relevante) Nachrichten — heute verworfene kann die Vorschau nicht zeigen"}
