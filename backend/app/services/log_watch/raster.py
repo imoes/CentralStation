@@ -34,9 +34,14 @@ THEMEN_R8 = frozenset({"cert", "backup"})
 #: Fehler-Cluster-Regel → Signal („persistent“ = neues Muster läuft anhaltend)
 REGEL_SIGNAL = {"new": "neu", "persistent": "neu", "spread": "ausbreitung", "spike": "anstieg"}
 #: Anwendungen, die eine Zeile selbst ausweisen, auch ohne Container-Namen: (Ausdruck über Muster bzw. Beispiel, app)
-#: Ansible-Module loggen auf dem Zielhost „ansible-<modul>[:] Invoked with …“ (gemessen 07.11.: 387 Muster,
-#: Filebeat-Rollout → Ausbreitung über 139 Hosts). Nutzer 07.11.: Ansible ist selbst erzeugt (N5, @Selbst-erzeugt).
-SELBST_APPS = ((re.compile(r"\bansible-[\w.]+:? Invoked with\b"), "ansible"),)
+#: Nutzer 07.11.: Ansible ist selbst erzeugt (N5, @Selbst-erzeugt). Gemessen 07.11. an 1 012 Mustern mit „ansible“:
+#: Modulaufruf/-warnung auf dem Zielhost 422, sudo des Benutzers ansible 175, Laufbilanz (ansible.log) 156,
+#: sshd mit Benutzer ansible 2. NICHT: Dienste auf Hosts, die „ansible“ nur im Namen tragen (certmonger auf
+#: ansible-runner), sshd-Sitzungszeilen ohne Benutzer (pam_env, syslogin_perform_logout — auch Menschen).
+SELBST_APPS = ((re.compile(r"\bansible-[\w.]+:? (?:Invoked with\b|\[WARNING\])"
+                           r"|\bsudo\b\W{1,4}ansible : (?:TTY=|PWD=|\(command continued\))"
+                           r"|\bp=\S+ (?:u=)?\S+ n=ansible \|"
+                           r"|\b(?:for|from) (?:invalid )?user ansible\b|\bfor ansible from\b"), "ansible"),)
 
 
 def apps_aus_text(*texte: str) -> list[str]:

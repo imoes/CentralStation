@@ -149,6 +149,14 @@ def test_ansible_ist_selbst_erzeugt_v8():
     assert apps_aus_text("<NUM> <TS> <*> python3 <NUM> ansible-ansible.legacy.stat Invoked with <*>") == ["ansible"]
     assert apps_aus_text("ansible-apt: Invoked with name=filebeat") == ["ansible"]
     assert apps_aus_text("sshd[1]: pam_env(sshd:session): deprecated", "ansible-runner sshd-session[2]: x") == []
+    for t in ("sudo - ansible : TTY=pts/<NUM> ; PWD=/systems/ansible ; USER=root ; COMMAND=/bin/sh -c",
+              "sudo: ansible : (command continued) print(json.dumps(out))",
+              "<TS> p=<NUM> u=root n=ansible | <*> : ok=<NUM> changed=<NUM> failed=<NUM>",
+              "<TS> p=<NUM> <*> n=ansible | [WARNING]: Could not match supplied host pattern",
+              "ansible-find: [WARNING] Skipped <*> path due to this access issue",
+              "sshd <NUM> Disconnected from user ansible <IP> port <NUM>"):
+        assert apps_aus_text(t) == ["ansible"], t
+    assert apps_aus_text("ansible-runner certmonger[<NUM>]: Error binding to <*> Local error.") == []
     tags = {"quelle:graylog", "app:ansible", "kritikalitaet:prod", "signal:ausbreitung", "signal:dringend"}
     assert bewerte(STANDARD.regeln, tags, {}).regel == "N5"
     assert bewerte(STANDARD.regeln, tags | {"signal:schaden"}, {}).regel == "R5"

@@ -2297,6 +2297,20 @@ async def lw_feld(name: str = "") -> dict:
 
 
 @mcp.tool()
+async def lw_feld_anlegen(name: str, art: str, bedeutung: str, belege: list, beispiel: str = "") -> dict:
+    """Log-Überwachung: Bedeutung eines NEUEN Felds, Signals, Quellfelds oder einer NEUEN Hashtag-Art (eigenes
+    Tag-Feld, art='hashtag', z. B. name='ursache') registrieren — nur mit geprüften Zitaten: belege = [{id, zitat}]
+    aus einer Nachricht (lw_suche) oder [{url, zitat}] aus einer mit web_seite gelesenen Seite. Vorhandenes wird
+    nicht überschrieben. Erst registrierte Tag-Arten darf eine KI an Nachrichten setzen.
+    SCHREIBOPERATION (Feldkatalog) — nur im Schreib-Zeitfenster des Nutzers."""
+    denied = await _require_write("Feldbedeutung registrieren")
+    if denied:
+        return denied
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_feld_anlegen(name, art, bedeutung, belege, beispiel)
+
+
+@mcp.tool()
 async def lw_definition() -> dict:
     """Die geltende Relevanz-Definition: Kriterien R1–R8 / N0–N6, Objekte, Regeln (erste passende entscheidet)."""
     from app.services.log_watch import werkzeuge

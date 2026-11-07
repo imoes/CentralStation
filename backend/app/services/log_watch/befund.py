@@ -109,8 +109,35 @@ def form(eingabe: dict) -> tuple[str, list[str], list[str]]:
     return kern, fakten, folge
 
 
+#: Form eines erfundenen Tags: Art klein, Wert ohne Leerraum (Hashtags sind Filter: art:wert)
+_TAG_ART = re.compile(r"[a-z][a-z0-9-]{1,30}")
+_TAG_WERT = re.compile(r"[^\s,;]{1,80}")
+
+
+def eigene_tags(gewuenscht: list[str], auf_belegen: set[str], erfindbar: set[str]) -> tuple[list[str], list[dict]]:
+    """Von der KI genannte Tags, die KEIN Beleg trägt → (gültig, abgelehnt mit Grund). Rein — testbar.
+
+    Nutzer 07.11.2026: die KI darf Tag-Felder erfinden; jede neue Art muss vorher registriert sein
+    (lw_feld_anlegen, art hashtag, mit geprüftem Zitat). Die Arten des Systems (quelle, host, thema …)
+    vergibt das Raster aus festem Vokabular — dort zählt weiter nur, was ein Beleg trägt."""
+    gut, weg = [], []
+    for t in gewuenscht:
+        if t in auf_belegen:
+            continue
+        art, _, wert = t.partition(":")
+        if not _TAG_ART.fullmatch(art) or not _TAG_WERT.fullmatch(wert):
+            weg.append({"tag": t, "grund": "Form art:wert — Art klein (a-z, 0-9, -), Wert ohne Leerzeichen"})
+        elif art not in erfindbar:
+            weg.append({"tag": t, "grund": f"Art {art!r} ist nicht als eigenes Tag-Feld registriert — erst "
+                                           f"lw_feld_anlegen(name={art!r}, art='hashtag', bedeutung, belege); "
+                                           "Arten des Systems nur mit Werten, die ein Beleg trägt"})
+        else:
+            gut.append(t)
+    return sorted(set(gut)), weg
+
+
 def baue(eingabe: dict, pruefung: Pruefung, jetzt: datetime, modell: str = "",
-         schritte: list | None = None, start: str = "") -> tuple[str, dict]:
+         schritte: list | None = None, start: str = "", erfindbar: set[str] | None = None) -> tuple[str, dict]:
     """(Dokument-ID, Dokument) des Befunds. Wirft BefundAbgelehnt mit Grund."""
     titel = str(eingabe.get("titel") or "").strip()
     if not titel:
@@ -141,9 +168,10 @@ def baue(eingabe: dict, pruefung: Pruefung, jetzt: datetime, modell: str = "",
     doc_id = f"ki:{kurz}"
     tags_belege = Counter(t for b in pruefung.gueltig for t in b["hashtags"] if not t.startswith("befund:"))
     gewuenscht = [t for t in (eingabe.get("hashtags") or []) if isinstance(t, str)]
-    #: von der KI genannte Hashtags gelten nur, wenn ein Beleg sie trägt
+    #: von der KI genannte Hashtags gelten, wenn ein Beleg sie trägt — oder als eigenes, registriertes Tag-Feld
     hashtags = sorted({t for t in gewuenscht if t in tags_belege} or set(tags_belege))
-    hashtags = [t for t in hashtags if not t.startswith("quelle:")] + ["quelle:ki", f"befund:{kurz}"]
+    eigene, abgelehnt = eigene_tags(gewuenscht, set(tags_belege), erfindbar or set())
+    hashtags = [t for t in hashtags if not t.startswith("quelle:")] + eigene + ["quelle:ki", f"befund:{kurz}"]
     hosts = Counter(b["host"] for b in pruefung.gueltig if b["host"])
     belegt = {b["id"]: b for b in pruefung.gueltig}             # je Dokument einmal
     return doc_id, {
@@ -164,6 +192,8 @@ def baue(eingabe: dict, pruefung: Pruefung, jetzt: datetime, modell: str = "",
             "start": start,
             "belege": [{k: b[k] for k in ("id", "zitat", "host", "quelle", "zeit")} for b in pruefung.gueltig],
             "verworfen": pruefung.verworfen, "schritte": schritte or [],
+            # eigene Tag-Felder: an den Belegen gesetzt; abgelehnte mit Grund (nichts verschwindet still)
+            "eigene_tags": eigene, "tags_abgelehnt": abgelehnt,
         },
     }
 
@@ -189,7 +219,9 @@ async def schreibe_befund(eingabe: dict, modell: str = "", schritte: list | None
     jetzt = jetzt or datetime.now(timezone.utc)
     belege = [b for b in (eingabe.get("belege") or []) if isinstance(b, dict)]
     pruefung = pruefe_belege(belege, await lies_dokumente([str(b.get("id")) for b in belege]))
-    doc_id, doc = baue(eingabe, pruefung, jetzt, modell, schritte, start)
+    from app.services.log_watch import felder
+    doc_id, doc = baue(eingabe, pruefung, jetzt, modell, schritte, start,
+                       erfindbar=felder.erfindbar(await felder.registrierte_hashtag_arten()))
     try:
         (doc["vektor"],) = await einbetten([doc["text"]])
     except EmbeddingFehler:
@@ -202,5 +234,12 @@ async def schreibe_befund(eingabe: dict, modell: str = "", schritte: list | None
     if belegt:
         await nachricht.verknuepfe(doc["schluessel"], "ki", f"Beleg des Befunds {doc_id} („{doc['ai_provenance']['titel'][:80]}“)",
                                    items=belegt, jetzt=jetzt)
+    eigene = doc["ai_provenance"]["eigene_tags"]
+    if eigene and belegt:
+        # das erfundene Tag beschreibt die Belege — erst an ihnen ist es such- und filterbar (Netzplan-Knoten)
+        await nachricht.markiere(eigene, [], "ki", f"eigenes Tag-Feld aus Befund {doc_id}",
+                                 ids=[i for _, i in belegt], jetzt=jetzt)
     return {"id": doc_id, "belege": len(pruefung.gueltig), "verworfen": pruefung.verworfen,
-            "hashtags": doc["hashtags"]}
+            "hashtags": doc["hashtags"],
+            **({"tags_abgelehnt": doc["ai_provenance"]["tags_abgelehnt"]}
+               if doc["ai_provenance"]["tags_abgelehnt"] else {})}

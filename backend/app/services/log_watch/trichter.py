@@ -87,7 +87,11 @@ Regeln:
   hinaus („Verzögerung“, „Ausfall droht“) gehören als Hypothese in hypothesen, nicht in den Befund.
 - Ursachen sind Hypothesen mit Status offen/gestuetzt/widerlegt. Zeitliche Nähe allein ist kein Beleg
   für eine Ursache; gemeinsames Auftreten heißt so.
-- Hashtags nur, die die Belege tragen. Keine Handlungen an Systemen — du analysierst nur.
+- Hashtags: die die Belege tragen. Fehlt eine Art für eine Eigenschaft der Belege, die du belegen kannst
+  (z. B. ursache:ansible-rollout, komponente:filebeat), erfinde ein eigenes Tag-Feld: zuerst die Art mit
+  lw_feld_anlegen(name=<art>, art="hashtag", bedeutung, belege) registrieren, dann im Befund nennen — es wird an
+  die Belege gehängt. Die Arten des Systems (quelle, host, thema, muster …) nur mit Werten der Belege.
+- Keine Handlungen an Systemen — du analysierst nur.
 - Antworte auf Deutsch, knapp — ein Mensch liest es im Cockpit in Sekunden:
   titel ≤ 80 Zeichen — was und wo; Zahlen und Zeiten nur aus einem Zitat (nicht das Suchfenster).
   kern: EIN Satz ≤ 300 Zeichen — was ist los, wo, seit wann, wie schlimm.

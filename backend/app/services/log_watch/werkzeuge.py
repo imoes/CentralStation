@@ -238,7 +238,8 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
     "lw_feld_anlegen": (lw_feld_anlegen, "Bedeutung eines NEUEN Felds/Hashtags/Signals/Quellfelds anlegen, das lw_feld "
                         "nicht kennt — nur mit Belegen: [{id, zitat}] aus einer Nachricht oder [{url, zitat}] aus einer "
                         "mit web_seite gelesenen Seite; das Zitat muss dort wörtlich stehen (der Code prüft). "
-                        "Vorhandenes wird nicht überschrieben.",
+                        "Vorhandenes wird nicht überschrieben. Ein eigenes Tag-Feld (neue Hashtag-Art, z. B. ursache) "
+                        "registrierst du hier mit art='hashtag' — erst dann gilt es im Befund.",
                         _p(name={"type": "string", "_pflicht": True},
                            art={"type": "string", "enum": ["feld", "hashtag", "signal", "quellfeld"], "_pflicht": True},
                            bedeutung={"type": "string", "_pflicht": True},
@@ -262,7 +263,9 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                   "Jeder Beleg ist {id, zitat}: die ID einer Nachricht aus lw_suche und ein wörtliches Zitat "
                   "(≥ 8 Zeichen) aus ihrem Text; der Code prüft das. Hypothesen: [{text (ein Satz), status: "
                   "offen|gestuetzt|widerlegt}]. Relevanz 0–3 (3 = dringend). Ursachen nur als Hypothese, nie "
-                  "aus zeitlicher Nähe allein.",
+                  "aus zeitlicher Nähe allein. hashtags: die der Belege, dazu eigene Tag-Felder (art:wert, z. B. "
+                  "ursache:ansible-rollout) — deren Art muss vorher mit lw_feld_anlegen(art='hashtag') registriert "
+                  "sein; sie werden an die Belege gehängt, nicht registrierte kommen mit Grund zurück.",
                   _p(titel={"type": "string", "_pflicht": True}, kern={"type": "string", "_pflicht": True},
                      fakten={"type": "array", "items": {"type": "string"}},
                      folge_von={"type": "array", "items": {"type": "string"}},

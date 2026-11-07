@@ -87,7 +87,7 @@ def test_rufe_benennt_fehler():
     assert "Pflichtargumente fehlen" in asyncio.run(wz.rufe("lw_nachricht", {}))["fehler"]
 
 
-def test_mcp_bietet_die_lesenden_lw_werkzeuge_aber_nicht_lw_befund():
+def test_mcp_bietet_die_lesenden_lw_werkzeuge_aber_nicht_lw_befund_und_registrieren_nur_mit_freigabe():
     import ast, pathlib
     quelle = pathlib.Path("app/api/mcp_server.py").read_text()
     namen = {n.name for n in ast.parse(quelle).body if isinstance(n, ast.AsyncFunctionDef)
@@ -95,7 +95,10 @@ def test_mcp_bietet_die_lesenden_lw_werkzeuge_aber_nicht_lw_befund():
     lesend = {n for n, (_, _, _, schreibt) in wz.REGISTRY.items() if not schreibt}
     assert lesend <= namen                         # jedes lesende Werkzeug auch im MCP
     assert "lw_befund" not in namen                # Befunde schreibt nur der Trichter
-    assert "lw_feld_anlegen" not in namen          # neue Feldbedeutungen legt nur die Analyse-KI an
+    # Nutzer 07.11.: neue Tag-Felder werden im MCP-Werkzeug registriert — für Konsolen-Agenten nur mit Schreibfreigabe
+    anlegen = next(n for n in ast.parse(quelle).body
+                   if isinstance(n, ast.AsyncFunctionDef) and n.name == "lw_feld_anlegen")
+    assert "lw_feld_anlegen" in namen and "_require_write" in ast.unparse(anlegen)
 
 
 def test_gespraech_rollen_erschoepfend_und_index():
@@ -130,3 +133,29 @@ def test_form_kern_fakten_folge():
                            ({"kern": "k", "fakten": ["f" * 301]}, "höchstens 300")):
         with pytest.raises(bf.BefundAbgelehnt, match=grund):
             bf.form(eingabe)
+
+
+def test_eigene_tag_felder_nur_registriert():
+    """Nutzer 07.11.: die KI erfindet Tag-Felder; gültig nur mit registrierter Art (lw_feld_anlegen, hashtag)."""
+    gut, weg = bf.eigene_tags(
+        ["thema:kernel-io", "ursache:ansible-rollout", "komponente:filebeat", "thema:erfunden",
+         "Ursache:x", "ursache:zwei worte"],
+        {"thema:kernel-io"}, {"ursache"})
+    assert gut == ["ursache:ansible-rollout"]
+    gruende = {w["tag"]: w["grund"] for w in weg}
+    assert "nicht als eigenes Tag-Feld registriert" in gruende["komponente:filebeat"]
+    assert "lw_feld_anlegen" in gruende["thema:erfunden"]          # System-Art: nur Werte der Belege
+    assert "Form" in gruende["Ursache:x"] and "Form" in gruende["ursache:zwei worte"]
+
+
+def test_befund_traegt_eigenes_tag_und_nennt_abgelehnte():
+    p = bf.pruefe_belege([{"id": "graylog:m1", "zitat": "Buffer I/O error on dev dm-8"}], DOKS)
+    _, d = bf.baue(_eingabe(hashtags=["ursache:ansible-rollout", "komponente:x"]), p, JETZT, erfindbar={"ursache"})
+    assert "ursache:ansible-rollout" in d["hashtags"] and "komponente:x" not in d["hashtags"]
+    assert d["ai_provenance"]["eigene_tags"] == ["ursache:ansible-rollout"]
+    assert [w["tag"] for w in d["ai_provenance"]["tags_abgelehnt"]] == ["komponente:x"]
+
+
+def test_erfindbar_ohne_system_arten():
+    from app.services.log_watch import felder
+    assert felder.erfindbar({"ursache", "thema", "host", "befund", "muster"}) == {"ursache"}

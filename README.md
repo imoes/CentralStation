@@ -1591,6 +1591,13 @@ The AI only works when a check is true, and it only writes its own analysis.
   example, origin (system | ki | mensch) and source. `lw_feld` looks up (funnel, MCP; `regelgruppe:syscheck`
   finds the kind); `lw_feld_anlegen` lets the analysis AI create only new entries with a source. The corpus tile
   names live hashtag kinds without an entry; a test fails for undocumented history fields.
+- **Tag fields the AI invents** (`befund.eigene_tags`, `felder.erfindbar`): an AI may add its own hashtag kind
+  (e.g. `ursache:ansible-rollout`) when no existing kind covers a property of the evidence. It must first register
+  the kind with `lw_feld_anlegen(name, art="hashtag", bedeutung, belege)`, with checked quotes, in the funnel or on
+  the MCP server. On the MCP server this needs the console user's write window. The finding then attaches the
+  tag to its evidence messages (`nachricht.markiere`, with history), so it is searchable and appears as a node.
+  An unregistered kind or a bad form comes back with its reason in `tags_abgelehnt`. The system's own kinds
+  (`quelle`, `host`, `thema`, `muster` …) keep their fixed vocabulary: only values found on the evidence.
 - **Web search for unclear log lines** (`websuche.py`): `web_suche(query, warum)` over SearXNG
   (`http://llm-host03.example.com:8080`, setting `log_watch.websuche_url`) and `web_seite(url)`. Internal names
   (hosts, IPs, internal domains, mails, UUIDs, secrets, user paths) are removed before a query leaves; pages only

@@ -10,6 +10,42 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — The AI invents its own tag fields, registered through the MCP tool
+
+You asked (07.11.): an AI should also be able to invent tag fields, and every such field must be registered
+in the MCP tool.
+
+### What is new
+
+- **Own tag fields in a finding.**
+  - In `lw_befund`, the AI may name hashtags that no evidence message carries, such as `ursache:ansible-rollout`.
+    It may do this only when the kind (`ursache`) is registered as `art="hashtag"` in `feld_bedeutung`.
+  - The tag goes on the finding and on its evidence messages, with history. It is then searchable and
+    filterable like any other hashtag.
+  - A tag with an unregistered kind or a wrong form is not dropped silently. It comes back in
+    `tags_abgelehnt`, with the reason and the call that registers it.
+  - The system's own kinds keep their fixed vocabulary.
+  - Evidence: tests `test_eigene_tag_felder_nur_registriert`, `test_befund_traegt_eigenes_tag_und_nennt_abgelehnte`
+    and `test_erfindbar_ohne_system_arten`. The live run is not observed yet; it needs the first finding that
+    uses it.
+- **`lw_feld_anlegen` on the MCP server.**
+  - Console agents can register new fields and tag kinds, with the same checked-quote rule as the analysis AI.
+  - For console agents this is a write operation and needs the user's write window. The test checks for the
+    `_require_write` gate.
+  - A hashtag kind must be lower case (`a-z`, `0-9`, `-`). `quelle`, `host`, `befund` and `incident` can never
+    be registered.
+
+### Changed
+
+- **The Ansible detection covers more lines.** Measured against the 1 012 learned patterns containing "ansible":
+  928 are now tagged `app:ansible`. Before, only the 422 module calls were tagged.
+  - Newly covered: module warnings; sudo by the user `ansible`, including continuation lines; the run summary
+    in `ansible.log`; sshd lines naming the user `ansible`.
+  - Still not tagged: services on hosts that only have "ansible" in their name (certmonger on `ansible-runner`),
+    and sshd session lines without a user name.
+
+---
+
 ## 2026-11-07 — Ansible runs count as self-generated; old outbreak incidents closed
 
 You decided (07.11.): Ansible runs are self-generated (N5), and the old outbreak incidents are closed.

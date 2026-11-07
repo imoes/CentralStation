@@ -10,6 +10,8 @@ Namen; Vorhandenes ändert nur ein Mensch). Nichts bleibt still undokumentiert:
 """
 from __future__ import annotations
 
+import re
+
 #: Felder einer Nachricht in cs-logs-* — (Bedeutung, änderbar)
 FELDER: dict[str, tuple[str, bool]] = {
     "zeit": ("Zeitpunkt der Nachricht in der Quelle (UTC)", False),
@@ -211,6 +213,10 @@ async def anlegen(name: str, art: str, bedeutung: str, beispiel: str, quelle: st
     voll = name_von(art, (name or "").strip())
     if not voll.split(":", 1)[1]:
         return {"abgelehnt": "Name fehlt"}
+    if art == "hashtag" and not re.fullmatch(r"[a-z][a-z0-9-]{1,30}", voll.split(":", 1)[1]):
+        return {"abgelehnt": "Name einer Hashtag-Art: klein, a-z, 0-9, - (2–31 Zeichen), z. B. ursache"}
+    if art == "hashtag" and voll.split(":", 1)[1] in NICHT_ERFINDBAR:
+        return {"abgelehnt": f"{voll} ist ein festes Feld bzw. eine Verknüpfung"}
     async with AsyncSessionLocal() as db:
         await stelle_bereit(db)
         da = await db.get(FeldBedeutung, voll)
@@ -221,6 +227,27 @@ async def anlegen(name: str, art: str, bedeutung: str, beispiel: str, quelle: st
                              angelegt_von=von, angelegt_at=datetime.now(timezone.utc)))
         await db.commit()
     return {"angelegt": voll}
+
+
+#: Tag-Arten, die niemand erfindet: feste Felder und Verknüpfungen (nachricht.FESTE_TAG_ARTEN, VERKNUEPFUNG)
+NICHT_ERFINDBAR = frozenset({"quelle", "host", "befund", "incident"})
+
+
+def erfindbar(registriert: set[str]) -> set[str]:
+    """Registrierte Hashtag-Arten, die die KI im Befund frei belegen darf: nicht die des Systems
+    (HASHTAG_ARTEN — deren Werte vergibt das Raster) und keine festen Felder. Rein."""
+    return set(registriert) - set(HASHTAG_ARTEN) - NICHT_ERFINDBAR
+
+
+async def registrierte_hashtag_arten() -> set[str]:
+    """Arten mit Eintrag art=hashtag in feld_bedeutung (hashtag:<art> → <art>)."""
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.log_watch import FeldBedeutung
+    async with AsyncSessionLocal() as db:
+        namen = (await db.execute(select(FeldBedeutung.name).where(FeldBedeutung.art == "hashtag"))).scalars()
+        return {n.split(":", 1)[1] for n in namen if ":" in n}
 
 
 def undokumentiert_aus(arten: list[str], bekannt: set[str]) -> list[str]:
