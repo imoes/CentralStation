@@ -404,6 +404,26 @@ async def run_incident_regeln() -> None:
         await _speichere("incident-regeln", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
 
 
+async def run_feld_doku() -> None:
+    """Die KI beschreibt neue Quellfelder des Feldkatalogs (log_watch/felder.py) — nur wenn kein Agent der
+    Flotte arbeitet (strata ist der Engpass). Ergebnis in raster_lauf „feld-doku“."""
+    from sqlalchemy import func, select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.log_watch import KiLease
+    from app.services.log_watch import felder
+    from app.services.log_watch.lauf import _speichere
+    async with AsyncSessionLocal() as db:
+        if (await db.execute(select(func.count()).select_from(KiLease))).scalar():
+            return
+    b = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    try:
+        await _speichere("feld-doku", b, await felder.beschreibe_quellfelder())
+    except Exception as e:
+        logger.warning("Feld-Doku fehlgeschlagen: %s", e)
+        await _speichere("feld-doku", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
+
+
 async def run_incident_housekeeping() -> None:
     """host-Incidents schließen, deren Mitglieder alle erledigt sind (Sicherheitsnetz).
 
@@ -520,6 +540,9 @@ async def start_scheduler() -> None:
     _scheduler.add_job(run_incident_objekte, "cron", minute="3-59/5",
                        id="log_watch_incident_objekte", replace_existing=True, max_instances=1, coalesce=True,
                        misfire_grace_time=120)
+    _scheduler.add_job(run_feld_doku, "cron", minute="17,47",
+                       id="log_watch_feld_doku", replace_existing=True, max_instances=1, coalesce=True,
+                       misfire_grace_time=300)
     _scheduler.add_job(run_incident_regeln, "cron", minute="4-59/5",
                        id="log_watch_incident_regeln", replace_existing=True, max_instances=1, coalesce=True,
                        misfire_grace_time=120)

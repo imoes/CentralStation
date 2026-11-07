@@ -95,7 +95,8 @@ SIGNALE: dict[str, str] = {
 }
 
 
-ARTEN = ("feld", "hashtag", "signal")
+#: quellfeld = Feld der Quelle (Graylog, Wazuh, CheckMK) aus dem Feldkatalog, Name quellfeld:<quelle>.<feld>
+ARTEN = ("feld", "hashtag", "signal", "quellfeld")
 
 
 def grundbestand() -> list[dict]:
@@ -210,3 +211,114 @@ async def undokumentiert(stunden: float = 24) -> list[str]:
         "size": 0, "query": {"range": {"zeit": {"gte": f"now-{int(stunden)}h"}}},
         "aggs": {"t": {"terms": {"field": "hashtags", "size": 20000}}}})
     return undokumentiert_aus([b["key"].split(":", 1)[0] for b in r["aggregations"]["t"]["buckets"]], bekannt)
+
+
+
+# ── Quellfelder (Feldkatalog): die KI beschreibt neue Felder selbst ─────────────
+# Nutzer 07.11.: „wenn neue Felder dazukommen, müssen diese dokumentiert werden … die KI muss nur neue Felder +
+# Beschreibung selber anlegen“. Auslöser: neue Graylog-Felder (servicename, error_type, event_action …) standen im
+# Feldkatalog ohne Bedeutung.
+
+#: so viele Felder beschreibt ein Lauf — der Job läuft nur, wenn kein Agent arbeitet (strata ist der Engpass)
+QUELLFELDER_JE_LAUF = 10
+#: Rollen, deren Felder beschrieben werden (ignorieren = Kennungen/Zeitstempel ohne Inhalt)
+BESCHREIBEN_ROLLEN = ("entitaet", "kategorie", "kennung", "messwert", "freitext", "unbekannt")
+
+PROMPT_QUELLFELD = """Du beschreibst ein Feld aus einem Log-System (Graylog, Wazuh oder CheckMK) für eine
+Analyse-KI. Gegeben: Quelle, Feldname, Typ, Rolle und gemessene Beispielwerte mit Anzahl.
+Antworte NUR mit JSON: {"bedeutung": "<1–2 Sätze Deutsch: was das Feld enthält und wofür es taugt>",
+"sicher": true|false}. sicher=true nur, wenn Name und Werte die Bedeutung eindeutig zeigen; sonst false
+und keine Vermutung als Tatsache. Erfinde KEINE Bedeutung einzelner Werte oder Codes (z. B. „0=OK“), die nicht
+aus den Beispielwerten selbst hervorgeht — gemessen 07.11.: host_state wurde mit den Service-Codes beschrieben."""
+
+
+def quellfeld_prompt(quelle: str, feld: str, typ: str, rolle: str, beispiele: list) -> str:
+    werte = ", ".join(f"{b.get('wert')!r} ({b.get('anzahl')})" for b in (beispiele or [])[:8]) or "keine"
+    return f"Quelle: {quelle}\nFeld: {feld}\nTyp: {typ}\nRolle: {rolle}\nBeispielwerte (Anzahl): {werte}"
+
+
+def lies_antwort(raw: str) -> dict | None:
+    """JSON-Antwort des Modells lesen (auch in ```-Blöcken). Rein — testbar."""
+    import json
+    import re
+    m = re.search(r"\{.*\}", raw or "", re.S)
+    if not m:
+        return None
+    try:
+        d = json.loads(m.group(0))
+    except ValueError:
+        return None
+    if not isinstance(d.get("bedeutung"), str) or not isinstance(d.get("sicher"), bool):
+        return None
+    return d
+
+
+async def offene_quellfelder(grenze: int = QUELLFELDER_JE_LAUF) -> tuple[list, int]:
+    """Aktive Quellfelder ohne Bedeutung, meistgenutzte zuerst. Rückgabe (Felder, Gesamtzahl offen)."""
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.log_watch import FeldBedeutung, FieldCatalog
+    async with AsyncSessionLocal() as db:
+        await stelle_bereit(db)
+        bekannt = set((await db.execute(select(FeldBedeutung.name).where(FeldBedeutung.art == "quellfeld"))).scalars())
+        rows = (await db.execute(select(FieldCatalog).where(FieldCatalog.status == "aktiv",
+                                                            FieldCatalog.rolle.in_(BESCHREIBEN_ROLLEN))
+                                 .order_by(FieldCatalog.abdeckung.desc().nullslast()))).scalars().all()
+    offen = [r for r in rows if f"quellfeld:{r.quelle}.{r.feld}" not in bekannt]
+    return offen[:grenze], len(offen)
+
+
+async def beschreibe_quellfelder(llm=None, grenze: int = QUELLFELDER_JE_LAUF) -> dict:
+    """Die KI beschreibt neue Quellfelder (nur sichere Bedeutungen; unsichere bleiben benannt offen)."""
+    from app.core.database import AsyncSessionLocal
+    from app.services.settings import get_active_llm_config
+    if llm is None:
+        from app.services.llm_client import generate_text as llm
+    async with AsyncSessionLocal() as db:
+        cfg = await get_active_llm_config(db)
+    felder, offen = await offene_quellfelder(grenze)
+    erg = {"offen_vorher": offen, "angelegt": [], "unsicher": [], "fehler": []}
+    for f in felder:
+        try:
+            raw = await llm(cfg, [{"role": "system", "content": PROMPT_QUELLFELD},
+                                  {"role": "user", "content": quellfeld_prompt(f.quelle, f.feld, f.typ, f.rolle,
+                                                                               f.beispielwerte or [])}],
+                            temperature=0.1, reasoning_effort="low")
+        except Exception as e:  # noqa: BLE001
+            erg["fehler"].append({"feld": f"{f.quelle}.{f.feld}", "fehler": f"{type(e).__name__}: {str(e)[:120]}"})
+            continue
+        a = lies_antwort(raw)
+        if a is None or not a["sicher"]:
+            erg["unsicher"].append(f"{f.quelle}.{f.feld}")
+            continue
+        bsp = str((f.beispielwerte or [{}])[0].get("wert", ""))[:200]
+        r = await anlegen(f"{f.quelle}.{f.feld}", "quellfeld", a["bedeutung"], bsp,
+                          f"Feldkatalog: Name, Typ {f.typ}, Rolle {f.rolle} und Beispielwerte "
+                          f"(Modell {getattr(cfg, 'model', '?')})", "ki")
+        (erg["angelegt"] if "angelegt" in r else erg["fehler"]).append(r.get("angelegt") or r)
+    return erg
+
+
+
+async def korrigiere(name: str, bedeutung: str, quelle: str, von: str) -> dict:
+    """Eine vorhandene Bedeutung korrigieren — nur Mensch oder System (die KI legt nur Neues an). Die alte
+    Bedeutung bleibt in der Quelle nachlesbar („ersetzt: …“)."""
+    if von == "ki":
+        return {"abgelehnt": "die KI korrigiert keine vorhandenen Bedeutungen"}
+    if len((bedeutung or "").strip()) < 10 or not (quelle or "").strip():
+        return {"abgelehnt": "Bedeutung (ein Satz) und Quelle sind Pflicht"}
+    from datetime import datetime, timezone
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.log_watch import FeldBedeutung
+    async with AsyncSessionLocal() as db:
+        e = await db.get(FeldBedeutung, name)
+        if e is None:
+            return {"abgelehnt": f"{name} gibt es nicht"}
+        alt = e.bedeutung
+        e.bedeutung, e.herkunft = bedeutung.strip()[:2000], "mensch" if von != "system" else "system"
+        e.quelle = f"{quelle.strip()} — ersetzt ({e.angelegt_von}): {alt}"[:2000]
+        e.angelegt_von, e.angelegt_at = von, datetime.now(timezone.utc)
+        await db.commit()
+    return {"korrigiert": name, "vorher": alt}

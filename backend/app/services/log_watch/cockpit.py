@@ -218,6 +218,14 @@ def befunde(hits: list[dict], pruefung: dict, ki_an: bool, stunden: int) -> dict
                     if warten else "Die Prüfung ist nicht wahr: nichts mit Relevanz 3 oder neuem Muster."))})}
 
 
+async def _offene_quellfelder() -> int | str:
+    from app.services.log_watch.felder import offene_quellfelder
+    try:
+        return (await offene_quellfelder(0))[1]
+    except Exception as e:  # noqa: BLE001
+        return f"nicht prüfbar: {type(e).__name__}"
+
+
 async def daten(db, typ: str, cfg: dict) -> dict:
     """Daten eines `lw_*`-Widgets. Unbekannter Typ oder fehlende Historie: benannt."""
     from app.services.log_watch import historie
@@ -294,6 +302,8 @@ async def daten(db, typ: str, cfg: dict) -> dict:
             undok = [f"nicht prüfbar: {type(e).__name__}"]
         return {**korpus(katalog, await _zeilen(db, jetzt - timedelta(hours=1)), letzte, d.version,
                          await historie.aktiv(db), jetzt, s0.werte if s0 else None),
-                # Hashtag-Arten ohne Bedeutung im Skill der KI (felder.py) — müssen dokumentiert werden
-                "undokumentiert": undok}
+                # Hashtag-Arten ohne Bedeutung (Tabelle feld_bedeutung) — müssen dokumentiert werden
+                "undokumentiert": undok,
+                # Quellfelder des Feldkatalogs ohne Bedeutung — die KI beschreibt sie nach und nach
+                "quellfelder_offen": (await _offene_quellfelder())}
     return {"state": "unavailable", "error": f"unbekannter Widget-Typ {typ}"}

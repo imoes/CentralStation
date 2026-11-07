@@ -36,3 +36,19 @@ def test_hashtag_mit_wert_meint_die_art():
     """Gemessen 07.11.: das Modell fragt lw_feld(name="regelgruppe:syscheck")."""
     assert "hashtag:regelgruppe" in felder.kandidaten("regelgruppe:syscheck")
     assert "signal:neu" in felder.kandidaten("signal:neu") and "hashtag:regel" in felder.kandidaten("regel")
+
+
+def test_quellfeld_antwort_und_prompt():
+    assert felder.lies_antwort('```json\n{"bedeutung": "Name des Syslog-Dienstes", "sicher": true}\n```') == \
+        {"bedeutung": "Name des Syslog-Dienstes", "sicher": True}
+    assert felder.lies_antwort('{"bedeutung": "x"}') is None and felder.lies_antwort("kein json") is None
+    p = felder.quellfeld_prompt("graylog", "servicename", "string", "entitaet",
+                                [{"wert": "sshd-session", "anzahl": 56}])
+    assert "servicename" in p and "'sshd-session' (56)" in p
+    assert "quellfeld" in felder.ARTEN and "quellfeld:graylog.servicename" in felder.kandidaten("graylog.servicename")
+
+
+def test_ki_korrigiert_nichts():
+    import asyncio
+    assert "abgelehnt" in asyncio.run(felder.korrigiere("hashtag:regel", "egal egal egal", "x", "ki"))
+    assert "KEINE Bedeutung einzelner Werte" in felder.PROMPT_QUELLFELD

@@ -186,7 +186,13 @@ const ZUSTAND: Record<string, string> = {
               <span class="chip z-fehler" matTooltip="Hashtag-Arten ohne Bedeutung im Skill der KI (backend log_watch/felder.py) — bitte dokumentieren">
                 Undokumentiert: {{ d().undokumentiert.join(', ') }}
               </span>
-            } @else if (d().undokumentiert) {
+            }
+            @if (d().quellfelder_offen) {
+              <span class="chip z-info" matTooltip="Felder der Quellen (Feldkatalog) ohne Bedeutung — die KI beschreibt sie nach und nach (nur sichere Bedeutungen)">
+                Quellfelder ohne Bedeutung: {{ d().quellfelder_offen }}
+              </span>
+            }
+            @if (!(d().undokumentiert ?? []).length && d().undokumentiert) {
               <span class="chip z-ok" matTooltip="Jede live vorkommende Hashtag-Art hat ihre Bedeutung im Skill der KI">Felder dokumentiert</span>
             }
             @for (n of nichtZugeordnet(); track n.grund) {
