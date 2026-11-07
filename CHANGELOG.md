@@ -63,6 +63,23 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   configuration is unchanged.
 - **ansible01 does not have these two role changes yet.**
 
+## 2026-11-07 — Field documentation becomes a fleet task; clearer reason for unanswered questions
+
+### Fixed
+
+- **Field documentation as a fleet task.** As a separate job that only ran when a slot was free, it skipped at
+  14:47, 15:17, 15:47, 16:47 and 17:17 ("alle 3 Plätze der Flotte belegt"); it ran once, at 16:18. New fields
+  mostly stayed undocumented.
+  - Now an agent takes it between two cases when it is due, i.e. when the last successful run is ≥ 30 min old.
+  - A lease `__feld-doku__` ensures only one agent does it. It uses an existing model slot, not an extra one.
+  - The run records which agent did it.
+  - Test: `test_feld_doku_ist_aufgabe_der_flotte`.
+- **Unanswered peer questions say whether they were ever delivered.** The two cases are "nicht mehr zugestellt"
+  (the case ended before the next model call) and "zugestellt, aber nicht beantwortet".
+  - Measured 07.11. 17:06: a question arrived 13 s before the asked agent finished its case.
+
+---
+
 ## 2026-11-07 — Lost incident mails are sent later; rules for new tag kinds; first uses observed
 
 ### Fixed
