@@ -59,7 +59,8 @@ KRITERIEN: tuple[Kriterium, ...] = (
     Kriterium("N2", NICHT_RELEVANT, "Bekannt und behandelt",
               "Quittiert, in Downtime, offenes Ticket dazu oder bereits als KI-Befund gemeldet "
               "(solange kein neues Relevanz-Kriterium hinzukommt).",
-              "CheckMK acknowledged/Downtime; Ticket und Befund: noch nicht angebunden"),
+              "CheckMK acknowledged/Downtime; offenes Ticket am Incident (incident_objekt.behandelt); "
+              "bereits gemeldeter Befund (bekannt.py, ohne KI angehängt)"),
     Kriterium("N3", NICHT_RELEVANT, "Nicht-Produktion", "Host mit Kritikalität test, dev oder offline.",
               "@Nicht-Produktion"),
     Kriterium("N4", NICHT_RELEVANT, "Rauschen",
@@ -98,7 +99,7 @@ PARAMETER = {
 }
 
 #: Version der Definition, die dieser Code als Standard mitbringt, und warum es sie gibt.
-CODE_VERSION = 6
+CODE_VERSION = 7
 AENDERUNGEN = {
     1: "Festgelegt mit dem Nutzer am 06.11.2026",
     2: "R6 umfasst Firewall-Bedrohungen (Sinkhole, Stufe ab medium) — Nutzer 06.11.2026: "
@@ -113,6 +114,10 @@ AENDERUNGEN = {
     6: "Nicht-Produktion umfasst Kritikalität offline (Nutzer 06.11.2026). Anlass: die Kritikalität "
        "kommt erst jetzt an allen Hosts an (wirksame CheckMK-Tags); 656 Hosts tragen offline, "
        "das kein Kriterium nannte. install (2 Hosts) bleibt ohne Kriterium, benannt",
+    7: "Incidents nach der Logik des Regelwerks (Nutzer 07.11.2026): dritte Aktion `incident` — Filter, "
+       "Gruppe, Fenster, Mindestwerte; die vier bisherigen Wege (Ausbruch, Flotte, Kritisch, Host) als "
+       "Standardregeln im Testmodus, verglichen mit den Incidents der alten Schwellen. N2 kennt offene "
+       "Tickets an Incidents",
 }
 
 def als_daten() -> tuple[list[dict], dict]:

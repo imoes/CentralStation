@@ -21,6 +21,16 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 
 FORWARD, BLOCK = "forward", "block"
+#: dritte Aktion (Nutzer 07.11.: Incidents nach der Logik des Regelwerks): eine Incident-Regel fasst die
+#: Nachrichten ihres Filters je Gruppe in einem Zeitfenster zusammen und eröffnet bei Erreichen der
+#: Mindestwerte einen Incident. Im Urteil je Nachricht (bewerte) zählt sie nicht.
+INCIDENT = "incident"
+AKTIONEN = (FORWARD, BLOCK, INCIDENT)
+#: Gruppierung einer Incident-Regel — erschöpfend: Muster (über Hosts), Dienst (über Hosts), Host
+GRUPPEN = ("muster", "dienst", "host")
+MINDESTENS = ("nachrichten", "hosts", "quellen")
+#: Art des Incidents, den eine Regel eröffnet (Incident.kind)
+INCIDENT_ARTEN = ("log_cluster", "fleet", "critical", "host")
 AKTIV, TEST = "aktiv", "test"
 
 #: Signale, die die Quellen setzen (Hashtag `signal:<name>`) — erschöpfend benannt
@@ -42,6 +52,11 @@ class Regel:
     #: Filtertext (filter.py), aus dem `bedingung` übersetzt ist — die Form, die Menschen
     #: lesen und schreiben; leer nur bei direkt angegebener Bedingung
     filter: str = ""
+    #: nur bei aktion=incident: Gruppe, Fenster in Minuten, Mindestwerte je Gruppe, Art des Incidents
+    gruppe: str = ""
+    fenster_min: int = 0
+    mindestens: dict = field(default_factory=dict)
+    incident_art: str = ""
 
 
 @dataclass
@@ -92,6 +107,8 @@ def bewerte(regeln: list[Regel], tags: set[str], felder: dict | None = None) -> 
     passende: list[Regel] = []
     test: list[str] = []
     for r in regeln:
+        if r.aktion == INCIDENT:          # zählt nicht im Urteil je Nachricht (incident_regeln.py)
+            continue
         if not passt(r.bedingung, tags, felder):
             continue
         if r.modus == TEST:
@@ -129,11 +146,36 @@ STANDARD_FILTER = (
 )
 
 
+#: Incident-Regeln — die vier Wege, auf denen heute Incidents entstehen (error_clusters), als Filter +
+#: Gruppe + Fenster + Mindestwerte. Zuerst im Testmodus: sie zählen, was sie eröffnet hätten, und
+#: incident_regeln.py vergleicht das mit den Incidents der alten Schwellen (Schattenbetrieb).
+#: (id, kriterium, name, filter, gruppe, fenster_min, mindestens, incident_art)
+STANDARD_INCIDENT = (
+    # error_clusters/runner._handle: Sofort-Meldung eines Musters (spread, persistent, große Spitze, großes Neues)
+    ("I-AUSBRUCH", "R4", "Fehlerausbruch eines Musters", "quelle:graylog signal:dringend !signal:schaden",
+     "muster", 30, {"nachrichten": 1}, "log_cluster"),
+    # error_clusters/fleet: derselbe CheckMK-Dienst auf ≥ 5 Hosts (alt zusätzlich ≥ 3× Median — fehlt hier)
+    ("I-FLOTTE", "R3", "Flotten-Ausfall eines Dienstes", "quelle:checkmk zustand:crit",
+     "dienst", 45, {"hosts": 5}, "fleet"),
+    # error_clusters/critical: kritische Kernelmeldung wiederholt (alt: ≥ 3 Fünf-Minuten-Fenster in 6 h)
+    ("I-KRITISCH", "R5", "Kritische Kernelmeldung gehäuft", "quelle:graylog signal:schaden",
+     "host", 360, {"nachrichten": 3}, "critical"),
+    # error_clusters/incident.process_alerts: ≥ 2 kritische/hohe Alerts oder ≥ 2 Quellen auf einem Host in
+    # 30 min — hier ≥ 2 dringende Nachrichten (deckt beides; gemessen 07.11.: mit „2 Quellen“ 16 nur alt).
+    # Unterschied mit Absicht: nur, was das Regelwerk relevant nennt (kein Testhost, kein Rauschen)
+    ("I-HOST", "R1", "Host mit mehreren dringenden Meldungen", "relevanz>=3",
+     "host", 30, {"nachrichten": 2}, "host"),
+)
+
+
 def standard_regeln(objekte: dict[str, str]) -> list[Regel]:
-    """Standardregeln, übersetzt mit den Objekten der Definition."""
+    """Standardregeln, übersetzt mit den Objekten der Definition — Urteilsregeln, dann Incident-Regeln."""
     from app.services.log_watch.filter import bedingung
-    return [Regel(rid, krit, name, aktion, bedingung(text, objekte), stufe_block=stufe, filter=text)
-            for rid, krit, name, aktion, text, stufe in STANDARD_FILTER]
+    return ([Regel(rid, krit, name, aktion, bedingung(text, objekte), stufe_block=stufe, filter=text)
+             for rid, krit, name, aktion, text, stufe in STANDARD_FILTER]
+            + [Regel(rid, krit, name, INCIDENT, bedingung(text, objekte), modus=TEST, filter=text,
+                     gruppe=gr, fenster_min=fm, mindestens=dict(mi), incident_art=art)
+               for rid, krit, name, text, gr, fm, mi, art in STANDARD_INCIDENT])
 
 
 def als_daten(regeln: list[Regel]) -> list[dict]:
@@ -161,8 +203,18 @@ def pruefe(daten: list[dict], kriterien_ids: set[str], objekte: dict[str, str] |
         fehler.append("Regel-IDs doppelt")
     for d in daten:
         rid = d.get("id")
-        if d.get("aktion") not in (FORWARD, BLOCK):
-            fehler.append(f"{rid}: aktion muss forward oder block sein")
+        if d.get("aktion") not in AKTIONEN:
+            fehler.append(f"{rid}: aktion muss forward, block oder incident sein")
+        if d.get("aktion") == INCIDENT:
+            if d.get("gruppe") not in GRUPPEN:
+                fehler.append(f"{rid}: gruppe muss {', '.join(GRUPPEN)} sein")
+            if not isinstance(d.get("fenster_min"), int) or d["fenster_min"] <= 0:
+                fehler.append(f"{rid}: fenster_min muss eine positive Zahl (Minuten) sein")
+            mi = d.get("mindestens") or {}
+            if not mi or set(mi) - set(MINDESTENS) or not all(isinstance(v, int) and v >= 1 for v in mi.values()):
+                fehler.append(f"{rid}: mindestens braucht {', '.join(MINDESTENS)} als ganze Zahlen ≥ 1")
+            if d.get("incident_art") not in INCIDENT_ARTEN:
+                fehler.append(f"{rid}: incident_art muss {', '.join(INCIDENT_ARTEN)} sein")
         if d.get("modus", AKTIV) not in (AKTIV, TEST):
             fehler.append(f"{rid}: modus muss aktiv oder test sein")
         if d.get("kriterium") not in kriterien_ids:

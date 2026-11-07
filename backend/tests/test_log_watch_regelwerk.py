@@ -107,7 +107,7 @@ def test_regelsatz_pruefen_und_rundreise():
     kaputt = daten + [{"id": "N6", "kriterium": "X9", "aktion": "drop", "modus": "egal",
                        "bedingung": {"feld": "level"}}]
     f = rw.pruefe(kaputt, ids)
-    assert "Regel-IDs doppelt" in f and any("forward oder block" in x for x in f)
+    assert "Regel-IDs doppelt" in f and any("forward, block oder incident" in x for x in f)
     assert any("X9" in x for x in f) and any("wohlgeformt" in x for x in f)
 
 
@@ -121,3 +121,19 @@ def test_offline_ist_nicht_produktion_v6():
     assert e.regel == "R5"
     e = bewerte(STANDARD.regeln, {"kritikalitaet:install", "signal:neu"}, {})
     assert e.regel == "R2"                                   # install: kein Kriterium, benannt offen
+
+
+def test_incident_regeln_zaehlen_nicht_im_urteil_und_werden_geprueft():
+    """Incident-Regeln (Aktion incident) stehen in derselben Regeltabelle, entscheiden aber nie über
+    eine einzelne Nachricht; der Prüfer verlangt Gruppe, Fenster, Mindestwerte und Art."""
+    inc = [r for r in REGELN if r.aktion == rw.INCIDENT]
+    assert [r.id for r in inc] == ["I-AUSBRUCH", "I-FLOTTE", "I-KRITISCH", "I-HOST"]
+    assert all(r.modus == rw.TEST for r in inc)          # erst Schattenbetrieb
+    e = rw.bewerte(inc, {"relevanz:3", "quelle:graylog", "signal:dringend"}, {"relevanz": 3})
+    assert e.regel == "default" and e.test_treffer == []
+    ids = {"R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "N0", "N1", "N2", "N3", "N4", "N5", "N6"}
+    d = rw.als_daten(inc)
+    assert rw.pruefe(d, ids, STANDARD.objekte) == []
+    kaputt = [{**d[0], "id": "X", "gruppe": "egal", "fenster_min": 0, "mindestens": {"tage": 1}, "incident_art": "?"}]
+    f = rw.pruefe(kaputt, ids, STANDARD.objekte)
+    assert len(f) == 4 and any("gruppe" in x for x in f) and any("incident_art" in x for x in f)

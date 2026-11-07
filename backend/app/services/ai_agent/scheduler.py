@@ -391,6 +391,19 @@ async def run_incident_objekte() -> None:
         await _speichere("incident-objekte", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
 
 
+async def run_incident_regeln() -> None:
+    """Incident-Regeln des Regelwerks auswerten (Schattenbetrieb: Kandidaten vs. alte Schwellen) —
+    ein Messpunkt je Lauf in raster_lauf „incident-regeln“ (log_watch/incident_regeln.py)."""
+    from app.services.log_watch import incident_regeln
+    from app.services.log_watch.lauf import _speichere
+    b = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    try:
+        await _speichere("incident-regeln", b, await incident_regeln.lauf())
+    except Exception as e:
+        logger.warning("Incident-Regeln fehlgeschlagen: %s", e)
+        await _speichere("incident-regeln", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
+
+
 async def run_incident_housekeeping() -> None:
     """host-Incidents schließen, deren Mitglieder alle erledigt sind (Sicherheitsnetz).
 
@@ -505,6 +518,8 @@ async def start_scheduler() -> None:
     # nach dem Raster (minute 1-59/5): neue Nachrichten sind dann geschrieben
     _scheduler.add_job(run_incident_objekte, "cron", minute="3-59/5",
                        id="log_watch_incident_objekte", replace_existing=True, max_instances=1, coalesce=True)
+    _scheduler.add_job(run_incident_regeln, "cron", minute="4-59/5",
+                       id="log_watch_incident_regeln", replace_existing=True, max_instances=1, coalesce=True)
     from app.services.log_watch.trichter import AGENTEN
     _scheduler.add_job(run_log_trichter, "interval", minutes=1,
                        id="log_watch_trichter", replace_existing=True, max_instances=AGENTEN,
