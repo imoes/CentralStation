@@ -10,6 +10,39 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 23: where the fleet's time goes (measurement)
+
+No code change. A measurement of steady-state operation (2026-11-06 23:44 to 2026-11-07 00:04 UTC, with
+no rollout in between) that corrects earlier statements.
+
+### Evidence
+
+- **Corpora, last hour:** 12 runs per source, 0 errors. Everything written: Wazuh 701/701, switch
+  119/119, Graylog 112/112, CheckMK 68/68, firewall 18/18. No document without a vector.
+- **Fleet:** 10 findings in 19 minutes (about 32/h), 3 agents throughout.
+- **Queue:** 116 → 104 → 106 messages; 41 → 39 → 40 cases; about 1 expired message per 10 minutes.
+  Inflow and processing roughly balance, but the backlog does not shrink.
+- **Model time per case:** median 239 s and 7.2 steps (n = 10).
+  - The final step (filing the finding) takes median 140 s, 60 % of a case.
+  - The other steps take median 18 s.
+
+### Corrections
+
+- **"131 s per case without `lw_wissen`" (part 21)** came from only 3 cases. In steady state it is 239 s.
+- **The time is not spent computing.**
+  - strata's longest generation in the period: 34 s total, 725 tokens at 40–56 tokens/s.
+  - The prompt cache works: on average 12 178 of 16 724 tokens cached, reading the prompt takes 7.6 s.
+  - strata computes in parallel (66 of 81 requests overlap) and computed only 587 s in 1 200 s, for all
+    clients together.
+  - nginx measures our 65 requests at an average of 49.6 s and at most 216 s, together about 3 220 s.
+    At most a fifth of that is computation.
+  - The rest is waiting between nginx and the start of computation in strata. strata does not log it,
+    so the cause is open (hypothesis: waiting for a free slot).
+- **Consequence:** more agents bring no throughput at present. The fleet stays at 3 until the waiting
+  time is explained.
+
+---
+
 ## 2026-11-07 — Log watch, part 22: the real cockpit shows the core; hub nodes hidden
 
 ### Fixed
