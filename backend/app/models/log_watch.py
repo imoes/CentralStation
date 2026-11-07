@@ -3,6 +3,7 @@
 Analysiert werden Felder und ihre Werte — dafür muss jedes Feld bekannt sein. Die
 Rolle eines Feldes bestimmt, wie es ausgewertet wird (services/log_watch/catalog.py).
 """
+import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Float, Integer, LargeBinary, String, Text
@@ -113,6 +114,26 @@ class KiLease(Base):
     fall: Mapped[str] = mapped_column(String(255))
     seit: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     bis: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class KiFrage(Base):
+    """Rückfrage einer KI-Instanz (oder der Konsole) an den Agenten, der einen Host gerade analysiert — mit
+    Kontext, wie Peer-Sessions (log_watch/rueckfrage.py). Jeder Zustand ist benannt: offen → zugestellt →
+    beantwortet | unbeantwortet (Agent fertig, ohne zu antworten); niemand = kein Agent am Host."""
+    __tablename__ = "ki_frage"
+
+    id: Mapped[uuid.UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    von: Mapped[str] = mapped_column(String(200))
+    an_host: Mapped[str] = mapped_column(String(255), index=True)
+    an_agent: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    frage: Mapped[str] = mapped_column(Text)
+    kontext: Mapped[dict] = mapped_column(postgresql.JSONB, default=dict)
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    grund: Mapped[str] = mapped_column(Text, default="")
+    antwort: Mapped[str | None] = mapped_column(Text, nullable=True)
+    belege: Mapped[list] = mapped_column(postgresql.JSONB, default=list)
+    gestellt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    beantwortet_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class FeldBedeutung(Base):

@@ -97,6 +97,26 @@ async def web_seite(url: str) -> dict:
     return await websuche.seite(url)
 
 
+async def lw_frage(host: str, frage: str, belege: list | None = None, _agent: str = "", _fall: str = "") -> dict:
+    """Rückfrage an den Agenten, der `host` gerade analysiert (wie Peer-Sessions) — rueckfrage.py."""
+    from app.services.log_watch import rueckfrage
+    return await rueckfrage.stelle(_agent or "unbekannt", host, frage,
+                                   {"fall": _fall, "belege": [str(b) for b in belege or []][:10]})
+
+
+async def lw_fragen(id: str = "", host: str = "", _agent: str = "") -> dict:
+    """Eine Rückfrage (mit Antwort) oder die eigenen der letzten 24 h."""
+    from app.services.log_watch import rueckfrage
+    if id:
+        return await rueckfrage.lies(id) or {"fehler": f"Frage {id} unbekannt"}
+    return {"fragen": await rueckfrage.liste(von=_agent or None, host=host or None)}
+
+
+async def lw_antwort(id: str, antwort: str, belege: list | None = None, _agent: str = "") -> dict:
+    from app.services.log_watch import rueckfrage
+    return await rueckfrage.antworte(_agent, id, antwort, belege)
+
+
 async def lw_definition() -> dict:
     from app.core.database import AsyncSessionLocal
     from app.services.log_watch.definition import KRITERIEN, aktuelle
@@ -254,6 +274,20 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
     "web_seite": (web_seite, "Eine öffentliche Seite aus web_suche lesen (Text; lange Seiten: Anfang und Ende). "
                   "In Foren steht die Lösung meist im LETZTEN Beitrag — lies das Ende. Keine internen Adressen.",
                   _p(url={"type": "string", "_pflicht": True}), False),
+    "lw_frage": (lw_frage,
+                 "Rückfrage an den Agenten, der einen Host GERADE analysiert — wie unter Kollegen: was weißt du "
+                 "über X, siehst du Y auch? Mit Kontext (belege = IDs deiner Nachrichten). Wartet bis 30 s auf die "
+                 "Antwort, sonst später lw_fragen(id). Analysiert niemand den Host, kommt „niemand“ mit Hinweis "
+                 "auf lw_gespraech. Antworten sind Kontext, kein Beleg.",
+                 _p(host={"type": "string", "_pflicht": True}, frage={"type": "string", "_pflicht": True},
+                    belege={"type": "array", "items": {"type": "string"}}), False),
+    "lw_fragen": (lw_fragen, "Eine Rückfrage mit Antwort (id) oder deine Rückfragen der letzten 24 h.",
+                  _p(id={"type": "string"}, host={"type": "string"}), False),
+    "lw_antwort": (lw_antwort,
+                   "Eine an dich gestellte Rückfrage beantworten (id aus der Rückfrage) — nur, was du belegen "
+                   "kannst; belege = IDs von Nachrichten. Weißt du es nicht, sag das.",
+                   _p(id={"type": "string", "_pflicht": True}, antwort={"type": "string", "_pflicht": True},
+                      belege={"type": "array", "items": {"type": "string"}}), True),
     "lw_definition": (lw_definition, "Die geltende Relevanz-Definition: Kriterien R1–R8/N0–N6, Objekte, "
                       "Regeln (erste passende entscheidet).", _p(), False),
     "lw_befund": (lw_befund,

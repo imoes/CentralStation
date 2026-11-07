@@ -2297,6 +2297,23 @@ async def lw_feld(name: str = "") -> dict:
 
 
 @mcp.tool()
+async def lw_frage(host: str, frage: str, belege: list | None = None) -> dict:
+    """Log-Überwachung: Rückfrage an den KI-Agenten, der einen Host GERADE analysiert — wie unter Kollegen
+    (z. B. „Siehst du auf cue092 auch den OOM von 14:05?“). belege = IDs von Nachrichten als Kontext. Wartet bis
+    30 s auf die Antwort, sonst später lw_fragen(id). Analysiert niemand den Host: Status „niemand“ mit Hinweis
+    auf lw_gespraech. Die Antwort ist Kontext, kein Beleg."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_frage(host, frage, belege, _agent=f"konsole:{_calling_user_id() or 'unbekannt'}")
+
+
+@mcp.tool()
+async def lw_fragen(id: str = "", host: str = "") -> dict:
+    """Log-Überwachung: eine Rückfrage mit Antwort (id) oder die Rückfragen zu einem Host / der letzten 24 h."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_fragen(id, host)
+
+
+@mcp.tool()
 async def lw_feld_anlegen(name: str, art: str, bedeutung: str, belege: list, beispiel: str = "") -> dict:
     """Log-Überwachung: Bedeutung eines NEUEN Felds, Signals, Quellfelds oder einer NEUEN Hashtag-Art (eigenes
     Tag-Feld, art='hashtag', z. B. name='ursache') registrieren — nur mit geprüften Zitaten: belege = [{id, zitat}]

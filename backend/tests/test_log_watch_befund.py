@@ -74,8 +74,10 @@ def test_ohne_gepruefte_belege_kein_befund():
 
 
 def test_registry_einzig_lw_befund_schreibt():
-    # schreibend: der Befund und die Bedeutung eines NEUEN Felds (Dokumentation, keine Aktion an einem System)
-    assert [n for n, (_, _, _, schreibt) in wz.REGISTRY.items() if schreibt] == ["lw_feld_anlegen", "lw_befund"]
+    # schreibend: der Befund, die Bedeutung eines NEUEN Felds und die Antwort auf eine Rückfrage
+    # (Dokumentation bzw. Gespräch, keine Aktion an einem System)
+    assert sorted(n for n, (_, _, _, schreibt) in wz.REGISTRY.items() if schreibt) == [
+        "lw_antwort", "lw_befund", "lw_feld_anlegen"]
     namen = [t["function"]["name"] for t in wz.openai_tools()]
     assert namen == list(wz.REGISTRY)
     assert wz.REGISTRY["lw_befund"][2]["required"] == ["titel", "kern", "relevanz", "belege"]

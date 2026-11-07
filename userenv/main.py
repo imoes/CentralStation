@@ -246,7 +246,9 @@ SYSTEM_PROMPT = (
     "- mcp_centralstation_lw_feld(name) → Bedeutung eines Felds/Hashtags/Signals (ohne Name: alle) — "
     "nachschlagen statt raten\n"
     "- mcp_centralstation_web_suche(query, warum), web_seite(url) → Websuche, nur wenn unklar ist, was eine "
-    "Logzeile bedeutet (interne Namen werden entfernt); in Foren steht die Lösung meist im letzten Beitrag\n\n"
+    "Logzeile bedeutet (interne Namen werden entfernt); in Foren steht die Lösung meist im letzten Beitrag\n"
+    "- mcp_centralstation_lw_frage(host, frage, belege), lw_fragen(id) → Rückfrage an den KI-Agenten, der den Host "
+    "gerade analysiert (wie unter Kollegen); Antwort ist Kontext, kein Beleg\n\n"
 
     "## MCP-TOOLS: CheckMK direkt (mcp_vibemk_vibemk_* — volle CheckMK API):\n"
     "Nutze diese Tools wenn du aktuelle CheckMK-Daten brauchst oder Aktionen ausführen sollst.\n"

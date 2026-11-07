@@ -10,6 +10,39 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — AI instances ask each other with context, like peer sessions
+
+You asked (07.11.): can an AI instance ask other sessions with context, the way Claude Code asks its peer
+sessions? Before, no: the 3 agents of the fleet only reached each other through finished analyses
+(`lw_gespraech`, `lw_wissen`), and `ki_lease` only stopped two agents from taking the same host.
+
+### What is new
+
+- **`lw_frage(host, frage, belege)`** asks the agent that is analysing the host right now (`ki_lease`). The
+  question carries the asker's case and evidence IDs as context.
+  - The asker waits up to 30 s for the answer. After that the answer is available through `lw_fragen(id)`. If
+    both agents are waiting, both carry on after 30 s, so they cannot deadlock.
+  - If no agent is analysing the host, the state is **niemand**, with a pointer to `lw_gespraech` and
+    `lw_wissen`.
+- **Delivery.**
+  - The question reaches the target agent before its next model call, as a worker turn with question, context
+    and instruction.
+  - The agent answers with `lw_antwort(id, antwort, belege)`, and only what it can back up. Answering is only
+    possible for questions addressed to that agent.
+  - Question and answer appear in the conversation log.
+- **States** (table `ki_frage`, migration 0063): offen → zugestellt → beantwortet. If the agent ends its case
+  without answering, the question becomes unbeantwortet, with the reason. Nothing disappears silently.
+- **Console:** `lw_frage` and `lw_fragen` are also on the MCP server. Claude and Codex console sessions can ask
+  the analysis agents (asker `konsole:<user>`). Consoles do not take questions themselves. The Hermes tool list
+  is updated in the file; it takes effect with the next userenv image, which is not rebuilt, so the running
+  console is left alone.
+- **Prompt:** the agent asks colleagues when a host in its case is being analysed elsewhere, and answers
+  questions to it straight away. An answer is context, not evidence.
+- Evidence: tests `test_zugestellte_frage_traegt_kontext_und_auftrag`, `test_werkzeuge_im_trichter_und_rollen`,
+  `test_prompt_nennt_rueckfrage`. Live end-to-end: see the next entry or the loop report.
+
+---
+
 ## 2026-11-07 — Rule editor like a firewall's policy view
 
 You asked (07.11.): "Ich habe keinen Regeleditor wie bei einer FW gesehen. Das fehlt noch im Frontend."

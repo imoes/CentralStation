@@ -19,7 +19,7 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 
-from app.services.log_watch import bekannt
+from app.services.log_watch import bekannt, rueckfrage
 from app.services.log_watch import werkzeuge as wz
 
 log = logging.getLogger(__name__)
@@ -74,6 +74,9 @@ Vorgehen als Trichter:
    lege sie mit lw_feld_anlegen an — nur mit geprüftem Zitat (Nachricht oder gelesene Seite). Weißt du nicht sicher, was eine
    Logzeile bedeutet: web_suche nach Fehlermeldung oder Code (nie Host/IP), dann web_seite — Kontext.
    In Foren steht die Lösung meist im letzten Beitrag.
+   Analysiert ein Kollege gerade einen anderen Host, der zu deinem Fall gehört (gleiches Muster, mögliche Ursache
+   dort): lw_frage(host, frage, belege) — wie unter Kollegen; seine Antwort ist Kontext, kein Beleg. Eine Rückfrage
+   an dich (sie kommt als „Rückfrage … von …“) beantworte sofort mit lw_antwort — nur Belegbares.
 3. Mit lw_befund abschließen — immer, auch wenn nichts Relevantes bleibt (dann Relevanz 0 oder 1 und
    kurz, warum).
 
@@ -202,6 +205,7 @@ def _kurz(name: str, erg: dict) -> str:
 #: Für die Konsole bleibt lw_wissen über MCP; zum Nachlesen bleibt lw_gespraech.
 #: Dazu drei lesende Quellen außerhalb der Historie (Nutzer, 07.11.) — dieselben wie auf dem MCP-Server.
 TRICHTER_WERKZEUGE = ["lw_suche", "lw_facetten", "lw_netzplan", "lw_nachricht", "lw_gespraech",
+                      "lw_frage", "lw_fragen", "lw_antwort",
                       "lw_definition", "get_checkmk_host", "search_tickets", "search_knowledge_base",
                       "lw_feld", "lw_feld_anlegen", "web_suche", "web_seite", "lw_befund"]
 
@@ -286,7 +290,14 @@ async def _schleife(fall: dict, llm_config, llm, prompt: str, verlauf: list[dict
     tools = wz.openai_tools([n for n in TRICHTER_WERKZEUGE if n not in fehlt])
     schritte: list[dict] = []
     erinnert = False
+    agent_name = fall.get("_agent") or ""
     for _ in range(SCHRITTE):
+        # Rückfragen anderer Instanzen (rueckfrage.py) vor dem nächsten Modellaufruf zustellen — mit Kontext
+        if agent_name:
+            for f in await rueckfrage.posteingang(agent_name):
+                zug = rueckfrage.als_zug(f)
+                nachrichten.append({"role": "user", "content": zug})
+                verlauf.append({"rolle": "worker", "text": zug})
         t0 = time.monotonic()
         antwort = await llm(llm_config, nachrichten, tools)
         ki_s = round(time.monotonic() - t0, 1)
@@ -309,6 +320,9 @@ async def _schleife(fall: dict, llm_config, llm, prompt: str, verlauf: list[dict
             elif a["name"] == "lw_befund":
                 erg = await wz.rufe(a["name"], a["argumente"], _modell=getattr(llm_config, "model", ""),
                                     _schritte=list(schritte), _start=fall["start"])
+            elif a["name"] in ("lw_frage", "lw_fragen", "lw_antwort"):
+                extra = {"_agent": agent_name} | ({"_fall": fall["start"]} if a["name"] == "lw_frage" else {})
+                erg = await wz.rufe(a["name"], a["argumente"], **extra)
             else:
                 erg = await wz.rufe(a["name"], a["argumente"])
             schritte.append({"werkzeug": a["name"], "argumente": a["argumente"], "ki_s": ki_s,
@@ -452,11 +466,13 @@ async def agent(llm=None) -> dict | None:
         if fall is None:
             break
         try:
+            fall["_agent"] = name
             ergebnisse.append(await analysiere(fall, llm_config, llm))
         except Exception as e:  # noqa: BLE001
             log.warning("Agent %s, Fall %s: %s", name, fall["start"], e)
             ergebnisse.append({"start": fall["start"], "hosts": fall["hosts"], "fehler": f"{type(e).__name__}: {str(e)[:300]}"})
         finally:
+            await rueckfrage.schliesse_offene(name)
             await gib_frei(name)
     return {"agent": name, "pruefung": k, "analysen": ergebnisse, "dauer_s": round(time.monotonic() - beginn, 1),
             "belegt_von_anderen": belegt_von_anderen, "befunde": [e["befund"] for e in ergebnisse if "befund" in e],
