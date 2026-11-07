@@ -443,9 +443,11 @@ async def feld_doku_faellig() -> bool:
     from app.core.database import AsyncSessionLocal
     from app.services.log_watch.lauf import faellig
     async with AsyncSessionLocal() as db:
+        # ein erfolgreicher Lauf trägt "fehler": [] (Liste, ggf. leer); ein gescheiterter "fehler": "<Text>".
+        # Gemessen 07.11.: mit NOT (werte ? 'fehler') galt kein Lauf als erfolgreich → lief bei jedem Fallwechsel
         zuletzt = (await db.execute(text(
             "SELECT max(created_at) FROM raster_lauf WHERE quelle = 'feld-doku' "
-            "AND NOT (werte ? 'ausgesetzt') AND NOT (werte ? 'fehler')"))).scalar()
+            "AND NOT (werte ? 'ausgesetzt') AND coalesce(jsonb_typeof(werte->'fehler'), '') <> 'string'"))).scalar()
     return faellig(zuletzt, datetime.now(timezone.utc), FELD_DOKU_ABSTAND_MIN)
 
 

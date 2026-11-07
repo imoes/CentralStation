@@ -76,6 +76,9 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   - A lease `__feld-doku__` ensures only one agent does it. It uses an existing model slot, not an extra one.
   - The run records which agent did it.
   - Test: `test_feld_doku_ist_aufgabe_der_flotte`.
+  - **Fixed the same day:** the due check counted every run as failed, because a successful run also carries
+    `"fehler": []`. The job therefore ran at every case change (measured: 17:32, 17:36, 17:43). Now only a
+    `fehler` given as text counts as a failure.
 - **Unanswered peer questions say whether they were ever delivered.** The two cases are "nicht mehr zugestellt"
   (the case ended before the next model call) and "zugestellt, aber nicht beantwortet".
   - Measured 07.11. 17:06: a question arrived 13 s before the asked agent finished its case.
