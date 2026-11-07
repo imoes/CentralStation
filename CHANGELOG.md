@@ -42,6 +42,15 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 - **Own tag kinds registered by the AI, with checked quotes:** `angriffsziel` (firewall URL target, quoted from
   firewall messages) and `komponente-…` (Defender sensor components). `standort` and the `komponente-*` names
   break the new rules; existing entries are not deleted, and a human corrects or removes them.
+- **Cleaned up on 07.11. (the user: "bereinige").** The previous entries are saved first, and the cleanup is in
+  the audit log as `feld_bedeutung_bereinigt`.
+  - 9 wrong kinds were removed: `standort` and seven `komponente-…`/`mdatp-core` registrations. Also removed:
+    `quelle-eigenschaft`, which duplicated `angriffsrolle:quelle` and was on no message.
+  - `hashtag:komponente` now has a general meaning (origin: human). The messages already carried the right form
+    `komponente:<wert>`, e.g. sensecommon, eventshandlers, mdatp, php-fpm.
+  - 3 messages went from `standort:KAS-2` to `ort:KAS-2` through the message method, with history. Two were
+    stored messages and one was the KI finding `ki:75bdb8f03c`. Afterwards 0 `standort:` tags remain.
+  - Remaining KI kinds: `angriffsrolle`, `angriffsziel`, `herkunftsland`, `richtung`, `ursache`.
 - **Field documentation ran for the first time at 16:18** and created 10 source-field meanings (e.g.
   `checkmk.in_downtime`, `wazuh.rule.groups`).
 - **Incident mails delivered with a record:** at 16:29, 3 mails went to the subscriber (jump012, cue0148,
