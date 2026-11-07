@@ -313,6 +313,13 @@ def _ablehnung(e: Exception) -> HTTPException:
     return HTTPException(422, str(e))
 
 
+def _grund(grund: str, user) -> str:
+    """Grund ist Pflicht — VOR dem Anhängen des Urhebers geprüft (sonst wäre „ (mail)“ ein Grund)."""
+    if not (grund or "").strip():
+        raise HTTPException(422, "Grund ist Pflicht — jede Änderung braucht einen zureichenden Grund")
+    return f"{grund.strip()} ({user.email})"
+
+
 async def _audit(db, user, aktion: str, ziel: str, werte: dict) -> None:
     db.add(AuditLog(action=aktion, resource_type="log_nachricht", resource_id=ziel[:200], user_id=user.id,
                     new_value=werte))
@@ -326,7 +333,7 @@ async def nachricht_urteilen(nachricht_id: str, body: UrteilBody, user: CurrentU
     from app.services.log_watch import nachricht
     try:
         r = await nachricht.urteile(body.urteil, body.relevanz, body.kriterien, "mensch",
-                                    f"{body.grund} ({user.email})", ids=[nachricht_id])
+                                    _grund(body.grund, user), ids=[nachricht_id])
     except nachricht.NachrichtAbgelehnt as e:
         raise _ablehnung(e)
     if not r:
@@ -341,7 +348,7 @@ async def nachricht_hashtags(nachricht_id: str, body: HashtagBody, user: Current
     """Hashtags hinzufügen/entfernen (nicht quelle:/host: — die spiegeln feste Felder)."""
     from app.services.log_watch import nachricht
     try:
-        r = await nachricht.markiere(body.hinzu, body.weg, "mensch", f"{body.grund} ({user.email})",
+        r = await nachricht.markiere(body.hinzu, body.weg, "mensch", _grund(body.grund, user),
                                      ids=[nachricht_id])
     except nachricht.NachrichtAbgelehnt as e:
         raise _ablehnung(e)
@@ -358,7 +365,7 @@ async def nachrichten_aendern(body: AendernBody, user: CurrentUser, db: Annotate
     from app.services.log_watch import nachricht
     from app.services.log_watch.definition import aktuelle
     objekte = (await aktuelle(db)).objekte
-    grund = f"{body.grund} ({user.email})"
+    grund = _grund(body.grund, user)
     try:
         if body.methode == "urteil":
             if body.urteil is None or body.relevanz is None or not body.kriterien:
