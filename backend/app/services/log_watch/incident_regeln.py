@@ -251,6 +251,43 @@ async def schliesse_ruhige(regeln: list[Regel], kandidaten: list[dict], jetzt: d
     return n
 
 
+def umgeschaltet(regel_daten: list[dict], arten: set[str]) -> list[dict]:
+    """Regeldaten mit den Incident-Regeln dieser Arten im Modus aktiv (alle anderen unverändert). Rein."""
+    return [{**r, "modus": AKTIV} if r.get("aktion") == INCIDENT and r.get("incident_art") in arten else dict(r)
+            for r in regel_daten]
+
+
+async def schalte(arten: set[str], grund: str, wer: str) -> int:
+    """Umschalten als neue Version der Definition (kein zweiter Schalter): die Incident-Regeln der Arten
+    werden aktiv. Urheber ist der Mensch, der es entschieden hat — so überschreibt ein späterer Code-Standard
+    die Entscheidung nicht still (definition.uebernahme: admin_aelter bleibt, benannt). Rückgabe: Version."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.audit import AuditLog
+    from app.models.log_watch import RelevanzDefinition
+    from app.services.log_watch.definition import aktuelle
+    from app.services.log_watch.regelwerk import als_daten, pruefe
+
+    if not grund.strip() or not wer.strip():
+        raise ValueError("Grund und Urheber sind Pflicht")
+    async with AsyncSessionLocal() as db:
+        d = await aktuelle(db)
+        daten = umgeschaltet(als_daten(d.regeln), arten)
+        fehler = pruefe(daten, {k["id"] for k in d.kriterien}, d.objekte)
+        if fehler:
+            raise ValueError("; ".join(fehler))
+        row = RelevanzDefinition(version=d.version + 1, kriterien=d.kriterien, parameter=d.parameter,
+                                 regeln=daten, objekte=d.objekte, begruendung=grund[:1000], erstellt_von=wer,
+                                 erstellt_at=datetime.now(timezone.utc))
+        db.add(row)
+        db.add(AuditLog(action="log_relevanz_definition", resource_type="relevanz_definition",
+                        resource_id=str(row.version), user_id=None,
+                        new_value={"version": row.version, "begruendung": grund, "von": wer,
+                                   "incident_regeln_aktiv": sorted(arten)}))
+        await db.commit()
+    _UEBERNOMMEN["t"] = 0.0                    # Weiche sofort neu lesen
+    return row.version
+
+
 async def lauf(jetzt: datetime | None = None) -> dict:
     """Ein Messpunkt des Schattenbetriebs (raster_lauf „incident-regeln“)."""
     from sqlalchemy import select

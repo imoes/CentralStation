@@ -92,3 +92,12 @@ def test_oom_zaehler_im_json_ist_kein_oom():
     for echt in ("kernel: Out of memory: Killed process 4711 (java)", "systemd: oom-kill:constraint=CONSTRAINT_MEMCG",
                  "Memory cgroup out of memory: Killed process", "invoked oom_kill by process 12"):
         assert "oom" in [t.id for t in themen(echt)], echt
+
+
+def test_umschalten_nur_die_gewaehlten_arten():
+    daten = rw.als_daten(rw.standard_regeln(STANDARD.objekte))
+    neu = ir.umgeschaltet(daten, {"critical", "log_cluster"})
+    modus = {d["id"]: d["modus"] for d in neu if d["aktion"] == rw.INCIDENT}
+    assert modus == {"I-AUSBRUCH": "aktiv", "I-FLOTTE": "test", "I-KRITISCH": "aktiv", "I-HOST": "test"}
+    # Urteilsregeln bleiben unverändert
+    assert [d for d in neu if d["aktion"] != rw.INCIDENT] == [d for d in daten if d["aktion"] != rw.INCIDENT]
