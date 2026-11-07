@@ -10,6 +10,25 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — A rebuilt console image no longer causes nine parallel recreates
+
+### Fixed
+
+- **`ensure_container` now runs one call per user at a time.** When the userenv image is newer, the backend
+  recreates the console container on its next access. That happened at 14:43:29 after the image rebuild
+  around 14:10 (Hermes tool list).
+  - The interface makes several requests at once, so nine calls at the same moment all removed the same
+    container.
+  - They ran into `409 Conflict` ("removal … already in progress", "marked for removal and cannot be started"),
+    and the console showed errors.
+  - Now concurrent calls for the same user wait for each other.
+  - Evidence: backend log 14:43:29–30 (9× "läuft auf einem veralteten Image", 409 conflicts); test
+    `test_gleichzeitige_aufrufe_eines_nutzers_laufen_nacheinander`.
+  - The user's data survived: `.claude`, `.hermes` and the workspaces are volumes. Running processes in the console
+    were ended.
+
+---
+
 ## 2026-11-07 — Incident mails leave proof; stage 0 and field documentation no longer skip silently
 
 ### Fixed
@@ -140,8 +159,10 @@ You decided (07.11.): Ansible runs are self-generated (N5), and the old outbreak
 
 ### Still missing
 
-- The Hermes prompt change reaches a console only after a userenv image rebuild and the next container start.
-  Hermes loads its tool list at startup.
+- ~~The Hermes prompt change reaches a console only after a userenv image rebuild and the next container start.~~
+  **Corrected 07.11. 14:45:** the backend replaces a console container on its next access when the userenv
+  image is newer (`userenv_manager._image_outdated`). It does not wait for the next start. The rebuild at about
+  14:10 therefore recreated the user's console at 14:43:29. See the entry "A rebuilt console image…".
 - The dead rule `mark_would_drop_container` is in no pipeline. Deleting it is a Graylog change and needs
   approval.
 

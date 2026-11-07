@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 import time
 
 log = logging.getLogger(__name__)
@@ -425,11 +426,29 @@ def _image_outdated(cli, container) -> bool:
     return bool(current and running and current != running)
 
 
+#: je Nutzer ein Lauf von ensure_container zur Zeit — gemessen 07.11. 14:43:29: neun gleichzeitige Aufrufe
+#: (Oberfläche lädt Verlauf, Sitzungen …) sahen alle das veraltete Image, entfernten denselben Container
+#: und liefen in 409 „removal already in progress“ / „marked for removal and cannot be started“
+_ENSURE_LOCKS: dict[str, threading.Lock] = {}
+_ENSURE_LOCKS_GUARD = threading.Lock()
+
+
+def _ensure_lock(user_id: str) -> threading.Lock:
+    with _ENSURE_LOCKS_GUARD:
+        return _ENSURE_LOCKS.setdefault(user_id, threading.Lock())
+
+
 def ensure_container(user_id: str) -> str:
     """Ensure the user's unified container is running. Returns ide_upstream for nginx.
 
-    Idempotent — safe to call on every Hermes session create or Werkbank proxy hit.
+    Idempotent — safe to call on every Hermes session create or Werkbank proxy hit;
+    concurrent calls for the same user wait for each other (one recreate, not nine).
     """
+    with _ensure_lock(user_id):
+        return _ensure_container(user_id)
+
+
+def _ensure_container(user_id: str) -> str:
     cli = _client()
     name = container_name(user_id)
 
