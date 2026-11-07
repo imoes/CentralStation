@@ -12,6 +12,7 @@ Stufe: relevant → 2, dringend → 3; nicht relevant → 1, bei Rauschen/selbst
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -32,6 +33,15 @@ THEMEN_R5 = frozenset({"oom", "disk-full", "fs-readonly", "kernel-io", "absturz"
 THEMEN_R8 = frozenset({"cert", "backup"})
 #: Fehler-Cluster-Regel → Signal („persistent“ = neues Muster läuft anhaltend)
 REGEL_SIGNAL = {"new": "neu", "persistent": "neu", "spread": "ausbreitung", "spike": "anstieg"}
+#: Anwendungen, die eine Zeile selbst ausweisen, auch ohne Container-Namen: (Ausdruck über Muster bzw. Beispiel, app)
+#: Ansible-Module loggen auf dem Zielhost „ansible-<modul>[:] Invoked with …“ (gemessen 07.11.: 387 Muster,
+#: Filebeat-Rollout → Ausbreitung über 139 Hosts). Nutzer 07.11.: Ansible ist selbst erzeugt (N5, @Selbst-erzeugt).
+SELBST_APPS = ((re.compile(r"\bansible-[\w.]+:? Invoked with\b"), "ansible"),)
+
+
+def apps_aus_text(*texte: str) -> list[str]:
+    """Anwendungen aus dem Zeilentext (SELBST_APPS) — für den Hashtag app:<name>."""
+    return [app for rx, app in SELBST_APPS if any(rx.search(t or "") for t in texte)]
 
 
 @dataclass
@@ -183,6 +193,7 @@ def bewerte_graylog(templates: dict, events: list, kritisch: dict, stumm: set[st
             signale_muster.add("stumm")
             gruende_muster.append("Muster stumm geschaltet (Admin)")
         apps = [e for e, _ in tt.entities.most_common() if e and e not in tt.sources][:3]
+        apps = apps_aus_text(tt.template, *(tt.examples[:1])) + [a for a in apps if a != "ansible"]
         # Gruppen je (Host, Themen der Zeile) — collector.TemplateTally.gruppen
         for (host, themen_ids), g in (getattr(tt, "gruppen", None) or {}).items():
             th = [alle_themen[i] for i in themen_ids if i in alle_themen]

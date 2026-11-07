@@ -10,6 +10,40 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Ansible runs count as self-generated; old outbreak incidents closed
+
+You decided (07.11.): Ansible runs are self-generated (N5), and the old outbreak incidents are closed.
+
+### Changed
+
+- **Ansible module calls count as "Selbst erzeugt" (N5).** They no longer become relevant, no longer go into
+  the history and no longer open incidents.
+  - Ansible modules log on the target host as `ansible-<module>[:] Invoked with …`; 387 learned patterns have
+    this form.
+  - The raster tags such lines `app:ansible` (`raster.SELBST_APPS`).
+  - The object `@Selbst-erzeugt` is now `dienst:Check_MK* OR app:ansible`: definition **v10**, author
+    thomas.kluge@example.org, in the audit log. The code standard is v8.
+  - Damage (R5) still wins, as for every N5.
+  - Evidence: the live v10 rules judge `app:ansible kritikalitaet:prod signal:ausbreitung signal:dringend` as N5.
+    The test `test_ansible_ist_selbst_erzeugt_v8` checks the same, plus R5 precedence and that sshd lines get no
+    tag.
+
+### Fixed
+
+- **40 old outbreak incidents closed.** They were opened on the old path and had not been updated for ≥ 6 h.
+  - Closed with a stated reason (`resolved_reason`) and an audit entry. Their previous state is saved.
+  - 10 old-path incidents stay open: the old path still updates them (last 14:14), so the outbreak is still
+    going on.
+  - New outbreaks are opened by the I-AUSBRUCH rule.
+
+### Still missing
+
+- **sshd session lines from the rollout** (`pam_env(sshd:session): deprecated reading of user environment`,
+  `syslogin_perform_logout: logout() returned an error`) are **not** marked as Ansible. They appear on every SSH
+  login, by people as well, so they cannot be attributed to Ansible. Whether they are noise (N4) is still open.
+
+---
+
 ## 2026-11-07 — Stage 0 check understands the topic regex; console agents get the new tools
 
 ### Changed

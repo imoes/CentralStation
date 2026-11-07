@@ -67,7 +67,7 @@ KRITERIEN: tuple[Kriterium, ...] = (
               "Webscanner-Zugriffe, PAM-Sitzung geöffnet/geschlossen, einzelne Anmeldefehler "
               "ohne Muster.", "@Rauschen"),
     Kriterium("N5", NICHT_RELEVANT, "Selbst erzeugt",
-              "Vom Monitoring selbst erzeugt (Check_MK-Checks, Agent-Updates).",
+              "Vom Betrieb selbst erzeugt (Check_MK-Checks, Agent-Updates, Ansible-Läufe).",
               "@Selbst-erzeugt"),
     Kriterium("N6", NICHT_RELEVANT, "Stumm geschaltet", "Ein Admin hat das Muster stumm geschaltet.",
               "LogTemplate.muted"),
@@ -81,7 +81,8 @@ STANDARD_OBJEKTE = {
     "Nicht-Produktion": "kritikalitaet:(test OR dev OR offline)",
     # PAM: Sitzung geöffnet/geschlossen; Webscanner (Wazuh ab Level 7, darum vor R6)
     "Rauschen": "regel:(5501 OR 5502) OR regelgruppe:web_scan",
-    "Selbst-erzeugt": "dienst:Check_MK*",
+    # Ansible: Nutzer 07.11.2026 — Modulaufrufe auf dem Zielhost (raster.SELBST_APPS → app:ansible)
+    "Selbst-erzeugt": "dienst:Check_MK* OR app:ansible",
     "Routine-Quellen": "quelle:(graylog OR switch)",
 }
 
@@ -99,7 +100,7 @@ PARAMETER = {
 }
 
 #: Version der Definition, die dieser Code als Standard mitbringt, und warum es sie gibt.
-CODE_VERSION = 7
+CODE_VERSION = 8
 AENDERUNGEN = {
     1: "Festgelegt mit dem Nutzer am 06.11.2026",
     2: "R6 umfasst Firewall-Bedrohungen (Sinkhole, Stufe ab medium) — Nutzer 06.11.2026: "
@@ -118,6 +119,9 @@ AENDERUNGEN = {
        "Gruppe, Fenster, Mindestwerte; die vier bisherigen Wege (Ausbruch, Flotte, Kritisch, Host) als "
        "Standardregeln im Testmodus, verglichen mit den Incidents der alten Schwellen. N2 kennt offene "
        "Tickets an Incidents",
+    8: "Ansible-Läufe sind selbst erzeugt (N5, Nutzer 07.11.2026): @Selbst-erzeugt umfasst app:ansible. "
+       "Anlass: ein Filebeat-Rollout über 139 Hosts ergab Ausbruchs- und Host-Incidents aus "
+       "„ansible-<modul> Invoked with“-Zeilen",
 }
 
 def als_daten() -> tuple[list[dict], dict]:

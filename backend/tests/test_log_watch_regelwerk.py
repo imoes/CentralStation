@@ -137,3 +137,19 @@ def test_incident_regeln_zaehlen_nicht_im_urteil_und_werden_geprueft():
     kaputt = [{**d[0], "id": "X", "gruppe": "egal", "fenster_min": 0, "mindestens": {"tage": 1}, "incident_art": "?"}]
     f = rw.pruefe(kaputt, ids, STANDARD.objekte)
     assert len(f) == 4 and any("gruppe" in x for x in f) and any("incident_art" in x for x in f)
+
+
+def test_ansible_ist_selbst_erzeugt_v8():
+    """Definition v8 (Nutzer 07.11.): Ansible-Modulaufrufe sind N5 — auch dringend und sich ausbreitend auf prod;
+    Schaden (R5) bleibt vorne."""
+    from app.services.log_watch.definition import STANDARD
+    from app.services.log_watch.raster import apps_aus_text
+    from app.services.log_watch.regelwerk import bewerte
+    assert apps_aus_text("python3[<NUM>]: ansible-apt Invoked with name=filebeat=<NUM>.<NUM>") == ["ansible"]
+    assert apps_aus_text("<NUM> <TS> <*> python3 <NUM> ansible-ansible.legacy.stat Invoked with <*>") == ["ansible"]
+    assert apps_aus_text("ansible-apt: Invoked with name=filebeat") == ["ansible"]
+    assert apps_aus_text("sshd[1]: pam_env(sshd:session): deprecated", "ansible-runner sshd-session[2]: x") == []
+    tags = {"quelle:graylog", "app:ansible", "kritikalitaet:prod", "signal:ausbreitung", "signal:dringend"}
+    assert bewerte(STANDARD.regeln, tags, {}).regel == "N5"
+    assert bewerte(STANDARD.regeln, tags | {"signal:schaden"}, {}).regel == "R5"
+    assert bewerte(STANDARD.regeln, tags - {"app:ansible"}, {}).regel != "N5"
