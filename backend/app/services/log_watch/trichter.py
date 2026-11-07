@@ -75,7 +75,7 @@ Vorgehen als Trichter:
    Logzeile bedeutet: web_suche nach Fehlermeldung oder Code (nie Host/IP), dann web_seite — Kontext.
    In Foren steht die Lösung meist im letzten Beitrag.
    Analysiert ein Kollege gerade einen anderen Host, der zu deinem Fall gehört (gleiches Muster, mögliche Ursache
-   dort): lw_frage(host, frage, belege) — wie unter Kollegen; seine Antwort ist Kontext, kein Beleg. Eine Rückfrage
+   dort — die Liste „Kollegen“ im Fall nennt, wer woran arbeitet): lw_frage(host, frage, belege) — wie unter Kollegen; seine Antwort ist Kontext, kein Beleg. Eine Rückfrage
    an dich (sie kommt als „Rückfrage … von …“) beantworte sofort mit lw_antwort — nur Belegbares.
 3. Mit lw_befund abschließen — immer, auch wenn nichts Relevantes bleibt (dann Relevanz 0 oder 1 und
    kurz, warum).
@@ -226,6 +226,33 @@ def _hashtags_aus(objekte: list[dict], fall: dict) -> list[str]:
     return sorted(tags)
 
 
+async def kollegen(agent: str) -> dict[str, list[str]]:
+    """Wer analysiert gerade welche Hosts (ki_lease, ohne den eigenen Agenten und ohne Sonderaufgaben)."""
+    from datetime import datetime as _dt
+
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.log_watch import KiLease
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(KiLease).where(KiLease.bis >= _dt.now(timezone.utc)))).scalars().all()
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        if r.agent != agent and not r.host.startswith("__"):
+            out.setdefault(r.agent, []).append(r.host)
+    return out
+
+
+def kollegen_text(k: dict[str, list[str]]) -> str:
+    """Zeile für den Fall-Prompt: nur an diese Hosts geht eine Rückfrage an jemanden. Rein — testbar.
+    Gemessen 07.11.: 18 Rückfragen an Hosts, die niemand analysierte (14 Agenten, 8 Hosts) — die Agenten
+    wussten nicht, wer gerade woran arbeitet."""
+    if not k:
+        return "Kollegen: gerade analysiert niemand sonst einen Host — lw_frage hätte keinen Empfänger."
+    return ("Kollegen (lw_frage erreicht nur diese Hosts): "
+            + "; ".join(f"{', '.join(sorted(h)[:6])}" for _, h in sorted(k.items())) + ".")
+
+
 async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=None, lage_bauer=None) -> dict:
     """Eine Analyse für einen Fall {start, anzahl, hosts}: der Worker baut die Host-Objekte (Suche),
     die KI liest sie als Prompt und vertieft mit Werkzeugen; jeder Zug geht ins Gesprächsprotokoll.
@@ -250,7 +277,9 @@ async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=
               + "\n\nLage des Falls (Suche des Workers zum Startfilter — rufe lw_suche/lw_facetten/lw_wissen "
               "NICHT erneut mit dem Startfilter auf):\n" + json.dumps(lage, ensure_ascii=False, default=str)
               + "\n\nHost-Objekte (Felder, Nachbarschaft, Gedächtnis):\n"
-              + json.dumps(objekte, ensure_ascii=False, default=str))
+              + json.dumps(objekte, ensure_ascii=False, default=str)
+              # nur in der Flotte (fall["_agent"]) — ohne Agent gibt es keine Kollegen
+              + ("\n\n" + kollegen_text(await kollegen(fall["_agent"])) if fall.get("_agent") else ""))
     verlauf: list[dict] = [{"rolle": "worker", "text": prompt}]
     ergebnis: dict = {}
     try:

@@ -28,3 +28,11 @@ def test_feld_doku_ist_aufgabe_der_flotte():
     import inspect
     assert trichter.FELD_DOKU_LEASE.startswith("__") and trichter.FELD_DOKU_ABSTAND_MIN == 30
     assert "feld_doku_als_aufgabe(name)" in inspect.getsource(trichter.agent)
+
+
+def test_kollegenliste_im_fall():
+    """Gemessen 07.11.: 18 Rückfragen ins Leere — der Fall nennt jetzt, wer gerade welche Hosts analysiert."""
+    assert "niemand sonst" in trichter.kollegen_text({})
+    t = trichter.kollegen_text({"a-1": ["cue092.example.com"], "b-2": ["nsa1", "nsa2"]})
+    assert t.startswith("Kollegen (lw_frage erreicht nur diese Hosts):") and "cue092.example.com" in t and "nsa1, nsa2" in t
+    assert "Liste „Kollegen“" in trichter.SYSTEM

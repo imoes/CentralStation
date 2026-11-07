@@ -65,6 +65,21 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Agents know which colleagues are analysing which hosts
+
+### Changed
+
+- **Each case tells the agent who is analysing which hosts right now** (a "Kollegen" line in the case prompt,
+  taken from `ki_lease`; the agent's own hosts and special tasks are left out).
+  - Measured 07.11. up to 19:13: all 18 peer questions with status `niemand` came from 14 different agents and
+    were about 8 hosts that nobody was analysing. The agents could not know who works on what, so they asked
+    into the void, and every such question cost a model call.
+  - The prompt also says `lw_frage` reaches only those hosts.
+  - Test: `test_kollegenliste_im_fall`.
+  - Observation point: the share of `niemand` among peer questions should fall.
+
+---
+
 ## 2026-11-07 — Field documentation becomes a fleet task; clearer reason for unanswered questions
 
 ### Fixed
