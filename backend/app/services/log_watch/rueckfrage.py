@@ -166,10 +166,15 @@ async def schliesse_offene(agent: str) -> int:
 
     from app.core.database import AsyncSessionLocal
     from app.models.log_watch import KiFrage
+    jetzt = datetime.now(timezone.utc)
+    n = 0
     async with AsyncSessionLocal() as db:
-        r = await db.execute(update(KiFrage).where(KiFrage.an_agent == agent,
-                                                   KiFrage.status.in_(("offen", "zugestellt")))
-                             .values(status="unbeantwortet", grund="Agent hat seinen Fall beendet, ohne zu antworten",
-                                     beantwortet_at=datetime.now(timezone.utc)))
+        # zwei verschiedene Gründe (gemessen 07.11. 17:06: Frage kam 13 s vor Fallende — nie zugestellt)
+        for status, grund in (("offen", "nicht mehr zugestellt: der Agent beendete seinen Fall vor seinem nächsten "
+                                        "Modellaufruf"),
+                              ("zugestellt", "zugestellt, aber der Agent beendete seinen Fall, ohne zu antworten")):
+            r = await db.execute(update(KiFrage).where(KiFrage.an_agent == agent, KiFrage.status == status)
+                                 .values(status="unbeantwortet", grund=grund, beantwortet_at=jetzt))
+            n += r.rowcount or 0
         await db.commit()
-        return r.rowcount or 0
+        return n
