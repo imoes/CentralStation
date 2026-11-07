@@ -89,6 +89,53 @@ Otherwise the name is the ECS name with underscores, the scheme Filebeat already
 
 ---
 
+## 2026-11-07 — Log watch, part 40: only facts with checked quotes; the AI describes source fields
+
+You said (2026-11-07):
+- "Antworte nur mit Fakten, die du belegen kannst — wie im Recherche-Tool mit geprüften Zitaten";
+- "eventuell auch mit einer Webrecherche — diese Fakten oder Zitate sind auch erlaubt".
+
+### What is new
+
+- **Source fields of the field catalog get meanings** (`quellfeld:<quelle>.<feld>` in `feld_bedeutung`).
+  - A job (:17 and :47, only when no agent holds a lease) lets the model describe up to 10 active fields
+    per run.
+  - **Stage 1:** from the field name and the measured sample values. Every quote must stand there, and a
+    value mapping like "0=OK" counts only if it is itself quoted.
+  - **Stage 2:** for fields stage 1 cannot back (max 3 per run): web search, read the best page,
+    describe with quotes checked word for word against that page.
+  - What neither stage can back stays open and is named. The corpus tile shows how many source fields
+    lack a meaning.
+- **`lw_feld_anlegen` takes evidence** `[{id, zitat}]` (history message) or `[{url, zitat}]` (page read
+  with `web_seite` in the last hour), checked word for word, instead of a free "source".
+- **System prompt of the analysis AI:** only facts a checked quote carries; the rest is a hypothesis or
+  omitted. This applies to findings, field meanings and knowledge from the web.
+- **Correction of wrong meanings:** `korrigiere()` is open to a human or the system, not the AI. The old
+  text stays readable in the source.
+
+### Fixed
+
+- **`checkmk.host_state` was described with the service codes** ("0=OK, 1=Warning, 2=Critical") and
+  marked "certain". It is corrected to 0 UP, 1 DOWN, 2 UNREACHABLE (from memory of the CheckMK
+  documentation, not looked up). This is what led to the quote requirement.
+
+### Evidence (live, 2026-11-07, new code in a one-off container)
+
+- **Stage 1 with quotes:** 1 of 4 fields backed, `checkmk.acknowledged` with the quotes "acknowledged",
+  "'0'", "'1'". The other 3 stayed "uncertain".
+- **Stage 2 (web):** all 3 backed, 138 s:
+  - `checkmk.state` from forum.checkmk.com;
+  - `checkmk.current_attempt` from stackoverflow.com (quote `"current_attempt": 10,`);
+  - `checkmk.plugin_output` from forum.checkmk.com.
+- Tests: 870 passed.
+
+### What is still missing
+
+- **Not deployed:** your console is running, and the job and the corpus count start with the next deploy.
+- **No screen to review** AI field meanings.
+
+---
+
 ## 2026-11-07 — Log watch, part 39: field meanings in the database; web search for unclear log lines
 
 You said (2026-11-07):
