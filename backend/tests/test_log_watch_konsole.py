@@ -70,3 +70,30 @@ def test_gedaechtnis_benennt_herkunft():
         {"sitzung": "s2", "zuege": [{"rolle": "ki", "text": "OOM", "fall": "muster:1", "hashtags": []}]}]
     g = hostobjekt.kuerze_gedaechtnis([], sitzungen)["gespraeche"]
     assert [(s["herkunft"], s["bezug"]) for s in g] == [("konsole", "incident:abc"), ("ki-analyse", "muster:1")]
+
+
+def test_werkzeugantwort_in_der_ansicht_der_lage():
+    """lw_suche: höchstens JE_ANTWORT Treffer mit Host und zitierbarem Teiltext, Facetten nie
+    abgeschnitten, Kürzung benannt; Fehler unverändert."""
+    lang = "Platte voll " * 100
+    erg = {"filter": "host:a", "gesamt": 30, "treffer": [
+        {"id": f"graylog:{i}", "zeit": "z", "quelle": "graylog", "host": "a", "relevanz": 3,
+         "gruende": ["R5"], "hashtags": ["thema:disk-full", "host:a", "ort:MUE-0"], "text": lang}
+        for i in range(30)], "facetten": {"thema": [{"wert": "disk-full", "anzahl": 30}],
+                                          "host": [{"wert": "a", "anzahl": 30}]}}
+    k = hostobjekt.kuerze_antwort("lw_suche", erg)
+    assert k["gesamt"] == 30 and k["gezeigt"] == hostobjekt.JE_ANTWORT == len(k["treffer"])
+    t = k["treffer"][0]
+    assert t["host"] == "a" and t["hashtags"] == ["thema:disk-full"]
+    assert len(t["text"]) == hostobjekt.TEXT_MAX and lang.startswith(t["text"])   # Teilstring → zitierbar
+    assert k["facetten"] == {"thema": ["disk-full (30)"]} and "lw_nachricht" in k["hinweis"]
+    f = hostobjekt.kuerze_antwort("lw_facetten", {"gesamt": 30, "facetten": erg["facetten"]})
+    assert f["facetten"] == {"thema": ["disk-full (30)"], "host": ["a (30)"]}   # alle Arten
+    assert hostobjekt.kuerze_antwort("lw_suche", {"fehler": "x"}) == {"fehler": "x"}
+
+
+def test_trichter_kuerzt_vor_der_grenze():
+    from app.services.log_watch import trichter
+    erg = {"gesamt": 1, "treffer": [{"id": "g:1", "text": "x" * 50000, "hashtags": []}], "facetten": {}}
+    s = trichter._kurz("lw_suche", erg)
+    assert len(s) < trichter.ANTWORT_MAX and "abgeschnitten" not in s

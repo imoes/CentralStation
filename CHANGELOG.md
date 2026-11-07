@@ -10,6 +10,58 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 28: tool answers in the view of the situation — smaller and complete
+
+Approved 2026-11-07 ("Ja") after the strata measurement (part 26): fewer new prompt tokens per step are
+the only lever for more cases per hour.
+
+### Fixed
+
+- **The AI received truncated tool answers and, in most searches, no facets at all.**
+  - Measured on 40 real `lw_suche` calls from the last hours: median 10 246 characters raw.
+  - 29 of 40 were longer than 6 000 characters and were cut blind at that limit. The JSON broke off in
+    the middle of a hit.
+  - The facets come after the hits in the answer, so they were lost in every cut answer.
+
+### What has changed
+
+- **Tool answers in the funnel use the same view as the worker's situation**
+  (`hostobjekt.kuerze_antwort`):
+  - `lw_suche`: at most 6 hits. Each hit has ID, time to the second, source, **host** (new, also in the
+    situation), relevance, at most 2 reasons, at most 5 hashtags, and at most 300 characters of text.
+  - The shortened text is a prefix of the original, so a quote from it still passes the quote check.
+  - The answer names what was left out: `gesamt` (all matches), `gezeigt`, and a note that
+    `lw_nachricht(id)` returns the full message.
+  - Facets: top 5 values per kind, always complete.
+  - `lw_facetten`: top 5 values per kind, for all kinds.
+  - `lw_gespraech`: the same view as the host object's memory (human, AI and finding turns, 300
+    characters each, origin and reference).
+- The 6 000-character limit stays only as a last safeguard, and it still names the cut.
+- The MCP tools for the console are unchanged and still answer in full.
+
+### Evidence
+
+- **Same real calls, old (capped at 6 000) → new:**
+
+  | Tool | Old | New | Saving |
+  |---|---|---|---|
+  | `lw_suche` | 190 622 characters | 120 479 characters | −37 %; largest answer 5 316 characters, so nothing is cut |
+  | `lw_facetten` | 156 966 | 40 030 | −74 % |
+  | `lw_gespraech` | 216 167 | 120 636 | −44 % |
+
+- **Per hit before:** text 213, reasons 106, hashtags 91, ID 41, time 30 characters on average.
+- **Tests:** at most 6 hits, host present, text quotable, facets never cut, cut named; a 50 000-character
+  answer stays below the safeguard.
+- **Backend suite:** 802 passed, 142 skipped.
+
+### What is still missing
+
+- **The effect on throughput is not yet measured.** To compare after the rollout: prompt tokens read by
+  strata per hour, and findings per hour. Before the rollout: 1.51 million tokens in 2 h, 21–33
+  findings per hour.
+
+---
+
 ## 2026-11-07 — Log watch, part 27: console sessions with a reference become memory
 
 ### What is new

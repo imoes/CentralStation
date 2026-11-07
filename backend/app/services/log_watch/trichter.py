@@ -160,8 +160,11 @@ def _zeit_iso(s) -> datetime:
         return datetime.min.replace(tzinfo=timezone.utc)
 
 
-def _kurz(erg: dict) -> str:
-    s = json.dumps(erg, ensure_ascii=False, default=str)
+def _kurz(name: str, erg: dict) -> str:
+    """Werkzeugantwort als Text: erst die Ansicht der Lage (hostobjekt.kuerze_antwort), die
+    Zeichengrenze greift nur noch als letzte Sicherung — und benennt, was fehlt."""
+    from app.services.log_watch.hostobjekt import kuerze_antwort
+    s = json.dumps(kuerze_antwort(name, erg), ensure_ascii=False, default=str)
     return s if len(s) <= ANTWORT_MAX else s[:ANTWORT_MAX] + f' … [abgeschnitten, {len(s)} Zeichen]'
 
 
@@ -270,8 +273,8 @@ async def _schleife(fall: dict, llm_config, llm, prompt: str, verlauf: list[dict
                 return {"start": fall["start"], "hosts": fall["hosts"], "befund": erg["id"], "belege": erg["belege"],
                         "verworfen": erg["verworfen"], "schritte": schritte}
             verlauf.append({"rolle": "werkzeug", "werkzeug": a["name"], "argumente": a["argumente"],
-                            "text": _kurz(erg)})
-            nachrichten.append({"role": "tool", "tool_call_id": a["id"], "content": _kurz(erg)})
+                            "text": _kurz(a["name"], erg)})
+            nachrichten.append({"role": "tool", "tool_call_id": a["id"], "content": _kurz(a["name"], erg)})
     return {"start": fall["start"], "hosts": fall["hosts"], "kein_befund": f"nach {SCHRITTE} Schritten kein gültiger Befund", "schritte": schritte}
 
 

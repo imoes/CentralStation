@@ -20,19 +20,53 @@ LAGE_MAX = 12
 TEXT_MAX = 300
 FACETTEN = ("thema", "muster", "regel", "regelgruppe", "mitre", "dienst", "signal", "quelle", "zustand")
 JE_FACETTE = 5
+#: je Treffer höchstens so viele Gründe bzw. Hashtags (gemessen 07.11.: im Mittel 106 bzw. 91 Zeichen
+#: je Treffer, mehr als der halbe Text; die Facetten fassen die Hashtags ohnehin zusammen)
+JE_TREFFER = 2
+JE_TREFFER_TAGS = 5
 
 
 def kuerze_lage(treffer: list[dict]) -> list[dict]:
     """Treffer → Lage-Einträge mit ID, Zeit, Quelle, Relevanz, Gründen und gekürztem Text."""
-    return [{"id": t["id"], "zeit": t.get("zeit"), "quelle": t.get("quelle"), "relevanz": t.get("relevanz"),
-             "gruende": (t.get("gruende") or [])[:3],
-             "hashtags": [h for h in t.get("hashtags") or [] if h.split(":")[0] in FACETTEN],
+    return [{"id": t["id"], "zeit": str(t.get("zeit") or "")[:19], "quelle": t.get("quelle"), "host": t.get("host"),
+             "relevanz": t.get("relevanz"),
+             "gruende": (t.get("gruende") or [])[:JE_TREFFER],
+             "hashtags": [h for h in t.get("hashtags") or [] if h.split(":")[0] in FACETTEN][:JE_TREFFER_TAGS],
              "text": (t.get("text") or "")[:TEXT_MAX]} for t in treffer[:LAGE_MAX]]
 
 
-def kuerze_facetten(facetten: dict) -> dict:
+def kuerze_facetten(facetten: dict, arten: tuple[str, ...] | None = None) -> dict:
+    """Top-Werte je Art als „wert (anzahl)“; `arten=None` heißt die Arten der Lage (FACETTEN)."""
     return {art: [f"{x['wert']} ({x['anzahl']})" for x in facetten.get(art, [])[:JE_FACETTE]]
-            for art in FACETTEN if facetten.get(art)}
+            for art in (arten or FACETTEN) if facetten.get(art)}
+
+
+#: so viele Treffer zeigt eine Werkzeugantwort im Trichter (gemessen 07.11. an 40 echten lw_suche-Aufrufen:
+#: Median 10 246 Zeichen roh, 29 von 40 über der 6 000-Zeichen-Grenze — blind abgeschnitten, die
+#: Facetten dahinter sah die KI nie). Mit 6 Treffern: Median 3 523, höchstens 5 316 Zeichen.
+JE_ANTWORT = 6
+
+
+def kuerze_antwort(werkzeug: str, erg: dict) -> dict:
+    """Werkzeugantwort für die KI in derselben Ansicht wie die Lage im Prompt: Treffer mit gekürztem,
+    aber zitierbarem Text (Teilstring des Originals), Facetten als Top-Werte. Was fehlt, ist benannt."""
+    if not isinstance(erg, dict) or "fehler" in erg:
+        return erg
+    kopf = {k: erg[k] for k in ("filter", "zeitraum", "gesamt") if k in erg}
+    if werkzeug == "lw_suche":
+        treffer = kuerze_lage(erg.get("treffer") or [])[:JE_ANTWORT]
+        return {**kopf, "gezeigt": len(treffer), "treffer": treffer,
+                "facetten": kuerze_facetten(erg.get("facetten") or {}),
+                "hinweis": f"je Treffer höchstens {TEXT_MAX} Zeichen Text, höchstens {JE_ANTWORT} Treffer; "
+                           "vollständig: lw_nachricht(id)"}
+    if werkzeug == "lw_facetten":
+        f = erg.get("facetten") or {}
+        return {**kopf, "facetten": kuerze_facetten(f, tuple(f)),
+                "hinweis": f"je Art die {JE_FACETTE} häufigsten Werte"}
+    if werkzeug == "lw_gespraech":
+        return {"filter": erg.get("filter"),
+                "sitzungen": kuerze_gedaechtnis([], erg.get("sitzungen") or [])["gespraeche"]}
+    return erg
 
 
 def kuerze_gedaechtnis(befunde: list[dict], sitzungen: list[dict]) -> dict:

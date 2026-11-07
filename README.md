@@ -1534,6 +1534,14 @@ The AI only works when a check is true, and it only writes its own analysis.
   | `lw_gespraech` | conversation protocols of earlier analyses for a filter (e.g. `host:x`) |
   | `lw_befund` | the only writing tool: files the finding |
 
+  In the funnel, tool answers use the same view as the worker's situation (`hostobjekt.kuerze_antwort`):
+  - `lw_suche`: at most 6 hits; each with host, 2 reasons, 5 hashtags and 300 characters of quotable
+    text. The answer names `gesamt` and `gezeigt`.
+  - Facets: top 5 values per kind.
+  - `lw_gespraech`: the memory view.
+
+  The MCP tools answer in full.
+
 - **A finding is a document** `quelle:ki`, `herkunft:ki` in `cs-logs-*` (`befund.py`). The code writes
   it, not the model, and checks first:
   - every quote must stand verbatim (case and whitespace ignored) in the text of a history document;
