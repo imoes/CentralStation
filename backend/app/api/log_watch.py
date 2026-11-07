@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import CurrentUser, RequireAdmin, get_db
+from app.api.deps import CurrentUser, RequireAdmin, RequireSysAdmin, get_db
 from app.models.audit import AuditLog
 from app.models.log_watch import FieldCatalog
 from app.services.log_watch import catalog
@@ -253,7 +253,7 @@ class VergessenBody(BaseModel):
     grund: str
 
 
-@router.post("/bekannt/{eintrag_id}/vergessen", dependencies=[RequireAdmin])
+@router.post("/bekannt/{eintrag_id}/vergessen", dependencies=[RequireSysAdmin])
 async def bekannten_fehler_vergessen(eintrag_id: str, body: VergessenBody, user: CurrentUser,
                                      db: Annotated[AsyncSession, Depends(get_db)]):
     """Ein Mensch widerlegt das Urteil: beim nächsten Auftreten analysiert die KI neu. Grund ist Pflicht."""
@@ -326,10 +326,11 @@ async def _audit(db, user, aktion: str, ziel: str, werte: dict) -> None:
     await db.commit()
 
 
-@router.post("/nachrichten/{nachricht_id}/urteil", dependencies=[RequireAdmin])
+@router.post("/nachrichten/{nachricht_id}/urteil", dependencies=[RequireSysAdmin])
 async def nachricht_urteilen(nachricht_id: str, body: UrteilBody, user: CurrentUser,
                              db: Annotated[AsyncSession, Depends(get_db)]):
-    """Ein Mensch urteilt — Vorrang vor KI und Regel; Grund ist Pflicht, die Änderung steht an der Nachricht."""
+    """Ein Mensch urteilt — Vorrang vor KI und Regel; Grund ist Pflicht, die Änderung steht an der Nachricht.
+    Betriebsarbeit wie Quittieren: admin oder sysadmin. Massenänderung über einen Filter bleibt admin."""
     from app.services.log_watch import nachricht
     try:
         r = await nachricht.urteile(body.urteil, body.relevanz, body.kriterien, "mensch",
@@ -342,7 +343,7 @@ async def nachricht_urteilen(nachricht_id: str, body: UrteilBody, user: CurrentU
     return {"ergebnis": r, "nachricht": await nachricht.lies(nachricht_id)}
 
 
-@router.post("/nachrichten/{nachricht_id}/hashtags", dependencies=[RequireAdmin])
+@router.post("/nachrichten/{nachricht_id}/hashtags", dependencies=[RequireSysAdmin])
 async def nachricht_hashtags(nachricht_id: str, body: HashtagBody, user: CurrentUser,
                              db: Annotated[AsyncSession, Depends(get_db)]):
     """Hashtags hinzufügen/entfernen (nicht quelle:/host: — die spiegeln feste Felder)."""
