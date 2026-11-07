@@ -135,6 +135,24 @@ export function tagFilter(tag: string, ausschliessen = false): string {
               </div>
             }
           } @else {
+            @if (objekteDerArt('incident').length) {
+              <div class="st-sub">Incidents</div>
+              @for (k of objekteDerArt('incident'); track k.id) {
+                <button class="st-zeile" (click)="waehle(k.id)">
+                  <i class="punkt" [style.background]="stufenFarbe(k.stufe)"></i>▲ {{ k.titel || k.id }}
+                  <span class="dim">{{ k.incident?.status === 'resolved' ? 'gelöst' : 'offen' }} · {{ k.anzahl }}</span>
+                </button>
+              }
+            }
+            @if (objekteDerArt('befund').length) {
+              <div class="st-sub">KI-Befunde</div>
+              @for (k of objekteDerArt('befund'); track k.id) {
+                <button class="st-zeile" (click)="waehle(k.id)">
+                  <i class="punkt" [style.background]="stufenFarbe(k.stufe)"></i>◆ {{ k.titel || k.id }}
+                  <span class="dim">{{ k.anzahl }}</span>
+                </button>
+              }
+            }
             <div class="st-sub">Wo sind die Probleme?</div>
             @for (k of brennpunkte(); track k.id) {
               <button class="st-zeile" (click)="waehle(k.id)">
@@ -215,8 +233,10 @@ export class FehlernetzComponent implements OnInit {
 
   readonly auswahl = computed(() => (this.netz()?.knoten ?? []).find(k => k.id === this.auswahlId()) ?? null);
   /** ohne Auswahl rechts: die Problemobjekte, rot zuerst — die Antwort auf „wo sind die Probleme?“ */
+  objekteDerArt(art: string): Knoten[] { return (this.netz()?.knoten ?? []).filter(k => k.art === art); }
+
   readonly brennpunkte = computed(() => (this.netz()?.knoten ?? [])
-    .filter(k => k.stufe !== 'auffaellig')
+    .filter(k => k.stufe !== 'auffaellig' && k.art !== 'incident' && k.art !== 'befund')
     .sort((a, b) => b.dringend_offen - a.dringend_offen || b.dringend - a.dringend).slice(0, 12));
 
   constructor() {
