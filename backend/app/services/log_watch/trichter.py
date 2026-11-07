@@ -430,6 +430,45 @@ async def gib_frei(agent: str) -> None:
         await db.commit()
 
 
+#: Feld-Doku als Aufgabe der Flotte: ein Agent übernimmt sie zwischen zwei Fällen. Gemessen 07.11.: als eigener
+#: Job (nur bei freiem Platz) setzte sie 14:47, 15:17, 15:47, 16:47 und 17:17 aus — die Flotte ist fast immer voll
+FELD_DOKU_LEASE = "__feld-doku__"
+FELD_DOKU_ABSTAND_MIN = 30
+
+
+async def feld_doku_faellig() -> bool:
+    """Letzter ERFOLGREICHER Lauf (nicht ausgesetzt, ohne Fehler) mindestens FELD_DOKU_ABSTAND_MIN alt."""
+    from sqlalchemy import text
+
+    from app.core.database import AsyncSessionLocal
+    from app.services.log_watch.lauf import faellig
+    async with AsyncSessionLocal() as db:
+        zuletzt = (await db.execute(text(
+            "SELECT max(created_at) FROM raster_lauf WHERE quelle = 'feld-doku' "
+            "AND NOT (werte ? 'ausgesetzt') AND NOT (werte ? 'fehler')"))).scalar()
+    return faellig(zuletzt, datetime.now(timezone.utc), FELD_DOKU_ABSTAND_MIN)
+
+
+async def feld_doku_als_aufgabe(agent_name: str) -> dict | None:
+    """Ist die Feld-Doku fällig und frei, erledigt dieser Agent sie (Sperre FELD_DOKU_LEASE: nur einer)."""
+    if not await feld_doku_faellig():
+        return None
+    if not await belege({"start": "feld-doku", "hosts": [FELD_DOKU_LEASE]}, agent_name):
+        return None
+    from app.services.log_watch import felder
+    from app.services.log_watch.lauf import _speichere
+    b = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    try:
+        erg = await felder.beschreibe_quellfelder()
+        await _speichere("feld-doku", b, {**erg, "agent": agent_name})
+        return erg
+    except Exception as e:  # noqa: BLE001
+        await _speichere("feld-doku", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}", "agent": agent_name})
+        return None
+    finally:
+        await gib_frei(agent_name)
+
+
 async def agent(llm=None) -> dict | None:
     """Ein Agent der Flotte: nimmt den nächsten freien Fall (Lease auf seine Hosts), analysiert,
     gibt frei — bis die Warteschlange leer ist oder sein Budget um. Schalter aus → None."""
@@ -453,6 +492,7 @@ async def agent(llm=None) -> dict | None:
         async with AsyncSessionLocal() as db:
             if (await get_setting(db, SCHALTER) or "").lower() not in ("1", "true", "ja"):
                 break
+        await feld_doku_als_aufgabe(name)
         k = await kandidaten()
         if k["anhaengen"]:
             angehaengt += (await bekannt.haenge_an(k.pop("anhaengen")))["angehaengt"]

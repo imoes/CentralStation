@@ -21,3 +21,10 @@ def test_werkzeuge_im_trichter_und_rollen():
 
 def test_prompt_nennt_rueckfrage():
     assert "lw_frage(host, frage, belege)" in trichter.SYSTEM and "lw_antwort" in trichter.SYSTEM
+
+
+def test_feld_doku_ist_aufgabe_der_flotte():
+    """Gemessen 07.11.: als eigener Job setzte die Feld-Doku fünfmal aus (Flotte voll)."""
+    import inspect
+    assert trichter.FELD_DOKU_LEASE.startswith("__") and trichter.FELD_DOKU_ABSTAND_MIN == 30
+    assert "feld_doku_als_aufgabe(name)" in inspect.getsource(trichter.agent)
