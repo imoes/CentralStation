@@ -129,10 +129,48 @@ export function tagFilter(tag: string, ausschliessen = false): string {
             @if (!nachbarn(k).length) { <div class="dim">—</div> }
             <div class="st-sub">Nachrichten{{ treffer().length ? ' · ' + (gesamtTreffer() | number) : '' }}</div>
             @for (t of treffer(); track t.id) {
-              <div class="msg" [class.r3]="t.relevanz >= 3">
+              <div class="msg" [class.r3]="t.relevanz >= 3" [class.offen]="objekt()?.id === t.id" (click)="oeffne(t.id)">
                 <span class="msg-kopf">{{ t.zeit | date:'dd.MM. HH:mm' }} · {{ t.quelle }} · {{ kurz(t.host) }}</span>
                 <span class="msg-text">{{ t.text }}</span>
               </div>
+              <!-- Die Nachricht als Objekt (backend log_watch/nachricht.py): feste Felder, Urteil, Hashtags,
+                   Geschichte; Änderungen nur über Methoden, jede mit Grund -->
+              @if (objekt(); as o) { @if (o.id === t.id) {
+                <div class="obj">
+                  <div class="obj-zeile"><b>{{ o.aenderbar.urteil === 'relevant' ? 'relevant' : 'nicht relevant' }}</b>
+                    · Relevanz {{ o.aenderbar.relevanz }} · {{ (o.aenderbar.kriterien || []).join(' ') }}
+                    · von {{ o.aenderbar.herkunft || 'regel' }}</div>
+                  <div class="obj-tags">
+                    @for (h of o.aenderbar.hashtags || []; track h) {
+                      <span class="obj-tag">{{ h }}@if (!fest(h)) { <button (click)="tagWeg(h)" title="entfernen">✕</button> }</span>
+                    }
+                  </div>
+                  <div class="obj-form">
+                    <input [(ngModel)]="neuerTag" placeholder="art:wert hinzufügen" (keydown.enter)="tagHinzu()">
+                  </div>
+                  <div class="obj-form">
+                    <select [(ngModel)]="urteilForm.urteil">
+                      <option value="relevant">relevant</option><option value="nicht_relevant">nicht relevant</option>
+                    </select>
+                    <select [(ngModel)]="urteilForm.relevanz">
+                      @for (r of [0, 1, 2, 3]; track r) { <option [ngValue]="r">Relevanz {{ r }}</option> }
+                    </select>
+                    <select [(ngModel)]="urteilForm.kriterium">
+                      @for (k of kriterienFuer(urteilForm.urteil); track k.id) { <option [value]="k.id">{{ k.id }} {{ k.titel }}</option> }
+                    </select>
+                  </div>
+                  <div class="obj-form">
+                    <input [(ngModel)]="grund" placeholder="Grund (Pflicht) — steht an der Nachricht">
+                    <button (click)="urteilen()" [disabled]="!grund.trim()">Urteil setzen</button>
+                  </div>
+                  @if (objektFehler()) { <div class="obj-fehler">{{ objektFehler() }}</div> }
+                  <div class="obj-sub">Geschichte</div>
+                  @for (e of o.aenderungen; track $index) {
+                    <div class="obj-gesch">{{ e.zeit | date:'dd.MM. HH:mm' }} · <b>{{ e.wer }}</b> · {{ e.was }} — {{ e.grund }}</div>
+                  }
+                  @if (!o.aenderungen.length) { <div class="obj-gesch dim">noch keine Änderung — so, wie das Raster es schrieb</div> }
+                </div>
+              } }
             }
           } @else {
             @if (objekteDerArt('incident').length) {
@@ -208,6 +246,21 @@ export function tagFilter(tag: string, ausschliessen = false): string {
     .msg-kopf { font-size: 10.5px; opacity: .65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .msg-text { font-size: 12px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
     .hinweis { margin-top: 10px; font-size: 12px; }
+    .msg { cursor: pointer; }
+    .msg.offen { border-left-color: #5b9bd5; }
+    .obj { margin: 2px 0 8px 8px; padding: 6px 8px; border-radius: 6px; font-size: 12px;
+      background: var(--mat-sys-surface-container, rgba(127,127,127,.08)); display: flex; flex-direction: column; gap: 4px; }
+    .obj-tags { display: flex; flex-wrap: wrap; gap: 3px; }
+    .obj-tag { font-size: 11px; padding: 0 6px; border-radius: 8px; background: rgba(127,127,127,.2); }
+    .obj-tag button { border: 0; background: none; color: inherit; cursor: pointer; padding: 0 0 0 3px; }
+    .obj-form { display: flex; gap: 4px; flex-wrap: wrap; }
+    .obj-form input { flex: 1; min-width: 140px; font: inherit; padding: 3px 6px; border-radius: 5px;
+      border: 1px solid rgba(127,127,127,.4); background: transparent; color: inherit; }
+    .obj-form select, .obj-form button { font: inherit; font-size: 12px; padding: 3px 6px; border-radius: 5px;
+      border: 1px solid rgba(127,127,127,.4); background: transparent; color: inherit; cursor: pointer; }
+    .obj-fehler { color: #d32f2f; }
+    .obj-sub { font-size: 10px; opacity: .6; text-transform: uppercase; letter-spacing: .05em; margin-top: 4px; }
+    .obj-gesch { font-size: 11px; overflow-wrap: anywhere; }
   `],
 })
 export class FehlernetzComponent implements OnInit {
@@ -228,6 +281,13 @@ export class FehlernetzComponent implements OnInit {
   readonly fehler = signal('');
   readonly auswahlId = signal<string | null>(null);
   readonly treffer = signal<Treffer[]>([]);
+  /** die geöffnete Nachricht als Objekt (GET /log-watch/nachrichten/{id}) */
+  readonly objekt = signal<any | null>(null);
+  readonly objektFehler = signal('');
+  readonly kriterien = signal<{ id: string; art: string; titel: string }[]>([]);
+  neuerTag = '';
+  grund = '';
+  urteilForm: { urteil: string; relevanz: number; kriterium: string } = { urteil: 'nicht_relevant', relevanz: 1, kriterium: 'N1' };
   readonly gesamtTreffer = signal(0);
   eingabe = '';
 
@@ -262,6 +322,54 @@ export class FehlernetzComponent implements OnInit {
         .subscribe({ next: r => { this.treffer.set(r.treffer ?? []); this.gesamtTreffer.set(r.gesamt ?? 0); },
                      error: () => this.treffer.set([]) });
     });
+  }
+
+  /** quelle: und host: spiegeln feste Felder der Nachricht — nicht änderbar (backend nachricht.FESTE_TAG_ARTEN) */
+  fest(tag: string): boolean { return /^(quelle|host):/.test(tag); }
+
+  kriterienFuer(urteil: string) { return this.kriterien().filter(k => (urteil === 'relevant') === (k.art === 'relevant')); }
+
+  oeffne(id: string) {
+    if (this.objekt()?.id === id) { this.objekt.set(null); return; }
+    this.objektFehler.set('');
+    if (!this.kriterien().length) {
+      this.http.get<any>(`${environment.apiUrl}/log-watch/definition`).subscribe(d => this.kriterien.set(d.kriterien ?? []));
+    }
+    this.http.get<any>(`${environment.apiUrl}/log-watch/nachrichten/${encodeURIComponent(id)}`).subscribe({
+      next: o => {
+        this.objekt.set(o);
+        const a = o.aenderbar ?? {};
+        this.urteilForm = { urteil: a.urteil ?? 'nicht_relevant', relevanz: a.relevanz ?? 1,
+                            kriterium: (a.kriterien ?? [])[0] ?? 'N1' };
+      },
+      error: e => this.objektFehler.set(`Nachricht nicht lesbar (${e.status})`),
+    });
+  }
+
+  private aendere(pfad: string, body: any) {
+    const o = this.objekt();
+    if (!o) return;
+    this.http.post<any>(`${environment.apiUrl}/log-watch/nachrichten/${encodeURIComponent(o.id)}/${pfad}`, body).subscribe({
+      next: r => { this.objekt.set(r.nachricht); this.objektFehler.set(''); this.grund = ''; this.neuerTag = ''; },
+      error: e => this.objektFehler.set(e?.error?.detail ?? `Änderung abgelehnt (${e.status})`),
+    });
+  }
+
+  tagHinzu() {
+    const t = this.neuerTag.trim();
+    if (!t) return;
+    if (!this.grund.trim()) { this.objektFehler.set('Grund ist Pflicht — bitte unten eintragen'); return; }
+    this.aendere('hashtags', { hinzu: [t], weg: [], grund: this.grund });
+  }
+
+  tagWeg(t: string) {
+    if (!this.grund.trim()) { this.objektFehler.set('Grund ist Pflicht — bitte unten eintragen'); return; }
+    this.aendere('hashtags', { hinzu: [], weg: [t], grund: this.grund });
+  }
+
+  urteilen() {
+    const f = this.urteilForm;
+    this.aendere('urteil', { urteil: f.urteil, relevanz: Number(f.relevanz), kriterien: [f.kriterium], grund: this.grund });
   }
 
   ngOnInit() {
