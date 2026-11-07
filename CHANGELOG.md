@@ -10,6 +10,42 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Exclusion filters moved into the rule set (test mode); peer question verified live
+
+### Changed
+
+- **The feed's exclusion filters are now rules, in definition v11.** Author thomas.kluge@example.org; the
+  change is in the audit log.
+  - 12 objects `@Aus-…` with one rule `AUS-1…12` each. Every rule has action block, criterion N6 (muted by an
+    admin), and sits right after N6.
+  - **All rules are in test mode:** they only count and decide nothing until someone switches them on in the
+    rule editor.
+  - Translation: rules only check hashtags (no free text), so each Lucene filter became the learned Drain
+    patterns (`muster:…`) whose template or examples contain the filter text. That is 68 patterns, e.g.
+    CUE-Print 18, LinMem 14, Kauditd 9, DOT1X 4.
+  - **The old CCI filter was too broad.** Its alternative `<?xml` also hid 14 unrelated error patterns:
+    digicol `Duplicate entry … DCX_DOCUMENT_UNIQUE` and Escenic Solr indexing errors. It was not carried over;
+    only the CCI terms were.
+  - **Not transferable (named):**
+    - Zipline audit log and "Converted text content": no learned pattern contains these texts.
+      *Hypothesis:* stage 0 already drops such container lines.
+    - Two Wazuh file-integrity filters (`cmk-update-agent.state.bak`, `patchmon config.yml`): a file path is not
+      a hashtag.
+    - KOR-0-SDWAN/HER-0: the history only knows these as places (`ort:`), so a rule would mute whole sites.
+  - "Promiscuous mode" was a personal filter and is a security signal; it is marked "prüfen!" in the rule name.
+- **Peer question verified live.**
+  - Question to the agent analysing `dev.example.net` at 16:20:42; answer at 16:21:07, 25 s later, with
+    evidence ID.
+  - The agent named the critical firewall message (RCE 96787, action "alert", not blocked) and set it apart
+    from the brute-force series (`ki_frage`, status beantwortet).
+
+### Still missing
+
+- Test hits of the AUS rules over a few hours, then switching them on in the editor. After that the old
+  exclusion filters can be switched off (`AUSSCHLUSSFILTER_AKTIV = False`).
+
+---
+
 ## 2026-11-07 — AI instances ask each other with context, like peer sessions
 
 You asked (07.11.): can an AI instance ask other sessions with context, the way Claude Code asks its peer
