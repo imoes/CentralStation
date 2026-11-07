@@ -30,6 +30,7 @@ interface Knoten {
 interface Kante { a: string; b: string; anzahl: number }
 interface Netz {
   gesamt: number; knoten: Knoten[]; kanten: Kante[]; satz?: string; fehler?: string; ausgeblendet_naben?: string[];
+  befund_titel?: Record<string, string>;
 }
 interface Treffer { id: string; zeit: string; quelle: string; host: string; relevanz: number; text: string; hashtags: string[] }
 
@@ -391,8 +392,8 @@ export class FehlernetzComponent implements OnInit {
   kurz(host: string): string { return String(host ?? '').split('.')[0]; }
 
   befundeVon(k: Knoten): { id: string; titel?: string }[] {
-    const titel = new Map((this.netz()?.knoten ?? []).filter(x => x.art === 'befund').map(x => [x.id, x.titel]));
-    return k.befunde.map(id => ({ id, titel: titel.get(id) }));
+    const titel = this.netz()?.befund_titel ?? {};
+    return k.befunde.map(id => ({ id, titel: titel[id] }));
   }
 
   nachbarn(k: Knoten): Knoten[] {

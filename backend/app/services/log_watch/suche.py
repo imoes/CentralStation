@@ -198,9 +198,11 @@ async def netzplan(filtertext: str = "", *, stunden: float = 24, knoten: int = 1
         if "m" in adj["aggregations"]:
             kn = kanten(adj["aggregations"]["m"]["buckets"], ids)
         zustand(k, adj["aggregations"]["z"]["buckets"])
-        await _befund_titel(os_client, k)
+        befund_titel = await _befund_titel(os_client, k)
         await _namen(os_client, k, q)
     return {"filter": filtertext, "gesamt": gesamt, "knoten": k, "kanten": kn,
+            # Titel aller Befunde, die an Knoten hängen — auch ohne eigenen Knoten im Bild
+            "befund_titel": befund_titel if ids else {},
             "ausgeblendet_naben": naben,
             "zeitraum": {"seit": seit.isoformat(), "bis": bis.isoformat(), "stunden": stunden},
             "satz": satz(k, gesamt, stunden),
@@ -249,7 +251,7 @@ def zustand(knoten: list[dict], buckets: dict) -> None:
         x["stufe"] = ("dringend_offen" if x["dringend_offen"] else "dringend" if x["dringend"] else "auffaellig")
 
 
-async def _befund_titel(os_client, knoten: list[dict]) -> None:
+async def _befund_titel(os_client, knoten: list[dict]) -> dict[str, str]:
     """Befund- und Incident-Knoten tragen ihren Titel — ein Objekt, kein Hash."""
     inc = [x["wert"] for x in knoten if x["art"] == "incident"]
     if inc:
@@ -260,15 +262,17 @@ async def _befund_titel(os_client, knoten: list[dict]) -> None:
                 i = t.get(x["wert"]) or {}
                 x["titel"] = i.get("titel") or ""
                 x["incident"] = {"kind": i.get("kind"), "status": i.get("status")}
-    ids = [f"ki:{x['wert']}" for x in knoten if x["art"] == "befund"]
+    ids = sorted({f"ki:{x['wert']}" for x in knoten if x["art"] == "befund"}
+                 | {f"ki:{b.split(':', 1)[1]}" for x in knoten for b in x.get("befunde") or []})
     if not ids:
-        return
+        return {}
     res = await os_client.search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
         "size": len(ids), "query": {"ids": {"values": ids}}, "_source": ["ai_provenance.titel", "relevanz"]})
     titel = {h["_id"]: (h["_source"].get("ai_provenance") or {}).get("titel") for h in res["hits"]["hits"]}
     for x in knoten:
         if x["art"] == "befund":
             x["titel"] = titel.get(f"ki:{x['wert']}") or ""
+    return {f"befund:{k.split(':', 1)[1]}": v for k, v in titel.items() if v}
 
 
 #: Arten, deren Wert eine Kennung ist (regel:550, T1040, Muster-Hash) — sie bekommen einen lesbaren Namen
@@ -301,7 +305,10 @@ async def _namen(os_client, knoten: list[dict], q: dict) -> None:
     if roh_k:
         res = await os_client.search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
             "size": 0, "query": q, "aggs": {"n": {"filters": {"filters": {
-                f"n{i}": {"term": {"hashtags": x["id"]}} for i, x in enumerate(roh_k)}},
+                # nur Quell-Nachrichten: Befunde tragen dieselben Hashtags, aber kein roh.rule
+                # (gemessen 07.11.: regel:80711 blieb ohne Namen)
+                f"n{i}": {"bool": {"filter": [{"term": {"hashtags": x["id"]}}, {"exists": {"field": "roh.rule"}}]}}
+                for i, x in enumerate(roh_k)}},
                 "aggs": {"t": {"top_hits": {"size": 1, "_source": ["roh.rule"]}}}}}})
         b = res["aggregations"]["n"]["buckets"]
         for i, x in enumerate(roh_k):
