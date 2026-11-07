@@ -40,7 +40,8 @@ def kandidaten_aus(regel: Regel, buckets: list[dict]) -> list[dict]:
     out = []
     for b in buckets:
         werte = {"nachrichten": b["doc_count"], "hosts": (b.get("hosts") or {}).get("value", 0),
-                 "quellen": (b.get("quellen") or {}).get("value", 0)}
+                 "quellen": (b.get("quellen") or {}).get("value", 0),
+                 "fenster": (b.get("fenster") or {}).get("value", 0)}
         if all(werte[k] >= v for k, v in mi.items()):
             out.append({"regel": regel.id, "art": regel.incident_art, "schluessel": praefix + str(b["key"]),
                         **werte, "host_liste": [h["key"] for h in (b.get("host_liste") or {}).get("buckets", [])]})
@@ -66,6 +67,9 @@ async def auswerten(regeln: list[Regel], objekte: dict, jetzt: datetime) -> list
                                "must_not": [{"terms": {"quelle": ["ki", "konsole"]}}]}},
             "aggs": {"g": {"terms": {**terms, "size": GRUPPEN_MAX}, "aggs": {
                 "hosts": {"cardinality": {"field": "host"}}, "quellen": {"cardinality": {"field": "quelle"}},
+                # verschiedene Fünf-Minuten-Fenster mit Treffern
+                "fenster": {"cardinality": {"script": {"lang": "painless",
+                    "source": "doc['zeit'].value.toEpochSecond() / 300"}}},
                 "host_liste": {"terms": {"field": "host", "size": 10}}}}}})
         k = kandidaten_aus(r, res["aggregations"]["g"]["buckets"])
         for x in k:

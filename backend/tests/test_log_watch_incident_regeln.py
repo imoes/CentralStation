@@ -71,3 +71,24 @@ def test_regel_mail_nennt_regel_und_netzplan():
     html = notify.render_html(ctx, None, "https://hal.example.com/feed?incident=abc", pending=False)
     assert "Regel I-FLOTTE" in html and "/topology?modus=fehler&amp;filter=incident:abc" in html
     assert notify.subject(ctx, ir.titel(_regel("I-FLOTTE"), k)).startswith("[CentralStation] Incident: Flotten-Ausfall")
+
+
+def test_kritisch_zaehlt_fuenf_minuten_fenster_wie_alt():
+    """error_clusters/critical eröffnet bei ≥ 3 Fünf-Minuten-Fenstern in 6 h — die Regel zählt dasselbe,
+    nicht Zeilen (gemessen 07.11.: 28 Zeilen auf jump012 hätten sonst schon gereicht)."""
+    r = _regel("I-KRITISCH")
+    assert r.mindestens == {"fenster": 3}
+    b = [{"key": "jump012", "doc_count": 28, "hosts": {"value": 1}, "quellen": {"value": 1}, "fenster": {"value": 2}},
+         {"key": "mon02", "doc_count": 9, "hosts": {"value": 1}, "quellen": {"value": 1}, "fenster": {"value": 3}}]
+    assert [k["schluessel"] for k in ir.kandidaten_aus(r, b)] == ["host:mon02"]
+
+
+def test_oom_zaehler_im_json_ist_kein_oom():
+    """Gemessen 07.11. (jump012): memory.events als JSON-Zähler mit Wert 0 wurde Thema oom (R5)."""
+    from app.services.log_watch.vokabular import themen
+    zaehler = ('[info]: Request content: {"key":"oom","value":"0"},{"key":"max","value":"0"},'
+               '{"key":"oom_kill","value":"0"},{"key":"oom_group_kill","value":"0"}')
+    assert "oom" not in [t.id for t in themen(zaehler)]
+    for echt in ("kernel: Out of memory: Killed process 4711 (java)", "systemd: oom-kill:constraint=CONSTRAINT_MEMCG",
+                 "Memory cgroup out of memory: Killed process", "invoked oom_kill by process 12"):
+        assert "oom" in [t.id for t in themen(echt)], echt

@@ -28,7 +28,8 @@ INCIDENT = "incident"
 AKTIONEN = (FORWARD, BLOCK, INCIDENT)
 #: Gruppierung einer Incident-Regel — erschöpfend: Muster (über Hosts), Dienst (über Hosts), Host
 GRUPPEN = ("muster", "dienst", "host")
-MINDESTENS = ("nachrichten", "hosts", "quellen")
+#: fenster = verschiedene Fünf-Minuten-Fenster mit Treffern (wie error_clusters/critical: „3 Ereignisse in 6 h“)
+MINDESTENS = ("nachrichten", "hosts", "quellen", "fenster")
 #: Art des Incidents, den eine Regel eröffnet (Incident.kind)
 INCIDENT_ARTEN = ("log_cluster", "fleet", "critical", "host")
 AKTIV, TEST = "aktiv", "test"
@@ -157,9 +158,9 @@ STANDARD_INCIDENT = (
     # error_clusters/fleet: derselbe CheckMK-Dienst auf ≥ 5 Hosts (alt zusätzlich ≥ 3× Median — fehlt hier)
     ("I-FLOTTE", "R3", "Flotten-Ausfall eines Dienstes", "quelle:checkmk zustand:crit",
      "dienst", 45, {"hosts": 5}, "fleet"),
-    # error_clusters/critical: kritische Kernelmeldung wiederholt (alt: ≥ 3 Fünf-Minuten-Fenster in 6 h)
+    # error_clusters/critical: kritische Kernelmeldung wiederholt — ≥ 3 Fünf-Minuten-Fenster in 6 h, wie alt
     ("I-KRITISCH", "R5", "Kritische Kernelmeldung gehäuft", "quelle:graylog signal:schaden",
-     "host", 360, {"nachrichten": 3}, "critical"),
+     "host", 360, {"fenster": 3}, "critical"),
     # error_clusters/incident.process_alerts: ≥ 2 kritische/hohe Alerts oder ≥ 2 Quellen auf einem Host in
     # 30 min — hier ≥ 2 dringende Nachrichten (deckt beides; gemessen 07.11.: mit „2 Quellen“ 16 nur alt).
     # Unterschied mit Absicht: nur, was das Regelwerk relevant nennt (kein Testhost, kein Rauschen)

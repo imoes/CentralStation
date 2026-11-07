@@ -29,7 +29,10 @@ def _t(id_: str, text: str, muster: str, mindest: int = 0, beispiel: str = "") -
 
 THEMEN: tuple[Thema, ...] = (
     _t("oom", "Speicher erschöpft",
-       r"\bout of memory\b|\boom[-_ ]?kill|\bOutOfMemoryError\b|\bcannot allocate memory\b", 2, beispiel='kernel: Out of memory: Killed process 4711 (java)'),
+       # nicht als Name eines Zählers: memory.events als JSON ("oom_kill","value":"0") meldet gerade KEINEN
+       # OOM-Kill — gemessen 07.11.: 28 Info-Zeilen auf jump012 wurden so zu R5 „Speicher erschöpft“
+       r"\bout of memory\b|(?<![\"'])\boom[-_ ]?kill(?![\"'_])|\bOutOfMemoryError\b|\bcannot allocate memory\b", 2,
+       beispiel='kernel: Out of memory: Killed process 4711 (java)'),
     _t("disk-full", "Datenträger voll",
        r"\bno space left on device\b|\bENOSPC\b|\bdisk (is )?full\b|\bfile ?system (is )?full\b", 2, beispiel='write /data/x: no space left on device'),
     _t("fs-readonly", "Dateisystem schreibgeschützt",
