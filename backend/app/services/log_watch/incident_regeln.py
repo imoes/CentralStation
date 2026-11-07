@@ -44,7 +44,9 @@ def kandidaten_aus(regel: Regel, buckets: list[dict]) -> list[dict]:
                  "fenster": (b.get("fenster") or {}).get("value", 0)}
         if all(werte[k] >= v for k, v in mi.items()):
             out.append({"regel": regel.id, "art": regel.incident_art, "schluessel": praefix + str(b["key"]),
-                        **werte, "host_liste": [h["key"] for h in (b.get("host_liste") or {}).get("buckets", [])]})
+                        **werte, "host_liste": [h["key"] for h in (b.get("host_liste") or {}).get("buckets", [])],
+                        "erste": (b.get("erste") or {}).get("value_as_string"),
+                        "letzte": (b.get("letzte") or {}).get("value_as_string")})
     return out
 
 
@@ -67,6 +69,7 @@ async def auswerten(regeln: list[Regel], objekte: dict, jetzt: datetime) -> list
                                "must_not": [{"terms": {"quelle": ["ki", "konsole"]}}]}},
             "aggs": {"g": {"terms": {**terms, "size": GRUPPEN_MAX}, "aggs": {
                 "hosts": {"cardinality": {"field": "host"}}, "quellen": {"cardinality": {"field": "quelle"}},
+                "erste": {"min": {"field": "zeit"}}, "letzte": {"max": {"field": "zeit"}},
                 # verschiedene Fünf-Minuten-Fenster mit Treffern
                 "fenster": {"cardinality": {"script": {"lang": "painless",
                     "source": "doc['zeit'].value.toEpochSecond() / 300"}}},
@@ -182,6 +185,72 @@ def incident_tag(schluessel: str) -> str:
     return _tag(art, wert)
 
 
+#: Bremsen aus dem Backtest der Fehler-Cluster (Projektnotiz, „nicht zurückdrehen“) — gelten auch hier
+COOLDOWN = timedelta(hours=3)            # wieder aufflammend = derselbe Incident, keine neue Mail
+GRUPPE_FENSTER = timedelta(minutes=30)   # gleichzeitig mit geteilten Hosts = ein Incident
+GRUPPE_JACCARD = 0.2
+HOST_MINDESTALTER = timedelta(minutes=15)
+NOCH_AKTIV = timedelta(minutes=15)
+
+
+def jaccard(a: set, b: set) -> float:
+    return len(a & b) / len(a | b) if a and b else 0.0
+
+
+async def freigabe(regel: Regel, k: dict, jetzt: datetime) -> str | None:
+    """Darf dieser Kandidat einen Incident eröffnen? None = ja, sonst der Grund. Die Statistik der
+    Fehler-Cluster bleibt die Messung (Grundlast, Median, Mindestalter, Wiederkehr, stumm) — die Regel
+    entscheidet; so gilt alles, was der Backtest belegt hat, ohne zweite Umsetzung:
+      I-AUSBRUCH  Episode des Musters ≥ min_age_minutes alt und noch aktiv (wie resend_pending)
+      I-FLOTTE    offene Flotten-Episode, nicht wiederkehrend (Orderserver jede Nacht = kein Incident)
+      I-HOST      erste dringende Meldung ≥ 15 min alt, letzte ≤ 15 min (Neustarts mailen nicht)"""
+    wert = k["schluessel"].split(":", 1)[1]
+    if regel.incident_art == "host":
+        if k.get("erste") and k["erste"] > (jetzt - HOST_MINDESTALTER).isoformat():
+            return "erste dringende Meldung jünger als 15 min"
+        if k.get("letzte") and k["letzte"] < (jetzt - NOCH_AKTIV).isoformat():
+            return "nicht mehr aktiv"
+        return None
+    if regel.incident_art not in ("log_cluster", "fleet"):
+        return None
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.error_cluster import ErrorCluster, LogTemplate
+    from app.services.error_clusters.fleet import fleet_key
+    from app.services.error_clusters.rules import DEFAULT
+    if regel.incident_art == "log_cluster":
+        async with AsyncSessionLocal() as db:
+            ep = (await db.execute(select(ErrorCluster).where(
+                ErrorCluster.source == "log", ErrorCluster.key == wert, ErrorCluster.status == "open")
+                .order_by(ErrorCluster.started_at.desc()).limit(1))).scalar_one_or_none()
+            stumm = (await db.execute(select(LogTemplate.muted).where(LogTemplate.key == wert))).scalar()
+        if stumm:
+            return "Muster stumm geschaltet"
+        if ep is None:
+            return "keine offene Episode des Musters"
+        if ep.started_at > jetzt - timedelta(minutes=DEFAULT.min_age_minutes):
+            return f"Ausbruch jünger als {DEFAULT.min_age_minutes} min (Mindestalter)"
+        if ep.last_active_at < jetzt - NOCH_AKTIV:
+            return "Ausbruch nicht mehr aktiv"
+        return None
+    if regel.incident_art == "fleet":
+        key = fleet_key(wert)
+        async with AsyncSessionLocal() as db:
+            ep = (await db.execute(select(ErrorCluster).where(
+                ErrorCluster.source == "checkmk_fleet", ErrorCluster.key == key, ErrorCluster.status == "open")
+                .order_by(ErrorCluster.started_at.desc()).limit(1))).scalar_one_or_none()
+            stumm = (await db.execute(select(LogTemplate.muted).where(LogTemplate.key == key))).scalar()
+        if stumm:
+            return "Dienst stumm geschaltet"
+        if ep is None:
+            return "kein Flotten-Ausfall laut Statistik (Mindestalter 30–45 min, ≥ 3× Median)"
+        if "recurring" in (ep.rules or []):
+            return "wiederkehrender Lauf (gleiche Uhrzeit an ≥ 3 von 7 Tagen) — nur Tagesübersicht"
+        return None
+    return None
+
+
 async def eroeffne(regel: Regel, k: dict, objekte: dict, jetzt: datetime) -> dict:
     """Aktiver Kandidat → Incident eröffnen oder fortschreiben (gleiche Art, gleicher Schlüssel, offen);
     nur ein NEUER Incident wird gemeldet. Rückgabe {incident, neu}."""
@@ -202,6 +271,30 @@ async def eroeffne(regel: Regel, k: dict, objekte: dict, jetzt: datetime) -> dic
                 inc.updated_at = jetzt
                 await db.commit()
                 return {"incident": str(inc.id), "neu": False}
+        # Cooldown: in den letzten 3 h geschlossen → derselbe Incident lebt wieder auf, ohne neue Mail
+        zu = (await db.execute(select(Incident).where(
+            Incident.kind == regel.incident_art, Incident.status == "resolved",
+            Incident.resolved_at >= jetzt - COOLDOWN))).scalars().all()
+        for inc in zu:
+            c = cluster_context(inc) or {}
+            if c.get("schluessel") == k["schluessel"]:
+                inc.status, inc.resolved_at, inc.updated_at = "open", None, jetzt
+                await db.commit()
+                return {"incident": str(inc.id), "neu": False, "wieder": True}
+        # Gruppierung: gleichzeitiger Ausbruch mit geteilten Hosts = ein Incident (fleet.group_leader)
+        if regel.incident_art in ("log_cluster", "fleet"):
+            hosts = set(k.get("host_liste") or [])
+            for inc in offen:
+                c = cluster_context(inc) or {}
+                if (c.get("regel") == regel.id and inc.created_at >= jetzt - GRUPPE_FENSTER
+                        and jaccard(hosts, set(c.get("hosts") or [])) >= GRUPPE_JACCARD):
+                    c2 = {kk: v for kk, v in c.items() if kk != "type"}
+                    c2["weitere_schluessel"] = sorted(set(c2.get("weitere_schluessel") or []) | {k["schluessel"]})
+                    from app.services.error_clusters.incident import set_cluster_context
+                    set_cluster_context(inc, c2)
+                    inc.updated_at = jetzt
+                    await db.commit()
+                    return {"incident": str(inc.id), "neu": False, "gruppiert": True}
         muster = ""
         if regel.gruppe == "muster":
             t = await db.get(LogTemplate, k["schluessel"].split(":", 1)[1])
@@ -325,12 +418,16 @@ async def lauf(jetzt: datetime | None = None) -> dict:
     kand = await auswerten(regeln, d.objekte, jetzt)
     # Umschalten: aktive Regeln eröffnen/fortschreiben und melden; Ruhige schließen
     aktiv = {r.id: r for r in regeln if r.modus == AKTIV}
-    eroeffnet, fortgeschrieben, gemeldet, fehler = 0, 0, 0, []
+    eroeffnet, fortgeschrieben, gemeldet, fehler, zurueckgehalten = 0, 0, 0, [], []
     for k in kand:
         r = aktiv.get(k["regel"])
         if r is None:
             continue
         try:
+            grund = await freigabe(r, k, jetzt)
+            if grund:
+                zurueckgehalten.append({"schluessel": k["schluessel"], "grund": grund})
+                continue
             e = await eroeffne(r, k, d.objekte, jetzt)
             if e["neu"]:
                 eroeffnet += 1
@@ -344,7 +441,9 @@ async def lauf(jetzt: datetime | None = None) -> dict:
     geschlossen = await schliesse_ruhige(regeln, kand, jetzt) if aktiv else 0
     return {"definition_v": d.version,
             "aktiv": {"eroeffnet": eroeffnet, "fortgeschrieben": fortgeschrieben, "gemeldet": gemeldet,
-                      "geschlossen": geschlossen, "fehler": fehler[:10]}, "regeln": [{"id": r.id, "modus": r.modus, "fenster_min": r.fenster_min}
+                      "geschlossen": geschlossen, "fehler": fehler[:10],
+                      # nicht eröffnet, mit Grund (Mindestalter, Wiederkehr, stumm …) — nichts still
+                      "zurueckgehalten": zurueckgehalten[:20]}, "regeln": [{"id": r.id, "modus": r.modus, "fenster_min": r.fenster_min}
                                                   for r in regeln],
             "kandidaten": len(kand), "je_regel": {r.id: sum(1 for k in kand if k["regel"] == r.id) for r in regeln},
             "vergleich": vergleiche(kand, alt), "beispiele": kand[:20]}

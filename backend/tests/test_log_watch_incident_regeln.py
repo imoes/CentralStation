@@ -101,3 +101,19 @@ def test_umschalten_nur_die_gewaehlten_arten():
     assert modus == {"I-AUSBRUCH": "aktiv", "I-FLOTTE": "test", "I-KRITISCH": "aktiv", "I-HOST": "test"}
     # Urteilsregeln bleiben unverändert
     assert [d for d in neu if d["aktion"] != rw.INCIDENT] == [d for d in daten if d["aktion"] != rw.INCIDENT]
+
+
+def test_bremsen_aus_dem_backtest():
+    """Mindestalter/Wiederkehr kommen aus der Statistik der Fehler-Cluster; Host: erste dringende Meldung
+    ≥ 15 min alt, letzte ≤ 15 min; Gruppierung über Jaccard der Hosts."""
+    import asyncio
+    from datetime import datetime, timezone
+    jetzt = datetime(2026, 11, 7, 13, 0, tzinfo=timezone.utc)
+    host = _regel("I-HOST")
+    jung = {"schluessel": "host:a", "erste": "2026-11-07T12:55:00+00:00", "letzte": "2026-11-07T12:59:00+00:00"}
+    alt_aktiv = {"schluessel": "host:a", "erste": "2026-11-07T12:30:00+00:00", "letzte": "2026-11-07T12:58:00+00:00"}
+    ruhig = {"schluessel": "host:a", "erste": "2026-11-07T12:00:00+00:00", "letzte": "2026-11-07T12:20:00+00:00"}
+    assert "jünger" in asyncio.run(ir.freigabe(host, jung, jetzt))
+    assert asyncio.run(ir.freigabe(host, alt_aktiv, jetzt)) is None
+    assert "nicht mehr aktiv" in asyncio.run(ir.freigabe(host, ruhig, jetzt))
+    assert ir.jaccard({"a", "b"}, {"b", "c"}) == 1 / 3 and ir.jaccard(set(), {"a"}) == 0.0
