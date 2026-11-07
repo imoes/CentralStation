@@ -10,6 +10,44 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 24: urgent cases first — what expired was the most important
+
+### Fixed
+
+- **Exactly the most urgent messages expired.**
+  - Measured 00:33 UTC: of 87 trigger messages that left the 2 h window, 10 were never analysed.
+  - All 10 were **CRIT on production hosts** (R1, `signal:dringend`): mssql014, mssql02, the domain
+    controllers vm-dhwad1/vm-dhwad2, switch nsa352, among others.
+  - They were single-message cases, crowded out by loud cases (dmzdockerp01 with 26 messages), because
+    the queue was ordered by size.
+  - **New order:**
+    1. urgent first (`signal:dringend`);
+    2. then the oldest message first, the one closest to expiring;
+    3. then size.
+
+    Regression test included.
+
+### Evidence
+
+- **Corpora, last hour:** 0 errors. Everything written: Wazuh 597/597, Graylog 108/108, switch 77/77,
+  CheckMK 36/36, firewall 28/28.
+- **AI:** 32 findings in the last hour.
+- **Queue** (UTC):
+
+  | Time | Messages | Cases | Expired |
+  |---|---|---|---|
+  | 23:40 | 116 | 41 | 1 |
+  | 23:50 | 104 | 39 | 1 |
+  | 00:00 | 106 | 40 | 1 |
+  | 00:10 | 73 | 32 | 5 |
+  | 00:20 | 58 | 34 | 2 |
+  | 00:30 | 116 | 37 | 0 |
+
+  17 of 40 cases had a single message.
+- **Backend suite:** 935 passed. Rolled out together with the hub filter (part 22).
+
+---
+
 ## 2026-11-07 — Log watch, part 23: where the fleet's time goes (measurement)
 
 No code change. A measurement of steady-state operation (2026-11-06 23:44 to 2026-11-07 00:04 UTC, with

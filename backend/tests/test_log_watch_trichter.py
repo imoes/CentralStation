@@ -85,8 +85,17 @@ def test_offene_eine_analyse_hat_gesehen_was_ihr_start_bis_dahin_traf():
 def test_faelle_gleiches_muster_ein_fall_ueber_hosts():
     n = [{"host": "cue0174", "hashtags": ["muster:m1"]}, {"host": "cue222", "hashtags": ["muster:m1"]},
          {"host": "cue222", "hashtags": ["muster:m1"]}, {"host": "srv032", "hashtags": ["host:srv032"]}]
-    assert tr.faelle(n) == [{"start": "muster:m1", "anzahl": 3, "hosts": ["cue0174", "cue222"]},
-                            {"start": "host:srv032", "anzahl": 1, "hosts": ["srv032"]}]
+    f = tr.faelle(n)
+    assert [(x["start"], x["anzahl"], x["hosts"]) for x in f] == [("muster:m1", 3, ["cue0174", "cue222"]),
+                                                                  ("host:srv032", 1, ["srv032"])]
+
+
+def test_faelle_dringend_dann_aelteste_dann_groesse():
+    """Regression 07.11.: CRIT auf Prod (Einzelfall) verfiel hinter lauten großen Fällen."""
+    n = ([{"host": "dmzdocker", "zeit": "2026-11-07T00:20:00Z", "hashtags": ["muster:laut"]}] * 26
+         + [{"host": "mssql014", "zeit": "2026-11-07T00:25:00Z", "hashtags": ["signal:dringend", "zustand:crit"]}]
+         + [{"host": "alt", "zeit": "2026-11-06T22:40:00Z", "hashtags": ["muster:alt"]}])
+    assert [x["start"] for x in tr.faelle(n)] == ["host:mssql014", "muster:alt", "muster:laut"]
 
 
 def test_runden_parallel_nur_mit_disjunkten_hosts():

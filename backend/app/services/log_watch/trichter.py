@@ -100,17 +100,26 @@ def offene(nachrichten: list[dict], befunde: list[dict]) -> list[dict]:
 def faelle(offen: list[dict]) -> list[dict]:
     """Offene Nachrichten → Fälle. Gleiches Muster = ein Fall über alle Hosts (ein Problem, ein
     Befund — gemessen 06.11.: derselbe ExifTool-Fehler auf cue0174 und cue222 gab zwei Befunde);
-    ohne Muster (Wazuh, CheckMK) je Host. Größter Fall zuerst."""
+    ohne Muster (Wazuh, CheckMK) je Host.
+
+    Reihenfolge: dringend zuerst (`signal:dringend`), dann die älteste Nachricht zuerst (wer dem
+    Verfall am nächsten ist), dann Größe. Vorher nur nach Größe — gemessen 07.11.: alle 10
+    verfallenen Nachrichten waren CRIT auf Prod-Hosts (Einzelfälle, u. a. Domain Controller),
+    verdrängt von lauten Fällen mit 26 Nachrichten."""
     je: dict[str, dict] = {}
     for n in offen:
         tags = n.get("hashtags") or []
         muster = sorted(t for t in tags if t.startswith("muster:"))
         start = muster[0] if muster else f"host:{n.get('host', '')}"
-        f = je.setdefault(start, {"start": start, "anzahl": 0, "hosts": set()})
+        f = je.setdefault(start, {"start": start, "anzahl": 0, "hosts": set(), "dringend": False, "aelteste": ""})
         f["anzahl"] += 1
         f["hosts"].add(n.get("host", ""))
+        f["dringend"] = f["dringend"] or "signal:dringend" in tags
+        z = n.get("zeit") or ""
+        if z and (not f["aelteste"] or z < f["aelteste"]):
+            f["aelteste"] = z
     out = [{**f, "hosts": sorted(f["hosts"])} for f in je.values()]
-    return sorted(out, key=lambda f: (-f["anzahl"], f["start"]))
+    return sorted(out, key=lambda f: (not f["dringend"], f["aelteste"] or "9", -f["anzahl"], f["start"]))
 
 
 async def kandidaten(stunden: float = STUNDEN) -> dict:
