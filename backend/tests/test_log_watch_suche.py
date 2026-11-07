@@ -58,3 +58,37 @@ def test_netzplan_naben_fallen_weg_ausser_im_fokus():
     b = [{"key": "netz:intern", "doc_count": 90}, {"key": "host:a", "doc_count": 30}, {"key": "thema:oom", "doc_count": 10}]
     assert [x["id"] for x in s.knoten_waehlen(b, 15, set(), gesamt=100)] == ["host:a", "thema:oom"]
     assert [x["id"] for x in s.knoten_waehlen(b, 15, {"netz:intern"}, gesamt=100)][0] == "netz:intern"
+
+
+def test_fehler_netzplan_zustand_je_knoten():
+    """Fehler-Netzplan: jeder Knoten trägt seinen Problemzustand aus derselben Suche."""
+    from app.services.log_watch import suche
+    k = [{"id": "host:a", "art": "host", "wert": "a", "anzahl": 10, "fokus": False},
+         {"id": "befund:x1", "art": "befund", "wert": "x1", "anzahl": 3, "fokus": False},
+         {"id": "host:b", "art": "host", "wert": "b", "anzahl": 40, "fokus": False}]
+    buckets = {"n0": {"doc_count": 10, "dringend": {"doc_count": 2}, "dringend_offen": {"doc_count": 1}, "offen": {"doc_count": 4},
+                      "befunde": {"buckets": [{"key": "befund:x1"}]}, "zuletzt": {"value_as_string": "2026-11-07T10:00:00Z"}},
+               "n1": {"doc_count": 3, "dringend": {"doc_count": 0}, "offen": {"doc_count": 0},
+                      "befunde": {"buckets": [{"key": "befund:x1"}]}, "zuletzt": {}},
+               "n2": {"doc_count": 40, "dringend": {"doc_count": 0}, "offen": {"doc_count": 0},
+                      "befunde": {"buckets": []}, "zuletzt": {}}}
+    suche.zustand(k, buckets)
+    assert [(x["stufe"], x["dringend"], x["offen"], x["befunde"]) for x in k] == [
+        ("dringend_offen", 2, 4, ["befund:x1"]), ("auffaellig", 0, 0, []), ("auffaellig", 0, 0, [])]
+    # der Satz nennt zuerst, wo es dringend und unbearbeitet ist — nicht den lautesten Host
+    assert suche.satz(k, 53, 24) == "53 relevante Nachrichten in 24 h · dringend und ohne Befund: a (1)."
+    k[0]["dringend_offen"] = 0
+    assert suche.satz(k, 53, 24) == "53 relevante Nachrichten in 24 h · dringend, aber untersucht: a (2)."
+    assert suche.satz([], 0, 24) == "Keine relevanten Nachrichten in 24 h."
+
+
+def test_fehler_sicht_waehlt_problemobjekte_nicht_kontext():
+    """Gemessen 07.11.: nach Menge gewählt füllten Kontext-Tags alle Knoten, kein Host war zu sehen."""
+    from app.services.log_watch import suche
+    b = [{"key": "netz:intern", "doc_count": 6000}, {"key": "kritikalitaet:prod", "doc_count": 5800},
+         {"key": "host:a", "doc_count": 30}, {"key": "thema:oom", "doc_count": 20}, {"key": "befund:x", "doc_count": 3}]
+    k = suche.knoten_waehlen(b, 15, set(), 0, arten=suche.FEHLER_ARTEN, je_art=suche.FEHLER_JE_ART)
+    assert [x["id"] for x in k] == ["host:a", "thema:oom", "befund:x"]
+    # ein Kontext-Tag im Filter bleibt sichtbar (der Netzplan zeigt, wovon er ausgeht)
+    k = suche.knoten_waehlen(b, 15, {"netz:intern"}, 0, arten=suche.FEHLER_ARTEN, je_art=suche.FEHLER_JE_ART)
+    assert k[0]["id"] == "netz:intern" and k[0]["fokus"]
