@@ -10,6 +10,46 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 31: a finding you can read in seconds
+
+You said (2026-11-07): the output of the findings must be formatted better; "with this output I can't
+do anything". The example in the cockpit began with five raw finding IDs, followed by one paragraph mixing
+the statement, measurements, quotes and a Wazuh side note.
+
+### What has changed
+
+- **The AI files a finding in a fixed form**, and the code checks it like the quotes:
+  - `kern`: one sentence of at most 300 characters: what, where, since when, how bad;
+  - `fakten`: at most 8 short points, each a value with its time;
+  - `folge_von`: earlier findings about the same situation. Finding IDs in the text are moved there
+    automatically.
+- **The AI tile shows it that way:** core sentence in bold, facts as a list, "Folgebefund · 5 frühere"
+  as a small marker with the IDs in the tooltip. Hypotheses show at most two lines, and evidence plus
+  the analysis path are folded away.
+- **Older findings** are split as far as possible: references out, first sentence as the core, the rest
+  under "Details".
+- The KPI row of the AI fleet tile has six columns. The new figure "ohne KI (bekannt)" had wrapped and
+  pushed the "Gelernt" line out of the tile.
+
+### Evidence
+
+- Rendered with the real example (mon03, "OMD mue performance") against API mocks:
+  - the core sentence is in bold;
+  - the marker shows 5 earlier findings;
+  - there are 4 facts with times;
+  - the old LayoutChampApp finding shows its first sentence as the core and the rest under "Details".
+- Tests:
+  - `test_log_watch_befund.py` (14), e.g. "Folgebefund zu ki:cc5562691e, ki:9ead2d2e92, …: der
+    Check …" becomes "der Check …" plus three references;
+  - Node checks of `befund-form.ts`: "z. B." and "100.00" do not end a sentence;
+  - full backend suite 829 passed.
+
+### What is still missing
+
+- Live proof that the model keeps the form: shown after the deploy by the first new findings.
+
+---
+
 ## 2026-11-07 — Feed search like Graylog: add or exclude a value, top values, suggestions
 
 You asked (2026-11-07): search in the feed like in Graylog, right-click a field to add it to the search

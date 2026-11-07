@@ -76,13 +76,17 @@ Vorgehen als Trichter:
 Regeln:
 - Belege: nur IDs aus der Lage oder aus lw_suche-Treffern und ein wörtliches Zitat (≥ 8 Zeichen)
   aus deren Text.
-- Der Befund-Text behauptet nur, was ein Zitat trägt (Werte, Schwellen, Zeiten). Deutungen darüber
+- kern und fakten behaupten nur, was ein Zitat trägt (Werte, Schwellen, Zeiten). Deutungen darüber
   hinaus („Verzögerung“, „Ausfall droht“) gehören als Hypothese in hypothesen, nicht in den Befund.
 - Ursachen sind Hypothesen mit Status offen/gestuetzt/widerlegt. Zeitliche Nähe allein ist kein Beleg
   für eine Ursache; gemeinsames Auftreten heißt so.
 - Hashtags nur, die die Belege tragen. Keine Handlungen an Systemen — du analysierst nur.
-- Antworte auf Deutsch, knapp: Titel ≤ 80 Zeichen — was und wo, Zahlen und Zeiten nur aus einem
-  Zitat (nicht das Suchfenster); Befund ≤ 8 Sätze mit Zahlen und Zeitraum."""
+- Antworte auf Deutsch, knapp — ein Mensch liest es im Cockpit in Sekunden:
+  titel ≤ 80 Zeichen — was und wo; Zahlen und Zeiten nur aus einem Zitat (nicht das Suchfenster).
+  kern: EIN Satz ≤ 300 Zeichen — was ist los, wo, seit wann, wie schlimm.
+  fakten: 2–6 kurze Punkte, je ein Messwert/Zustand mit Uhrzeit, ohne Wiederholung des kerns.
+  folge_von: frühere Befunde (ki:…) zur selben Lage — nie IDs in titel, kern oder fakten.
+  hypothesen: je ein Satz."""
 
 
 #: so viele auslösende Nachrichten liest die Prüfung je Lauf (mehr wären ein Rückstau, benannt)
@@ -293,7 +297,8 @@ async def _schleife(fall: dict, llm_config, llm, prompt: str, verlauf: list[dict
                              "gesamt": erg.get("gesamt"), "fehler": erg.get("fehler") or erg.get("abgelehnt")})
             if a["name"] == "lw_befund" and "id" in erg:
                 verlauf.append({"rolle": "befund", "befund": erg["id"], "werkzeug": a["name"],
-                                "text": str(a["argumente"].get("titel", "")) + "\n" + str(a["argumente"].get("befund", ""))})
+                                "text": str(a["argumente"].get("titel", "")) + "\n" + str(a["argumente"].get("kern", ""))
+                                + "".join(f"\n- {f}" for f in a["argumente"].get("fakten") or [])})
                 arg = a["argumente"]
                 return {"start": fall["start"], "hosts": fall["hosts"], "befund": erg["id"], "belege": erg["belege"],
                         "verworfen": erg["verworfen"], "schritte": schritte,

@@ -22,6 +22,12 @@ from app.services.log_watch.definition import NICHT_RELEVANT, RELEVANT
 from app.services.log_watch.historie import PRAEFIX, index_name
 
 HYPOTHESE_STATUS = ("offen", "gestuetzt", "widerlegt")
+#: Form des Befunds (Nutzer 07.11.: „mit diesem Output kann ich nichts anfangen“ — ein Absatz mit fünf
+#: Befund-IDs vorne): `kern` ist ein Satz, `fakten` sind kurze Punkte, Bezüge stehen in `folge_von`
+KERN_MAX = 300
+FAKTEN_MAX = 8
+FAKT_MAX = 300
+_BEZUG = re.compile(r"\bki:[0-9a-f]{10}\b")
 #: Zitate kürzer als das belegen nichts (ein Wort passt fast überall)
 ZITAT_MIN = 8
 #: Reste der Werkzeugaufruf-Syntax des Modells im Text (gemessen 06.11.: qwen hängte
@@ -69,13 +75,48 @@ def pruefe_belege(belege: list[dict], dokumente: dict[str, dict]) -> Pruefung:
     return p
 
 
+def ohne_bezuege(text: str) -> tuple[str, list[str]]:
+    """Befund-IDs aus dem Text lösen (sie gehören nach `folge_von`). Rein — testbar.
+    „Folgebefund zu ki:a, ki:b: der Check …“ → („der Check …“, [ki:a, ki:b])."""
+    ids = _BEZUG.findall(text or "")
+    if not ids:
+        return (text or "").strip(), []
+    t = re.sub(r"\(?\s*(?:Folge-?[Bb]efund(?:e)?\s+(?:zu|von)\s+)?ki:[0-9a-f]{10}(?:\s*(?:,|und)\s*ki:[0-9a-f]{10})*\s*\)?\s*:?\s*",
+               " ", text)
+    t = re.sub(r"\s+([,.;:])", r"\1", re.sub(r"\s{2,}", " ", t)).strip(" ,;:")
+    return t, list(dict.fromkeys(ids))          # keine Großschreibung: Hostnamen bleiben, wie sie sind
+
+
+def form(eingabe: dict) -> tuple[str, list[str], list[str]]:
+    """(kern, fakten, folge_von) prüfen. Ältere Eingaben mit nur `befund` gelten als kern ohne fakten."""
+    kern, folge = ohne_bezuege(str(eingabe.get("kern") or eingabe.get("befund") or ""))
+    fakten = []
+    for f in eingabe.get("fakten") or []:
+        t, ids = ohne_bezuege(str(f))
+        folge += ids
+        if t:
+            fakten.append(t)
+    folge = list(dict.fromkeys(folge + [str(x) for x in eingabe.get("folge_von") or [] if _BEZUG.fullmatch(str(x))]))
+    if not kern:
+        raise BefundAbgelehnt("kern ist Pflicht: ein Satz — was, wo, seit wann")
+    if len(kern) > KERN_MAX:
+        raise BefundAbgelehnt(f"kern hat {len(kern)} Zeichen, höchstens {KERN_MAX}: ein Satz — Einzelheiten in fakten")
+    if len(fakten) > FAKTEN_MAX:
+        raise BefundAbgelehnt(f"{len(fakten)} fakten, höchstens {FAKTEN_MAX} — das Wichtigste zuerst")
+    lang = [f for f in fakten if len(f) > FAKT_MAX]
+    if lang:
+        raise BefundAbgelehnt(f"ein Fakt hat {len(lang[0])} Zeichen, höchstens {FAKT_MAX}: je Fakt ein Wert mit Zeit")
+    return kern, fakten, folge
+
+
 def baue(eingabe: dict, pruefung: Pruefung, jetzt: datetime, modell: str = "",
          schritte: list | None = None, start: str = "") -> tuple[str, dict]:
     """(Dokument-ID, Dokument) des Befunds. Wirft BefundAbgelehnt mit Grund."""
     titel = str(eingabe.get("titel") or "").strip()
-    text = str(eingabe.get("befund") or "").strip()
-    if not titel or not text:
-        raise BefundAbgelehnt("Titel und Befund sind Pflicht")
+    if not titel:
+        raise BefundAbgelehnt("Titel ist Pflicht")
+    kern, fakten, folge_von = form(eingabe)
+    text = kern + "".join(f"\n- {f}" for f in fakten)
     for name, wert in (("Titel", titel), ("Befund", text)):
         if _SYNTAX_REST.search(wert):
             raise BefundAbgelehnt(f"{name} enthält Werkzeug-Syntax ({_SYNTAX_REST.search(wert).group(0)!r}) "
@@ -118,6 +159,7 @@ def baue(eingabe: dict, pruefung: Pruefung, jetzt: datetime, modell: str = "",
         "gruppe_anzahl": len(belegt),
         "ai_provenance": {
             "titel": titel, "modell": modell, "hypothesen": hypothesen,
+            "kern": kern, "fakten": fakten, "folge_von": folge_von,
             # Startfilter der Analyse: alles, was er bis jetzt traf, gilt als gesehen (trichter.offene)
             "start": start,
             "belege": [{k: b[k] for k in ("id", "zitat", "host", "quelle", "zeit")} for b in pruefung.gueltig],

@@ -2,6 +2,7 @@ import { CommonModule, DecimalPipe } from '@angular/common';
 import { Component, computed, inject, input } from '@angular/core';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ThemeService } from '../../core/services/theme.service';
+import { befundForm } from './befund-form';
 
 /**
  * KI-Cockpit: Widgets der Log-Überwachung (lw_*). Daten aus
@@ -40,25 +41,40 @@ const ZUSTAND: Record<string, string> = {
                 <span class="bef-host">{{ b.hostKurz }}</span>
                 <span class="bef-zeit">{{ b.zeit | date:'HH:mm' }}</span>
               </summary>
-              <p class="bef-text">{{ b.befund }}</p>
+              <!-- Lesbar in Sekunden: Kern (ein Satz), Fakten als Liste, Bezüge als Marke, Rest aufklappbar -->
+              <div class="bef-kern">{{ b.form.kern }}</div>
+              @if (b.form.folge.length) {
+                <span class="bef-folge" [matTooltip]="'Frühere Befunde zur selben Lage: ' + b.form.folge.join(', ')">
+                  Folgebefund · {{ b.form.folge.length }} {{ b.form.folge.length === 1 ? 'früherer' : 'frühere' }}</span>
+              }
+              @if (b.form.fakten.length) {
+                <ul class="bef-fakten">
+                  @for (f of b.form.fakten; track $index) { <li>{{ f }}</li> }
+                </ul>
+              }
+              @if (b.form.rest) {
+                <details class="bef-mehr"><summary>Details</summary><p class="bef-text">{{ b.form.rest }}</p></details>
+              }
               @if (b.hypothesen.length) {
                 <div class="bef-sub">Hypothesen</div>
                 @for (h of b.hypothesen; track $index) {
-                  <div class="hyp"><span class="hyp-st" [class]="'hyp-st st-' + h.status">{{ STATUS[h.status] ?? h.status }}</span>{{ h.text }}</div>
+                  <div class="hyp"><span class="hyp-st" [class]="'hyp-st st-' + h.status">{{ STATUS[h.status] ?? h.status }}</span>
+                    <span class="hyp-text" [title]="h.text">{{ h.text }}</span></div>
                 }
               }
-              <div class="bef-sub">Belege · {{ b.belege.length }} {{ b.belege.length === 1 ? 'geprüftes Zitat' : 'geprüfte Zitate' }}@if (b.verworfen) { · {{ b.verworfen }} verworfen }</div>
-              @for (z of b.belege; track $index) {
-                <div class="zitat" [matTooltip]="z.id">„{{ z.zitat }}“ <span class="zitat-q">{{ z.quelle }}</span></div>
-              }
-              <div class="bef-sub">Weg der Analyse</div>
-              <div class="schritte">
-                @for (s of b.schritte; track $index) {
-                  <span class="schritt" [matTooltip]="s.filter || ''">{{ s.werkzeug.replace('lw_', '') }}@if (s.gesamt != null) { · {{ s.gesamt }} }</span>
-                  <span class="pfeil">→</span>
+              <details class="bef-mehr">
+                <summary>Belege · {{ b.belege.length }} {{ b.belege.length === 1 ? 'geprüftes Zitat' : 'geprüfte Zitate' }}@if (b.verworfen) { · {{ b.verworfen }} verworfen } · Weg der Analyse ({{ b.schritte.length }} Schritte)</summary>
+                @for (z of b.belege; track $index) {
+                  <div class="zitat" [matTooltip]="z.id">„{{ z.zitat }}“ <span class="zitat-q">{{ z.quelle }}</span></div>
                 }
-                <span class="schritt ende" [matTooltip]="b.modell ? 'Modell ' + b.modell : ''">Befund</span>
-              </div>
+                <div class="schritte">
+                  @for (s of b.schritte; track $index) {
+                    <span class="schritt" [matTooltip]="s.filter || ''">{{ s.werkzeug.replace('lw_', '') }}@if (s.gesamt != null) { · {{ s.gesamt }} }</span>
+                    <span class="pfeil">→</span>
+                  }
+                  <span class="schritt ende" [matTooltip]="b.modell ? 'Modell ' + b.modell : ''">Befund</span>
+                </div>
+              </details>
               <div class="tags">
                 @for (t of b.hashtags; track t) { <span class="tag-chip">#{{ t }}</span> }
                 <span class="tag-chip krit">{{ b.kriterien.join(' ') }}</span>
@@ -210,6 +226,14 @@ const ZUSTAND: Record<string, string> = {
     .bef-titel { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .bef-host, .bef-zeit { opacity: .7; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .bef-text { margin: 6px 0; line-height: 1.4; }
+    .bef-kern { margin: 6px 0 4px; font-size: 13.5px; font-weight: 600; line-height: 1.4; }
+    .bef-folge { display: inline-block; font-size: 10.5px; padding: 0 7px; border-radius: 8px; margin-bottom: 4px;
+      background: rgba(127,127,127,.2); cursor: help; }
+    .bef-fakten { margin: 4px 0 6px; padding-left: 18px; line-height: 1.4; }
+    .bef-fakten li { margin: 1px 0; }
+    .bef-mehr { margin: 4px 0; }
+    .bef-mehr > summary { font-size: 11px; opacity: .7; cursor: pointer; }
+    .hyp-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .bef-sub { font-size: 10px; opacity: .6; text-transform: uppercase; letter-spacing: .04em; margin-top: 6px; }
     .hyp { display: flex; gap: 6px; align-items: baseline; }
     .hyp-st { font-size: 10px; padding: 0 6px; border-radius: 8px; background: rgba(127,127,127,.25); white-space: nowrap; }
@@ -230,7 +254,7 @@ const ZUSTAND: Record<string, string> = {
     .t-holo .bef.r3 { border-left-color: #4fd6ff; }
     .t-holo .bef.r3 .bef-rel { background: #4fd6ff; }
     .t-classic .bef.r3 { border-left-color: #f59e0b; }
-    .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+    .kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
     .kpi { display: flex; flex-direction: column; align-items: flex-start; padding: 4px 6px;
            background: rgba(127,127,127,.08); border-radius: 4px; min-width: 0; }
     .kpi b { font-size: 18px; font-variant-numeric: tabular-nums; }
@@ -300,7 +324,7 @@ export class LwWidgetComponent {
   readonly befunde = computed(() =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ((this.d().befunde ?? []) as any[]).map(b => ({
-      ...b, hostKurz: String(b.host ?? '').split('.')[0],
+      ...b, hostKurz: String(b.host ?? '').split('.')[0], form: befundForm(b),
       hashtags: (b.hashtags ?? []).filter((t: string) => !t.startsWith('befund:') && t !== 'quelle:ki'),
     })));
 

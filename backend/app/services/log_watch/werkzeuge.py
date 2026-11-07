@@ -83,12 +83,14 @@ async def lw_definition() -> dict:
                         "kriterium": r.kriterium, "modus": r.modus} for r in (d.regeln or [])]}
 
 
-async def lw_befund(titel: str, befund: str, relevanz: int, belege: list, hypothesen: list | None = None,
+async def lw_befund(titel: str, kern: str, relevanz: int, belege: list, fakten: list | None = None,
+                    folge_von: list | None = None, hypothesen: list | None = None,
                     hashtags: list | None = None, _modell: str = "", _schritte: list | None = None,
                     _start: str = "") -> dict:
     from app.services.log_watch.befund import BefundAbgelehnt, schreibe_befund
     try:
-        return await schreibe_befund({"titel": titel, "befund": befund, "relevanz": relevanz,
+        return await schreibe_befund({"titel": titel, "kern": kern, "fakten": fakten or [],
+                                      "folge_von": folge_von or [], "relevanz": relevanz,
                                       "belege": belege, "hypothesen": hypothesen or [],
                                       "hashtags": hashtags or []}, _modell, _schritte, start=_start)
     except BefundAbgelehnt as e:
@@ -206,11 +208,16 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
     "lw_definition": (lw_definition, "Die geltende Relevanz-Definition: Kriterien R1–R8/N0–N6, Objekte, "
                       "Regeln (erste passende entscheidet).", _p(), False),
     "lw_befund": (lw_befund,
-                  "Den Befund ablegen — beendet die Analyse. Jeder Beleg ist {id, zitat}: die ID einer "
-                  "Nachricht aus lw_suche und ein wörtliches Zitat (≥ 8 Zeichen) aus ihrem Text; der Code "
-                  "prüft das. Hypothesen: [{text, status: offen|gestuetzt|widerlegt}]. Relevanz 0–3 "
-                  "(3 = dringend). Ursachen nur als Hypothese, nie aus zeitlicher Nähe allein.",
-                  _p(titel={"type": "string", "_pflicht": True}, befund={"type": "string", "_pflicht": True},
+                  "Den Befund ablegen — beendet die Analyse. kern: EIN Satz (≤ 300 Zeichen) — was, wo, seit "
+                  "wann, wie schlimm. fakten: 2–6 kurze Punkte (je ≤ 300 Zeichen), je ein Wert mit Zeit aus "
+                  "einem Zitat. folge_von: IDs früherer Befunde (ki:…) zur selben Lage — nie in den Text. "
+                  "Jeder Beleg ist {id, zitat}: die ID einer Nachricht aus lw_suche und ein wörtliches Zitat "
+                  "(≥ 8 Zeichen) aus ihrem Text; der Code prüft das. Hypothesen: [{text (ein Satz), status: "
+                  "offen|gestuetzt|widerlegt}]. Relevanz 0–3 (3 = dringend). Ursachen nur als Hypothese, nie "
+                  "aus zeitlicher Nähe allein.",
+                  _p(titel={"type": "string", "_pflicht": True}, kern={"type": "string", "_pflicht": True},
+                     fakten={"type": "array", "items": {"type": "string"}},
+                     folge_von={"type": "array", "items": {"type": "string"}},
                      relevanz={"type": "integer", "_pflicht": True},
                      belege={"type": "array", "_pflicht": True, "items": {"type": "object", "properties": {
                          "id": {"type": "string"}, "zitat": {"type": "string"}}, "required": ["id", "zitat"]}},

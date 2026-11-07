@@ -200,6 +200,8 @@ def befunde(hits: list[dict], pruefung: dict, ki_an: bool, stunden: int) -> dict
             "id": h["_id"], "zeit": s.get("zeit"), "host": s.get("host"), "relevanz": s.get("relevanz"),
             "titel": pv.get("titel") or (s.get("text") or "").split("\n")[0][:120],
             "befund": s.get("ai_befund") or "", "hashtags": s.get("hashtags") or [],
+            # Form seit 07.11.: kern + fakten + folge_von (ältere Befunde: nur `befund`, die Kachel teilt ihn)
+            "kern": pv.get("kern") or "", "fakten": pv.get("fakten") or [], "folge_von": pv.get("folge_von") or [],
             "kriterien": s.get("kriterien") or [], "hypothesen": pv.get("hypothesen") or [],
             "belege": pv.get("belege") or [], "verworfen": len(pv.get("verworfen") or []),
             "schritte": [{"werkzeug": x.get("werkzeug"), "filter": (x.get("argumente") or {}).get("filter"),

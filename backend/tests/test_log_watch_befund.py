@@ -77,7 +77,7 @@ def test_registry_einzig_lw_befund_schreibt():
     assert [n for n, (_, _, _, schreibt) in wz.REGISTRY.items() if schreibt] == ["lw_befund"]
     namen = [t["function"]["name"] for t in wz.openai_tools()]
     assert namen == list(wz.REGISTRY)
-    assert wz.REGISTRY["lw_befund"][2]["required"] == ["titel", "befund", "relevanz", "belege"]
+    assert wz.REGISTRY["lw_befund"][2]["required"] == ["titel", "kern", "relevanz", "belege"]
 
 
 def test_rufe_benennt_fehler():
@@ -105,3 +105,26 @@ def test_gespraech_rollen_erschoepfend_und_index():
     assert set(z[0]) <= set(g.MAPPING["properties"])
     with pytest.raises(ValueError, match="unbekannt"):
         g.zuege("s1", {"start": "host:a", "hosts": ["a"]}, [], [{"rolle": "erfunden"}], jetzt)
+
+
+def test_bezuege_aus_dem_text_nach_folge_von():
+    """Gemessen 07.11. im Cockpit: „Folgebefund zu ki:cc5562691e, ki:9ead2d2e92, … : der Check …“."""
+    t, ids = bf.ohne_bezuege("Folgebefund zu ki:cc5562691e, ki:9ead2d2e92, ki:2fce659014: der Check "
+                             "„OMD mue performance“ bleibt CRITICAL.")
+    assert t == "der Check „OMD mue performance“ bleibt CRITICAL."
+    assert ids == ["ki:cc5562691e", "ki:9ead2d2e92", "ki:2fce659014"]
+    assert bf.ohne_bezuege("Platte voll (ki:0123456789).") == ("Platte voll.", ["ki:0123456789"])
+    assert bf.ohne_bezuege("ohne Bezug") == ("ohne Bezug", [])
+
+
+def test_form_kern_fakten_folge():
+    kern, fakten, folge = bf.form({"kern": "Folgebefund zu ki:aaaaaaaaaa: mon03 Helper bei 100 %.",
+                                   "fakten": ["10:27 UTC: 100,00 % (Schwelle 95 %)", "  "],
+                                   "folge_von": ["ki:bbbbbbbbbb", "unsinn"]})
+    assert (kern, fakten, folge) == ("mon03 Helper bei 100 %.", ["10:27 UTC: 100,00 % (Schwelle 95 %)"],
+                                     ["ki:aaaaaaaaaa", "ki:bbbbbbbbbb"])
+    for eingabe, grund in (({"kern": ""}, "kern ist Pflicht"), ({"kern": "x" * 301}, "höchstens 300"),
+                           ({"kern": "k", "fakten": ["f"] * 9}, "höchstens 8"),
+                           ({"kern": "k", "fakten": ["f" * 301]}, "höchstens 300")):
+        with pytest.raises(bf.BefundAbgelehnt, match=grund):
+            bf.form(eingabe)

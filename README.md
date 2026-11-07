@@ -1605,6 +1605,8 @@ The AI only works when a check is true, and it only writes its own analysis.
 
 - **A finding is a document** `quelle:ki`, `herkunft:ki` in `cs-logs-*` (`befund.py`). The code writes
   it, not the model, and checks first:
+  - the form: `kern` (one sentence, ≤ 300 characters), `fakten` (≤ 8 points, each ≤ 300 characters),
+    `folge_von` (earlier findings; IDs found in the text are moved there);
   - every quote must stand verbatim (case and whitespace ignored) in the text of a history document;
     a finding cannot cite a finding;
   - without one checked quote there is no finding; the reason goes back to the model;
