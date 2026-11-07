@@ -308,7 +308,7 @@ async def lauf(jetzt: datetime | None = None) -> dict:
         fenster_je_art = {r.incident_art: r.fenster_min for r in regeln}
         fenster = max(fenster_je_art.values() or [30])
         incs = (await db.execute(select(Incident).where(
-            Incident.updated_at >= jetzt - timedelta(minutes=fenster)))).scalars().all()
+            Incident.created_at >= jetzt - timedelta(minutes=fenster)))).scalars().all()
 
     def kanon(h: str) -> str:
         e, k, _grund = verz.zuordnen(h)
@@ -316,8 +316,10 @@ async def lauf(jetzt: datetime | None = None) -> dict:
 
     alt: dict[str, set[str]] = {}
     for inc in incs:
+        # verglichen werden ERÖFFNUNGEN im Fenster der Regel — gemessen 07.11.: mit `updated_at` zählten
+        # Incidents von 09:13 und vom Vortag als „nur alt“, weil ihr Zeitstempel später berührt wurde
         grenze = jetzt - timedelta(minutes=fenster_je_art.get(inc.kind, fenster))
-        if inc.updated_at < grenze or (inc.status == "resolved" and inc.resolved_at and inc.resolved_at < grenze):
+        if inc.created_at < grenze:
             continue
         alt.setdefault(inc.kind, set()).update(schluessel_alt(inc.kind, inc.primary_host, cluster_context(inc), kanon))
     kand = await auswerten(regeln, d.objekte, jetzt)
