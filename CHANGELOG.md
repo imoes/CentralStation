@@ -79,6 +79,9 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   - **Fixed the same day:** the due check counted every run as failed, because a successful run also carries
     `"fehler": []`. The job therefore ran at every case change (measured: 17:32, 17:36, 17:43). Now only a
     `fehler` given as text counts as a failure.
+  - **Also fixed:** the old schedule job (:17/:47) kept running on its own, without the due check, e.g. at
+    17:47. It now calls the same function as the agents, with the same due check and lease. It runs only while
+    the fleet has a free slot, as a stand-in for an idle fleet.
 - **Unanswered peer questions say whether they were ever delivered.** The two cases are "nicht mehr zugestellt"
   (the case ended before the next model call) and "zugestellt, aber nicht beantwortet".
   - Measured 07.11. 17:06: a question arrived 13 s before the asked agent finished its case.
