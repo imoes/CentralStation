@@ -26,8 +26,14 @@ def _ohne_db(monkeypatch):
         return 1
     monkeypatch.setattr(tr.bekannt, "lerne", lerne)
 
+    async def gesehen(befund, relevanz, start, bis, stunden):
+        GESEHEN.append((befund, start, stunden))
+        return 5
+    monkeypatch.setattr(tr.bekannt, "markiere_gesehen", gesehen)
+
 
 GELERNT: list = []
+GESEHEN: list = []
 
 
 async def _bauer(host, stunden):
@@ -76,6 +82,8 @@ def test_trichter_bis_befund(monkeypatch):
     assert erg["befund"] == "ki:abc"
     # gelernt wird aus Belegen und Lage — nach dem Befund, mit Titel und Relevanz aus lw_befund
     assert GELERNT == [("ki:abc", "t2", 0, [], ["graylog:m1"])] and erg["gelernt"] == 1
+    # was der Startfilter im Prüffenster traf, hängt danach am Befund (dieselbe Definition wie offene())
+    assert GESEHEN[-1][:2] == ("ki:abc", "host:a") and erg["gesehen"] == 5
     assert [s["werkzeug"] for s in erg["schritte"]] == ["lw_wissen", "lw_facetten", "lw_befund", "lw_befund"]
     assert erg["schritte"][2]["fehler"].startswith("kein geprüfter Beleg")
     assert "nicht wörtlich" in ki.gesehen[3][-1]          # Ablehnung ging an die KI zurück

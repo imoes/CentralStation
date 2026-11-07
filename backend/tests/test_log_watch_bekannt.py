@@ -86,3 +86,11 @@ def test_gesehen_belege_immer_lage_nur_ungebunden():
             "ki:x": {"quelle": "ki", "hashtags": []}}
     g = bk.gesehen_aus(docs, ["g:1", "ki:x"], ["g:2", "g:3", "g:4", "fehlt"], "ki:neu")
     assert [d["schluessel"] for d in g] == ["muster:m1", "muster:m3", "muster:m4"]
+
+
+def test_gesehen_ist_der_startfilter_im_pruefenster_ohne_befunde():
+    q = bk.gesehen_abfrage("muster:m1", datetime(2026, 11, 7, 9, 0, tzinfo=timezone.utc), JETZT)
+    f = q["bool"]["filter"]
+    assert f[0] == {"term": {"hashtags": "muster:m1"}}
+    assert f[1]["range"]["zeit"]["lte"] == JETZT.isoformat()
+    assert {"prefix": {"hashtags": "befund:"}} in q["bool"]["must_not"]

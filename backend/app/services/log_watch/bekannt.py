@@ -287,6 +287,70 @@ async def haenge_an(haengen: list[dict], jetzt: datetime | None = None) -> dict:
     return {"angehaengt": sum(g["n"] for g in gezaehlt.values()), "fehler": fehler_n}
 
 
+#: hängt eine gesehene Nachricht an den Befund — ai_provenance nur, wenn noch keine da ist
+_GESEHEN = ("if (ctx._source.hashtags == null) { ctx._source.hashtags = []; }"
+            " if (ctx._source.hashtags.contains(params.b)) { ctx.op = 'noop'; } else {"
+            " ctx._source.hashtags.add(params.b); ctx._source.ai_relevanz = params.r;"
+            " if (ctx._source.ai_provenance == null) { ctx._source.ai_provenance = params.p; } }")
+
+
+def gesehen_abfrage(start: str, seit: datetime, bis: datetime) -> dict:
+    """Was eine Analyse gesehen hat — dieselbe Definition wie trichter.offene: alles, was ihr Startfilter
+    im Prüffenster bis zu ihrem Zeitpunkt traf; noch an keinem Befund, keine Befunde selbst."""
+    from app.services.log_watch import filter as flt
+    return {"bool": {"filter": [flt.opensearch(start),
+                                {"range": {"zeit": {"gte": seit.isoformat(), "lte": bis.isoformat()}}}],
+                     "must_not": [{"prefix": {"hashtags": "befund:"}}, {"terms": {"quelle": ["ki", "konsole"]}}]}}
+
+
+async def markiere_gesehen(befund: str, relevanz, start: str, bis: datetime, stunden: float) -> int:
+    """Nach einem Befund: jede Nachricht, die die Analyse gesehen hat, trägt `befund:<id>` — wie Belege und
+    Wiederholungen. Vorher trugen nur die 2–3 zitierten den Hashtag; die übrigen galten im Netzplan als
+    unbearbeitet, obwohl die Prüfung (trichter.offene) sie als gesehen führte — zwei Definitionen für
+    dasselbe (gemessen 07.11.: alle 22 Knoten des Fehler-Netzplans rot)."""
+    from datetime import timedelta
+
+    from app.core.opensearch import get_opensearch
+    from app.services.log_watch.historie import PRAEFIX
+    if not start:
+        return 0
+    try:
+        relevanz = int(relevanz)
+    except (TypeError, ValueError):
+        relevanz = None
+    seit = bis - timedelta(hours=stunden)
+    r = await get_opensearch().update_by_query(
+        index=f"{PRAEFIX}*", conflicts="proceed", refresh=True, body={
+            "query": gesehen_abfrage(start, seit, bis),
+            "script": {"lang": "painless", "source": _GESEHEN, "params": {
+                "b": f"befund:{befund.split(':', 1)[-1]}", "r": relevanz,
+                "p": {"gesehen": {"befund": befund, "start": start, "zeit": bis.astimezone(timezone.utc).isoformat()}}}}})
+    return int(r.get("updated") or 0)
+
+
+async def gesehen_nachtragen(tage: float = 7, stunden: float = 2.0 + 1 / 6) -> dict:
+    """Einmalig: für die Befunde der letzten Tage markieren, was sie gesehen haben (Prüffenster STUNDEN + TAKT)."""
+    from datetime import timedelta
+
+    from app.core.opensearch import get_opensearch
+    from app.services.log_watch.historie import PRAEFIX
+    seit = (datetime.now(timezone.utc) - timedelta(days=tage)).isoformat()
+    res = await get_opensearch().search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
+        "size": 5000, "sort": [{"zeit": "asc"}], "_source": ["zeit", "relevanz", "ai_provenance.start"],
+        "query": {"bool": {"filter": [{"term": {"quelle": "ki"}}, {"range": {"zeit": {"gte": seit}}}]}}})
+    n, markiert, ohne_start = 0, 0, 0
+    for h in res["hits"]["hits"]:
+        s = h["_source"]
+        start = (s.get("ai_provenance") or {}).get("start")
+        if not start:
+            ohne_start += 1
+            continue
+        markiert += await markiere_gesehen(h["_id"], s.get("relevanz"), start,
+                                           datetime.fromisoformat(str(s["zeit"]).replace("Z", "+00:00")), stunden)
+        n += 1
+    return {"befunde": len(res["hits"]["hits"]), "mit_start": n, "ohne_start": ohne_start, "nachrichten_markiert": markiert}
+
+
 async def liste(status: str | None = None, suche: str = "", limit: int = 100) -> dict:
     """Bekannte Fehler, zuletzt aufgetretene zuerst; mit Gesamtzahlen je Status."""
     from app.core.opensearch import get_opensearch

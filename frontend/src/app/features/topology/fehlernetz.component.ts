@@ -217,7 +217,7 @@ export class FehlernetzComponent implements OnInit {
       const h = this.stunden();
       this.router.navigate([], { queryParams: { modus: 'fehler', filter: f || null, stunden: h }, queryParamsHandling: 'merge',
                                   replaceUrl: true });
-      this.http.get<Netz>(`${environment.apiUrl}/log-watch/netzplan`, { params: { filter: f, stunden: h, knoten: 22, sicht: 'fehler' } })
+      this.http.get<Netz>(`${environment.apiUrl}/log-watch/netzplan`, { params: { filter: f, stunden: h, knoten: 30, sicht: 'fehler' } })
         .subscribe({
           next: n => { this.fehler.set(n.fehler ? `Filter: ${n.fehler}` : ''); this.netz.set(n); },
           error: e => this.fehler.set(`Netzplan nicht geladen (${e.status ?? '?'})`),
@@ -279,7 +279,7 @@ export class FehlernetzComponent implements OnInit {
       },
       series: [{
         type: 'graph', layout: 'force', roam: true, draggable: true,
-        force: { repulsion: 220, edgeLength: [50, 140], gravity: 0.2, layoutAnimation: false },
+        force: { repulsion: 420, edgeLength: [70, 200], gravity: 0.12, layoutAnimation: false },
         label: {
           show: true, fontSize: 11, color: dunkel ? '#eee' : '#222',
           formatter: (p: { data: any }) => {

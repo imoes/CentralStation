@@ -259,6 +259,13 @@ async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=
                 ergebnis.get("beleg_ids") or [], [n.get("id") for n in lage.get("nachrichten") or []])
         except Exception as e:  # noqa: BLE001 — Befund bleibt gültig, Lernen benannt ausgefallen
             ergebnis["lern_fehler"] = f"{type(e).__name__}: {str(e)[:200]}"
+        try:
+            # was die Analyse gesehen hat, hängt am Befund (eine Definition mit offene())
+            ergebnis["gesehen"] = await bekannt.markiere_gesehen(
+                ergebnis["befund"], ergebnis.get("relevanz"), fall["start"], datetime.now(timezone.utc),
+                STUNDEN + TAKT.total_seconds() / 3600)
+        except Exception as e:  # noqa: BLE001
+            ergebnis["gesehen_fehler"] = f"{type(e).__name__}: {str(e)[:200]}"
     return {**ergebnis, "sitzung": sitzung}
 
 
