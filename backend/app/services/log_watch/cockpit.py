@@ -264,7 +264,13 @@ async def daten(db, typ: str, cfg: dict) -> dict:
         return volumen(await _zeilen(db, seit), stunden)
     if typ == "lw_hashtags":
         zeilen = await _zeilen(db, seit - timedelta(hours=stunden))
-        return {**hashtags(zeilen, seit, int(cfg.get("limit") or 15)), "zeitraum_h": stunden}
+        h = hashtags(zeilen, seit, int(cfg.get("limit") or 15))
+        from app.services.log_watch.suche import namen   # lesbare Namen (regel:11307 → Beschreibung …)
+        n = await namen([x["tag"] for x in h["hashtags"]])
+        for x in h["hashtags"]:
+            if n.get(x["tag"]):
+                x["name"] = n[x["tag"]]
+        return {**h, "zeitraum_h": stunden}
     if typ == "lw_korpus":
         from sqlalchemy import func, select
 

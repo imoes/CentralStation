@@ -163,7 +163,7 @@ const ZUSTAND: Record<string, string> = {
           }
           @for (h of hashtags(); track h.tag) {
             <div class="tag-row">
-              <span class="tag">#{{ h.tag }}</span>
+              <span class="tag" [matTooltip]="'#' + h.tag">@if (h.name) { {{ h.name }} <span class="tag-id">#{{ h.tag }}</span> } @else { #{{ h.tag }} }</span>
               <span class="tag-n">{{ h.anzahl | number }}</span>
               <span class="tag-trend" [class.neu]="h.vergleich === 'neu'" [class.hoch]="(h.faktor ?? 0) >= 2"
                     [matTooltip]="h.vergleich === 'kein_vergleich' ? 'Kein Vergleich: im Zeitraum davor keine Messung dieser Quelle' : h.vergleich === 'neu' ? 'Im Zeitraum davor gemessen, dort nicht vorgekommen' : 'vorher ' + h.vorher">
@@ -230,6 +230,7 @@ const ZUSTAND: Record<string, string> = {
     .bef-titel { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .bef-host, .bef-zeit { opacity: .7; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .bef-text { margin: 6px 0; line-height: 1.4; }
+    .tag-id { opacity: .55; font-size: 10px; }
     .bef-link { cursor: pointer; text-decoration: underline dotted; }
     .bef-uebersicht { font: inherit; font-size: 11px; margin: 4px 0; padding: 2px 8px; border-radius: 6px; cursor: pointer;
       border: 1px solid rgba(127,127,127,.4); background: transparent; color: inherit; }
@@ -383,7 +384,7 @@ export class LwWidgetComponent {
   });
 
   readonly hashtags = computed(() =>
-    (this.d().hashtags ?? []) as { tag: string; anzahl: number; vorher: number; faktor: number | null; vergleich: string }[]);
+    (this.d().hashtags ?? []) as { tag: string; anzahl: number; vorher: number; faktor: number | null; vergleich: string; name?: string }[]);
 
   readonly laeufe = computed(() => {
     const l = this.d().laeufe ?? {};

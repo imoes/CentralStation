@@ -296,26 +296,37 @@ def name_aus_roh(art: str, wert: str, roh: dict) -> str:
     return ""
 
 
-async def _namen(os_client, knoten: list[dict], q: dict) -> None:
-    """Lesbare Namen für Kennungs-Knoten: Wazuh-Regel und MITRE-Technik aus der Quelle, Thema aus dem
-    Vokabular, Muster aus seinem Text — der Hashtag bleibt die Identität, der Name steht daneben."""
+async def namen(tags: list[str], q: dict | None = None) -> dict[str, str]:
+    """Lesbare Namen für Hashtags, deren Wert eine Kennung ist — EINE Stelle für Netzplan, Cockpit und
+    Suche: regel:/mitre-technik: aus der Quelle (roh.rule, nur Quell-Nachrichten — Befunde tragen dieselben
+    Hashtags ohne roh), thema: aus dem Vokabular, muster: aus dem Mustertext, incident: aus dem Titel.
+    Ohne Namen fehlt der Eintrag (benannt leer: der Hashtag selbst bleibt sichtbar)."""
+    from app.core.opensearch import get_opensearch
     from app.services.log_watch.vokabular import THEMEN
+    out: dict[str, str] = {}
+    tags = list(dict.fromkeys(t for t in tags if t))
     themen = {t.id: t.text for t in THEMEN}
-    roh_k = [x for x in knoten if x["art"] in NAMEN_AUS_ROH and not x.get("titel")]
-    if roh_k:
-        res = await os_client.search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
-            "size": 0, "query": q, "aggs": {"n": {"filters": {"filters": {
-                # nur Quell-Nachrichten: Befunde tragen dieselben Hashtags, aber kein roh.rule
-                # (gemessen 07.11.: regel:80711 blieb ohne Namen)
-                f"n{i}": {"bool": {"filter": [{"term": {"hashtags": x["id"]}}, {"exists": {"field": "roh.rule"}}]}}
-                for i, x in enumerate(roh_k)}},
+    for t in tags:
+        art, _, wert = t.partition(":")
+        if art == "thema" and wert in themen:
+            out[t] = themen[wert]
+    roh_t = [t for t in tags if t.partition(":")[0] in NAMEN_AUS_ROH]
+    if roh_t:
+        res = await get_opensearch().search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
+            "size": 0, **({"query": q} if q else {}), "aggs": {"n": {"filters": {"filters": {
+                # nur Quell-Nachrichten (gemessen 07.11.: regel:80711 blieb sonst ohne Namen)
+                f"n{i}": {"bool": {"filter": [{"term": {"hashtags": t}}, {"exists": {"field": "roh.rule"}}]}}
+                for i, t in enumerate(roh_t)}},
                 "aggs": {"t": {"top_hits": {"size": 1, "_source": ["roh.rule"]}}}}}})
         b = res["aggregations"]["n"]["buckets"]
-        for i, x in enumerate(roh_k):
+        for i, t in enumerate(roh_t):
             hits = ((b.get(f"n{i}") or {}).get("t") or {}).get("hits", {}).get("hits") or []
             if hits:
-                x["titel"] = name_aus_roh(x["art"], x["wert"], hits[0]["_source"].get("roh") or {})
-    muster = [x for x in knoten if x["art"] == "muster" and not x.get("titel")]
+                art, _, wert = t.partition(":")
+                n = name_aus_roh(art, wert, hits[0]["_source"].get("roh") or {})
+                if n:
+                    out[t] = n
+    muster = [t.partition(":")[2] for t in tags if t.startswith("muster:")]
     if muster:
         from sqlalchemy import select
 
@@ -324,13 +335,21 @@ async def _namen(os_client, knoten: list[dict], q: dict) -> None:
         from app.services.log_watch.incident_regeln import lesbar
         async with AsyncSessionLocal() as db:
             rows = (await db.execute(select(LogTemplate.key, LogTemplate.template)
-                                     .where(LogTemplate.key.in_([x["wert"] for x in muster])))).all()
-        texte = {k: lesbar(t) for k, t in rows}
-        for x in muster:
-            x["titel"] = texte.get(x["wert"], "")
+                                     .where(LogTemplate.key.in_(muster)))).all()
+        out.update({f"muster:{k}": lesbar(v) for k, v in rows if v})
+    inc = [t.partition(":")[2] for t in tags if t.startswith("incident:")]
+    if inc:
+        from app.services.log_watch.incident_objekt import titel as incident_titel
+        out.update({f"incident:{k}": v["titel"] for k, v in (await incident_titel(inc)).items() if v.get("titel")})
+    return out
+
+
+async def _namen(os_client, knoten: list[dict], q: dict) -> None:
+    """Namen der Knoten (siehe namen) — Befund- und Incident-Titel setzt _befund_titel."""
+    n = await namen([x["id"] for x in knoten if not x.get("titel")], q)
     for x in knoten:
-        if x["art"] == "thema" and not x.get("titel"):
-            x["titel"] = themen.get(x["wert"], "")
+        if not x.get("titel") and n.get(x["id"]):
+            x["titel"] = n[x["id"]]
 
 
 def satz(knoten: list[dict], gesamt: int, stunden: float) -> str:
