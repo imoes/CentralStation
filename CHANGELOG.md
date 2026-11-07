@@ -89,6 +89,45 @@ Otherwise the name is the ECS name with underscores, the scheme Filebeat already
 
 ---
 
+## 2026-11-07 — Log watch, part 41: one outbreak across many hosts is one incident
+
+### Fixed
+
+- **I-HOST counted messages of a spreading pattern once per host.**
+  - At 13:39 UTC a fleet-wide wave (378 urgent Graylog messages on 139 hosts, 4 patterns with
+    `signal:ausbreitung`) gave 139 I-HOST candidates.
+  - The 15-minute brake held them back, but from about 13:54 up to 139 host incidents with mails would
+    have followed.
+  - With your approval (≈ 13:47 UTC) definition v9 changed I-HOST to `relevanz>=3 !signal:ausbreitung`,
+    without a deploy. A wave across many hosts belongs to I-AUSBRUCH as one incident, as `CROSS_KINDS`
+    did on the old path. The code standard says the same (`regelwerk.STANDARD_INCIDENT`).
+
+### Evidence
+
+- **Candidates right after v9:** 139 → 6 I-HOST (nsa353, mu-img-servicedesk01, mon03, mon02,
+  mu-img-atlas01, rendere04), all with urgent messages that do not belong to the wave.
+- **The wave itself was an Ansible rollout, not an error.** The patterns:
+  - `python3: ansible-apt Invoked with name=filebeat=…`;
+  - `ansible-apt_repository … artifacts.elastic.co …`;
+  - `ansible.legacy.apt … apt-transport-https`;
+  - `sshd-session … logout() returned an error`.
+
+  Episodes started at 13:10 and were last active at 13:15 UTC. No mail went out for it: when it reached
+  30 minutes of age it was no longer active (same brake as the old path).
+
+### Corrections
+
+- I had first named a Graylog change of the other session (new level detection from 13:10 UTC) as the
+  cause. That was wrong; the pattern texts show the Ansible rollout.
+
+### What is still missing
+
+- **Intended Ansible runs are classified as urgent spread.** They belong to N5 "Selbst erzeugt" (agent
+  updates), but `@Selbst-erzeugt` only knows `dienst:Check_MK*`. That is a change to the definition and
+  needs your decision.
+
+---
+
 ## 2026-11-07 — Log watch, part 40: only facts with checked quotes; the AI describes source fields
 
 You said (2026-11-07):
