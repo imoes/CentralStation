@@ -70,8 +70,17 @@ async def _grundlagen():
     from app.services.log_watch.definition import aktuelle
     from app.services.log_watch.hosts import verzeichnis
 
+    from app.services.log_watch import incident_objekt, raster
+
     async with AsyncSessionLocal() as db:
-        return await verzeichnis(db), await aktuelle(db)
+        verz, d = await verzeichnis(db), await aktuelle(db)
+        # Ist-Zustand „behandelt“ aus Incidents mit Ticket — je Lauf neu, kein Teil der Definition
+        try:
+            raster.setze_behandelt(await incident_objekt.behandelt(db, verz))
+        except Exception as e:  # noqa: BLE001 — ohne diese Liste urteilt das Raster wie bisher
+            log.warning("Behandelt-Liste aus Incidents nicht geladen: %s", e)
+            raster.setze_behandelt([])
+        return verz, d
 
 
 #: Ein gespeicherter CheckMK-Zustand gilt nach einem Neustart nur so lange als Vergleich.

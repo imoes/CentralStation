@@ -67,10 +67,32 @@ class Treffer:
     belege: list = field(default_factory=list)
 
 
+#: Ist-Zustand „behandelt“ aus Incidents (Extension, nicht Teil der versionierten Definition): je Incident
+#: mit offenem Ticket (Bedingung seines Filters, Grund). Gesetzt je Lauf von lauf.py (setze_behandelt);
+#: leer = nichts behandelt. Wie CheckMK-Quittung/Downtime wird daraus `signal:behandelt` → Kriterium N2.
+_BEHANDELT: list[tuple[dict, str]] = []
+
+
+def setze_behandelt(liste: list[tuple[dict, str]]) -> None:
+    _BEHANDELT[:] = liste
+
+
+def _behandelt(tags: list[str], felder: dict, gruende: list[str]) -> tuple[list[str], list[str]]:
+    """Trifft der Filter eines Incidents mit offenem Ticket, ist die Nachricht behandelt (N2), mit Grund."""
+    if not _BEHANDELT or "signal:behandelt" in tags:
+        return tags, gruende
+    from app.services.log_watch.regelwerk import passt
+    ts = set(tags)
+    for bed, grund in _BEHANDELT:
+        if passt(bed, ts, felder or {}):
+            return tags + ["signal:behandelt"], gruende + [grund]
+    return tags, gruende
+
+
 def _urteil(quelle, schluessel, host, bekannt, tags, felder, gruende, anzahl, beispiel,
             d: Definition, belege=None) -> Treffer:
     """Das Regelwerk entscheidet; Stufe: FORWARD 2 (dringend 3), BLOCK laut Regel 0/1."""
-    tags = _ohne_doppel(tags)
+    tags, gruende = _behandelt(_ohne_doppel(tags), felder, list(gruende))
     e = bewerte(d.regeln, set(tags), felder)
     if e.aktion == FORWARD:
         urteil, st = RELEVANT, 3 if "signal:dringend" in tags else 2

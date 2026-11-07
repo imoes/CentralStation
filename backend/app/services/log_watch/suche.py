@@ -96,7 +96,7 @@ async def suche(filtertext: str = "", *, stunden: float = 24, limit: int = 20,
 
 #: Hashtag-Arten, die Knoten werden. Nicht: `muster:` (Hash, unlesbar — steht in der Facette),
 #: `hostliste:` (Zustand der Zuordnung), `regelgruppe:` (doppelt zu `regel:`).
-NETZ_ARTEN = ("host", "befund", "thema", "dienst", "regel", "mitre", "mitre-technik", "label", "netz", "netzbereich", "zustand",
+NETZ_ARTEN = ("host", "befund", "incident", "thema", "dienst", "regel", "mitre", "mitre-technik", "label", "netz", "netzbereich", "zustand",
               "kritikalitaet", "signal", "quelle", "app", "ort", "gegenstelle")
 #: höchstens so viele Knoten je Art — sonst verdrängen 15 Hosts jedes Thema
 JE_ART = 5
@@ -214,8 +214,8 @@ async def netzplan(filtertext: str = "", *, stunden: float = 24, knoten: int = 1
 #: (quelle, netz, kritikalitaet, ort, signal, zustand) — gemessen 07.11.: nach Menge gewählt füllten sie
 #: alle 15 Knoten (netz:intern 6 075, kritikalitaet:prod 5 872 …) und kein Host war zu sehen. Sie bleiben
 #: Filter und Facetten.
-FEHLER_ARTEN = ("host", "befund", "thema", "dienst", "regel", "mitre-technik", "app", "gegenstelle", "label")
-FEHLER_JE_ART = {"host": 8, "befund": 4, "thema": 3, "dienst": 3, "regel": 3, "mitre-technik": 2, "app": 2,
+FEHLER_ARTEN = ("host", "befund", "incident", "thema", "dienst", "regel", "mitre-technik", "app", "gegenstelle", "label")
+FEHLER_JE_ART = {"host": 8, "befund": 4, "incident": 4, "thema": 3, "dienst": 3, "regel": 3, "mitre-technik": 2, "app": 2,
                  "gegenstelle": 2, "label": 2}
 _OFFEN = [{"prefix": {"hashtags": "befund:"}}, {"term": {"quelle": "ki"}}]
 
@@ -249,7 +249,16 @@ def zustand(knoten: list[dict], buckets: dict) -> None:
 
 
 async def _befund_titel(os_client, knoten: list[dict]) -> None:
-    """Befund-Knoten tragen den Titel der KI-Analyse — ein Objekt, kein Hash."""
+    """Befund- und Incident-Knoten tragen ihren Titel — ein Objekt, kein Hash."""
+    inc = [x["wert"] for x in knoten if x["art"] == "incident"]
+    if inc:
+        from app.services.log_watch.incident_objekt import titel as incident_titel
+        t = await incident_titel(inc)
+        for x in knoten:
+            if x["art"] == "incident":
+                i = t.get(x["wert"]) or {}
+                x["titel"] = i.get("titel") or ""
+                x["incident"] = {"kind": i.get("kind"), "status": i.get("status")}
     ids = [f"ki:{x['wert']}" for x in knoten if x["art"] == "befund"]
     if not ids:
         return

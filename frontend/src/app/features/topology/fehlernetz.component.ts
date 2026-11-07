@@ -25,7 +25,7 @@ import { ThemeService } from '../../core/services/theme.service';
 interface Knoten {
   id: string; art: string; wert: string; anzahl: number; fokus: boolean;
   stufe: 'dringend_offen' | 'dringend' | 'auffaellig'; dringend: number; dringend_offen: number; offen: number;
-  befunde: string[]; zuletzt?: string; titel?: string;
+  befunde: string[]; zuletzt?: string; titel?: string; incident?: { kind?: string; status?: string };
 }
 interface Kante { a: string; b: string; anzahl: number }
 interface Netz {
@@ -40,7 +40,8 @@ const STUFE_FARBE: Record<string, Record<string, string>> = {
 const STUFE_TEXT: Record<string, string> = {
   dringend_offen: 'dringend und unbearbeitet', dringend: 'dringend, untersucht', auffaellig: 'relevant',
 };
-const FORM: Record<string, string> = { host: 'circle', befund: 'diamond' };
+const FORM: Record<string, string> = { host: 'circle', befund: 'diamond', incident: 'triangle' };
+const INCIDENT_ART: Record<string, string> = { log_cluster: 'Log-Ausbruch', fleet: 'Flotten-Ausfall', critical: 'Kritisch', host: 'Host' };
 
 /** Hashtag → Ausdruck der Filtersprache (Werte mit Leerzeichen/Klammern in Anführungszeichen). */
 export function tagFilter(tag: string, ausschliessen = false): string {
@@ -80,7 +81,7 @@ export function tagFilter(tag: string, ausschliessen = false): string {
           }
           <div class="fn-legende">
             @for (s of STUFEN; track s) { <span class="leg"><i [style.background]="stufenFarbe(s)"></i>{{ STUFE_TEXT[s] }}</span> }
-            <span class="leg">● Host</span><span class="leg">◆ KI-Befund</span><span class="leg">▬ Tag</span>
+            <span class="leg">● Host</span><span class="leg">▲ Incident</span><span class="leg">◆ KI-Befund</span><span class="leg">▬ Tag</span>
             <span class="leg dim">Kante = an derselben Nachricht · keine Ursache</span>
           </div>
         </div>
@@ -92,6 +93,10 @@ export function tagFilter(tag: string, ausschliessen = false): string {
               <span class="st-name" [title]="k.id">{{ k.titel || k.wert }}</span>
             </div>
             <div class="st-stufe" [style.border-color]="stufenFarbe(k.stufe)">{{ STUFE_TEXT[k.stufe] }}</div>
+            @if (k.incident) {
+              <div class="st-meta">Incident · {{ INCIDENT_ART[k.incident.kind ?? ''] || k.incident.kind }} ·
+                {{ k.incident.status === 'resolved' ? 'gelöst' : 'offen' }}</div>
+            }
             <div class="st-zahlen">
               <span><b>{{ k.anzahl | number }}</b> Nachrichten</span>
               <span><b>{{ k.dringend | number }}</b> dringend</span>
@@ -104,6 +109,9 @@ export function tagFilter(tag: string, ausschliessen = false): string {
               <button (click)="alsFilter(k.id, true)" matTooltip="Dieses Objekt ausschließen"><mat-icon>filter_alt_off</mat-icon> Ausschließen</button>
               @if (k.art === 'host') {
                 <button (click)="cockpit(k.wert)" matTooltip="Host-Cockpit öffnen"><mat-icon>dns</mat-icon> Cockpit</button>
+              }
+              @if (k.art === 'incident') {
+                <button (click)="incidentOeffnen(k.wert)" matTooltip="Incident mit Zeitachse im Feed öffnen"><mat-icon>open_in_new</mat-icon> Incident</button>
               }
             </div>
             @if (befundeVon(k).length) {
@@ -194,6 +202,7 @@ export class FehlernetzComponent implements OnInit {
                      { h: 72, label: '3 Tage' }, { h: 168, label: '7 Tage' }];
   readonly STUFEN = ['dringend_offen', 'dringend', 'auffaellig'];
   readonly STUFE_TEXT = STUFE_TEXT;
+  readonly INCIDENT_ART = INCIDENT_ART;
 
   readonly filter = signal<string[]>([]);
   readonly stunden = signal(24);
@@ -283,7 +292,7 @@ export class FehlernetzComponent implements OnInit {
         label: {
           show: true, fontSize: 11, color: dunkel ? '#eee' : '#222',
           formatter: (p: { data: any }) => {
-            const w = p.data.art === 'befund' ? (p.data.titel || p.data.wert) : p.data.wert;
+            const w = (p.data.art === 'befund' || p.data.art === 'incident') ? (p.data.titel || p.data.wert) : p.data.wert;
             const t = w.length > 26 ? w.slice(0, 25) + '…' : w;
             return p.data.dringend_offen ? `${t}  ⚠ ${p.data.dringend_offen}` : t;
           },
@@ -292,7 +301,7 @@ export class FehlernetzComponent implements OnInit {
         data: knoten.map(k => ({
           ...k, name: k.id,
           symbol: FORM[k.art] ?? 'roundRect',
-          symbolSize: k.art === 'host' || k.art === 'befund'
+          symbolSize: k.art === 'host' || k.art === 'befund' || k.art === 'incident'
             ? 14 + 34 * Math.sqrt(k.anzahl / max) : [22 + 30 * Math.sqrt(k.anzahl / max), 14],
           itemStyle: {
             color: this.stufenFarbe(k.stufe),
@@ -330,6 +339,8 @@ export class FehlernetzComponent implements OnInit {
   entferne(f: string) { this.filter.update(a => a.filter(x => x !== f)); }
 
   setzeStunden(h: number) { this.stunden.set(Number(h)); }
+
+  incidentOeffnen(id: string) { this.router.navigate(['/feed'], { queryParams: { incident: id } }); }
 
   cockpit(host: string) {
     window.open('/cockpit/' + encodeURIComponent(host), 'cockpit-' + host,
