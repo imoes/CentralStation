@@ -64,6 +64,26 @@ async def _speichere(quelle: str, b: datetime, werte: dict) -> None:
         await db.commit()
 
 
+#: Stufe 0 läuft, sobald die letzte Messung so alt ist — vorher nur bei bc.minute % 15 == 0: jedes verlorene
+#: CheckMK-Fenster (gemessen 07.11.: 14:10/14:15/14:30 nach Neustarts) ließ die Messung ganz ausfallen
+STUFE0_ABSTAND_MIN = 14
+
+
+def faellig(zuletzt: datetime | None, jetzt: datetime, abstand_min: float) -> bool:
+    """Ist eine periodische Messung fällig? Nie gelaufen = fällig. Rein — testbar."""
+    return zuletzt is None or (jetzt - zuletzt).total_seconds() >= abstand_min * 60
+
+
+async def _zuletzt(quelle: str) -> datetime | None:
+    from sqlalchemy import func, select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.log_watch import RasterLauf
+    async with AsyncSessionLocal() as db:
+        return (await db.execute(select(func.max(RasterLauf.created_at))
+                                 .where(RasterLauf.quelle == quelle))).scalar()
+
+
 async def _grundlagen():
     """Hostverzeichnis und aktuelle Relevanz-Definition — beides braucht jedes Urteil."""
     from app.core.database import AsyncSessionLocal
@@ -338,7 +358,7 @@ async def run_raster() -> None:
             await _speichere("switch", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
 
     # Stufe 0 (Graylog-Verwerfregeln): alle 15 min — je Regel wird jeder Knoten befragt.
-    if "graylog" in adapter and bc.minute % 15 == 0:
+    if "graylog" in adapter and faellig(await _zuletzt("stufe0"), _jetzt(), STUFE0_ABSTAND_MIN):
         from app.services.log_watch import stufe0
         from app.services.log_watch.vokabular import THEMEN
         try:

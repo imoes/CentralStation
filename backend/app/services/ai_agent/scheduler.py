@@ -405,18 +405,22 @@ async def run_incident_regeln() -> None:
 
 
 async def run_feld_doku() -> None:
-    """Die KI beschreibt neue Quellfelder des Feldkatalogs (log_watch/felder.py) — nur wenn kein Agent der
-    Flotte arbeitet (strata ist der Engpass). Ergebnis in raster_lauf „feld-doku“."""
+    """Die KI beschreibt neue Quellfelder des Feldkatalogs (log_watch/felder.py) — nur wenn ein Platz der
+    Flotte frei ist (strata ist der Engpass: höchstens AGENTEN Aufrufe gleichzeitig). Ergebnis in raster_lauf
+    „feld-doku“ — auch ein Aussetzen, mit Grund (vorher still: gemessen 07.11. lief der Job nie)."""
     from sqlalchemy import func, select
 
     from app.core.database import AsyncSessionLocal
     from app.models.log_watch import KiLease
     from app.services.log_watch import felder
     from app.services.log_watch.lauf import _speichere
-    async with AsyncSessionLocal() as db:
-        if (await db.execute(select(func.count()).select_from(KiLease))).scalar():
-            return
+    from app.services.log_watch.trichter import AGENTEN
     b = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    async with AsyncSessionLocal() as db:
+        belegt = (await db.execute(select(func.count()).select_from(KiLease))).scalar() or 0
+    if belegt >= AGENTEN:
+        await _speichere("feld-doku", b, {"ausgesetzt": f"alle {AGENTEN} Plätze der Flotte belegt"})
+        return
     try:
         await _speichere("feld-doku", b, await felder.beschreibe_quellfelder())
     except Exception as e:

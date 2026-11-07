@@ -124,3 +124,12 @@ def test_zaehlregel_zaehlt_die_durch_themen_geretteten():
 def test_zaehlregeln_nach_titel():
     regeln = [{"id": "1", "title": "count_topic_rescued"}, {"id": "2", "title": "drop_http_success"}]
     assert s0.zaehl_regeln(regeln) == [{"id": "1", "titel": "count_topic_rescued", "art": "gerettet"}]
+
+
+def test_stufe0_faellig_nach_abstand_nicht_nach_minute():
+    from datetime import datetime, timedelta, timezone
+    from app.services.log_watch.lauf import STUFE0_ABSTAND_MIN, faellig
+    jetzt = datetime(2026, 11, 7, 14, 37, tzinfo=timezone.utc)          # keine Viertelstunde — trotzdem fällig
+    assert faellig(None, jetzt, STUFE0_ABSTAND_MIN)
+    assert faellig(jetzt - timedelta(minutes=37), jetzt, STUFE0_ABSTAND_MIN)
+    assert not faellig(jetzt - timedelta(minutes=5), jetzt, STUFE0_ABSTAND_MIN)

@@ -126,3 +126,12 @@ def test_regel_incident_wird_nicht_vom_mitglieder_abgleich_geschlossen():
     regel = SimpleNamespace(causal_context=[{"type": "error_cluster", "regel": "I-HOST", "schluessel": "host:a"}])
     alt = SimpleNamespace(causal_context=[{"type": "error_cluster", "hosts": ["a"]}])
     assert von_regel(regel) and not von_regel(alt) and not von_regel(SimpleNamespace(causal_context=None))
+
+
+def test_zustellung_wird_am_incident_vermerkt():
+    from datetime import datetime, timezone
+    from app.services.error_clusters.notify import zustellung
+    t = datetime(2026, 11, 7, 14, 40, tzinfo=timezone.utc)
+    z = zustellung(None, 1, ["a@x.de"], "ok", t)
+    assert z == [{"zeit": t.isoformat(), "mails": 1, "empfaenger": ["a@x.de"], "triage": "ok"}]
+    assert len(zustellung([{}] * 25, 0, [], "none", t)) == 20 and zustellung([{}] * 25, 0, [], "none", t)[-1]["mails"] == 0

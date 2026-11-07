@@ -10,6 +10,27 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Incident mails leave proof; stage 0 and field documentation no longer skip silently
+
+### Fixed
+
+- **Every incident mail is recorded on the incident** (`zustellungen`: time, number of mails, recipients, triage
+  state; the last 20 entries are kept).
+  - Before, proof of delivery existed only in the container log. A restart clears that log, and Graylog drops
+    INFO lines from containers (`drop_container_noise`).
+  - Measured 07.11.: the mail for incident `f1e97652` (I-AUSBRUCH, 14:29) could no longer be shown after the
+    14:33 restart. A Graylog search for `notify f1e97652` found 0 messages.
+  - For rule incidents, `_mark_mailed` only marks a fault-cluster episode, so nothing was written for them.
+- **Stage 0 runs as soon as the last measurement is ≥ 14 min old.** Before, it ran only when the CheckMK window
+  fell exactly on :00, :15, :30 or :45, so each lost window dropped a measurement.
+  - Measured 07.11.: no stage 0 run between 14:00 and 14:35, because the windows 14:10, 14:15 and 14:30 were lost
+    during restarts.
+- **The field documentation job runs as soon as one fleet slot is free.** Before, it waited for an empty fleet.
+  When all 3 slots are busy, it writes an entry `ausgesetzt` with the reason.
+  - Measured 07.11.: before this change the job had never written a run entry (`raster_lauf` "feld-doku" empty).
+
+---
+
 ## 2026-11-07 — The AI invents its own tag fields, registered through the MCP tool
 
 You asked (07.11.): an AI should also be able to invent tag fields, and every such field must be registered

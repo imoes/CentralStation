@@ -464,9 +464,11 @@ async def deliver(ctx: dict, title: str, cluster_id: str, incident_id: str | Non
                            render_html(ctx, result, incident_url,
                                        pending=task is not None and result is None))
         await _mark_mailed(db, cluster_id)
+        triage_zustand = "ok" if result else ("pending" if task else "none")
+        if incident_id:
+            await _vermerke_zustellung(db, incident_id, sent, to, triage_zustand)
         await db.commit()
-    log.info("error_clusters: notify %s → %d mail(s), triage=%s", cluster_id[:8], sent,
-             "ok" if result else ("pending" if task else "none"))
+    log.info("error_clusters: notify %s → %d mail(s), triage=%s", cluster_id[:8], sent, triage_zustand)
 
     if result is None and task is not None:
         try:
@@ -615,6 +617,28 @@ async def on_critical(items: list[dict], cfg) -> None:
         run_background(deliver(ctx, it["title"], it["cluster_id"], it["incident_id"], cfg,
                                None, ctx.get("checkmk") or []),
                        name=f"error_cluster_critical_{it['cluster_id'][:8]}")
+
+
+def zustellung(alt: list | None, sent: int, to: list[str], triage: str, jetzt: datetime) -> list[dict]:
+    """Zustell-Vermerke am Incident fortschreiben (höchstens 20). Rein — testbar."""
+    return ((alt or []) + [{"zeit": jetzt.isoformat(), "mails": sent, "empfaenger": list(to),
+                            "triage": triage}])[-20:]
+
+
+async def _vermerke_zustellung(db, incident_id: str, sent: int, to: list[str], triage: str) -> None:
+    """Dauerhafter Nachweis am Incident, ob und an wen gemeldet wurde — vorher nur im Container-Log
+    (geht beim Neustart verloren; Graylog verwirft INFO-Zeilen der Container, drop_container_noise)."""
+    from app.models.workflow import Incident
+    from app.services.error_clusters.incident import cluster_context as _cc, set_cluster_context
+    try:
+        inc = (await db.execute(select(Incident).where(Incident.id == uuid.UUID(incident_id)))).scalar_one_or_none()
+    except ValueError:
+        return
+    if inc is None:
+        return
+    c = {k: v for k, v in (_cc(inc) or {}).items() if k != "type"}
+    c["zustellungen"] = zustellung(c.get("zustellungen"), sent, to, triage, datetime.now(timezone.utc))
+    set_cluster_context(inc, c)
 
 
 async def _mark_mailed(db, cluster_id: str) -> None:
