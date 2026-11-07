@@ -141,9 +141,6 @@ const SOURCE_META = [
                 </div>
                 <div class="search-actions">
                   <mat-slide-toggle [(ngModel)]="search.enabled">{{ i18n.t('common.enabled') }}</mat-slide-toggle>
-                  <mat-slide-toggle [(ngModel)]="search.is_exclusion" color="warn">
-                    <span class="exclusion-label">Ausblenden</span>
-                  </mat-slide-toggle>
                   <button mat-stroked-button (click)="previewSearch(search)" [disabled]="previewing() === search.id">
                     @if (previewing() === search.id) { <mat-spinner diameter="16"></mat-spinner> }
                     @else { <mat-icon>visibility</mat-icon> }
@@ -155,9 +152,12 @@ const SOURCE_META = [
                   </button>
                 </div>
                 @if (search.is_exclusion) {
+                  <!-- Rauschunterdrückung abgeschaltet (07.11.2026): Rauschen entscheidet das Regelwerk; der Eintrag
+                       bleibt als Rückweg und wird als Regel übernommen -->
                   <div class="exclusion-hint">
                     <mat-icon>block</mat-icon>
-                    Passende Meldungen werden automatisch aus dem Feed ausgeblendet.
+                    Ausschlussfilter (Auslaufmodell): wirkt nur noch auf Rohmeldungen, nicht auf „Ereignisse“.
+                    Er wird als Regel ins Regelwerk übernommen (N4 Rauschen / N6 stumm) und danach abgeschaltet.
                   </div>
                 }
                 @if (previewFor(search.id).length > 0) {

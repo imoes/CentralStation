@@ -118,8 +118,11 @@ interface CollabTimeline {
 
 interface FeedItem {
   id: string;
-  type: 'alert' | 'email' | 'teams_message';
-  source: 'checkmk' | 'graylog' | 'wazuh' | 'o365' | 'teams' | 'coroot';
+  type: 'alert' | 'email' | 'teams_message' | 'log_watch';
+  source: string;
+  /** 'historie' = eingestufte Nachricht aus cs-logs-* (Feldnamen in `felder`) */
+  korpus?: string;
+  felder?: { feld: string; wert: string | number | boolean | null }[];
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
   title: string;
   body: string | null;
@@ -152,14 +155,29 @@ interface FeedSearch {
   position: number;
 }
 
+// „Ereignisse“ zeigt nur eingestufte Nachrichten der Historie (Nutzer 07.11.2026) — das sind ihre Quellen.
+// E-Mail, Teams und Coroot werden nicht eingestuft; rohe Meldungen stehen unter „Rohmeldungen“.
 const SOURCE_META: Record<string, { label: string; icon: string; color: string }> = {
   checkmk:  { label: 'CheckMK',       icon: 'monitor_heart',    color: '#1565c0' },
   graylog:  { label: 'Graylog',       icon: 'article',          color: '#6a1b9a' },
   wazuh:    { label: 'Wazuh',         icon: 'security',         color: '#b71c1c' },
-  o365:     { label: 'E-Mail',        icon: 'mail',             color: '#e65100' },
-  teams:    { label: 'Teams',         icon: 'groups',           color: '#0f4c96' },
-  coroot:   { label: 'Coroot',        icon: 'insights',         color: '#00897b' },
+  switch:   { label: 'Switch',        icon: 'lan',              color: '#00897b' },
+  firewall: { label: 'Firewall',      icon: 'local_fire_department', color: '#e65100' },
+  ki:       { label: 'KI-Befunde',    icon: 'psychology',       color: '#0f4c96' },
 };
+
+/** Vordefinierte Filter der Suche — jeder ist ein Suchterm über die Historie (anklicken = hinzu/weg). */
+const VORDEFINIERT: { label: string; q: string; tip: string }[] = [
+  { label: 'Relevant', q: 'relevanz:>=2', tip: 'Relevanz 2–3: vom Regelwerk oder der KI als relevant eingestuft' },
+  { label: 'Dringend', q: 'relevanz:3', tip: 'Relevanz 3: dringend' },
+  { label: 'KI-analysiert', q: '_exists_:ai_relevanz', tip: 'Nachrichten, die die KI bewertet hat' },
+  { label: 'KI-Befunde', q: 'quelle:ki', tip: 'Befunde der KI (Analyse-Ergebnis mit geprüften Zitaten)' },
+  { label: 'Mit Incident', q: 'hashtags:incident*', tip: 'Nachrichten, die zu einem Incident gehören' },
+  { label: 'Nur Regel', q: 'herkunft:regel', tip: 'nur vom Regelwerk eingestuft (ohne KI, ohne Mensch)' },
+  { label: 'Vom Menschen', q: 'herkunft:mensch', tip: 'von einem Menschen eingestuft (Vorrang vor KI und Regel)' },
+];
+/** Index der Historie — Standard für Suche, Histogramm, Top-Werte und Vorschläge */
+const HISTORIE_INDEX = 'cs-logs-*';
 
 const SEVERITY_COLOR: Record<string, string> = {
   critical: '#b71c1c',
@@ -256,8 +274,8 @@ const SEVERITY_COLOR: Record<string, string> = {
         @if (zeitVon()) {
           <!-- absoluter Zeitraum nach Zoom im Histogramm (Graylog OnZoom) — × zurück zum relativen -->
           <span class="glog-abs" matTooltip="Absoluter Zeitraum (Ende exklusiv) — × zurück zu „{{ relativLabel() }}“">
-            <mat-icon>schedule</mat-icon>{{ zeitText(zeitVon()) }} – {{ zeitText(zeitBis()) }}
-            <button type="button" (click)="zeitZurueck()" aria-label="Zeitraum zurücksetzen"><mat-icon>close</mat-icon></button>
+            <mat-icon style="font-size:16px;height:16px;width:16px">schedule</mat-icon>{{ zeitText(zeitVon()) }} – {{ zeitText(zeitBis()) }}
+            <button type="button" (click)="zeitZurueck()" aria-label="Zeitraum zurücksetzen"><mat-icon style="font-size:16px;height:16px;width:16px">close</mat-icon></button>
           </span>
         } @else {
           <select class="glog-range" [(ngModel)]="searchRangeSec">
@@ -281,6 +299,17 @@ const SEVERITY_COLOR: Record<string, string> = {
       @if (suchHinweis()) {
         <div class="glog-fehler"><mat-icon>error_outline</mat-icon>{{ suchHinweis() }}</div>
       }
+      <!-- Vordefinierte Filter: eingestufte bzw. analysierte Nachrichten — Klick nimmt den Term in die Suche/heraus -->
+      <div class="vordef">
+        @for (v of vordefiniert; track v.q) {
+          <button type="button" class="vordef-chip" [class.an]="vordefAktiv(v.q)" [matTooltip]="v.tip + ' · ' + v.q"
+                  (click)="vordefUmschalten(v.q)">{{ v.label }}</button>
+        }
+        @if (nichtAnwendbar()) {
+          <span class="vordef-hinweis" matTooltip="Diese Filter kennt die eingestufte Historie nicht">
+            <mat-icon style="font-size:14px;height:14px;width:14px">info</mat-icon>nicht angewendet: {{ nichtAnwendbar() }}</span>
+        }
+      </div>
 
       <!-- ── Filter panel ───────────────────────────────────────────────────── -->
       @if (showFilters()) {
@@ -836,16 +865,6 @@ const SEVERITY_COLOR: Record<string, string> = {
                   Kommentar@if ((item.collab?.comment_count ?? 0) > 0) { ({{ item.collab!.comment_count }}) }
                 </button>
               }
-              <button mat-button class="action-btn ignore-btn" (click)="ignoreItem(item)"
-                      [disabled]="isIgnoring(item.id)"
-                      matTooltip="KI erstellt Ausschluss-Filter für ähnliche Meldungen">
-                @if (isIgnoring(item.id)) {
-                  <mat-spinner diameter="14" class="ki-spinner"></mat-spinner>
-                } @else {
-                  <mat-icon>block</mat-icon>
-                }
-                Ignorieren
-              </button>
               <span class="spacer"></span>
               <span class="item-type-hint">{{ typeLabel(item.type) }}</span>
             </div>
@@ -1197,24 +1216,20 @@ const SEVERITY_COLOR: Record<string, string> = {
       color: var(--mat-sys-on-surface); }
     .search-active-banner mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--mat-sys-primary); }
     .glog-bar { position: relative; }
-    .glog-abs { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; padding: 2px 4px 2px 8px; border-radius: 6px;
-      font-size: 12.5px; white-space: nowrap; background: color-mix(in srgb, var(--mat-sys-primary) 12%, transparent); }
-    .glog-abs mat-icon { font-size: 16px; height: 16px; width: 16px; }
-    .glog-abs button { border: 0; background: none; cursor: pointer; padding: 0; display: inline-flex; color: inherit; }
-    .histo { margin: -6px 0 12px; padding: 6px 10px 4px; border-radius: 8px; user-select: none;
-      background: var(--mat-sys-surface-container-low, rgba(0,0,0,.03)); }
-    .histo-kopf { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-bottom: 4px; }
-    .histo-tipp { font-size: 11px; opacity: .75; }
-    .histo-fehler { color: var(--mat-sys-error, #b3261e); }
-    .histo-balken { display: flex; align-items: flex-end; gap: 1px; height: 72px; cursor: crosshair; }
+    .vordef { display: flex; flex-wrap: wrap; gap: 6px; margin: -6px 0 12px; align-items: center; font-size: 12px; }
+    .vordef-chip { border: 1px solid var(--mat-sys-outline-variant); background: none; color: inherit; border-radius: 14px; padding: 3px 10px; cursor: pointer; }
+    .vordef-chip.an { background: color-mix(in srgb, var(--mat-sys-primary) 18%, transparent); border-color: var(--mat-sys-primary); }
+    .vordef-hinweis, .histo-kopf, .histo-achse, .histo-leer { display: flex; align-items: center; gap: 6px; color: var(--mat-sys-on-surface-variant); font-size: 11.5px; }
+    .glog-abs { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border-radius: 6px; font-size: 12.5px; white-space: nowrap; background: color-mix(in srgb, var(--mat-sys-primary) 12%, transparent); }
+    .glog-abs button { border: 0; background: none; cursor: pointer; color: inherit; display: inline-flex; }
+    .histo { margin: -6px 0 12px; padding: 6px 10px 4px; border-radius: 8px; user-select: none; background: var(--mat-sys-surface-container-low); }
+    .histo-achse { justify-content: space-between; }
+    .histo-fehler { color: var(--mat-sys-error); }
+    .histo-balken { display: flex; align-items: flex-end; gap: 1px; height: 72px; cursor: crosshair; margin: 4px 0 2px; }
     .hb { flex: 1; height: 100%; display: flex; align-items: flex-end; min-width: 2px; }
-    .hb span { display: block; width: 100%; background: var(--mat-sys-primary); border-radius: 1px 1px 0 0; }
-    .hb:hover span, .hb.sel span { background: var(--mat-sys-tertiary, #7d5260); }
-    .hb.sel { background: color-mix(in srgb, var(--mat-sys-tertiary, #7d5260) 15%, transparent); }
-    .histo-achse { display: flex; justify-content: space-between; font-size: 11px; color: var(--mat-sys-on-surface-variant); margin-top: 2px; }
-    .histo-leer { font-size: 12px; padding: 8px 0; color: var(--mat-sys-on-surface-variant); }
+    .hb span { width: 100%; background: var(--mat-sys-primary); }
+    .hb:hover span, .hb.sel span { background: var(--mat-sys-tertiary); }
     :host-context(html.cs-theme-lcars) .hb span { background: #ffcc66; }
-    :host-context(html.cs-theme-lcars) .hb:hover span, :host-context(html.cs-theme-lcars) .hb.sel span { background: #ff9966; }
     .glog-fehler { display: flex; align-items: center; gap: 6px; margin: -10px 0 12px; padding: 4px 12px; font-size: 12.5px;
       color: var(--mat-sys-error, #b3261e); }
     .glog-fehler mat-icon { font-size: 16px; height: 16px; width: 16px; }
@@ -1488,8 +1503,6 @@ const SEVERITY_COLOR: Record<string, string> = {
     }
     .action-btn { font-size: 13px; color: var(--mat-sys-on-surface-variant); }
     .action-btn mat-icon { font-size: 16px; height: 16px; width: 16px; margin-right: 4px; }
-    .ignore-btn { color: var(--mat-sys-error) !important; opacity: 0.7; }
-    .ignore-btn:hover { opacity: 1; }
     .spacer { flex: 1; }
     .item-type-hint { font-size: 11px; color: var(--mat-sys-outline); padding-right: 8px; }
 
@@ -1616,7 +1629,6 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-lcars) mat-divider { --mat-divider-color: #2a1d0a; }
     :host-context(html.cs-theme-lcars) .card-actions { background: #0a0804; padding: 4px 10px; border-top: 1px solid #2a1d0a; }
     :host-context(html.cs-theme-lcars) .action-btn { color: #e8a060 !important; font-size: 12px; }
-    :host-context(html.cs-theme-lcars) .ignore-btn { color: #ff7766 !important; }
     :host-context(html.cs-theme-lcars) .item-type-hint { color: rgba(255,204,153,.3); font-size: 10px; }
     /* ── divider & empty ── */
     :host-context(html.cs-theme-lcars) .last-seen-divider { color: #ffcc66; font-family: 'Antonio','Eurostile',sans-serif; letter-spacing: .08em; text-transform: uppercase; font-size: 11px; }
@@ -1949,6 +1961,9 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   vsSel = signal(-1);
   menu = signal<{ x: number; y: number; fw: Feldwert; alterSek: number } | null>(null);
   topWerte = signal<any | null>(null);
+  readonly vordefiniert = VORDEFINIERT;
+  /** Filter, die die Historie nicht kennt (Kopfzeile X-Filter-Nicht-Anwendbar) — benannt statt still */
+  nichtAnwendbar = signal('');
   /** Nachrichtenhistogramm der aktiven Suche (GET /feed/histogramm) */
   histo = signal<any | null>(null);
   histoMax = computed(() => Math.max(1, ...((this.histo()?.balken ?? []).map((b: any) => b.anzahl))));
@@ -2166,9 +2181,11 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
           checkmk_min_age_minutes: p.feed_checkmk_min_age_minutes ?? 5,
           teams_channels: p.feed_teams_channels ?? [],
         };
-        const enabled: string[] = p.feed_sources_enabled ?? [];
+        // die gespeicherte Quellenauswahl galt den Rohmeldungen (E-Mail, Teams …) — „Ereignisse“ startet mit
+        // allen Quellen der Historie; nur Quellen, die es dort gibt, werden aus der Auswahl übernommen
+        const enabled: string[] = (p.feed_sources_enabled ?? []).filter((x: string) => allIds.includes(x));
         if (!this.routeSourceSet) {
-          this.activeFilter.set(enabled.length > 0 ? enabled : allIds);
+          this.activeFilter.set(enabled.length >= 3 ? [...new Set([...enabled, 'switch', 'firewall', 'ki'])] : allIds);
         }
         this.load(true);
       },
@@ -2417,8 +2434,10 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (this.routeQuery)        params['q']            = this.routeQuery;
     if (this.routeIndex)        params['index']        = this.routeIndex;
     if (this.highlightId)       params['highlight_id'] = this.highlightId;
-    this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params }).subscribe({
-      next: (data) => {
+    this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params, observe: 'response' }).subscribe({
+      next: (resp) => {
+        const data = resp.body ?? [];
+        this.nichtAnwendbar.set(resp.headers.get('X-Filter-Nicht-Anwendbar') ?? '');
         // Discard regular-feed responses that arrived after a text search became active.
         // loadMore() fires load(false) without a guard, so this races with runFeedSearch().
         if (this.searchActive()) {
@@ -2699,8 +2718,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (this.zeitVon()) { qp['von'] = this.zeitVon()!; qp['bis'] = this.zeitBis()!; }
     if (this.suchIndex) qp['index'] = this.suchIndex;
     this.router.navigate(['/feed'], { queryParams: qp });
-    const params: any = { q, ...this.zeitParams(), limit: 200 };
-    if (this.suchIndex) params.index = this.suchIndex;
+    const params: any = { q, ...this.zeitParams(), limit: 200, index: this.suchIndex || HISTORIE_INDEX };
     this.ladeHistogramm(q);
     this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params, observe: 'response' }).subscribe({
       next: r => {
@@ -2742,7 +2760,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     const nr = ++this.vsNr;
     this.vsTimer = setTimeout(() => {
       this.http.get<any>(`${environment.apiUrl}/feed/vorschlaege`, {
-        params: { q: eingabe, ...this.zeitParams() },
+        params: { q: eingabe, ...this.zeitParams(), index: this.suchIndex || HISTORIE_INDEX },
       }).subscribe({
         next: r => {
           if (nr !== this.vsNr) return;                 // veraltete Antwort
@@ -2822,6 +2840,24 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       () => this.snackBar.open('Wert kopiert', '', { duration: 1500 }));
   }
 
+  // ── Vordefinierte Filter (Historie) ──
+  vordefAktiv(term: string): boolean {
+    return this.vordefTeile(this.searchActive() ? this.activeSearchQuery() : this.searchQuery).includes(term);
+  }
+
+  private vordefTeile(q: string): string[] {
+    return (q || '').split(/\s+AND\s+/).map(t => t.trim()).filter(Boolean);
+  }
+
+  /** Term hinzu (mit AND) oder heraus — die Suche bleibt ein Text, die Chips spiegeln ihn nur */
+  vordefUmschalten(term: string) {
+    const basis = this.searchActive() ? this.activeSearchQuery() : (this.searchQuery || '');
+    const teile = this.vordefTeile(basis);
+    const neu = teile.includes(term) ? teile.filter(t => t !== term) : [...teile, term];
+    this.searchQuery = neu.join(' AND ');
+    if (this.searchQuery) this.runFeedSearch(); else this.clearFeedSearch();
+  }
+
   // ── Zeitraum + Histogramm (Graylog: AutoInterval, OnZoom setzt einen absoluten Zeitraum) ──
   /** Ein Zeitraum für Treffer, Top-Werte, Vorschläge und Histogramm */
   zeitParams(): Record<string, string | number> {
@@ -2865,8 +2901,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private ladeHistogramm(q: string) {
-    const params: any = { q, ...this.zeitParams() };
-    if (this.suchIndex) params.index = this.suchIndex;
+    const params: any = { q, ...this.zeitParams(), index: this.suchIndex || HISTORIE_INDEX };
     this.histo.set({ laedt: true, balken: [] });
     this.http.get<any>(`${environment.apiUrl}/feed/histogramm`, { params }).subscribe({
       next: r => this.histo.set(r),
@@ -2908,8 +2943,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     const q = this.searchActive() ? this.activeSearchQuery() : '';
     const bereich = this.zeitLabel();
     this.topWerte.set({ feld, q, bereich, laedt: true });
-    const params: any = { feld, q, ...this.zeitParams() };
-    if (this.suchIndex) params.index = this.suchIndex;
+    const params: any = { feld, q, ...this.zeitParams(), index: this.suchIndex || HISTORIE_INDEX };
     this.http.get<any>(`${environment.apiUrl}/feed/werte`, { params }).subscribe({
       next: r => this.topWerte.set({ ...r, q, bereich }),
       error: e => this.topWerte.set({ feld, q, bereich, fehler: e?.error?.detail ?? 'Top-Werte nicht verfügbar' }),

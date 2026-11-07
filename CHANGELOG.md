@@ -10,6 +10,71 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — "Ereignisse" shows only classified messages; predefined filters
+
+You decided (07.11.):
+- The feed shows only the history, with no unparsed messages.
+- The noise suppression goes; its data is kept.
+- Predefined filters can be clicked.
+
+### Changed
+
+- **"Ereignisse" reads the classified history (`cs-logs-*`) instead of the raw messages (`cs-feed-*`).**
+  - Every entry has relevance, verdict, criteria, hashtags and reasons. Its fields carry their real names
+    (`host`, `hashtags`, `relevanz`, `roh.*`), so right-click "add to search" hits exactly that field.
+  - The feed filters become a search over the history (`feed_index.historie_suche_aus_filtern`):
+
+    | Feed filter | History field |
+    |---|---|
+    | source chips | `quelle` |
+    | severity | `relevanz` (critical/high → 3, medium → 2, low → 1, info → 0) |
+    | host | `host` |
+    | location | `ort:` |
+    | criticality | `kritikalitaet:` |
+    | host group | `hg:` |
+
+  - The history knows no operating system and no VE. These filters are named under the search bar as "nicht
+    angewendet", not dropped silently.
+  - New source chips: Switch, Firewall, KI-Befunde. E-Mail, Teams and Coroot are not classified and no longer
+    appear in "Ereignisse". Raw messages remain under the "Rohmeldungen" tab.
+  - Direct links to a raw message (`?highlight=`) still pin it at the top.
+  - Searches, histogram, top values and suggestions run on the history by default. Saved searches with their
+    own index still search that index. In the history, suggestions know hashtag kinds: `ort:M` →
+    `hashtags:ort\:MUE\-0`.
+- **Predefined filters under the search bar**, each one a search term; a click adds it or removes it:
+
+  | Filter | Search term |
+  |---|---|
+  | Relevant | `relevanz:>=2` |
+  | Dringend | `relevanz:3` |
+  | KI-analysiert | `_exists_:ai_relevanz` |
+  | KI-Befunde | `quelle:ki` |
+  | Mit Incident | `hashtags:incident*` |
+  | Nur Regel | `herkunft:regel` |
+  | Vom Menschen | `herkunft:mensch` |
+
+- **Noise suppression on the way out.**
+  - The "Ignorieren" button and the "Ausblenden" switch are gone, so no new exclusion filters can be created.
+  - The 18 existing filters (10 system-wide) never apply to "Ereignisse".
+  - They still apply to raw messages (bridge counts, work list, topology, dashboard, sysadmin agent) until they
+    are moved into the rule set as rules. Without that step the agent would get the noise again at once.
+  - One switch `feed_index.AUSSCHLUSSFILTER_AKTIV` turns them off everywhere.
+- Evidence, live against `cs-logs-*` 07.11.:
+  - Feed from the history: 12 127 entries; the first is a KI finding with 18 fields.
+  - Predefined filters over 1 h, each with search = histogram = sum of bars: Relevant 583, Dringend 109,
+    KI-analysiert 98, KI-Befunde 19, Mit Incident 64.
+  - Tests: `test_feed_filter_werden_zur_suche_ueber_die_historie`, `test_historie_eintrag_hat_echte_feldnamen`,
+    `test_ausschlussfilter_abgeschaltet_liefern_nichts_ohne_db`.
+
+### Still missing
+
+- **Move the 18 exclusion filters into the rule set as rules**, then switch them off.
+- **A rule editor in the interface, as on a firewall**: objects, rule table, hits, test/active, commit with a
+  reason.
+- The feed's auto-refresh and unread counter still count raw messages.
+
+---
+
 ## 2026-11-07 — Feed search: message histogram over time, as in Graylog
 
 You asked (07.11.): the search should look like Graylog or the research tool, and the bars showing frequency ×

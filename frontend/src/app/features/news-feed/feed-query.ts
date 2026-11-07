@@ -68,8 +68,11 @@ const FELDNAME = /^[A-Za-z_][\w]*(\.[A-Za-z_][\w]*)*$/;
 export function felderVon(item: {
   source?: string; severity?: string; type?: string; status?: string;
   location_name?: string | null; location_city?: string | null; tags?: string[] | null;
-  metadata?: Record<string, any> | null;
+  metadata?: Record<string, any> | null; felder?: Feldwert[] | null;
 }): Feldwert[] {
+  // Historie (cs-logs-*): das Backend liefert die Felder unter ihren echten Namen (host, hashtags, relevanz,
+  // roh.* …) — „Zur Suche hinzufügen“ trifft genau dieses Feld (feed_index.als_feed_eintrag)
+  if (item.felder) return item.felder;
   const out: Feldwert[] = [];
   const add = (feld: string, wert: unknown) => {
     if (wert === null || wert === undefined || wert === '') return;
@@ -98,8 +101,9 @@ export function felderVon(item: {
 
 /** Der Host als Feldwert (nicht das zusammengesetzte Etikett der Karte): Wazuh trägt ihn in
  *  `metadata.agent`, die übrigen Quellen in `metadata.host`. */
-export function hostFeld(item: { source?: string; metadata?: Record<string, any> | null }): Feldwert | null {
+export function hostFeld(item: { source?: string; metadata?: Record<string, any> | null; korpus?: string }): Feldwert | null {
   const m = item.metadata ?? {};
+  if (item.korpus === 'historie') return m['host'] ? { feld: 'host', wert: String(m['host']) } : null;
   if (item.source === 'wazuh' && m['agent']) return { feld: 'metadata.agent', wert: String(m['agent']) };
   if (m['host']) return { feld: 'metadata.host', wert: String(m['host']) };
   return null;

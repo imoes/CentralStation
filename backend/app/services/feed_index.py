@@ -396,7 +396,17 @@ def _apply_metadata_filters(
     return result
 
 
+#: Rauschunterdrückung über Ausschluss-Suchen (FeedSearch.is_exclusion). Nutzer 07.11.2026: sie fällt weg, Rauschen
+#: entscheidet das Regelwerk (N4/N6). Sie wirkt nur auf ROHmeldungen (Bridge-Zähler, Arbeitsliste, Topologie,
+#: Dashboard, Sysadmin-Agent) — „Ereignisse“ zeigt die Historie und wendet sie nie an. Abgeschaltet (False) wird
+#: erst, wenn die 18 Filter als Regeln im Regelwerk stehen; sonst bekäme der Agent das Rauschen sofort wieder.
+#: Die Einträge bleiben in der DB (Rückweg); dieser eine Schalter gilt für alle Verwender gleich.
+AUSSCHLUSSFILTER_AKTIV = True
+
+
 async def get_exclusion_matchers(db: Any) -> list[dict]:
+    if not AUSSCHLUSSFILTER_AKTIV:
+        return []
     """Build safe text matchers from active exclusion FeedSearches.
 
     Used by code paths that filter in Python (e.g. the AI agent's collect_data,
@@ -459,6 +469,8 @@ def matches_exclusion(text: str, matchers: list[dict]) -> bool:
 
 
 async def get_exclusion_must_not_clauses(db: Any, user_id: str | None = None) -> list[dict]:
+    if not AUSSCHLUSSFILTER_AKTIV:
+        return []
     """Return OpenSearch must_not clauses for active exclusion FeedSearches.
 
     Scope: system exclusions (user_id IS NULL, set by admins — apply to everyone)
@@ -815,6 +827,99 @@ class FeedQueryFehler(ValueError):
 
 
 @dataclass(frozen=True)
+class Korpus:
+    """Was eine Feed-Suche durchsucht: Rohmeldungen (cs-feed-*) oder die eingestufte Historie (cs-logs-*).
+    Eine Abfrage-Definition, je Korpus andere Feldnamen — die Sprache (Lucene) bleibt dieselbe."""
+    name: str
+    zeit: str
+    felder: tuple[str, ...]
+    quelle: str
+
+
+ROH = Korpus("roh", "created_at", ("title^2", "metadata.host^3", "metadata.agent^2", "tags"), "source")
+HISTORIE = Korpus("historie", "zeit", ("text", "host^3", "hashtags^2", "gruende"), "quelle")
+HISTORIE_INDEX = "cs-logs-*"
+
+
+def korpus_von(index_pattern: str | None) -> Korpus:
+    return HISTORIE if (index_pattern or "").startswith("cs-logs") else ROH
+
+
+#: Relevanz der Historie → Schwere der Feed-Karte (Farbe); die Relevanz steht zusätzlich als Feld da
+SCHWERE_AUS_RELEVANZ = {3: "critical", 2: "medium", 1: "low", 0: "info"}
+_ROH_FELD = re.compile(r"^[A-Za-z_][\w]*$")
+
+
+#: Quellen der Historie (Feed-Chips); E-Mail, Teams und Coroot werden nicht eingestuft
+HISTORIE_QUELLEN = ("checkmk", "graylog", "wazuh", "switch", "firewall", "ki", "konsole")
+RELEVANZ_AUS_SCHWERE = {"critical": 3, "high": 3, "medium": 2, "low": 1, "info": 0}
+
+
+def _liste(v) -> list[str]:
+    return [str(x) for x in (v if isinstance(v, (list, tuple)) else [v]) if x] if v else []
+
+
+def historie_suche_aus_filtern(quellen=None, schwere=None, host=None, orte=None, kritikalitaeten=None,
+                               hostgruppen=None, betriebssysteme=None, ve=None) -> tuple[str, list[str]]:
+    """Die Filter des Feeds (Chips, Filterleiste, Links von Bridge/Dashboard) als Suche über die Historie.
+    Rückgabe (Lucene-Suche, nicht anwendbare Filter) — was die Historie nicht kennt, wird benannt. Rein."""
+    teile: list[str] = []
+    nicht: list[str] = []
+    if quellen is not None:
+        qs = [q for q in _liste(quellen) if q in HISTORIE_QUELLEN]
+        fremd = [q for q in _liste(quellen) if q not in HISTORIE_QUELLEN]
+        if fremd:
+            nicht.append("Quelle " + "/".join(fremd) + " (wird nicht eingestuft)")
+        teile.append("quelle:(" + " OR ".join(qs) + ")" if qs else 'quelle:"—"')
+    if schwere:
+        if schwere in RELEVANZ_AUS_SCHWERE:
+            teile.append(f"relevanz:{RELEVANZ_AUS_SCHWERE[schwere]}")
+        else:
+            nicht.append(f"Schwere {schwere}")
+    if host:
+        teile.append(f"host:*{escape_wert(str(host).strip().lower())}*")
+    for art, werte in (("ort", orte), ("kritikalitaet", kritikalitaeten), ("hg", hostgruppen)):
+        w = _liste(werte)
+        if w:
+            teile.append("hashtags:(" + " OR ".join(escape_wert(f"{art}:{x}") for x in w) + ")")
+    if _liste(betriebssysteme):
+        nicht.append("Betriebssystem")
+    if _liste(ve):
+        nicht.append("Virtualisierung (VE)")
+    return " AND ".join(teile), nicht
+
+
+def als_feed_eintrag(hit: dict) -> dict:
+    """Ein Dokument der Historie als Feed-Eintrag: eingestuft (Relevanz, Urteil, Kriterien, Hashtags) und mit
+    seinen Feldern unter ihren echten Namen (`felder`) — „Zur Suche hinzufügen“ trifft genau dieses Feld."""
+    src = hit.get("_source") or {}
+    prov = src.get("ai_provenance") or {}
+    text = src.get("text") or ""
+    titel = prov.get("titel") or text.split("\n", 1)[0][:200]
+    felder: list[dict] = []
+    for k in ("quelle", "host", "relevanz", "urteil", "herkunft", "ai_relevanz", "level", "schluessel"):
+        if src.get(k) not in (None, ""):
+            felder.append({"feld": k, "wert": src[k]})
+    for k in ("kriterien", "hashtags"):
+        felder += [{"feld": k, "wert": v} for v in src.get(k) or []]
+    for k, v in sorted((src.get("roh") or {}).items()):
+        if _ROH_FELD.match(k) and isinstance(v, (str, int, float, bool)) and v != "":
+            felder.append({"feld": f"roh.{k}", "wert": v})
+    rel = src.get("relevanz")
+    return {
+        "id": hit["_id"], "external_id": hit["_id"], "korpus": HISTORIE.name, "index": hit.get("_index"),
+        "source": src.get("quelle"), "type": "log_watch", "status": "new",
+        "severity": SCHWERE_AUS_RELEVANZ.get(rel, "info"),
+        "title": titel, "body": src.get("ai_befund") or text,
+        "created_at": src.get("zeit"), "tags": src.get("hashtags") or [],
+        "metadata": {"host": src.get("host"), "relevanz": rel, "urteil": src.get("urteil"),
+                     "herkunft": src.get("herkunft"), "kriterien": src.get("kriterien") or [],
+                     "gruende": src.get("gruende") or []},
+        "felder": felder,
+    }
+
+
+@dataclass(frozen=True)
 class Zeitraum:
     """Zeitraum einer Feed-Suche wie in Graylog: relativ (letzte N Sekunden) ODER absolut (von–bis, z. B. nach
     einem Zoom im Histogramm — Graylogs OnZoom setzt ebenfalls einen absoluten Zeitraum, nicht den Suchtext).
@@ -835,7 +940,7 @@ class Zeitraum:
             return jetzt - timedelta(seconds=self.sekunden), jetzt
         return None, None
 
-    def filter(self, jetzt: datetime) -> dict | None:
+    def filter(self, jetzt: datetime, feld: str = "created_at") -> dict | None:
         von, bis = self.grenzen(jetzt)
         if von is None and bis is None:
             return None
@@ -844,7 +949,7 @@ class Zeitraum:
             r["gte"] = von.isoformat()
         if self.von or self.bis:          # absolut: halboffen [von, bis) — ein Balken zählt nur einmal
             r["lt"] = bis.isoformat()
-        return {"range": {"created_at": r}}
+        return {"range": {feld: r}}
 
 
 #: Graylog 5.2 AutoInterval.boundaries (Skalierung 1.0), 1:1: (Spanne bis einschließlich, Intervall,
@@ -884,62 +989,63 @@ async def histogramm(index_pattern: str, query_string: str, zeit: "Zeitraum | in
     from opensearchpy.exceptions import RequestError
     zr = Zeitraum.aus(zeit)
     jetzt = datetime.now(timezone.utc)
-    query = await _abfrage(query_string, user_id, None, zr, db)
+    k = korpus_von(index_pattern)
+    query = await _abfrage(query_string, user_id, None, zr, db, k)
     os_client = get_opensearch()
     von, bis = zr.grenzen(jetzt)
     try:
         if von is None:
             r = await os_client.search(index=index_pattern, ignore_unavailable=True, body={
-                "size": 0, "query": query, "aggs": {"a": {"min": {"field": "created_at"}},
-                                                    "b": {"max": {"field": "created_at"}}}})
+                "size": 0, "query": query, "aggs": {"a": {"min": {"field": k.zeit}},
+                                                    "b": {"max": {"field": k.zeit}}}})
             _pruefe_shards(r)
             a, b = r["aggregations"]["a"].get("value"), r["aggregations"]["b"].get("value")
             if a is None:
                 return {"gesamt": 0, "balken": [], "intervall_s": None, "von": None, "bis": None,
-                        "zeitfeld": "created_at"}
+                        "zeitfeld": k.zeit}
             von = datetime.fromtimestamp(a / 1000, timezone.utc)
             bis = datetime.fromtimestamp(b / 1000, timezone.utc) + timedelta(milliseconds=1)
         iv_s, angabe = intervall_fuer((bis - von).total_seconds())
         resp = await os_client.search(index=index_pattern, ignore_unavailable=True, body={
             "size": 0, "track_total_hits": True, "query": query,
             "aggs": {"zeit": {"date_histogram": {
-                "field": "created_at", **angabe, "min_doc_count": 0,
+                "field": k.zeit, **angabe, "min_doc_count": 0,
                 "extended_bounds": {"min": int(von.timestamp() * 1000), "max": int(bis.timestamp() * 1000) - 1}}}}})
     except RequestError as e:
         raise FeedQueryFehler(_grund(e)) from e
     _pruefe_shards(resp)
     return {"gesamt": resp["hits"]["total"]["value"], "intervall_s": iv_s,
-            "von": von.isoformat(), "bis": bis.isoformat(), "zeitfeld": "created_at",
+            "von": von.isoformat(), "bis": bis.isoformat(), "zeitfeld": k.zeit,
             "balken": [{"zeit": datetime.fromtimestamp(x["key"] / 1000, timezone.utc).isoformat(),
                         "anzahl": x["doc_count"]} for x in resp["aggregations"]["zeit"]["buckets"]]}
 
 
 async def _abfrage(query_string: str, user_id: str | None = None, host_scope: list[str] | None = None,
-                   since_seconds: "Zeitraum | int | None" = None, db: Any = None) -> dict:
+                   since_seconds: "Zeitraum | int | None" = None, db: Any = None, korpus: Korpus = ROH) -> dict:
     """Die Abfrage einer Feed-Suche (Lucene `query_string`, Zeitraum, Sichtbarkeit, Ausschlüsse) —
     EINE Definition für Treffer, Trefferzahl und Top-Werte."""
     if query_string:
         query: dict = {
             "query_string": {
-                "query": _normalise_query_string(query_string),
+                "query": _normalise_query_string(query_string) if korpus is ROH else query_string,
                 "default_operator": "AND",
                 # Restrict to key fields so bare hostname searches (e.g. "cue0175") don't
                 # match unrelated log bodies that merely mention the host in passing.
                 # Users can still target body explicitly with body:keyword syntax.
-                "fields": ["title^2", "metadata.host^3", "metadata.agent^2", "tags"],
+                "fields": list(korpus.felder),
             }
         }
     else:
         query = {"match_all": {}}
 
     filter_clauses: list[dict] = []
-    zeitfilter = Zeitraum.aus(since_seconds).filter(datetime.now(timezone.utc))
+    zeitfilter = Zeitraum.aus(since_seconds).filter(datetime.now(timezone.utc), korpus.zeit)
     if zeitfilter:
         filter_clauses.append(zeitfilter)
     must_not: list[dict] = []
-    if db is not None:
+    if db is not None and korpus is ROH:     # Historie: Rauschen hat das Regelwerk schon entschieden
         must_not.extend(await get_exclusion_must_not_clauses(db, user_id))
-    if user_id:
+    if user_id and korpus is ROH:            # Historie: nur Systemquellen, keine persönlichen
         filter_clauses.append({
             "bool": {
                 "should": [
@@ -1038,15 +1144,18 @@ async def suche_seite(index_pattern: str, query_string: str, size: int = 50, fro
     """Feed-Suche wie in Graylog: (Treffer, Gesamtzahl). Eine unlesbare Suche ist FeedQueryFehler
     mit Grund — sie sieht nie aus wie „0 Treffer“."""
     from opensearchpy.exceptions import RequestError
-    body = {"query": await _abfrage(query_string, user_id, None, since_seconds, db),
-            "sort": [{"created_at": {"order": "desc"}}], "from": from_, "size": size,
+    k = korpus_von(index_pattern)
+    body = {"query": await _abfrage(query_string, user_id, None, since_seconds, db, k),
+            "sort": [{k.zeit: {"order": "desc"}}], "from": from_, "size": size,
             "track_total_hits": True}
     try:
         resp = await get_opensearch().search(index=index_pattern, body=body, ignore_unavailable=True)
     except RequestError as e:
         raise FeedQueryFehler(_grund(e)) from e
     _pruefe_shards(resp)
-    return [h["_source"] for h in resp["hits"]["hits"]], resp["hits"]["total"]["value"]
+    hits = resp["hits"]["hits"]
+    eintraege = [als_feed_eintrag(h) for h in hits] if k is HISTORIE else [h["_source"] for h in hits]
+    return eintraege, resp["hits"]["total"]["value"]
 
 
 #: Feldnamen, die eine Top-Werte-Abfrage annimmt (kein Skript, keine Wildcards)
@@ -1083,7 +1192,7 @@ async def top_werte(index_pattern: str, query_string: str, feld: str, since_seco
     os_client = get_opensearch()
     agg_feld = await _zaehlfeld(os_client, index_pattern, feld)
     body = {"size": 0, "track_total_hits": True,
-            "query": await _abfrage(query_string, user_id, None, since_seconds, db),
+            "query": await _abfrage(query_string, user_id, None, since_seconds, db, korpus_von(index_pattern)),
             "aggs": {"werte": {"terms": {"field": agg_feld, "size": max(1, min(size, 50))}},
                      "fehlend": {"missing": {"field": agg_feld}}}}
     try:
@@ -1465,6 +1574,10 @@ VORSCHLAG_FELDER = ("metadata.host", "metadata.agent", "metadata.container_name"
                     "metadata.application", "metadata.hostgroups", "tags", "source", "severity", "location_name")
 KERN_FELDER = ("source", "severity", "type", "status", "title", "body", "tags", "location_name",
                "location_city", "ai_insight", "created_at")
+#: dieselbe Rolle für die Historie: ihre Felder sind keyword (hashtags trägt host:, thema:, muster: …)
+VORSCHLAG_FELDER_HISTORIE = ("hashtags", "host", "quelle", "kriterien", "urteil", "herkunft")
+HISTORIE_FELDNAMEN = ("quelle", "host", "relevanz", "urteil", "herkunft", "kriterien", "hashtags", "text",
+                      "gruende", "ai_relevanz", "ai_hashtags", "ai_befund", "level", "schluessel", "zeit", "roh")
 VORSCHLAG_MAX = 9
 _feldnamen_cache: dict[str, tuple[float, list[str]]] = {}
 
@@ -1529,14 +1642,19 @@ async def vorschlaege(eingabe: str, since_seconds: int | None = None, user_id: s
     if not wort or wort.startswith(("-", "!", "(", '"')) or wort.upper() in ("AND", "OR", "NOT"):
         return leer
     os_client = get_opensearch()
+    k = korpus_von(index_pattern)
     feld, praefix = (wort.split(":", 1) if ":" in wort else (None, wort))
     out: list[dict] = []
     if feld is None:
+        namen = HISTORIE_FELDNAMEN if k is HISTORIE else await _feldnamen(index_pattern)
         out += [{"q": f"{basis} {n}:".strip(), "art": "feld", "feld": n, "anzahl": None}
-                for n in await _feldnamen(index_pattern) if n.lower().startswith(praefix.lower())][:3]
+                for n in namen if n.lower().startswith(praefix.lower())][:3]
         agg_felder = []
-        for f in VORSCHLAG_FELDER:
+        for f in (VORSCHLAG_FELDER_HISTORIE if k is HISTORIE else VORSCHLAG_FELDER):
             agg_felder.append(f"{f}.keyword" if f.startswith("metadata.") else f)
+    elif k is HISTORIE and feld not in HISTORIE_FELDNAMEN and re.fullmatch(r"[a-z][a-z0-9-]{1,30}", feld):
+        # Historie: `thema:` ist kein Feld, sondern eine Hashtag-Art → Werte aus `hashtags`, Suche hashtags:thema\:…
+        agg_felder = ["hashtags"]
     else:
         if not _FELDNAME.match(feld) or feld == "_exists_":
             return leer
@@ -1544,12 +1662,20 @@ async def vorschlaege(eingabe: str, since_seconds: int | None = None, user_id: s
             agg_felder = [await _zaehlfeld(os_client, index_pattern, feld)]
         except FeedQueryFehler as e:
             return {**leer, "fehler": str(e)}
+
+    def _inc(af: str) -> str:
+        """Vorschlags-Muster je Feld: Hashtags der Historie tragen die Art vorn (thema:oom)."""
+        if k is HISTORIE and af == "hashtags":
+            if feld is not None and feld not in HISTORIE_FELDNAMEN:
+                return _regex_praefix(f"{feld}:{praefix}")
+            return "([^:]*:)?" + (_regex_praefix(praefix) if praefix else ".*")
+        return _regex_praefix(praefix) if praefix else ".*"
+
     if praefix or feld is not None:
-        inc = _regex_praefix(praefix) if praefix else ".*"
-        body = {"size": 0, "query": await _abfrage(_ohne_operator(basis), user_id, None, since_seconds, db),
+        body = {"size": 0, "query": await _abfrage(_ohne_operator(basis), user_id, None, since_seconds, db, k),
                 # execution_hint map: mit regex-include über globale Ordinals scheiterte `source` auf
                 # cs-feed-checkmk/-coroot mit index_out_of_bounds_exception (gemessen 07.11., Teilfehler)
-                "aggs": {f"f{i}": {"terms": {"field": af, "size": VORSCHLAG_MAX, "include": inc,
+                "aggs": {f"f{i}": {"terms": {"field": af, "size": VORSCHLAG_MAX, "include": _inc(af),
                                              "execution_hint": "map"}}
                          for i, af in enumerate(agg_felder)}}
         try:
@@ -1577,7 +1703,7 @@ async def vorschlaege(eingabe: str, since_seconds: int | None = None, user_id: s
         for v in werte:
             nd += [{"index": index_pattern, "ignore_unavailable": True},
                    {"size": 0, "track_total_hits": True,
-                    "query": await _abfrage(v["q"], user_id, None, since_seconds, db)}]
+                    "query": await _abfrage(v["q"], user_id, None, since_seconds, db, k)}]
         m = await os_client.msearch(body=nd)
         for v, resp in zip(werte, m.get("responses") or []):
             v["anzahl"] = ((resp.get("hits") or {}).get("total") or {}).get("value") if "error" not in resp else None

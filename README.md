@@ -569,6 +569,12 @@ The search bar on `/feed` works like Graylog 5.2's search (`feed-query.ts`, port
   tool: up to 9 complete queries. After `feld:` the field's values in the current result; after a word,
   matching hosts, containers, services, tags and field names. The number is the hit count of that exact
   query (one `_msearch`). An unreadable input shows its reason under the bar.
+- **Ereignisse = classified history.** The feed reads `cs-logs-*`, so each entry has relevance, verdict,
+  criteria, hashtags and its fields under their real names. Raw messages stay under "Rohmeldungen". The feed
+  filters (sources, severity, host, location, criticality, host group) become a search over the history;
+  filters the history does not know are named. Predefined filters under the search bar: Relevant, Dringend,
+  KI-analysiert, KI-Befunde, Mit Incident, Nur Regel, Vom Menschen. Each is a search term; a click adds or
+  removes it.
 - **Message histogram** (`GET /api/feed/histogramm?q=&time_range_seconds=` or `&von=&bis=`), as in
   Graylog: the hits of the same search per interval; empty intervals are 0. The interval follows Graylog's
   `AutoInterval` table (15 min → 30 s, 1 day → 30 min, 30 days → 1 day). Clicking a bar, or dragging across

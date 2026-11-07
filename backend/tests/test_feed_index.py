@@ -370,7 +370,7 @@ class TestSearch:
         body = client.search.call_args[1]["body"]
         assert body["sort"] == [{"created_at": {"order": "desc"}}]
 
-    async def test_db_exclusion_searches_go_into_must_not(self):
+    async def test_db_exclusion_searches_go_into_must_not(self, ausschluss_an):
         """Exclusion FeedSearches loaded from DB must appear as must_not clauses."""
         client = _os_client_stub()
         db = _db_stub([_feed_search("body:DOT1X*"), _feed_search("body:\"cue.zipline.audit\"")])
@@ -486,6 +486,23 @@ class TestSearchByQuery:
         assert body["sort"] == [{"created_at": {"order": "desc"}}]
 
 
+@pytest.fixture
+def ausschluss_an(monkeypatch):
+    """Die Ausschlussfilter sind seit 07.11.2026 abgeschaltet (Regelwerk entscheidet Rauschen); diese Tests
+    prüfen ihr Verhalten im eingeschalteten Zustand (Rückweg)."""
+    from app.services import feed_index
+    monkeypatch.setattr(feed_index, "AUSSCHLUSSFILTER_AKTIV", True)
+
+
+async def test_ausschlussfilter_abgeschaltet_liefern_nichts_ohne_db(monkeypatch):
+    from app.services import feed_index
+    monkeypatch.setattr(feed_index, "AUSSCHLUSSFILTER_AKTIV", False)
+    db = _db_stub([_feed_search("body:DOT1X*")])
+    assert await get_exclusion_must_not_clauses(db) == []
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.usefixtures("ausschluss_an")
 class TestGetExclusionMustNotClauses:
     async def test_no_exclusion_searches_returns_empty(self):
         db = _db_stub([])

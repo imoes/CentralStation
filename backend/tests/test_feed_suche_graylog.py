@@ -175,3 +175,25 @@ def test_zeitraum_relativ_und_absolut_halboffen():
     assert Zeitraum(von=v, bis=b).filter(jetzt) == {"range": {"created_at": {"gte": v.isoformat(), "lt": b.isoformat()}}}
     assert Zeitraum(von=v, bis=b).grenzen(jetzt) == (v, b)
     assert Zeitraum.aus(Zeitraum(von=v)) == Zeitraum(von=v)
+
+
+def test_feed_filter_werden_zur_suche_ueber_die_historie():
+    from app.services.feed_index import historie_suche_aus_filtern as f
+    q, nicht = f(["checkmk", "ki", "teams"], "high", "srv-web01", ["MUE-0"], "prod", ["cue"], ["linux"], None)
+    assert q == ('quelle:(checkmk OR ki) AND relevanz:3 AND host:*srv\\-web01* AND hashtags:(ort\\:MUE\\-0) '
+                 'AND hashtags:(kritikalitaet\\:prod) AND hashtags:(hg\\:cue)')
+    assert any("teams" in n for n in nicht) and "Betriebssystem" in nicht
+    assert f(["teams"])[0] == 'quelle:"—"'                    # nur Fremde → nichts, benannt
+    assert f() == ("", [])
+
+
+def test_historie_eintrag_hat_echte_feldnamen():
+    from app.services.feed_index import als_feed_eintrag
+    e = als_feed_eintrag({"_id": "graylog:x", "_index": "cs-logs-2026.11.07", "_source": {
+        "zeit": "2026-11-07T14:00:00Z", "quelle": "graylog", "host": "a.example.com", "relevanz": 3,
+        "urteil": "relevant", "herkunft": "regel", "kriterien": ["R5"], "hashtags": ["thema:oom", "host:a.example.com"],
+        "text": "kernel: Out of memory\nmehr", "roh": {"level": 3, "facility": "kern", "x.y": 1, "leer": ""}}})
+    assert e["korpus"] == "historie" and e["severity"] == "critical" and e["title"] == "kernel: Out of memory"
+    felder = {(x["feld"], x["wert"]) for x in e["felder"]}
+    assert {("host", "a.example.com"), ("hashtags", "thema:oom"), ("kriterien", "R5"), ("roh.level", 3)} <= felder
+    assert not any(x["feld"] in ("roh.x.y", "roh.leer") for x in e["felder"])

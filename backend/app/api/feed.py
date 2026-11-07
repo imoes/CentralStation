@@ -182,6 +182,8 @@ async def get_feed(
     von: str | None = Query(None, description="Absoluter Zeitraum (ISO 8601), schlägt time_range_seconds"),
     bis: str | None = Query(None, description="Absoluter Zeitraum, Ende exklusiv"),
     highlight_id: str | None = Query(None, description="Fetch this item by ID and pin it at the top"),
+    korpus: str = Query("historie", pattern="^(historie|roh)$",
+                        description="historie = nur eingestufte Nachrichten (cs-logs-*); roh = Rohmeldungen"),
 ):
     """Return unified news feed from OpenSearch, sorted by created_at desc."""
     from app.services import feed_index
@@ -253,6 +255,27 @@ async def get_feed(
     effective_ve          = ve          or (None if pref_override else _pref_list(prefs.checkmk_ve)          if prefs else None)
     effective_criticality = criticality or (None if pref_override else _pref_list(prefs.checkmk_criticality) if prefs else None)
     effective_hostgroup   = [v.strip() for v in hostgroup.split(",") if v.strip()] if hostgroup else None
+
+    if korpus == "historie":
+        # Nutzer 07.11.2026: „Ereignisse“ zeigt nur eingestufte Nachrichten (Relevanz, Hashtags, Urteil); die
+        # Filter des Feeds werden zur Suche über die Historie, nicht anwendbare kommen als Kopfzeile zurück
+        q_hist, nicht = feed_index.historie_suche_aus_filtern(
+            sources.split(",") if sources else None, severity, host, effective_location,
+            effective_criticality, effective_hostgroup, effective_os, effective_ve)
+        try:
+            items, gesamt = await feed_index.suche_seite(feed_index.HISTORIE_INDEX, q_hist, from_=offset,
+                                                         size=limit)
+        except feed_index.FeedQueryFehler as e:
+            raise HTTPException(400, f"Suche nicht lesbar: {e}")
+        response.headers["X-Total-Count"] = str(gesamt)
+        response.headers["X-Feed-Suche"] = q_hist[:1000]
+        if nicht:
+            response.headers["X-Filter-Nicht-Anwendbar"] = "; ".join(nicht)[:500]
+        if highlight_id and not any(i.get("id") == highlight_id for i in items):
+            pinned = await feed_index.get_by_id(highlight_id)       # Direktlink auf eine Rohmeldung
+            if pinned:
+                items = [pinned] + list(items)
+        return items
 
     items = await feed_index.search(
         sources=active,
