@@ -10,6 +10,59 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Graylog: the filebeat rollout replayed weeks of rotated logs; stopped at the source, copies deleted
+
+### Fixed
+
+- **Filebeat no longer re-reads the rotated CUE logs `/home/*/LogFile.DDMMYYYY`.**
+  - What happened:
+    - The F6 rollout of `img_filebeat` on 07.11. made cue0111/0112/0148/0149/0213/0214 read every rotated
+      `LogFile.DDMMYYYY` again.
+    - Volume of these hosts: about 11.2 million messages between 14:55 and 15:05 UTC, against about 13,000 per
+      10 min afterwards (`glcnt.py`, absolute UTC windows).
+    - Each later filebeat restart replayed the files of 06.11. and 07.11. again: 16:18–16:37 UTC.
+  - Cause:
+    - The role's comment called the dated files "active daily logs", so they were not excluded.
+    - On cue0110–0214 every `LogFile.DDMMYYYY` has the modification time 04:00 of the date in its name, and the
+      file being written is `LogFile` (`ls -la`, 07.11. 17:19 CET). So the dated files are closed archives.
+  - Fix in the role on ansible03 (rolled out to cue0110–0114, 0148, 0149, 0213, 0214; runs `20261107-171621-ae0e3`
+    and `20261107-173807-a6917`, 9/9 changed, no failures):
+    - `5de3309`: the homelog input excludes `LogFile\.\d{8}$`, and the comment is corrected.
+    - `4c96b14`: every filebeat input has `ignore_older: 48h`, so a fresh install does not read files that were
+      untouched for longer than that. This also covers `folder_afp_picture.log`, which sent 464,000 lines in
+      10 minutes.
+  - Verified: 0 messages from a dated file between 16:37 and 16:41 UTC; `/home/ngrc/LogFile` and
+    `/home/ngio/LogFile` keep arriving.
+- **A second safeguard in Graylog: pipeline `[proc]drop_filebeat_history`.**
+  - It holds the rule `drop_filebeat_rotated_history`, which drops `^/home/[^/]+/LogFile\.\d{8}$`.
+  - It is attached to the streams "Linux Syslog INFO" and "Linux Service Errors".
+  - The rule first sat in `[proc]normalization` and never matched. That pipeline hangs on the Default stream,
+    and these streams take their messages out of Default before the pipelines run. The simulator against the
+    test stream could not show that.
+  - Simulator against both real streams with real messages:
+    - `LogFile.07112026` and `LogFile.06112026`: dropped in both streams.
+    - `LogFile` and `/home/ngio/LogFile`: kept in both streams.
+- **The replayed copies from 07.11. are deleted.**
+  - `_delete_by_query` on `linux_info_*` and `linux_errors_*` for `log_file_path` = `/home/*/LogFile.<8 digits>`
+    with a timestamp from 07.11. 00:00 onwards.
+  - Counted beforehand in OpenSearch: 6,500,907 + 5,512,439 = 12,013,346 documents, the same numbers as the
+    Graylog search.
+  - Result 16:54 UTC:
+    - Both tasks deleted 6,500,907 and 5,512,439 documents, with 0 version conflicts and 0 failures.
+    - Recount after `_refresh`: 0 left.
+    - The current `/home/ngrc/LogFile` and `/home/ngio/LogFile` from 07.11. are untouched: 5,035,922 documents.
+    - Cluster `green`.
+
+### Still missing
+
+- **Older copies are not deleted.** `linux_errors_*` still holds 17,567,729 messages from dated `LogFile`s from
+  before 07.11. (Graylog count 01.10.–07.11.). It is not checked whether these are copies too.
+- **Filebeat re-reads open files on every restart.** At 16:39 UTC the restart sent about 13,000 lines of the
+  current `LogFile` a second time. The cause is not known; the registry under `/var/lib/filebeat` exists.
+- **cue0224 is not covered.** It sent 497,548 replayed lines but is not in the ansible03 inventory, so its filebeat
+  configuration is unchanged.
+- **ansible01 does not have these two role changes yet.**
+
 ## 2026-11-07 — Lost incident mails are sent later; rules for new tag kinds; first uses observed
 
 ### Fixed
