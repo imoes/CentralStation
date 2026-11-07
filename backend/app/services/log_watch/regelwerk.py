@@ -164,7 +164,10 @@ STANDARD_INCIDENT = (
     # error_clusters/incident.process_alerts: ≥ 2 kritische/hohe Alerts oder ≥ 2 Quellen auf einem Host in
     # 30 min — hier ≥ 2 dringende Nachrichten (deckt beides; gemessen 07.11.: mit „2 Quellen“ 16 nur alt).
     # Unterschied mit Absicht: nur, was das Regelwerk relevant nennt (kein Testhost, kein Rauschen)
-    ("I-HOST", "R1", "Host mit mehreren dringenden Meldungen", "relevanz>=3",
+    # Meldungen sich ausbreitender Muster zählen nicht: ein Ausbruch über viele Hosts ist EIN Incident (I-AUSBRUCH),
+    # nicht einer je Host — gemessen 07.11. 13:39: ein Ansible-Rollout (filebeat, 139 Hosts) ergab 139 Kandidaten
+    # (Definition v9, wie CROSS_KINDS im alten Weg)
+    ("I-HOST", "R1", "Host mit mehreren dringenden Meldungen", "relevanz>=3 !signal:ausbreitung",
      "host", 30, {"nachrichten": 2}, "host"),
 )
 
