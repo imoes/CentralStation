@@ -10,6 +10,85 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Graylog: fields checked stream by stream, wrong fields fixed, missing fields added
+
+You asked (2026-11-07): go through the messages of every Graylog stream, check that the existing fields
+are parsed correctly, and add the fields that are still missing ("alles ist ein Objekt"). These changes
+are in Graylog itself (pipeline rules, extractors, one stream), not in CentralStation code. The log watch
+field catalog and the AI see the new fields with no code change.
+
+Method: a sample of 2 671 messages from 37 streams, plus up to 200 per format. Before going live, every
+rule passed Graylog's own syntax check (`rule/parse`). It was then run in Graylog's simulator against real
+messages on a paused test stream with no rules, so it had no effect on production. The check confirmed
+that every extracted value appears word for word in the message. Every change saved the previous state
+before writing.
+
+### Fixed
+
+| | Before | After (live) |
+|---|---|---|
+| Container lines with `ERROR` in the text | `level 6` (info): Docker GELF sets the level from stdout/stderr | `level 3`, `log_level=error`: the level is read from the text (`level_from_text_container`) |
+| Container lines starting with "F" (e.g. "Fetching file") | `level 0` (emergency), 186 in 24 h. The first character was read as a Go prefix | The Go prefix is only used for real klog lines |
+| Palo Alto `gim_event_type` | `palo_threat` on **every** traffic log, about 1.95 M/h; `palo_traffic` 0. Both rules had the same condition | `palo_traffic` / `palo_threat` by log type |
+| Squid `Peer_Status` / `Peer_Host` / `epoch_time` | `-` / `HIER_DIRECT/host` / `+0100`. The grok pattern was missing the user column | `HIER_DIRECT` / host / gone; `user_name` and `Content_Type` added |
+| `gl2_processing_error` | about 160 in 24 h: a JSON extractor ran on `SolrQuery: {q=…}`, and `list_get(-2)` failed on the DNS root `.` | 0 |
+| Cisco CUBE `source` | `History-Info:`, `21114624:` … | sender IP; the old value is kept in `source_parse_error` |
+| Netapp `source` / `netapp_hostname` | `[netapp13-n04:…]:` / `[netapp30-01`; `netapp_source` cut to 11 characters | `netapp30-01`, plus `netapp_event`, `netapp_severity`, `netapp_vol`, `netapp_run_time` |
+| Stream "Linux Service Errors" | 7.6 % of it was `info`, stored a second time in "Linux Syslog INFO" | `hyde_score > 0` **and** `log_level` not info/notice/debug |
+
+### What is new (fields that were only free text before)
+
+- **Unifi:** CEF fields (`unifi_*`, `source_ip`, `source_mac`). Firewall lines get `rule_name`,
+  `rule_description`, `source_ip`/`destination_ip`, ports, interfaces and `network_transport`. Syslog
+  lines get `servicename` and `process_id`. The device name from the message becomes `source`.
+- **Juniper:** the PFE firewall gets interface, `action` (accept/discard/reject), MACs, IPs, ports and
+  packets. Syslog lines get `servicename`, `process_id`, `event_action` (e.g. `UI_LOGIN_EVENT`) and
+  `user_name`.
+- **Cisco CUBE:** `cisco_facility`, `cisco_mnemonic`, `cube_module`, `cube_function`, `sip_call_id`,
+  `sip_guid`.
+- **Palo Alto via syslog 514 (paksmb, nfw32):** the same snake_case names as the other firewalls
+  (`source_ip`, `rule_name` …), added as copies, so the CamelCase fields stay for the dashboard "NFW28".
+- **Pulse Secure:** `vpn_node`, `source_ip`, `user_name`, `vpn_realm`, `vpn_roles`, `vpn_session_id`,
+  `vpn_assigned_ip`.
+- **FTP/SFTP (ftpp01-v):** `user_name`, `source_ip`, `log_level`, `file_path`, `event_action`
+  (uploaded/opendir …), `file_size`.
+- **CUE Print CPIO/CPWeb:** `user_name`, `cue_newsroom`, `log_logger`, `log_level`/`level`.
+- **Symantec:** `av_client_host`, `av_event`, `av_category`, `av_group`, `user_name`, `user_domain`.
+- **Container Java/klog:** `log_logger`, `process_thread_name`, `process_id`, `error_type` (exception
+  class), `log_origin_file_name`/`_line`, `process_thread_id`.
+- **Any syslog line:** `servicename` and `process_id`, when no other parser set them.
+
+Field names: an existing name is reused (`source_ip`, `user_name`, `servicename`, `log_level` …).
+Otherwise the name is the ECS name with underscores, the scheme Filebeat already uses.
+
+### Evidence (live, 2026-11-07)
+
+- Container lines with `level 6` and `ERROR` in the text: 803 in 12:40–12:53 UTC, **0** after 12:57 UTC.
+- `gim_event_type:palo_traffic`: 48 433 in 2 min (nfw062, nfw34, paksmb …), was 0 per hour.
+- Squid after 12:57 UTC: `Peer_Status` `HIER_DIRECT` 1 040, `HIER_NONE` 90, `epoch_time` 0.
+- After 13:05:40 UTC: Juniper PFE 255/255 have `source_ip`. Unifi has 0 messages without
+  `servicename`/`source_ip`/CEF name. 0 helper fields left behind, 0 `gl2_processing_error`.
+- "Linux Service Errors" after 12:58:35 UTC: error 14 124, warn 273, critical 2, info **0**.
+- Graylog journal on all 3 nodes after the change: reading keeps up with writing (195/331/1 432 per s),
+  1–22 entries uncommitted.
+
+### What is still missing
+
+- **Filebeat cuts only the first word of the timestamp** ("7 13:37:14 host prog…"). The fix belongs in
+  the Ansible role `img_filebeat` on ansible03 (a patch is ready). Rolling it out to 236 hosts needs a
+  decision: 89 of them have no known zone.
+- **Messages stored before 2026-11-07 ~14:00 keep their old fields.** Pipeline rules only apply to new
+  messages.
+- **While switching the stream to `AND`, 366 foreign messages were also stored in "Linux Service
+  Errors"** (3 s, 12:58:26–29 UTC). They are not lost.
+- **All 27 Netapp extractors exist twice.** Every Netapp message is parsed twice; not changed yet.
+- **Reverse DNS now also runs for the new `source_ip`/`destination_ip`** (estimated +230 000 lookups/h on
+  top of about 1.95 M/h). It goes through the cached lookup table. The journal showed no backlog.
+- The dashboard "NFW28" still uses CamelCase fields. Once it is switched over, the copies can become a
+  rename.
+
+---
+
 ## 2026-11-07 — Log watch, part 37: readable names; a finding opens its host overview
 
 You said (2026-11-07):
