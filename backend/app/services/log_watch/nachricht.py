@@ -78,7 +78,8 @@ SKRIPT_VERKNUEPFE = (
 SKRIPT_MARKIERE = (
     "if (ctx._source.hashtags == null) { ctx._source.hashtags = []; }"
     " boolean neu = false;"
-    " for (def t : params.weg) { if (ctx._source.hashtags.remove(t)) { neu = true; } }"
+    # removeIf statt remove(t): List.remove ist in Painless mehrdeutig (Index/Objekt) — gemessen 07.11.: Fehler
+    " if (ctx._source.hashtags.removeIf(x -> params.weg.contains(x))) { neu = true; }"
     " for (def t : params.hinzu) { if (!ctx._source.hashtags.contains(t)) { ctx._source.hashtags.add(t); neu = true; } }"
     " if (!neu) { ctx.op = 'noop'; } else { " + _GESCHICHTE + " }")
 

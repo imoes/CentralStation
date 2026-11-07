@@ -50,3 +50,8 @@ def test_skripte_tragen_die_geschichte():
     for s in (nm.SKRIPT_VERKNUEPFE, nm.SKRIPT_MARKIERE, nm.SKRIPT_URTEILE):
         assert "aenderungen.add(params.e)" in s
     assert "params.rang[params.e.wer] < alt" in nm.SKRIPT_URTEILE   # Vorrang im Schreibweg selbst
+
+
+def test_entfernen_ohne_mehrdeutiges_remove():
+    """Gemessen 07.11.: hashtags.remove(t) scheiterte in Painless (Index/Objekt mehrdeutig) — Ergebnis „fehler“."""
+    assert "removeIf" in nm.SKRIPT_MARKIERE and ".remove(t)" not in nm.SKRIPT_MARKIERE
