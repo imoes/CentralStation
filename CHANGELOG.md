@@ -10,6 +10,49 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 37: readable names; a finding opens its host overview
+
+You said (2026-11-07):
+- the rules have no meaningful names, only "R550 or so";
+- clicking an entry in the AI findings tile does not open the host overview with all objects attached
+  to it.
+
+### What has changed
+
+- **Nodes carry a name from the source** next to their hashtag. The hashtag stays the identity.
+
+  | Kind | Name from | Example (live) |
+  |---|---|---|
+  | `regel:` | Wazuh `rule.description` | `regel:533` "Listened ports status (netstat) changed …"; `regel:5104` "Interface entered in promiscuous(sniffing) mode."; `regel:80711` "Auditd: Process ended abnormally." |
+  | `mitre-technik:` | technique | `T1040` "Network Sniffing" |
+  | `thema:` | vocabulary | `thema:absturz` "Prozess abgestürzt" |
+  | `muster:` | pattern text, placeholders removed | |
+
+  The graph labels, the tooltip, the side lists and the cockpit graph widget show the name, with the
+  hashtag in brackets.
+- **AI findings tile:** the host of a finding is a link, and in an open finding there is the button
+  "Host-Übersicht". Both open the error network graph filtered on that host, with the host selected
+  (`?auswahl=host:…`): its findings with titles, incidents, linked objects and messages.
+- **Every finding linked to a node has a title**, also when it is not a node in the picture itself.
+
+### Fixed
+
+- **A failed data request emptied the whole cockpit.** During a backend restart the graph widget got a
+  response without a node list, hit a `TypeError` 15 times and blanked the dashboard. It now shows a
+  named error in its tile.
+- **Rule names were taken from AI findings,** which carry the same hashtags but no `roh.rule`, so
+  `regel:80711` had no name.
+
+### Evidence (live, 2026-11-07, logged in as thomas.kluge@example.org)
+
+- Clicking the host of the finding "Scheduler-Welle: nsa274 fpc4 neu 12:09 …" opens
+  `/topology?modus=fehler&filter=host:nsa274.example.com&auswahl=host:nsa274.example.com`.
+  - The profile shows 23 messages (23 urgent, 0 without a finding).
+  - It lists 5 AI findings with titles, the linked switches nsa284, nsa409, nsa260 … and 8 messages.
+- Tests: 851 passed.
+
+---
+
 ## 2026-11-07 — Log watch, part 36: every message is an object
 
 You asked (2026-11-07): is every OpenSearch entry an object that can be changed like in object-oriented
