@@ -70,7 +70,11 @@ programming — "die API muss dahin gehen, dass jede Nachricht ein Objekt ist".
 
 ### What is still missing
 
-- **No screen yet** to judge or tag a message (the API exists).
+- ~~No screen yet~~ — correction: since 12:15 UTC a click on a message in the error network graph opens it
+  as an object (verdict, hashtags with ✕ except `quelle:`/`host:`, add a hashtag, set a verdict with
+  criterion, history). The verdict button stays disabled without a reason.
+  - Live with your account: a test hashtag was added and removed, and both entries are in the history.
+  - A real verdict was not set in the test: a human verdict would permanently outrank the rule.
 - **`neu_bewerten` covers themes and the rule set**, not source-specific signals that only the raster
   sees at read time (e.g. the outbreak events of the error clusters).
 
