@@ -1516,6 +1516,11 @@ The AI only works when a check is true, and it only writes its own analysis.
     problem; `netz:dmz` returns conversations about DMZ hosts.
   - It has its own index because the steps are not messages about the network and would distort the
     graph and the statistics.
+  - **Console sessions with a reference** (incident, alert or ticket) are written to it as well
+    (`konsole.py`): roles `mensch`/`ki`, hashtags `quelle:konsole`, the reference and `host:`.
+    - The source is the console's own history, rewritten idempotently after every answer.
+    - Sessions without a reference are not stored.
+    - The funnel sees them in `gedaechtnis` with `herkunft: konsole`, as context, not as evidence.
 - **Tools** (`werkzeuge.py`, one registry for the funnel and the MCP server):
 
   | Tool | Purpose |

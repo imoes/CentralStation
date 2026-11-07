@@ -10,6 +10,96 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 27: console sessions with a reference become memory
+
+### What is new
+
+- **Console sessions with a reference are written to the conversation protocol** (`cs-gespraech-*`),
+  by decision of 2026-11-07: "Nur die Konsolen mit Bezug."
+  - A reference is an incident (`incident:<uuid>`), an alert (`alert:<external_id>`) or a ticket
+    (`ticket:<key>`). Sessions without one stay in the user container and are not stored.
+  - The source is the same history the console shows (`/sessions/{sid}/history` in the user
+    container). It is not a second copy of the SSE stream.
+  - After every console answer the whole session is written again. The document ID `session:step`
+    makes this idempotent.
+  - Only what the human and the console AI wrote is stored: roles `mensch` and `ki`. Tool output and
+    system prompts are not stored.
+- **Hosts of a session:**
+  - Incident: the primary host plus the hosts of its error cluster.
+  - Alert or ticket: the session name, but only if the host directory knows it.
+  - Names are canonical, the same as `host:` in the history.
+- **Searchable like every conversation:** `quelle:konsole`, the reference tag and `host:` per host.
+  `lw_gespraech` and the host object's `gedaechtnis` therefore also return what people clarified in
+  the console.
+- **The funnel AI sees the origin:**
+  - Each conversation in `gedaechtnis` carries `herkunft` ("konsole" or "ki-analyse") and `bezug`.
+  - The system prompt says to use console conversations as context, never as quoted evidence. The
+    quote check accepts only stored messages anyway.
+
+### Evidence
+
+- **Tests** (`test_log_watch_konsole.py`): no reference means the container is never asked; only human
+  and AI text is kept; the hashtags carry origin, reference and host; the host object names the origin.
+- **Backend suite:** 800 passed, 142 skipped.
+
+### What is still missing
+
+- **Existing sessions are not backfilled.** 14 of 53 console sessions have a reference. Their history
+  lives in the users' containers, and those containers are stopped. A session is written the next time
+  someone continues it.
+
+---
+
+## 2026-11-07 — Log watch, part 26: why the fleet waits in front of strata (measurement)
+
+No code change. A read-only look at strata on llm-host03 (docker0220), approved 2026-11-07. Window:
+05:34–07:34 UTC.
+
+### Evidence
+
+- **strata configuration:**
+  - `PARALLEL=4`, `CONTEXT=128k`, engine flags `--batch 4 --kv-resident 32768 --expert-cache 9000
+    --resident-budget-gib 45 --spec 4`.
+  - Model: `Qwen3.8-Flash-Next-UD-IQ4_XS`.
+- **Two logs, not one:**
+  - The `print_timing` lines in `docker logs strata-27b` are a translation by `/data/perflog.sh`
+    (awk) of the real engine log `/data/state/strata/launch/aikb.engine.log`.
+  - The translation covers prompt reading and single-slot decode only. It leaves out batched decode
+    (`strata batch: N windows, avg R rows, … ms/window`).
+- **Engine log over the last 431 prompts (about 2 h):**
+  - Prompt reading takes 2 545 s for 1.51 million new tokens, at 593 tokens/s.
+  - Prompt reading is **serial**: no two prompt reads overlap.
+  - 65 % of all prompt tokens were reused from the cache.
+  - Decode: 585 s single and up to 2 854 s batched, with 3.0 rows on average.
+  - Together up to about 6 000 s of work in 7 176 s of wall time. One batch phase may have started
+    before the window, so this is an upper bound.
+- **Clients** (nginx, `/qwen27b`, 2 h):
+
+  | Client | Requests | Response time |
+  |---|---|---|
+  | CentralStation (10.0.254.10) | 253 | 13 943 s total, 55 s average |
+  | aikb.test (10.0.28.119) | 115 | short classifications, 99 s of prompt reading in total |
+  | ansible01.example.net | 10 | – |
+
+- **Who reads the prompts:**
+  - Prompts of 500–30 000 tokens (the tool loops) account for 2 446 s of the 2 545 s.
+  - Our 67 sessions in the same 2 h wrote about 2.26 million characters (about 1.2 million tokens):
+    - worker prompts 787 000 characters (11 400 per case);
+    - `lw_suche` results 971 000 (195 calls, 2.9 per case, 5 000 characters each).
+- **The extra searches are not repeats.** They deepen the case: the same service over 3 days,
+  neighbouring switches, `apt-daily-upgrade` over 14 days.
+
+### Corrections
+
+- **Part 23 said "strata computed only 587 s in 1 200 s; the waiting is unexplained (hypothesis: a free
+  slot)". That was wrong.** The 587 s came from the translated log, which does not contain batched
+  decode.
+- **The cause of the waiting:** strata is close to saturated, and prompt reading is serial. A new step
+  waits until the prompt in front of it has been read (5–20 s per prompt).
+- **More agents therefore bring no throughput.** The lever is fewer new prompt tokens per step.
+
+---
+
 ## 2026-11-07 — Log watch, part 25: one oversized text no longer blocks the vectors of others
 
 ### Fixed

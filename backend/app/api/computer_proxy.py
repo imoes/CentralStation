@@ -1549,6 +1549,23 @@ async def get_history(
     return r.json()
 
 
+async def _sichere_konsole(sid: str, user_id) -> None:
+    """Verlauf aus dem Container (derselbe wie /history) ins Gesprächsprotokoll; nie fatal."""
+    from app.services.log_watch import konsole
+
+    async def holer() -> list[dict]:
+        async with _internal_client(timeout=35.0) as client:
+            r = await client.get(f"{_target_url(user_id)}/sessions/{sid}/history")
+        return r.json() if r.status_code == 200 else []
+
+    try:
+        n = await konsole.sichere(sid, user_id, holer)
+        if n:
+            log.info("Konsolen-Gedächtnis: %d Züge der Sitzung %s gesichert", n, sid[:8])
+    except Exception as exc:
+        log.warning("Konsolen-Gedächtnis für %s fehlgeschlagen: %s", sid[:8], exc)
+
+
 # ── Message → SSE stream (pass-through) ───────────────────────────
 
 @router.post("/sessions/{sid}/message")
@@ -1641,6 +1658,8 @@ async def send_message(
                     # Hermes closes the SSE stream without a proper chunked-transfer
                     # terminator when the response is complete — this is expected.
                     pass
+        # Konsolen-Gedächtnis: Sitzungen mit Bezug (Incident/Alert/Ticket) ins Gesprächsprotokoll.
+        asyncio.ensure_future(_sichere_konsole(sid, user.id))
 
     # Increment msg_count in PostgreSQL (fire-and-forget, don't block SSE).
     # Uses a fresh session — the request's `db` may already be closed when this runs.

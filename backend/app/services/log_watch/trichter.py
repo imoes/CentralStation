@@ -58,6 +58,8 @@ Vorgehen als Trichter:
    Host-Objekt — felder (Stammdaten aus CheckMK), nachbarschaft (Netzplan-Kanten) und gedaechtnis
    (frühere Befunde und Gespräche zu diesem Host). Lies beides zuerst.
    Gibt es im Gedächtnis schon einen Befund zur selben Lage, beziehe dich darauf (Folge-Befund).
+   Gespräche mit herkunft "konsole" zeigen, was Menschen in der Konsole zu einem Incident, Alert
+   oder Ticket geklärt haben: als Kontext nutzen und nennen, aber nicht als Beleg zitieren.
 2. Werkzeuge (lw_suche, lw_facetten, lw_netzplan, lw_nachricht, lw_gespraech) nur zum Vertiefen
    über die Lage hinaus (anderer Filter, anderer Zeitraum, eine Nachricht vollständig):
    den auffälligsten Hashtag als Filter ergänzen, bis ein kleines, zusammenhängendes Ergebnis bleibt.

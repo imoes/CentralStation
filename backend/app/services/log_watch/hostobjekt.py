@@ -9,7 +9,8 @@ derselben Suche, und die KI bekommt das Ergebnis als Objekt:
   lage           relevante Nachrichten im Zeitraum (IDs + Text zum Zitieren), Facetten
   nachbarschaft  Netzplan-Kanten des Hosts (gemeinsam an derselben Nachricht, keine Ursache)
   gedaechtnis    frühere Befunde (Titel, Hypothesen mit Status) und das Gesprächsprotokoll
-                 der letzten Sitzungen — geladen per Suche host:<name>
+                 der letzten Sitzungen — geladen per Suche host:<name>; dazu gehören auch
+                 Konsolen-Sitzungen mit Bezug (herkunft "konsole", siehe konsole.py)
 """
 from __future__ import annotations
 
@@ -39,7 +40,10 @@ def kuerze_gedaechtnis(befunde: list[dict], sitzungen: list[dict]) -> dict:
     return {
         "befunde": [{"id": b["id"], "zeit": b.get("zeit"), "relevanz": b.get("relevanz"),
                      "befund": (b.get("ai_befund") or b.get("text") or "")[:600]} for b in befunde[:5]],
-        "gespraeche": [{"sitzung": s["sitzung"], "zuege": [
+        "gespraeche": [{"sitzung": s["sitzung"],
+                        "herkunft": "konsole" if any("quelle:konsole" in (z.get("hashtags") or [])
+                                                     for z in s["zuege"]) else "ki-analyse",
+                        "bezug": (s["zuege"] or [{}])[0].get("fall"), "zuege": [
             {"rolle": z["rolle"], **({"werkzeug": z["werkzeug"]} if z.get("werkzeug") else {}),
              "text": (z.get("text") or "")[:300]}
             for z in s["zuege"] if z["rolle"] in ("ki", "befund", "mensch")]} for s in sitzungen],
