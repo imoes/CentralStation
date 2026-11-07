@@ -237,29 +237,29 @@ async def lerne(befund: str, titel: str, relevanz, beleg_ids: list[str], lage_id
     return len(neu)
 
 
-#: hängt eine Nachricht an den Befund — nur einmal (noop, wenn sie ihn schon trägt), damit zwei
-#: Agenten, die dieselbe Nachricht sehen, die Wiederholung nicht doppelt zählen
-_ANHAENGEN = ("if (ctx._source.hashtags == null) { ctx._source.hashtags = []; }"
-              " if (ctx._source.hashtags.contains(params.b)) { ctx.op = 'noop'; } else {"
-              " ctx._source.hashtags.add(params.b); ctx._source.ai_relevanz = params.r;"
-              " ctx._source.ai_provenance = params.p; }")
-
-
 async def haenge_an(haengen: list[dict], jetzt: datetime | None = None) -> dict:
-    """Wiederholungen bekannter Fehler an ihren Befund hängen, ohne KI. Rückgabe {angehaengt, fehler}."""
+    """Wiederholungen bekannter Fehler an ihren Befund hängen, ohne KI — über die Methode der Nachricht
+    (nachricht.verknuepfe: idempotent, mit Geschichte). Rückgabe {angehaengt, fehler}."""
     from app.core.opensearch import get_opensearch
+    from app.services.log_watch import nachricht
     if not haengen:
         return {"angehaengt": 0}
     z = (jetzt or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
     os_client = get_opensearch()
-    body: list[dict] = []
+    ergebnis: dict[str, str] = {}
+    je_befund: dict[str, list[dict]] = {}
     for h in haengen:
-        kurz = h["befund"].split(":", 1)[1]
-        body += [{"update": {"_index": h["index"], "_id": h["id"], "retry_on_conflict": 3}},
-                 {"script": {"lang": "painless", "source": _ANHAENGEN, "params": {
-                     "b": f"befund:{kurz}", "r": h.get("relevanz"),
-                     "p": {"bekannt": {"befund": h["befund"], "fehler": h["fehler"], "zeit": z}}}}}]
-    res = await os_client.bulk(body=body, refresh=True)
+        je_befund.setdefault(h["befund"], []).append(h)
+    for befund, liste in je_befund.items():
+        for h in liste:                       # je Fehler-Schlüssel eigene Herkunft (ai_provenance.bekannt)
+            r = await nachricht.verknuepfe(
+                f"befund:{befund.split(':', 1)[1]}", "regel",
+                f"Wiederholung des bekannten Fehlers {h['fehler']} (Befund {befund}) — ohne KI",
+                items=[(h["index"], h["id"])], ai_relevanz=h.get("relevanz"),
+                ai_provenance={"bekannt": {"befund": befund, "fehler": h["fehler"], "zeit": z}})
+            ergebnis.update(r)
+    res = {"items": [{"update": {"result": "updated" if ergebnis.get(h["id"]) == "geaendert" else "noop",
+                                 **({"error": True} if ergebnis.get(h["id"]) == "fehler" else {})}} for h in haengen]}
     gezaehlt: dict[str, dict] = {}
     fehler_n = 0
     for h, item in zip(haengen, res.get("items") or []):
@@ -287,13 +287,6 @@ async def haenge_an(haengen: list[dict], jetzt: datetime | None = None) -> dict:
     return {"angehaengt": sum(g["n"] for g in gezaehlt.values()), "fehler": fehler_n}
 
 
-#: hängt eine gesehene Nachricht an den Befund — ai_provenance nur, wenn noch keine da ist
-_GESEHEN = ("if (ctx._source.hashtags == null) { ctx._source.hashtags = []; }"
-            " if (ctx._source.hashtags.contains(params.b)) { ctx.op = 'noop'; } else {"
-            " ctx._source.hashtags.add(params.b); ctx._source.ai_relevanz = params.r;"
-            " if (ctx._source.ai_provenance == null) { ctx._source.ai_provenance = params.p; } }")
-
-
 def gesehen_abfrage(start: str, seit: datetime, bis: datetime) -> dict:
     """Was eine Analyse gesehen hat — dieselbe Definition wie trichter.offene: alles, was ihr Startfilter
     im Prüffenster bis zu ihrem Zeitpunkt traf; noch an keinem Befund, keine Befunde selbst."""
@@ -318,14 +311,13 @@ async def markiere_gesehen(befund: str, relevanz, start: str, bis: datetime, stu
         relevanz = int(relevanz)
     except (TypeError, ValueError):
         relevanz = None
+    from app.services.log_watch import nachricht
     seit = bis - timedelta(hours=stunden)
-    r = await get_opensearch().update_by_query(
-        index=f"{PRAEFIX}*", conflicts="proceed", refresh=True, body={
-            "query": gesehen_abfrage(start, seit, bis),
-            "script": {"lang": "painless", "source": _GESEHEN, "params": {
-                "b": f"befund:{befund.split(':', 1)[-1]}", "r": relevanz,
-                "p": {"gesehen": {"befund": befund, "start": start, "zeit": bis.astimezone(timezone.utc).isoformat()}}}}})
-    return int(r.get("updated") or 0)
+    return await nachricht.verknuepfe(
+        f"befund:{befund.split(':', 1)[-1]}", "ki", f"von der Analyse {befund} gesehen (Startfilter {start})",
+        abfrage=gesehen_abfrage(start, seit, bis), ai_relevanz=relevanz,
+        ai_provenance={"gesehen": {"befund": befund, "start": start, "zeit": bis.astimezone(timezone.utc).isoformat()}},
+        jetzt=bis)
 
 
 async def gesehen_nachtragen(tage: float = 7, stunden: float = 2.0 + 1 / 6) -> dict:

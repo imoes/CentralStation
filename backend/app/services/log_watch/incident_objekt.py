@@ -68,19 +68,13 @@ def fenster(created_at: datetime, resolved_at: datetime | None, jetzt: datetime)
 
 async def markiere(incident_id: str, filtertext: str, seit: datetime, bis: datetime) -> int:
     """Nachrichten des Incidents tragen `incident:<id>` (idempotent). Rückgabe: neu markierte."""
-    from app.core.opensearch import get_opensearch
     from app.services.log_watch import filter as flt
-    from app.services.log_watch.historie import PRAEFIX
-    tag = f"incident:{incident_id}"
-    r = await get_opensearch().update_by_query(
-        index=f"{PRAEFIX}*", conflicts="proceed", refresh=True, body={
-            "query": {"bool": {"filter": [flt.opensearch(filtertext),
-                                          {"range": {"zeit": {"gte": seit.isoformat(), "lte": bis.isoformat()}}}],
-                               "must_not": [{"term": {"hashtags": tag}}, {"terms": {"quelle": ["ki", "konsole"]}}]}},
-            "script": {"lang": "painless", "params": {"t": tag},
-                       "source": "if (ctx._source.hashtags == null) { ctx._source.hashtags = []; }"
-                                 " ctx._source.hashtags.add(params.t);"}})
-    return int(r.get("updated") or 0)
+    from app.services.log_watch import nachricht
+    return await nachricht.verknuepfe(
+        f"incident:{incident_id}", "regel", f"im Filter des Incidents: {filtertext}",
+        abfrage={"bool": {"filter": [flt.opensearch(filtertext),
+                                     {"range": {"zeit": {"gte": seit.isoformat(), "lte": bis.isoformat()}}}],
+                          "must_not": [{"terms": {"quelle": ["ki", "konsole"]}}]}})
 
 
 async def lauf(jetzt: datetime | None = None) -> dict:

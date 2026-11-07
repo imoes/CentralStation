@@ -68,6 +68,9 @@ MAPPING = {
         "ai_hashtags": {"type": "keyword"},
         "ai_befund": {"type": "text"},
         "ai_provenance": {"type": "object", "enabled": False},
+        # Nachricht als Objekt (nachricht.py): jede Änderung mit Urheber, Zeit, Grund
+        "aenderungen": {"type": "object", "enabled": False},
+        "geaendert": {"type": "date"},
     },
 }
 VORLAGE_BODY = {
@@ -129,6 +132,8 @@ async def stelle_bereit() -> None:
     from app.core.opensearch import get_opensearch
     os_client = get_opensearch()
     await os_client.indices.put_index_template(name=VORLAGE, body=VORLAGE_BODY)
+    from app.services.log_watch import nachricht
+    await nachricht.stelle_bereit()          # neue Felder auch in bestehenden Tagesindizes
 
 
 async def schreibe(docs: list[tuple[str, datetime, dict]]) -> dict:
@@ -212,6 +217,9 @@ async def nachbetten(limit: int = NACHBETTEN_JE_LAUF) -> dict:
             "nicht_einbettbar": len(nicht_einbettbar), **({"nicht_einbettbar_ids": nicht_einbettbar[:10]} if nicht_einbettbar else {})}
 
 
+from app.services.log_watch.nachricht import _GESCHICHTE  # noqa: E402 — ein Schreibweg (Geschichte)
+
+
 def r7_abfrage(quellen_je_host: dict[str, list[str]], seit: datetime) -> dict:
     """update_by_query-Body: gespeicherte relevante Nachrichten der Hosts, die im Zeitraum in
     mindestens zwei Quellen relevant sind, bekommen R7 und Relevanz 3 — wie im Raster
@@ -224,9 +232,12 @@ def r7_abfrage(quellen_je_host: dict[str, list[str]], seit: datetime) -> dict:
                        {"term": {"urteil": RELEVANT}},
                        {"range": {"zeit": {"gte": seit.astimezone(timezone.utc).isoformat()}}}],
             "must_not": [{"term": {"kriterien": "R7"}}]}},
-        "script": {"lang": "painless", "params": {"q": {h: sorted(q) for h, q in quellen_je_host.items()}},
+        "script": {"lang": "painless", "params": {"q": {h: sorted(q) for h, q in quellen_je_host.items()},
+                                                  "e": _r7_eintrag()},
                    "source": (
-                       "List qs = params.q.get(ctx._source.host); if (qs == null) { ctx.op = 'noop'; return; }"
+                       # Vorrang (nachricht.RANG): ein Urteil von KI oder Mensch ändert eine Regel nicht
+                       "if (ctx._source.herkunft != null && ctx._source.herkunft != 'regel') { ctx.op = 'noop'; return; }"
+                       " List qs = params.q.get(ctx._source.host); if (qs == null) { ctx.op = 'noop'; return; }"
                        " List andere = new ArrayList();"
                        " for (def x : qs) { if (x != ctx._source.quelle) { andere.add(x); } }"
                        " if (andere.isEmpty()) { ctx.op = 'noop'; return; }"
@@ -235,8 +246,15 @@ def r7_abfrage(quellen_je_host: dict[str, list[str]], seit: datetime) -> dict:
                        " ctx._source.kriterien.add('R7');"
                        " if (ctx._source.gruende == null) { ctx._source.gruende = []; }"
                        " ctx._source.gruende.add('zugleich relevant in ' + String.join(', ', andere)"
-                       " + ' (selber Zeitraum) — gemeinsames Auftreten, keine Ursache belegt');")},
+                       " + ' (selber Zeitraum) — gemeinsames Auftreten, keine Ursache belegt');"
+                       " " + _GESCHICHTE)},
     }
+
+
+def _r7_eintrag() -> dict:
+    from app.services.log_watch.nachricht import _eintrag
+    return _eintrag("regel", "Kriterium R7, Relevanz 3", "Zusammentreffen: derselbe Host im selben Zeitraum in "
+                    "zwei Quellen relevant (raster.quellenuebergreifend)", datetime.now(timezone.utc))
 
 
 async def markiere_r7(quellen_je_host: dict[str, list[str]], seit: datetime) -> dict:

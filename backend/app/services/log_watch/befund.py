@@ -196,15 +196,11 @@ async def schreibe_befund(eingabe: dict, modell: str = "", schritte: list | None
         pass                                            # nachbetten() holt es nach
     os_client = get_opensearch()
     await os_client.index(index=index_name(jetzt), id=doc_id, body=doc, refresh=True)
-    body: list[dict] = []
-    for b in {b["id"]: b for b in pruefung.gueltig}.values():
-        body += [{"update": {"_index": b["index"], "_id": b["id"]}},
-                 {"script": {"lang": "painless",
-                             "source": "if (ctx._source.hashtags == null) { ctx._source.hashtags = []; }"
-                                       " if (!ctx._source.hashtags.contains(params.b)) "
-                                       "{ ctx._source.hashtags.add(params.b); }",
-                             "params": {"b": doc["schluessel"]}}}]
-    if body:
-        await os_client.bulk(body=body, refresh=True)
+    # Belege verknüpfen — über die Methode der Nachricht (ein Schreibweg, mit Geschichte)
+    from app.services.log_watch import nachricht
+    belegt = list({b["id"]: (b["index"], b["id"]) for b in pruefung.gueltig}.values())
+    if belegt:
+        await nachricht.verknuepfe(doc["schluessel"], "ki", f"Beleg des Befunds {doc_id} („{doc['ai_provenance']['titel'][:80]}“)",
+                                   items=belegt, jetzt=jetzt)
     return {"id": doc_id, "belege": len(pruefung.gueltig), "verworfen": pruefung.verworfen,
             "hashtags": doc["hashtags"]}

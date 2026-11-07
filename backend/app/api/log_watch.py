@@ -268,3 +268,112 @@ async def bekannten_fehler_vergessen(eintrag_id: str, body: VergessenBody, user:
                                                 "grund": body.grund.strip()[:1000]}))
     await db.commit()
     return e
+
+
+
+# ── Nachricht als Objekt (nachricht.py): lesen und über Methoden ändern ──────
+
+@router.get("/nachrichten/{nachricht_id}")
+async def nachricht_lesen(nachricht_id: str, _user: CurrentUser):
+    """Das Objekt: feste Felder, änderbare Felder, Verknüpfungen, Geschichte der Änderungen."""
+    from app.services.log_watch import nachricht
+    n = await nachricht.lies(nachricht_id)
+    if n is None:
+        raise HTTPException(404, "keine Nachricht mit dieser ID")
+    return n
+
+
+class UrteilBody(BaseModel):
+    urteil: str
+    relevanz: int
+    kriterien: list[str]
+    grund: str
+
+
+class HashtagBody(BaseModel):
+    hinzu: list[str] = []
+    weg: list[str] = []
+    grund: str
+
+
+class AendernBody(BaseModel):
+    """Eine Methode auf das Ergebnis eines Filters (Objekte sind Suchergebnisse)."""
+    filter: str
+    methode: str                     # urteil | hashtags | neu_bewerten
+    grund: str
+    urteil: str | None = None
+    relevanz: int | None = None
+    kriterien: list[str] | None = None
+    hinzu: list[str] = []
+    weg: list[str] = []
+    stunden: float | None = None
+
+
+def _ablehnung(e: Exception) -> HTTPException:
+    return HTTPException(422, str(e))
+
+
+async def _audit(db, user, aktion: str, ziel: str, werte: dict) -> None:
+    db.add(AuditLog(action=aktion, resource_type="log_nachricht", resource_id=ziel[:200], user_id=user.id,
+                    new_value=werte))
+    await db.commit()
+
+
+@router.post("/nachrichten/{nachricht_id}/urteil", dependencies=[RequireAdmin])
+async def nachricht_urteilen(nachricht_id: str, body: UrteilBody, user: CurrentUser,
+                             db: Annotated[AsyncSession, Depends(get_db)]):
+    """Ein Mensch urteilt — Vorrang vor KI und Regel; Grund ist Pflicht, die Änderung steht an der Nachricht."""
+    from app.services.log_watch import nachricht
+    try:
+        r = await nachricht.urteile(body.urteil, body.relevanz, body.kriterien, "mensch",
+                                    f"{body.grund} ({user.email})", ids=[nachricht_id])
+    except nachricht.NachrichtAbgelehnt as e:
+        raise _ablehnung(e)
+    if not r:
+        raise HTTPException(404, "keine Nachricht mit dieser ID")
+    await _audit(db, user, "log_nachricht_urteil", nachricht_id, body.model_dump())
+    return {"ergebnis": r, "nachricht": await nachricht.lies(nachricht_id)}
+
+
+@router.post("/nachrichten/{nachricht_id}/hashtags", dependencies=[RequireAdmin])
+async def nachricht_hashtags(nachricht_id: str, body: HashtagBody, user: CurrentUser,
+                             db: Annotated[AsyncSession, Depends(get_db)]):
+    """Hashtags hinzufügen/entfernen (nicht quelle:/host: — die spiegeln feste Felder)."""
+    from app.services.log_watch import nachricht
+    try:
+        r = await nachricht.markiere(body.hinzu, body.weg, "mensch", f"{body.grund} ({user.email})",
+                                     ids=[nachricht_id])
+    except nachricht.NachrichtAbgelehnt as e:
+        raise _ablehnung(e)
+    if not r:
+        raise HTTPException(404, "keine Nachricht mit dieser ID")
+    await _audit(db, user, "log_nachricht_hashtags", nachricht_id, body.model_dump())
+    return {"ergebnis": r, "nachricht": await nachricht.lies(nachricht_id)}
+
+
+@router.post("/nachrichten/aendern", dependencies=[RequireAdmin])
+async def nachrichten_aendern(body: AendernBody, user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]):
+    """Dieselbe Methode auf alle Nachrichten eines Filters. Leerer Filter ist abgelehnt."""
+    from app.services.log_watch import filter as flt
+    from app.services.log_watch import nachricht
+    from app.services.log_watch.definition import aktuelle
+    objekte = (await aktuelle(db)).objekte
+    grund = f"{body.grund} ({user.email})"
+    try:
+        if body.methode == "urteil":
+            if body.urteil is None or body.relevanz is None or not body.kriterien:
+                raise nachricht.NachrichtAbgelehnt("urteil, relevanz und kriterien sind Pflicht")
+            n = await nachricht.urteile(body.urteil, body.relevanz, body.kriterien, "mensch", grund,
+                                        filtertext=body.filter, objekte=objekte)
+            erg = {"geaendert": n}
+        elif body.methode == "hashtags":
+            erg = {"geaendert": await nachricht.markiere(body.hinzu, body.weg, "mensch", grund,
+                                                         filtertext=body.filter, objekte=objekte)}
+        elif body.methode == "neu_bewerten":
+            erg = await nachricht.neu_bewerten(body.filter, "mensch", grund, objekte=objekte, stunden=body.stunden)
+        else:
+            raise nachricht.NachrichtAbgelehnt("methode muss urteil, hashtags oder neu_bewerten sein")
+    except (nachricht.NachrichtAbgelehnt, flt.FilterFehler) as e:
+        raise _ablehnung(e)
+    await _audit(db, user, f"log_nachrichten_{body.methode}", body.filter, {**body.model_dump(), **erg})
+    return erg
