@@ -117,6 +117,11 @@ export const routes: Routes = [
     loadComponent: () => import('./features/cockpit/cockpit.component').then(m => m.CockpitComponent),
   },
   {
+    path: 'regelwerk',
+    canActivate: [authGuard, roleGuard('admin', 'sysadmin')],
+    loadComponent: () => import('./features/regelwerk/regelwerk.component').then(m => m.RegelwerkComponent),
+  },
+  {
     path: 'topology',
     canActivate: [authGuard, roleGuard('admin', 'sysadmin', 'network_technician')],
     loadComponent: () => import('./features/topology/topology.component').then(m => m.TopologyComponent),

@@ -10,6 +10,50 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Rule editor like a firewall's policy view
+
+You asked (07.11.): "Ich habe keinen Regeleditor wie bei einer FW gesehen. Das fehlt noch im Frontend."
+
+### What is new
+
+- **New page `/regelwerk` (navigation: Infrastruktur → Regelwerk)** for the roles admin and sysadmin.
+  - **Rules tab.**
+    - The rules are listed in order: the first matching active rule decides, and the default is block (N0).
+    - Editable inline: name, filter (the search's filter language with `@Objekt`), action, criterion, and the
+      switch between active and test.
+    - ▲▼ change the order. New rules start in test mode and are inserted before the first forward rule, so they
+      can take effect.
+    - Each rule shows:
+
+      | Column | Meaning |
+      |---|---|
+      | Treffer | times it decided |
+      | Verdrängt | it matched, but an earlier rule decided (measured shadowing) |
+      | Test | it would have matched (test mode) |
+      | Letzter | time of its last hit |
+
+      The hit window is 24 h or 7 days.
+  - **Objects tab.** Named filters, each with "used in". An object that a rule uses cannot be deleted; the button
+    is greyed out and names the reason.
+  - **Versions tab.** Every version with author, time and reason.
+- **Draft bar.**
+  - **"Prüfen & Vorschau"** checks the draft without saving (`POST /log-watch/definition/pruefen`). It returns
+    the errors, or which verdicts of the stored messages would change, with examples. The stated limit: only
+    stored, relevant messages are checked; ones dropped today cannot be shown.
+  - **"Übernehmen"** creates a new version with a reason (`POST /definition`). The button is greyed out with its
+    reason: role, no change, not checked, errors, or no reason given. New versions remain **admin** only; this
+    decision is still open.
+- **API:** `GET /log-watch/regeln/treffer?stunden=` (hits, displaced, test and last hit per rule, from the raster
+  runs) and `POST /log-watch/definition/pruefen` (sysadmin; saves nothing).
+- Evidence, live 07.11., definition v10:
+  - 18 rules with hits over 24 h, e.g. N1 Routine 14 123 837, R6 Wazuh 36 706 (3 887 displaced), I-HOST 460
+    candidates.
+  - Preview of an unchanged draft: 3 000 checked, 0 changed.
+  - Tests: `test_treffer_je_regel_summiert_quellen_und_merkt_letzten`,
+    `test_vorschau_zeigt_geaenderte_urteile_nur_fuer_regel_urteile`.
+
+---
+
 ## 2026-11-07 — "Ereignisse" shows only classified messages; predefined filters
 
 You decided (07.11.):
@@ -77,8 +121,6 @@ You decided (07.11.):
 ### Still missing
 
 - **Move the 18 exclusion filters into the rule set as rules**, then switch them off.
-- **A rule editor in the interface, as on a firewall**: objects, rule table, hits, test/active, commit with a
-  reason.
 - The feed's auto-refresh and unread counter still count raw messages.
 
 ---

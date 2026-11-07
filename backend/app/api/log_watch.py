@@ -154,21 +154,13 @@ class DefinitionBody(BaseModel):
     objekte: dict[str, str] | None = None
 
 
-@router.post("/definition", dependencies=[RequireAdmin])
-async def neue_definition(body: DefinitionBody, user: CurrentUser,
-                          db: Annotated[AsyncSession, Depends(get_db)]):
-    """Neue Version anlegen. Jede Änderung braucht eine Begründung; nichts wird überschrieben."""
-    from datetime import datetime, timezone
-
-    from app.models.log_watch import RelevanzDefinition
-    from app.services.log_watch.definition import aktuelle, pruefe
-
+def _pruefe_entwurf(body: DefinitionBody) -> list[str]:
+    """Fehler eines Entwurfs (Kriterien, Parameter, Objekte, Regeln) — eine Prüfung für Speichern und Vorschau."""
+    from app.services.log_watch.definition import STANDARD_OBJEKTE, pruefe
+    from app.services.log_watch.filter import FilterFehler, aufloesen, lies
     from app.services.log_watch.regelwerk import pruefe as pruefe_regeln
 
     fehler = pruefe(body.kriterien, body.parameter)
-    from app.services.log_watch.definition import STANDARD_OBJEKTE
-    from app.services.log_watch.filter import FilterFehler, aufloesen, lies
-
     objekte = body.objekte if body.objekte is not None else STANDARD_OBJEKTE
     for name, text in objekte.items():
         try:
@@ -177,6 +169,59 @@ async def neue_definition(body: DefinitionBody, user: CurrentUser,
             fehler.append(f"Objekt @{name}: {e}")
     if body.regeln is not None:
         fehler += pruefe_regeln(body.regeln, {k.get("id") for k in body.kriterien}, objekte)
+    return fehler
+
+
+@router.get("/regeln/treffer", dependencies=[RequireSysAdmin])
+async def get_regel_treffer(db: Annotated[AsyncSession, Depends(get_db)],
+                            stunden: float = Query(24, gt=0, le=24 * 14)):
+    """Regel-Editor: je Regel Treffer (entschieden), verdrängt (passte, eine frühere entschied — gemessene
+    Verdeckung), Testtreffer und letzter Treffer im Zeitraum, aus den Rasterläufen."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.log_watch import RasterLauf
+    from app.services.log_watch.regel_editor import treffer_je_regel
+    seit = datetime.now(timezone.utc) - timedelta(hours=stunden)
+    rows = (await db.execute(select(RasterLauf).where(RasterLauf.fenster_start >= seit))).scalars()
+    return {"stunden": stunden, "regeln": treffer_je_regel([(r.quelle, r.fenster_start, r.werte) for r in rows])}
+
+
+@router.post("/definition/pruefen", dependencies=[RequireSysAdmin])
+async def pruefe_definition(body: DefinitionBody, db: Annotated[AsyncSession, Depends(get_db)],
+                            stunden: float = Query(24, gt=0, le=24 * 7)):
+    """Entwurf prüfen, ohne zu speichern: Fehler und Vorschau, welche Urteile der gespeicherten Nachrichten
+    im Zeitraum sich ändern würden (Commit-Vorschau des Regel-Editors)."""
+    from app.core.opensearch import get_opensearch
+    from app.services.log_watch.definition import STANDARD_OBJEKTE, aktuelle
+    from app.services.log_watch.historie import PRAEFIX
+    from app.services.log_watch.regel_editor import VORSCHAU_MAX, vorschau
+    from app.services.log_watch.regelwerk import aus_daten
+
+    fehler = _pruefe_entwurf(body)
+    if fehler or body.regeln is None:
+        return {"fehler": fehler, "vorschau": None}
+    d = await aktuelle(db)
+    neu = aus_daten(body.regeln, body.objekte if body.objekte is not None else STANDARD_OBJEKTE)
+    res = await get_opensearch().search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
+        "size": VORSCHAU_MAX, "sort": [{"zeit": "desc"}],
+        "query": {"bool": {"filter": [{"range": {"zeit": {"gte": f"now-{int(stunden * 60)}m"}}}],
+                           "must_not": [{"terms": {"quelle": ["ki", "konsole"]}}]}},
+        "_source": ["hashtags", "level", "relevanz", "herkunft", "text", "host"]})
+    docs = [{**h["_source"], "_id": h["_id"]} for h in res["hits"]["hits"]]
+    return {"fehler": [], "vorschau": {**vorschau(d.regeln, neu, docs), "stunden": stunden,
+                                       "gekappt": len(docs) >= VORSCHAU_MAX}}
+
+
+@router.post("/definition", dependencies=[RequireAdmin])
+async def neue_definition(body: DefinitionBody, user: CurrentUser,
+                          db: Annotated[AsyncSession, Depends(get_db)]):
+    """Neue Version anlegen. Jede Änderung braucht eine Begründung; nichts wird überschrieben."""
+    from datetime import datetime, timezone
+
+    from app.models.log_watch import RelevanzDefinition
+    from app.services.log_watch.definition import aktuelle
+
+    fehler = _pruefe_entwurf(body)
     if not body.begruendung.strip():
         fehler.append("Begründung fehlt")
     if fehler:

@@ -141,6 +141,7 @@ export class App implements OnInit, OnDestroy {
     { path: '/projects',   labelKey: 'app.nav.projects', icon: 'folder_open', roles: ['admin','sysadmin'], group: 'arbeit' },
     { path: '/workbench',  labelKey: 'app.nav.workbench', icon: 'construction', roles: ['admin','sysadmin'], group: 'arbeit' },
     { path: '/topology',   labelKey: 'app.nav.topology', icon: 'account_tree', roles: ['admin','sysadmin','network_technician'], group: 'infrastruktur' },
+    { path: '/regelwerk',  labelKey: 'app.nav.regelwerk', icon: 'rule', roles: ['admin','sysadmin'], group: 'infrastruktur' },
   ];
 
   unreadFeedCount = signal<number>(0);
