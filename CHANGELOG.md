@@ -10,6 +10,38 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 35: a false "out of memory" and the kernel rule counted like before
+
+Found while checking the shadow candidates of the incident rules.
+
+### Fixed
+
+- **Theme `oom` fired on a counter that says "no OOM".** `memory.events` written as JSON
+  (`{"key":"oom_kill","value":"0"}`) matched `\boom[-_ ]?kill`, so harmless `[info]` request logs became
+  R5 "Speicher erschöpft" and candidates for an incident.
+  - In the last 7 days 36 of 39 `thema:oom` messages were such counters (jump012 34, mon-beta 2).
+  - A quoted key is now excluded; real OOM lines (`Out of memory: Killed process`, `oom-kill:`,
+    `invoked oom_kill`) still match. There is a test with the real line.
+
+### What has changed
+
+- **Incident rules have the minimum value `fenster`** (distinct five-minute windows with hits).
+  I-KRITISCH needs 3, as `error_clusters/critical` does ("3 events in 6 h"), instead of counting lines;
+  measured, jump012 had 28 lines in 16 windows.
+
+### Evidence
+
+- Shadow run with the fix in place:
+  - mon02 remains a candidate with a real `kernel: … segfault` (theme `absturz`, 5 windows);
+  - the old path does not count it, because its kernel signatures are narrower.
+- Tests: 844 passed.
+
+### What is still missing
+
+- Messages already stored keep their old `thema:oom` tag; new ones are judged correctly.
+
+---
+
 ## 2026-11-07 — Log watch, part 34: incidents follow the rule system (definition v7); one mail path
 
 Steps 3 and 4 of the incident refactor you asked for (2026-11-07: "der Incident muss nach dem Logik-Update
