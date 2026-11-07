@@ -82,7 +82,9 @@ def kuerze_antwort(werkzeug: str, erg: dict) -> dict:
                              "stelle": (t.get("match") or "")[:TEXT_MAX]} for t in erg.get("issues") or []],
                 **({"hinweise": erg["notes"]} if erg.get("notes") else {})}
     if werkzeug == "web_seite":
-        return {**{k: erg[k] for k in ("url", "laenge", "gekuerzt") if k in erg}, "text": (erg.get("text") or "")[:TEXT_MAX * 10]}
+        from app.services.log_watch.websuche import kuerze_mit_ende   # Ende behalten: dort steht meist die Lösung
+        return {**{k: erg[k] for k in ("url", "laenge", "gekuerzt", "quelle") if k in erg},
+                "text": kuerze_mit_ende(erg.get("text") or "", TEXT_MAX * 10)}
     if werkzeug == "search_knowledge_base":
         return {"gesamt": erg.get("count", 0),
                 "artikel": [{"titel": a.get("title"), "url": a.get("url"),

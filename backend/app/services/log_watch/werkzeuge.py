@@ -241,7 +241,8 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                   "Suche nach Fehlermeldung oder Code (z. B. „ORA-12541 TNS no listener“), nie nach Host, IP oder "
                   "internen Namen (werden entfernt). warum = welche Zeile, was ist unklar. Kontext, kein Beleg.",
                   _p(query={"type": "string", "_pflicht": True}, warum={"type": "string", "_pflicht": True}), False),
-    "web_seite": (web_seite, "Eine öffentliche Seite aus web_suche lesen (Text, gekürzt). Keine internen Adressen.",
+    "web_seite": (web_seite, "Eine öffentliche Seite aus web_suche lesen (Text; lange Seiten: Anfang und Ende). "
+                  "In Foren steht die Lösung meist im LETZTEN Beitrag — lies das Ende. Keine internen Adressen.",
                   _p(url={"type": "string", "_pflicht": True}), False),
     "lw_definition": (lw_definition, "Die geltende Relevanz-Definition: Kriterien R1–R8/N0–N6, Objekte, "
                       "Regeln (erste passende entscheidet).", _p(), False),

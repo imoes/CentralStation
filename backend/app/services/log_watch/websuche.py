@@ -135,10 +135,19 @@ async def _stackexchange(site: str, frage: str, url: str) -> dict:
         q = (await c.get(f"{api}/questions/{frage}", params={"site": site, "filter": "withbody"})).json()
         a = (await c.get(f"{api}/questions/{frage}/answers", params={"site": site, "order": "desc", "sort": "votes",
                                                                      "filter": "withbody", "pagesize": 3})).json()
+        # die neueste Antwort dazu: im Forum steht die Lösung meist im letzten Beitrag (Nutzer 07.11.)
+        neu = (await c.get(f"{api}/questions/{frage}/answers", params={"site": site, "order": "desc",
+                                                                       "sort": "creation", "filter": "withbody",
+                                                                       "pagesize": 1})).json()
     if q.get("error_message"):
         return {"fehler": f"Stack Exchange: {q['error_message']}", "url": url}
     f = (q.get("items") or [{}])[0]
     teile = [f"FRAGE: {html.unescape(f.get('title', ''))}\n{text_aus_html(f.get('body', ''))}"]
+    beste = {x.get("answer_id") for x in a.get("items") or []}
+    for x in neu.get("items") or []:
+        if x.get("answer_id") not in beste:
+            teile.append(f"NEUESTE ANTWORT (oft die Lösung; Punkte {x.get('score')}"
+                         f"{', akzeptiert' if x.get('is_accepted') else ''}):\n{text_aus_html(x.get('body', ''))}")
     for x in a.get("items") or []:
         teile.append(f"ANTWORT (Punkte {x.get('score')}{', akzeptiert' if x.get('is_accepted') else ''}):\n"
                      f"{text_aus_html(x.get('body', ''))}")
@@ -168,5 +177,14 @@ async def seite(url: str) -> dict:
     if r.url and oeffentlich(str(r.url)):                 # Weiterleitung ins eigene Netz
         return {"fehler": "Weiterleitung auf eine interne Adresse", "url": url}
     text = text_aus_html(r.text) if "html" in r.headers.get("content-type", "") else r.text
-    return {"url": str(r.url), "text": text[:SEITE_MAX], "laenge": len(text),
-            **({"gekuerzt": f"{len(text)} Zeichen, gezeigt {SEITE_MAX}"} if len(text) > SEITE_MAX else {})}
+    return {"url": str(r.url), "text": kuerze_mit_ende(text), "laenge": len(text),
+            **({"gekuerzt": f"{len(text)} Zeichen: Anfang und Ende gezeigt (in Foren steht die Lösung meist im "
+                            f"letzten Beitrag)"} if len(text) > SEITE_MAX else {})}
+
+
+def kuerze_mit_ende(text: str, grenze: int = SEITE_MAX) -> str:
+    """Lange Seite → Anfang (Frage) + Ende (letzte Beiträge, meist die Lösung — Nutzer 07.11.). Rein."""
+    if len(text) <= grenze:
+        return text
+    kopf = grenze // 3
+    return text[:kopf] + "\n[… Mitte ausgelassen …]\n" + text[-(grenze - kopf - 30):]

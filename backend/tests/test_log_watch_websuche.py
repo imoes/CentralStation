@@ -39,3 +39,10 @@ def test_stackexchange_urls():
     assert ws.stackexchange("https://unix.stackexchange.com/questions/42/x") == ("unix", "42")
     assert ws.stackexchange("https://serverfault.com/questions/7") == ("serverfault", "7")
     assert ws.stackexchange("https://docs.oracle.com/x") is None
+
+
+def test_lange_seite_behaelt_das_ende():
+    """Nutzer 07.11.: im Forum ist der letzte Beitrag meist die Lösung — die Kürzung behält das Ende."""
+    t = "FRAGE " + "x" * 20000 + " LOESUNG: restart the listener"
+    k = ws.kuerze_mit_ende(t, 6000)
+    assert k.startswith("FRAGE") and k.endswith("LOESUNG: restart the listener") and len(k) <= 6000

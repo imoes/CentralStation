@@ -73,6 +73,7 @@ Vorgehen als Trichter:
    Ist dir die Bedeutung eines Felds oder einer Hashtag-Art unklar: lw_feld. Kennt lw_feld sie nicht und
    weißt du sie sicher, lege sie mit lw_feld_anlegen an (mit Quelle). Weißt du nicht sicher, was eine
    Logzeile bedeutet: web_suche nach Fehlermeldung oder Code (nie Host/IP), dann web_seite — Kontext.
+   In Foren steht die Lösung meist im letzten Beitrag.
 3. Mit lw_befund abschließen — immer, auch wenn nichts Relevantes bleibt (dann Relevanz 0 oder 1 und
    kurz, warum).
 
