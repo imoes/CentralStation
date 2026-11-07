@@ -97,7 +97,7 @@ def test_nachbetten_ergaenzt_nur_dokumente_ohne_vektor(monkeypatch):
     monkeypatch.setattr(embed, "einbetten", _einbetten)
     erg = asyncio.run(historie.nachbetten(limit=2))
     assert gesucht["query"] == {"bool": {"must_not": [{"exists": {"field": "vektor"}}]}}
-    assert erg == {"offen": 3, "nachgebettet": 1, "abgelehnt": 1}
+    assert erg == {"offen": 3, "nachgebettet": 1, "abgelehnt": 1, "nicht_einbettbar": 0}
     assert geschrieben["body"][0] == {"update": {"_index": "cs-logs-2026.11.06", "_id": "graylog:m1"}}
     assert len(geschrieben["body"][1]["doc"]["vektor"]) == embed.DIM
 
@@ -136,3 +136,34 @@ def test_wazuh_holer_holt_genau_die_mitgelieferten_ids():
     out = asyncio.run(lauf._wazuh_holer(_W(), B)([(t1, 1), (t2, 1)]))
     assert abfragen == [{"size": 2, "query": {"ids": {"values": ["a1", "b1"]}}}]   # n je Treffer
     assert [(qid, text) for _, qid, _, text, _ in out] == [("a1", "Invalid user x")]   # b1 fehlt → nicht erfunden
+
+
+def test_nachbetten_ein_giftiges_dokument_blockiert_die_anderen_nicht(monkeypatch):
+    """Regression 07.11.: ein zu langer Text ließ den ganzen Stapel scheitern, bei jedem Lauf."""
+    from app.services.log_watch import embed, historie
+
+    class _OS:
+        async def search(self, index, body, **_):
+            return {"hits": {"total": {"value": 3}, "hits": [
+                {"_index": "i", "_id": "kurz1", "_source": {"text": "kurz"}},
+                {"_index": "i", "_id": "gift", "_source": {"text": "GIFT"}},
+                {"_index": "i", "_id": "kurz2", "_source": {"text": "auch kurz"}}]}}
+
+        async def bulk(self, body):
+            return {"items": [{"update": {}}] * (len(body) // 2)}
+
+    async def _einbetten(texte):
+        if "GIFT" in texte:
+            raise embed.EmbeddingFehler("HTTPStatusError: 500")
+        return [[0.1] * embed.DIM for _ in texte]
+
+    import app.core.opensearch as core_os
+    monkeypatch.setattr(core_os, "get_opensearch", lambda: _OS())
+    monkeypatch.setattr(embed, "einbetten", _einbetten)
+    erg = asyncio.run(historie.nachbetten(limit=3))
+    assert erg["nachgebettet"] == 2 and erg["nicht_einbettbar"] == 1 and erg["nicht_einbettbar_ids"] == ["gift"]
+
+
+def test_einbetten_kuerzt_unter_die_server_batchgroesse():
+    from app.services.log_watch import embed
+    assert embed.MAX_ZEICHEN / 1.85 < 2048          # gemessen: 1,85 Zeichen je Token Logtext

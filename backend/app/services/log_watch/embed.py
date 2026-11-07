@@ -15,8 +15,11 @@ URL = os.environ.get("LOG_WATCH_EMBED_URL", "https://llm-host03.example.com/embe
 DIM = 1024
 #: Texte je Aufruf
 STAPEL = 32
-#: Zeichen je Text — reicht für Muster, Belege und Befund; bge-m3 kann 8 192 Token.
-MAX_ZEICHEN = 4000
+#: Zeichen je Text. Nicht das Modell begrenzt (bge-m3: 8 192 Token), sondern der Server: er nimmt je
+#: Eingabe höchstens seine Batch-Größe (2 048 Token, llama-embed --batch-size). Gemessen 07.11.:
+#: 4 000 Zeichen Logtext = 2 164 Token (1,85 Zeichen/Token) → HTTP 500 für den GANZEN Stapel.
+#: 3 000 Zeichen ≈ 1 620 Token. Gespeichert wird der volle Text, gekürzt nur die Eingabe des Vektors.
+MAX_ZEICHEN = 3000
 
 
 class EmbeddingFehler(RuntimeError):

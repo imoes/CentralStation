@@ -10,6 +10,35 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 25: one oversized text no longer blocks the vectors of others
+
+### Fixed
+
+- **6 history documents had no vector, and the catch-up failed on every run.**
+  - The embedding server (`llama-embed`) logged: "input (2164 tokens) is too large to process …
+    (current batch size: 2048)".
+  - One Graylog document from mon-beta has 4 702 characters; cut to 4 000 that is still 2 164 tokens
+    (1.85 characters per token for log text).
+  - The server rejects the whole batch, so 5 short documents from cue0111 (125–132 characters) failed
+    with it. The catch-up retried the same batch every run.
+  - The comment "bge-m3 kann 8 192 Token" was right about the model but wrong as the limit: the server
+    accepts at most its batch size of 2 048 tokens per input.
+- **Fix:**
+  - The vector input is cut to 3 000 characters (about 1 620 tokens); the full text is still stored.
+  - If a batch fails, the catch-up embeds one by one. What still fails is counted as
+    `nicht_einbettbar` with its ID.
+
+### Evidence
+
+- **Embedding requests from our backend in 70 minutes** (nginx log on llm-host03): 85 × 200, 4 × 500.
+- **Tests:** a "poison" document no longer stops the other two, and the cut stays below the server batch
+  size.
+- **Backend suite:** 937 passed.
+- **Queue order (part 24), live:** since the rollout, 1 of 51 trigger messages left the window
+  unanalysed, against 10 of 87 before. That one was urgent.
+
+---
+
 ## 2026-11-07 — Log watch, part 24: urgent cases first — what expired was the most important
 
 ### Fixed

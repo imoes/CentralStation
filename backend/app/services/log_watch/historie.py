@@ -185,16 +185,31 @@ async def nachbetten(limit: int = NACHBETTEN_JE_LAUF) -> dict:
     offen = res["hits"]["total"]["value"]
     if not hits:
         return {"offen": 0, "nachgebettet": 0}
+    texte = [h["_source"].get("text") or "" for h in hits]
+    nicht_einbettbar: list[str] = []
     try:
-        vektoren = await einbetten([h["_source"].get("text") or "" for h in hits])
-    except EmbeddingFehler as e:
-        return {"offen": offen, "nachgebettet": 0, "fehler": str(e)[:300]}
+        paare = list(zip(hits, await einbetten(texte)))
+    except EmbeddingFehler:
+        # Ein Stapel scheitert ganz, wenn EIN Text nicht passt (gemessen 07.11.: ein Dokument
+        # blockierte so bei jedem Lauf fünf andere). Dann einzeln — der Rest kommt durch,
+        # was einzeln scheitert, ist benannt.
+        paare = []
+        for h, t in zip(hits, texte):
+            try:
+                (v,) = await einbetten([t])
+                paare.append((h, v))
+            except EmbeddingFehler:
+                nicht_einbettbar.append(h["_id"])
+        if not paare:
+            return {"offen": offen, "nachgebettet": 0, "nicht_einbettbar": len(nicht_einbettbar),
+                    "fehler": f"kein Dokument einbettbar (z. B. {nicht_einbettbar[0]})"}
     body: list[dict] = []
-    for h, v in zip(hits, vektoren):
+    for h, v in paare:
         body += [{"update": {"_index": h["_index"], "_id": h["_id"]}}, {"doc": {"vektor": v}}]
     r = await os_client.bulk(body=body)
     abgelehnt = sum(1 for i in r.get("items", []) if (i.get("update") or {}).get("error"))
-    return {"offen": offen, "nachgebettet": len(hits) - abgelehnt, "abgelehnt": abgelehnt}
+    return {"offen": offen, "nachgebettet": len(paare) - abgelehnt, "abgelehnt": abgelehnt,
+            "nicht_einbettbar": len(nicht_einbettbar), **({"nicht_einbettbar_ids": nicht_einbettbar[:10]} if nicht_einbettbar else {})}
 
 
 def r7_abfrage(quellen_je_host: dict[str, list[str]], seit: datetime) -> dict:
