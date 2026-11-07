@@ -50,7 +50,7 @@ def ki(zeilen: list[tuple[str, datetime, dict]], stunden: int) -> dict:
     for quelle, b, w in sorted(zeilen, key=lambda z: z[1]):
         if quelle == "ki-pruefung" and "fehler" not in w:
             reihe.append({"zeit": b.isoformat(), "offen": w.get("offen", 0), "faelle": w.get("faelle", 0),
-                          "verfallen": w.get("verfallen", 0)})
+                          "verfallen": w.get("verfallen", 0), "bekannt": w.get("bekannt", 0)})
             summe["verfallen"] += w.get("verfallen", 0)
         elif quelle == "ki-pruefung":
             summe["pruef_fehler"] += 1
@@ -61,9 +61,12 @@ def ki(zeilen: list[tuple[str, datetime, dict]], stunden: int) -> dict:
             summe["befunde"] += len(w.get("befunde") or [])
             summe["ohne_befund"] += sum(1 for a in an if "kein_befund" in a)
             summe["fehler"] += sum(1 for a in an if "fehler" in a)
+            # Lernen: Wiederholungen bekannter Fehler, ohne KI an ihren Befund gehängt (Nachrichten)
+            summe["ohne_ki"] += w.get("bekannt_angehaengt", 0)
+            summe["gelernt"] += sum(a.get("gelernt") or 0 for a in an)
             modell_s += sum(s.get("ki_s") or 0 for a in an for s in a.get("schritte") or [])
             analysiert += len(an)
-    for k in ("analysiert", "befunde", "ohne_befund", "fehler", "verfallen"):
+    for k in ("analysiert", "befunde", "ohne_befund", "fehler", "verfallen", "ohne_ki", "gelernt"):
         summe.setdefault(k, 0)
     return {"zeitraum_h": stunden, "einheit": "Nachrichten bzw. Fälle; Messpunkt alle 10 min",
             "laeufe": einsaetze, "messpunkte": len(reihe), "reihe": reihe, "summe": dict(summe),
@@ -250,8 +253,11 @@ async def daten(db, typ: str, cfg: dict) -> dict:
         from app.services.log_watch import trichter
         from app.services.settings import get_setting
         an = (await get_setting(db, trichter.SCHALTER) or "").lower() in ("1", "true", "ja")
+        from app.services.log_watch import bekannt
+        b = await bekannt.liste(limit=0)
         return {**ki(await _zeilen(db, seit), stunden), "ki_aktiv": an,
-                "kapazitaet": {"agenten": trichter.AGENTEN, "budget_s": trichter.AGENT_BUDGET_S}}
+                "kapazitaet": {"agenten": trichter.AGENTEN, "budget_s": trichter.AGENT_BUDGET_S},
+                "bekannt": {k: b[k] for k in ("gesamt", "je_status", "wiederholungen")}}
     if typ == "lw_volumen":
         return volumen(await _zeilen(db, seit), stunden)
     if typ == "lw_hashtags":

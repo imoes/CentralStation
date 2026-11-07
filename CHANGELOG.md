@@ -10,6 +10,99 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 30: the funnel learns — a known error no longer goes to the AI
+
+You asked (2026-11-07): "Wenn die KI bereits ein Problem untersucht hat und der selbe Fehler wieder
+auftaucht, dann muss die KI nichts mehr machen." And: every object is the result document of a search,
+with fields like host and tags.
+
+### What is new
+
+- **Known errors** (`bekannt.py`, OpenSearch index `cs-log-bekannt`).
+  - After every finding, each error the analysis saw points to that finding. "Saw" means the case's
+    situation plus the cited evidence; messages already attached to another finding are not taken
+    from the situation.
+  - **Same error** = same error key, built from the group key the raster already writes on every
+    message: `muster:<drain>` across all hosts (Graylog, switch), and per host `regel:` (Wazuh),
+    `dienst:` (CheckMK), `bedrohung:` (firewall).
+  - A repeat is attached to the finding by the agent, without AI: hashtag `befund:<id>`, the finding's
+    `ai_relevanz`, `ai_provenance.bekannt`. The filter `befund:<id>` now shows evidence and repeats.
+  - **Exception:** a repeat with a criterion R1–R8 or `signal:dringend` that the error did not have at
+    its finding goes to the AI, named `neu_seit_befund`. This is the plan's N2 rule ("relevant again
+    only when an R appears that was not there when it was handled").
+- **A known error is an object:** its `filter` in the filter language (`muster:x` or
+  `host:h dienst:"Filesystem /"`), `host`, `hashtags`, finding, relevance, status, repeats, hosts.
+- **Human correction:** `GET /api/log-watch/bekannt`; `POST /api/log-watch/bekannt/{id}/vergessen`
+  with a reason (admin, audited) sets the status `widerlegt`, and the AI analyses the next occurrence.
+- **Cockpit:** the AI tile shows "ohne KI (bekannt)" and the number of active and refuted known errors.
+
+### Evidence
+
+- **The group key is always a hashtag:** measured 2026-11-07 on all 7 677 messages of the history
+  (wazuh 5 209, switch 1 040, graylog 769, checkmk 426, firewall 233): 0 without a key, 0 whose key is
+  not also a hashtag. A test checks for ten keys (with spaces, parentheses, a trailing `*`) that the
+  object's filter hits exactly the messages with the same error key.
+- **Backtest over the 388 findings of the last 7 days**, in time order, counting only cited evidence
+  (the situation of old analyses is not stored, so this is a lower bound):
+
+  | | Findings |
+  |---|---|
+  | all errors already known from an earlier finding (no AI run needed) | 193 (50 %) |
+  | partly known | 96 |
+  | new | 99 |
+
+  Only 20 cited messages would have gone back to the AI because of a new criterion.
+- **Tests:** `test_log_watch_bekannt.py` (7), funnel and cockpit tests extended; full suite 815 passed,
+  142 skipped.
+
+### What is still missing
+
+- **A screen for known errors** (list, open the filter as a search, "forget" with a reason). Today only
+  the API and the counters in the AI tile.
+- **Similar but not identical errors** (vector, "similar to …") still go to the AI unmarked.
+- **Rule suggestions from filter chains** (plan: a chain that led to a confirmed finding becomes a test
+  rule) are not built.
+
+---
+
+## 2026-11-07 — Log watch, part 29: the funnel reads CheckMK, tickets and the knowledge base
+
+You approved (2026-11-07, "Ja mache das") a small read-only set beyond the history.
+
+### What is new
+
+- Three more tools for the AI funnel, with the MCP server's names and the same code:
+  - `get_checkmk_host`: live CheckMK state; in the funnel only services not OK, the number OK, and
+    CPU/RAM/disk of the last 2 h.
+  - `search_tickets`: Jira and ServiceDesk by free text; an open ticket means N2 (handled).
+  - `search_knowledge_base`: quick search in the knowledge base; no deep search (measured ~280 s).
+- Each call waits at most 30 s; a timeout or an outage is a named error, never an empty result.
+- Their results are context; evidence for a finding stays history messages only.
+- A tool that cannot work is not offered, with the reason.
+
+### What changed
+
+- The MCP tools `get_checkmk_host` and `search_knowledge_base` (quick search) now call the shared
+  functions `checkmk_metrics.host_status` and `aikb.search_kb`, so funnel and MCP have one
+  implementation.
+
+### Evidence
+
+- **Live, read-only (2026-11-07, docker0218.example.com):**
+  - `get_checkmk_host`: 1.9 s, 36 services OK, 0 not OK, 6 vitals; 450 characters in the funnel.
+  - `search_knowledge_base`: 25.6 s, 3 articles (first: "[KB] docker0218.example.com").
+  - `search_tickets`: searched nowhere. Both Jira connectors (Jira, ServiceDesk) are personal
+    (`owner_user_id` set); there is no global one.
+- **Tests:** `test_log_watch_werkzeuge_extern.py` (6).
+
+### What is still missing
+
+- **Ticket search in the funnel is off** until there is a global Jira/ServiceDesk connector. The funnel
+  runs without a user and does not use anyone's personal credentials. The tool is therefore not
+  offered, and the reason is named.
+
+---
+
 ## 2026-11-07 — Log watch, part 28: tool answers in the view of the situation — smaller and complete
 
 Approved 2026-11-07 ("Ja") after the strata measurement (part 26): fewer new prompt tokens per step are

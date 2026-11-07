@@ -66,6 +66,25 @@ def kuerze_antwort(werkzeug: str, erg: dict) -> dict:
     if werkzeug == "lw_gespraech":
         return {"filter": erg.get("filter"),
                 "sitzungen": kuerze_gedaechtnis([], erg.get("sitzungen") or [])["gespraeche"]}
+    if werkzeug == "get_checkmk_host":
+        services = erg.get("services") or []
+        nicht_ok = [{"service": x.get("name"), "zustand": x.get("state_label"),
+                     "ausgabe": (x.get("summary") or "")[:TEXT_MAX]} for x in services if x.get("state")]
+        return {"host": erg.get("hostname"), "site": erg.get("site"), "nicht_ok": nicht_ok[:JE_ANTWORT * 2],
+                "nicht_ok_gesamt": len(nicht_ok), "ok": len(services) - len(nicht_ok),
+                "metriken_2h": [f"{m.get('service')} {m.get('metric')}: {m.get('current')}{m.get('unit') or ''} "
+                                f"(min {m.get('min')}, max {m.get('max')}, {m.get('trend')})"
+                                for m in erg.get("performance") or []]}
+    if werkzeug == "search_tickets":
+        return {"gesucht_in": erg.get("searched"), "gesamt": erg.get("total_found", 0),
+                "tickets": [{"key": t.get("key"), "titel": t.get("summary"), "status": t.get("status"),
+                             "aktualisiert": str(t.get("updated") or "")[:10], "instanz": t.get("instance"),
+                             "stelle": (t.get("match") or "")[:TEXT_MAX]} for t in erg.get("issues") or []],
+                **({"hinweise": erg["notes"]} if erg.get("notes") else {})}
+    if werkzeug == "search_knowledge_base":
+        return {"gesamt": erg.get("count", 0),
+                "artikel": [{"titel": a.get("title"), "url": a.get("url"),
+                             "auszug": (a.get("excerpt") or "")[:TEXT_MAX * 2]} for a in erg.get("results") or []]}
     return erg
 
 

@@ -353,7 +353,7 @@ async def run_log_trichter() -> None:
     start = datetime.now(timezone.utc).replace(microsecond=0)
     try:
         erg = await trichter.agent()
-        if erg is not None and (erg["analysen"] or erg["belegt_von_anderen"]):
+        if erg is not None and (erg["analysen"] or erg["belegt_von_anderen"] or erg["bekannt_angehaengt"]):
             await _speichere("ki", start, erg)
     except Exception as e:
         logger.warning("KI-Agent fehlgeschlagen: %s", e)
@@ -370,6 +370,8 @@ async def run_log_ki_pruefung() -> None:
         k = await trichter.kandidaten()
         await _speichere("ki-pruefung", b, {"offen": k["gesamt"], "faelle": len(k["faelle"]),
                                             "verfallen": k["verfallen"], "gekappt": k["gekappt"],
+                                            # bekannte Fehler, die auf ihren Befund warten (ohne KI)
+                                            "bekannt": k["bekannt"], "neu_seit_befund": k["neu_seit_befund"],
                                             "groesste": k["faelle"][:5]})
     except Exception as e:
         logger.warning("KI-Prüfung fehlgeschlagen: %s", e)

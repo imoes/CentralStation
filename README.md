@@ -1533,14 +1533,46 @@ The AI only works when a check is true, and it only writes its own analysis.
   | `lw_definition` | the relevance definition: criteria, objects, rules |
   | `lw_gespraech` | conversation protocols of earlier analyses for a filter (e.g. `host:x`) |
   | `lw_befund` | the only writing tool: files the finding |
+  | `get_checkmk_host` | live CheckMK state of a host: services not OK, CPU/RAM/disk of the last 2 h |
+  | `search_tickets` | Jira and ServiceDesk tickets by free text (an open ticket = N2, handled) |
+  | `search_knowledge_base` | internal knowledge base (runbooks, server docs), quick search only |
+
+  The last three reach beyond the history. They carry the MCP server's names and call the same code
+  (`checkmk_metrics.host_status`, `ticketing.search_tickets`, `aikb.search_kb`), with a 30 s limit each.
+  Their results are context, never evidence for `lw_befund`. A tool that cannot work is not offered to
+  the funnel, with the reason (`werkzeuge.nicht_verfuegbar`). `search_tickets` needs a global Jira
+  connector, because the funnel runs without a user and does not use personal credentials.
 
   In the funnel, tool answers use the same view as the worker's situation (`hostobjekt.kuerze_antwort`):
   - `lw_suche`: at most 6 hits; each with host, 2 reasons, 5 hashtags and 300 characters of quotable
     text. The answer names `gesamt` and `gezeigt`.
   - Facets: top 5 values per kind.
   - `lw_gespraech`: the memory view.
+  - `get_checkmk_host`: only services that are not OK (with status line), the number OK, the vitals.
 
   The MCP tools answer in full.
+
+- **Known errors: the funnel learns** (`bekannt.py`, index `cs-log-bekannt`). If the AI has already
+  analysed an error and the same error comes back, the AI does nothing.
+  - **Same error** = same error key, built from the group key the raster writes on every message:
+    `muster:<drain>` across all hosts (Graylog, switch); `<host>|regel:` (Wazuh), `<host>|dienst:`
+    (CheckMK), `<host>|bedrohung:` (firewall) per host.
+  - **Learning:** after every finding, each error the analysis saw (the case's situation and the cited
+    evidence) points to that finding. Messages already attached to another finding are not taken from
+    the situation.
+  - **Repeats:** the agent attaches them to the finding without AI: hashtag `befund:<id>`,
+    `ai_relevanz` of the finding, `ai_provenance.bekannt`. The filter `befund:<id>` shows evidence and
+    repeats. The counter `wiederholungen` grows.
+  - **Exception:** a repeat that carries a criterion R1–R8 or `signal:dringend` the error did not have
+    at its finding goes to the AI (`neu_seit_befund`), as the plan's N2 rule says.
+  - **A known error is an object:** `filter` in the filter language (`muster:x`,
+    `host:h dienst:"Filesystem /"`), `host`, `hashtags`, `befund`, `relevanz`, `merkmale`, `status`
+    (`aktiv` | `widerlegt`), `wiederholungen`, `hosts`. The filter is the search for the error; a test
+    proves filter and key hit the same messages.
+  - **Human correction:** `GET /api/log-watch/bekannt` lists them; `POST
+    /api/log-watch/bekannt/{id}/vergessen` with a reason (admin, audited) sets `widerlegt`. The AI then
+    analyses the next occurrence, and its new finding makes the entry active again.
+  - **Cockpit:** the AI tile shows "ohne KI (bekannt)" and how many known errors are active or refuted.
 
 - **A finding is a document** `quelle:ki`, `herkunft:ki` in `cs-logs-*` (`befund.py`). The code writes
   it, not the model, and checks first:

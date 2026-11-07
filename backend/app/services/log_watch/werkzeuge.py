@@ -3,9 +3,15 @@
 Der Agent sieht dasselbe wie der Mensch im Cockpit: dieselbe Suche, dieselben Facetten, dieselbe
 Definition. Alle Werkzeuge lesen; einzig `lw_befund` schreibt — die Analyse der KI als Dokument
 `quelle:ki`, keine Aktion an einem System (Belege prüft der Code, befund.py).
+
+Drei Werkzeuge reichen über die Historie hinaus (Nutzer, 07.11.): `get_checkmk_host`,
+`search_tickets`, `search_knowledge_base`. Sie heißen wie auf dem MCP-Server und rufen dieselbe
+Umsetzung (checkmk_metrics.host_status, ticketing.search_tickets, aikb.search_kb) — nur lesend,
+ohne Tiefensuche, mit Frist EXTERN_S. Belege eines Befunds bleiben Nachrichten der Historie.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Awaitable, Callable
 
 from app.services.log_watch import suche as s
@@ -89,6 +95,78 @@ async def lw_befund(titel: str, befund: str, relevanz: int, belege: list, hypoth
         return {"abgelehnt": str(e)}
 
 
+#: höchstens so lange wartet ein Agent auf eine externe Quelle — die Wissensdatenbank stockt
+#: zeitweise minutenlang (connectors/aikb.py, Grenze dort 900 s), der Agent hat 480 s Budget
+EXTERN_S = 30
+
+
+async def _extern(was: str, coro) -> dict:
+    """Externe Quelle mit Frist; `error` der Quelle heißt hier `fehler` (wie bei allen Werkzeugen)."""
+    try:
+        r = await asyncio.wait_for(coro, EXTERN_S)
+    except asyncio.TimeoutError:
+        return {"fehler": f"{was}: keine Antwort nach {EXTERN_S} s"}
+    except Exception as e:  # noqa: BLE001 — eine ausgefallene Quelle ist ein benannter Zustand
+        return {"fehler": f"{was}: {type(e).__name__}: {str(e)[:200]}"}
+    if isinstance(r, dict) and r.get("error"):
+        return {**{k: v for k, v in r.items() if k != "error"}, "fehler": f"{was}: {r['error']}"}
+    return r
+
+
+async def get_checkmk_host(hostname: str) -> dict:
+    from app.services.checkmk_metrics import host_status
+    return await _extern("CheckMK", host_status(hostname))
+
+
+async def search_tickets(query: str, open_only: bool = False) -> dict:
+    from app.core.database import AsyncSessionLocal
+    from app.services.ticketing import search_tickets as suche_tickets
+
+    async def _hole():
+        async with AsyncSessionLocal() as db:   # ohne Nutzer: nur die globalen Jira-Konnektoren
+            r = await suche_tickets(db, None, query, open_only=open_only, max_results=5)
+        if not r.get("searched"):               # sonst sähe „nirgends gesucht“ aus wie „kein Ticket“
+            return {"error": OHNE_JIRA}
+        return r
+    return await _extern("Jira", _hole())
+
+
+#: Grund, warum search_tickets fehlt — der Trichter läuft ohne Nutzer und nimmt keine persönlichen
+#: Zugangsdaten (gemessen 07.11.: Jira und ServiceDesk sind nur als persönliche Konnektoren angelegt)
+OHNE_JIRA = "kein globaler Jira-/ServiceDesk-Konnektor (nur persönliche) — Tickets nicht durchsuchbar"
+
+
+async def nicht_verfuegbar() -> dict[str, str]:
+    """Werkzeuge, die gerade nicht funktionieren können, mit Grund — der Trichter bietet sie nicht an
+    (ein Werkzeug, das nur verweigert, kostet die KI einen Schritt)."""
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.connector import ConnectorConfig
+    async with AsyncSessionLocal() as db:
+        typen = set((await db.execute(select(ConnectorConfig.type).where(
+            ConnectorConfig.enabled.is_(True), ConnectorConfig.owner_user_id.is_(None),
+            ConnectorConfig.type.in_(["jira", "jira_sd", "aikb", "checkmk"])))).scalars())
+    out = {}
+    if not typen & {"jira", "jira_sd"}:
+        out["search_tickets"] = OHNE_JIRA
+    if "aikb" not in typen:
+        out["search_knowledge_base"] = "kein aktiver IT-AIKB-Konnektor"
+    if "checkmk" not in typen:
+        out["get_checkmk_host"] = "kein CheckMK-Konnektor"
+    return out
+
+
+async def search_knowledge_base(query: str) -> dict:
+    from app.core.database import AsyncSessionLocal
+    from app.services.connectors.aikb import search_kb
+
+    async def _hole():
+        async with AsyncSessionLocal() as db:
+            return await search_kb(db, query, size=3)
+    return await _extern("Wissensdatenbank", _hole())
+
+
 def _p(**props) -> dict:
     return {"type": "object", "properties": props, "required": [k for k, v in props.items() if v.pop("_pflicht", False)]}
 
@@ -141,6 +219,21 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                                                                 "enum": ["offen", "gestuetzt", "widerlegt"]}}}},
                      hashtags={"type": "array", "items": {"type": "string"}}),
                   True),
+    "get_checkmk_host": (get_checkmk_host,
+                         "Live-Zustand eines Hosts aus CheckMK: Services, die nicht OK sind (mit Statuszeile), "
+                         "Anzahl OK, CPU/RAM/Platte der letzten 2 h mit Trend. Prüft, ob ein Problem jetzt "
+                         "noch besteht. Kein Beleg für lw_befund (Belege sind Nachrichten der Historie).",
+                         _p(hostname={"type": "string", "_pflicht": True}), False),
+    "search_tickets": (search_tickets,
+                       "Tickets in Jira und ServiceDesk per Freitext (z. B. Hostname, Dienst, Fehlertext). "
+                       "Ein offenes Ticket zum Problem heißt: bekannt und behandelt (Kriterium N2) — im Befund "
+                       "nennen. Kein Beleg für lw_befund.",
+                       _p(query={"type": "string", "_pflicht": True},
+                          open_only={"type": "boolean", "description": "nur nicht erledigte Tickets"}), False),
+    "search_knowledge_base": (search_knowledge_base,
+                              "Interne Wissensdatenbank (Runbooks, Server-Doku, Abhängigkeiten) per Suchbegriff, "
+                              "z. B. Hostname oder Dienst. Kontext, kein Beleg für lw_befund.",
+                              _p(query={"type": "string", "_pflicht": True}), False),
 }
 
 

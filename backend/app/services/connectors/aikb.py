@@ -57,6 +57,27 @@ async def load_aikb_connector(db):
     return result.scalar_one_or_none()
 
 
+async def search_kb(db, query: str, size: int = 5) -> dict:
+    """Schnelle Suche (OpenSearch, Textauszüge) — EINE Umsetzung für das MCP-Werkzeug
+    search_knowledge_base (ohne Tiefensuche) und den KI-Trichter der Log-Überwachung.
+    Ein Ausfall heißt `error`, nie eine leere Wissensdatenbank."""
+    from app.core.security import decrypt_credentials
+
+    conn = await load_aikb_connector(db)
+    if not conn:
+        return {"error": "Kein aktiver IT-AIKB Connector konfiguriert"}
+    aikb = AIKBConnector(base_url=conn.base_url, credentials=decrypt_credentials(conn.encrypted_credentials))
+    hits = await aikb.search_opensearch(query, size=size)
+    if not hits and aikb.last_error:
+        # A failed search must not look like an empty knowledge base — the agent
+        # would report "nothing documented" as a finding.
+        return {"mode": "opensearch", "query": query, "error": f"Wissensdatenbank nicht erreichbar: {aikb.last_error}",
+                "results": [], "count": 0}
+    return {"mode": "opensearch", "query": query, "count": len(hits),
+            "results": [{"title": h.get("title", ""), "space": h.get("space_key", ""),
+                         "url": h.get("source_url", ""), "excerpt": h.get("content", "")[:4000]} for h in hits]}
+
+
 async def aikb_configured(db) -> bool:
     """Ist die Wissensdatenbank für die Agenten nutzbar?"""
     return await load_aikb_connector(db) is not None

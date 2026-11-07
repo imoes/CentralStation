@@ -234,3 +234,34 @@ async def netzplan_historie(_user: CurrentUser, db: Annotated[AsyncSession, Depe
     from app.services.log_watch import suche
     from app.services.log_watch.definition import aktuelle
     return await suche.netzplan(filter, stunden=stunden, knoten=knoten, objekte=(await aktuelle(db)).objekte)
+
+
+# ── Bekannte Fehler: was die KI schon untersucht hat (bekannt.py) ─────────────
+
+@router.get("/bekannt")
+async def bekannte_fehler(_user: CurrentUser, status: str = Query("", pattern="^(|aktiv|widerlegt)$"),
+                          suche: str = Query("", max_length=200), limit: int = Query(100, ge=0, le=500)):
+    """Bekannte Fehler als Objekte (Filter, Host, Hashtags, Befund, Wiederholungen ohne KI)."""
+    from app.services.log_watch import bekannt
+    return await bekannt.liste(status or None, suche, limit)
+
+
+class VergessenBody(BaseModel):
+    grund: str
+
+
+@router.post("/bekannt/{eintrag_id}/vergessen", dependencies=[RequireAdmin])
+async def bekannten_fehler_vergessen(eintrag_id: str, body: VergessenBody, user: CurrentUser,
+                                     db: Annotated[AsyncSession, Depends(get_db)]):
+    """Ein Mensch widerlegt das Urteil: beim nächsten Auftreten analysiert die KI neu. Grund ist Pflicht."""
+    from app.services.log_watch import bekannt
+    if not body.grund.strip():
+        raise HTTPException(422, "Grund fehlt")
+    e = await bekannt.vergiss(eintrag_id, body.grund.strip(), user.email)
+    if e is None:
+        raise HTTPException(404, "kein bekannter Fehler mit dieser ID")
+    db.add(AuditLog(action="log_bekannt_vergessen", resource_type="log_bekannt", resource_id=eintrag_id,
+                    user_id=user.id, new_value={"fehler": e.get("fehler"), "befund": e.get("befund"),
+                                                "grund": body.grund.strip()[:1000]}))
+    await db.commit()
+    return e

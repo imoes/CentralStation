@@ -8,6 +8,9 @@ schreibt der Code (befund.py). Die KI handelt nie an einem System; kein max_toke
 
 Jeder Schritt wird festgehalten (Werkzeug, Argumente, Trefferzahl) und steht im Befund unter
 `ai_provenance.schritte` — die Begründungskette ist nachlesbar.
+
+Lernen (bekannt.py): nach jedem Befund gilt jeder gesehene Fehler als bekannt. Taucht er wieder auf,
+hängt der Agent die Nachricht ohne KI an den Befund — außer sie bringt ein neues Kriterium mit.
 """
 from __future__ import annotations
 
@@ -16,6 +19,7 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 
+from app.services.log_watch import bekannt
 from app.services.log_watch import werkzeuge as wz
 
 log = logging.getLogger(__name__)
@@ -63,6 +67,9 @@ Vorgehen als Trichter:
 2. Werkzeuge (lw_suche, lw_facetten, lw_netzplan, lw_nachricht, lw_gespraech) nur zum Vertiefen
    über die Lage hinaus (anderer Filter, anderer Zeitraum, eine Nachricht vollständig):
    den auffälligsten Hashtag als Filter ergänzen, bis ein kleines, zusammenhängendes Ergebnis bleibt.
+   Außerhalb der Historie, wenn es den Befund ändert: get_checkmk_host (besteht das Problem jetzt
+   noch?), search_tickets (gibt es ein Ticket? offen = N2 behandelt), search_knowledge_base (Runbook,
+   Abhängigkeiten). Deren Ergebnisse sind Kontext — im Befund nennen, aber nie als Beleg zitieren.
 3. Mit lw_befund abschließen — immer, auch wenn nichts Relevantes bleibt (dann Relevanz 0 oder 1 und
    kurz, warum).
 
@@ -135,20 +142,26 @@ async def kandidaten(stunden: float = STUNDEN) -> dict:
     seit_dt = datetime.now(timezone.utc) - timedelta(hours=stunden)
     seit = seit_dt.isoformat()
     res = await os_client.search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
-        "size": PRUEF_MAX, "track_total_hits": True, "_source": ["host", "zeit", "hashtags"],
+        "size": PRUEF_MAX, "track_total_hits": True,
+        "_source": ["host", "zeit", "hashtags", "schluessel", "kriterien"],
         "query": {"bool": {"filter": [{"range": {"zeit": {"gte": (seit_dt - TAKT).isoformat()}}},
                                       flt.opensearch(AUSLOESER)],
                            "must_not": [{"prefix": {"hashtags": "befund:"}}]}}})
-    alle = [h["_source"] for h in res["hits"]["hits"]]
+    alle = [{**h["_source"], "_id": h["_id"], "_index": h["_index"]} for h in res["hits"]["hits"]]
     bef = await os_client.search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
         "size": 500, "_source": ["host", "zeit", "ai_provenance.start"],
         "query": {"bool": {"filter": [{"term": {"quelle": "ki"}}, {"range": {"zeit": {"gte": seit}}}]}}})
     offen_alle = offene(alle, [h["_source"] for h in bef["hits"]["hits"]])
-    offen = [n for n in offen_alle if _zeit_iso(n.get("zeit")) >= seit_dt]
+    offen_frist = [n for n in offen_alle if _zeit_iso(n.get("zeit")) >= seit_dt]
+    # bekannte Fehler gehen nicht an die KI, sondern an ihren Befund (agent → bekannt.haenge_an)
+    offen, anhaengen = bekannt.teile(offen_frist, await bekannt.lade([bekannt.fehler(n) for n in offen_frist]))
     je_host = Counter(n.get("host", "") for n in offen)
     return {"gesamt": len(offen), "gekappt": res["hits"]["total"]["value"] > PRUEF_MAX,
             # im letzten Takt aus dem Prüffenster gefallen, ohne dass eine Analyse sie sah
-            "verfallen": len(offen_alle) - len(offen),
+            "verfallen": len(offen_alle) - len(offen_frist),
+            "bekannt": len(anhaengen), "anhaengen": anhaengen,
+            # bekannter Fehler mit neuem Kriterium — geht trotzdem an die KI (benannt)
+            "neu_seit_befund": sum(1 for n in offen if n.get("neu_seit_befund")),
             "faelle": faelle(offen),
             "hosts": [{"host": h, "anzahl": n} for h, n in je_host.most_common(20)]}
 
@@ -172,8 +185,10 @@ def _kurz(name: str, erg: dict) -> str:
 #: (Lage des Falls, Gedächtnis je Host) — zwei Wege zum selben Ergebnis nahm die KI beide
 #: (gemessen 06.11.: alle 6 Sitzungen nach dem Deploy begannen trotzdem mit lw_wissen).
 #: Für die Konsole bleibt lw_wissen über MCP; zum Nachlesen bleibt lw_gespraech.
+#: Dazu drei lesende Quellen außerhalb der Historie (Nutzer, 07.11.) — dieselben wie auf dem MCP-Server.
 TRICHTER_WERKZEUGE = ["lw_suche", "lw_facetten", "lw_netzplan", "lw_nachricht", "lw_gespraech",
-                      "lw_definition", "lw_befund"]
+                      "lw_definition", "get_checkmk_host", "search_tickets", "search_knowledge_base",
+                      "lw_befund"]
 
 #: so viele Hosts eines Falls bekommen ein Host-Objekt im Prompt (der Rest wird genannt)
 HOSTS_IM_PROMPT = 3
@@ -232,12 +247,21 @@ async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=
                                             _dt.now(timezone.utc)))
         except Exception as e:  # noqa: BLE001 — Protokoll-Ausfall benannt, Analyse bleibt gültig
             ergebnis["protokoll_fehler"] = f"{type(e).__name__}: {str(e)[:200]}"
+    if ergebnis.get("befund"):
+        # gesehen hat die Analyse die Lage des Falls und, was sie zitiert hat
+        try:
+            ergebnis["gelernt"] = await bekannt.lerne(
+                ergebnis["befund"], ergebnis.get("titel") or "", ergebnis.get("relevanz") or 0,
+                ergebnis.get("beleg_ids") or [], [n.get("id") for n in lage.get("nachrichten") or []])
+        except Exception as e:  # noqa: BLE001 — Befund bleibt gültig, Lernen benannt ausgefallen
+            ergebnis["lern_fehler"] = f"{type(e).__name__}: {str(e)[:200]}"
     return {**ergebnis, "sitzung": sitzung}
 
 
 async def _schleife(fall: dict, llm_config, llm, prompt: str, verlauf: list[dict]) -> dict:
     nachrichten = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
-    tools = wz.openai_tools(TRICHTER_WERKZEUGE)
+    fehlt = await wz.nicht_verfuegbar()
+    tools = wz.openai_tools([n for n in TRICHTER_WERKZEUGE if n not in fehlt])
     schritte: list[dict] = []
     erinnert = False
     for _ in range(SCHRITTE):
@@ -270,8 +294,11 @@ async def _schleife(fall: dict, llm_config, llm, prompt: str, verlauf: list[dict
             if a["name"] == "lw_befund" and "id" in erg:
                 verlauf.append({"rolle": "befund", "befund": erg["id"], "werkzeug": a["name"],
                                 "text": str(a["argumente"].get("titel", "")) + "\n" + str(a["argumente"].get("befund", ""))})
+                arg = a["argumente"]
                 return {"start": fall["start"], "hosts": fall["hosts"], "befund": erg["id"], "belege": erg["belege"],
-                        "verworfen": erg["verworfen"], "schritte": schritte}
+                        "verworfen": erg["verworfen"], "schritte": schritte,
+                        "titel": str(arg.get("titel") or ""), "relevanz": arg.get("relevanz"),
+                        "beleg_ids": [str(b.get("id")) for b in arg.get("belege") or [] if isinstance(b, dict)]}
             verlauf.append({"rolle": "werkzeug", "werkzeug": a["name"], "argumente": a["argumente"],
                             "text": _kurz(a["name"], erg)})
             nachrichten.append({"role": "tool", "tool_call_id": a["id"], "content": _kurz(a["name"], erg)})
@@ -382,6 +409,7 @@ async def agent(llm=None) -> dict | None:
     ergebnisse: list[dict] = []
     k: dict = {}
     belegt_von_anderen = 0
+    angehaengt = 0
     while time.monotonic() - beginn < AGENT_BUDGET_S:
         # Schalter vor JEDEM Fall: aus = Flotte läuft leer (laufende Fälle enden, keine neuen) —
         # so lässt sich ausrollen, ohne eine Analyse abzubrechen
@@ -389,6 +417,9 @@ async def agent(llm=None) -> dict | None:
             if (await get_setting(db, SCHALTER) or "").lower() not in ("1", "true", "ja"):
                 break
         k = await kandidaten()
+        if k["anhaengen"]:
+            angehaengt += (await bekannt.haenge_an(k.pop("anhaengen")))["angehaengt"]
+        k.pop("anhaengen", None)
         fall = None
         for f in k["faelle"]:
             if await belege(f, name):
@@ -405,7 +436,9 @@ async def agent(llm=None) -> dict | None:
         finally:
             await gib_frei(name)
     return {"agent": name, "pruefung": k, "analysen": ergebnisse, "dauer_s": round(time.monotonic() - beginn, 1),
-            "belegt_von_anderen": belegt_von_anderen, "befunde": [e["befund"] for e in ergebnisse if "befund" in e]}
+            "belegt_von_anderen": belegt_von_anderen, "befunde": [e["befund"] for e in ergebnisse if "befund" in e],
+            # Wiederholungen bekannter Fehler, ohne KI an ihren Befund gehängt
+            "bekannt_angehaengt": angehaengt}
 
 
 def uuid_kurz() -> str:

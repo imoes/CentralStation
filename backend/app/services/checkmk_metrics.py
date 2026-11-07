@@ -131,3 +131,40 @@ async def fetch_host_metrics(hostname: str, hours: int = 2, db: Any = None) -> d
                 "metrics": metrics_out}
 
     return {"hostname": hostname, "error": "Host auf keinem CheckMK-Standort gefunden"}
+
+
+async def host_status(hostname: str, db: Any = None) -> dict:
+    """A host's CheckMK overview: every service with state and plugin output, plus the
+    standard vitals of the last 2 hours. One implementation for the MCP tool
+    get_checkmk_host and the log-watch funnel.
+
+    Returns {hostname, site, services, performance} or {hostname, error, details}."""
+    from app.services.connectors.checkmk import CheckMKConnector
+
+    configs = await checkmk_configs(db)
+    if not configs:
+        return {"hostname": hostname, "error": "Kein CheckMK-Connector konfiguriert"}
+
+    errors: list[str] = []
+    for cfg, creds in configs:
+        connector = CheckMKConnector(base_url=cfg.base_url, credentials=creds)
+        try:
+            services = await connector.list_services(hostname)
+            if not services:
+                continue
+            perf = await fetch_host_metrics(hostname, hours=2, db=db)
+            return {
+                "hostname": hostname,
+                "site": cfg.name,
+                "services": services,
+                "performance": perf.get("metrics", []),
+            }
+        except Exception as exc:
+            log.warning("host_status %s on '%s': %s", hostname, cfg.name, exc)
+            errors.append(f"{cfg.name}: {exc}")
+
+    return {
+        "hostname": hostname,
+        "error": "Host auf keinem CheckMK-Standort gefunden",
+        "details": errors or None,
+    }

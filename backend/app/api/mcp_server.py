@@ -314,6 +314,7 @@ async def acknowledge_alert(alert_id: str) -> dict:
 from app.services.checkmk_metrics import (  # noqa: E402
     fetch_host_metrics as _fetch_host_performance,
     checkmk_configs as _checkmk_configs_svc,
+    host_status as _host_status,
 )
 
 
@@ -444,36 +445,7 @@ async def get_checkmk_host(hostname: str) -> dict:
     Host — alle Services plus die Standardmetriken CPU/RAM/Disk der letzten 2 Stunden.
     Für eine ANDERE Metrik, ein längeres Zeitfenster oder eine feinere Zeitreihe nimm
     `vibemk_get_service_metrics` (jede Metrik, bis 30 Tage, 1-Minuten-Auflösung bis 4h)."""
-    from app.services.connectors.checkmk import CheckMKConnector
-
-    configs = await _checkmk_configs()
-    if not configs:
-        return {"error": "Kein CheckMK-Connector konfiguriert"}
-
-    errors: list[str] = []
-    for cfg, creds in configs:
-        connector = CheckMKConnector(base_url=cfg.base_url, credentials=creds)
-        try:
-            services = await connector.list_services(hostname)
-            if not services:
-                continue
-            # Fetch fresh performance metrics in parallel with the service query
-            perf = await _fetch_host_performance(hostname, hours=2)
-            return {
-                "hostname": hostname,
-                "site": cfg.name,
-                "services": services,
-                "performance": perf.get("metrics", []),
-            }
-        except Exception as exc:
-            log.warning("get_checkmk_host %s on '%s': %s", hostname, cfg.name, exc)
-            errors.append(f"{cfg.name}: {exc}")
-
-    return {
-        "hostname": hostname,
-        "error": "Host auf keinem CheckMK-Standort gefunden",
-        "details": errors or None,
-    }
+    return await _host_status(hostname)
 
 
 # ── Tool: Get CheckMK Performance Metrics (RRD) ───────────────────────────────
@@ -983,7 +955,12 @@ async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
     - Du dir bei einer technischen Lösung unsicher bist und interne Doku prüfen willst
     """
     from app.core.security import decrypt_credentials
-    from app.services.connectors.aikb import AIKBConnector, load_aikb_connector
+    from app.services.connectors.aikb import AIKBConnector, load_aikb_connector, search_kb
+
+    if not deepsearch:
+        # dieselbe schnelle Suche wie im KI-Trichter der Log-Überwachung (search_kb)
+        async with (await _get_db_session()) as db:
+            return await search_kb(db, query, size=5)
 
     # Dieselbe Abfrage, nach der die Agenten-Anleitung entscheidet, ob sie dieses
     # Werkzeug überhaupt erwähnt (load_aikb_connector) — eine Definition für beides.
@@ -996,50 +973,23 @@ async def search_knowledge_base(query: str, deepsearch: bool = False) -> dict:
     creds = decrypt_credentials(conn.encrypted_credentials)
     aikb = AIKBConnector(base_url=conn.base_url, credentials=creds)
 
-    if deepsearch:
-        res = await aikb.search_rag(query, deepsearch=True)
-        answer = res.get("answer") or ""
-        sources = res.get("results") or []
-        return {
-            "mode": "deepsearch",
-            "query": query,
-            "answer": answer,
-            "sources": [
-                {
-                    "title": s.get("title", ""),
-                    "space": s.get("space_key", ""),
-                    "url": s.get("source_url", ""),
-                    "excerpt": s.get("content", "")[:4000],
-                }
-                for s in sources
-            ],
-        }
-    else:
-        hits = await aikb.search_opensearch(query, size=5)
-        if not hits and aikb.last_error:
-            # A failed search must not look like an empty knowledge base — the agent
-            # would report "nothing documented" as a finding.
-            return {
-                "mode": "opensearch",
-                "query": query,
-                "error": f"Wissensdatenbank nicht erreichbar: {aikb.last_error}",
-                "results": [],
-                "count": 0,
+    res = await aikb.search_rag(query, deepsearch=True)
+    answer = res.get("answer") or ""
+    sources = res.get("results") or []
+    return {
+        "mode": "deepsearch",
+        "query": query,
+        "answer": answer,
+        "sources": [
+            {
+                "title": s.get("title", ""),
+                "space": s.get("space_key", ""),
+                "url": s.get("source_url", ""),
+                "excerpt": s.get("content", "")[:4000],
             }
-        return {
-            "mode": "opensearch",
-            "query": query,
-            "results": [
-                {
-                    "title": h.get("title", ""),
-                    "space": h.get("space_key", ""),
-                    "url": h.get("source_url", ""),
-                    "excerpt": h.get("content", "")[:4000],
-                }
-                for h in hits
-            ],
-            "count": len(hits),
-        }
+            for s in sources
+        ],
+    }
 
 
 # ── Server-Dokumentation: Manpages und Fähigkeiten (Prüf-Container) ──────────

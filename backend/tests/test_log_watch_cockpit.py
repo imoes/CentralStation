@@ -140,16 +140,17 @@ def test_ki_statistik_flotte_und_warteschlange_getrennt():
     t = lambda m: datetime(2026, 11, 6, 23, m, tzinfo=timezone.utc)
     zeilen = [
         ("ki-pruefung", t(0), {"offen": 77, "faelle": 37, "verfallen": 0}),
-        ("ki", t(1), {"analysen": [{"befund": "ki:a", "schritte": [{"ki_s": 50}]}, {"kein_befund": "x", "schritte": [{"ki_s": 30}]}],
+        ("ki", t(1), {"analysen": [{"befund": "ki:a", "gelernt": 2, "schritte": [{"ki_s": 50}]}, {"kein_befund": "x", "schritte": [{"ki_s": 30}]}],
                       "befunde": ["ki:a"]}),
-        ("ki", t(2), {"analysen": [{"fehler": "ReadTimeout"}], "befunde": []}),
+        ("ki", t(2), {"analysen": [{"fehler": "ReadTimeout"}], "befunde": [], "bekannt_angehaengt": 12}),
         ("ki-pruefung", t(10), {"offen": 40, "faelle": 20, "verfallen": 3}),
         ("ki-pruefung", t(20), {"fehler": "Timeout"}),
         ("graylog", t(5), {"nachrichten": 5}),
     ]
     d = ki(zeilen, 6)
     assert d["laeufe"] == 2 and d["messpunkte"] == 2 and d["trend_offen"] == -37
-    assert d["summe"] == {"analysiert": 3, "befunde": 1, "ohne_befund": 1, "fehler": 1, "verfallen": 3, "pruef_fehler": 1}
+    assert d["summe"] == {"analysiert": 3, "befunde": 1, "ohne_befund": 1, "fehler": 1, "verfallen": 3, "pruef_fehler": 1,
+                          "ohne_ki": 12, "gelernt": 2}
     assert d["modell_s_je_fall"] == 26.7 and d["jetzt"]["faelle"] == 20
 
 

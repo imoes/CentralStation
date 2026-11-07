@@ -81,7 +81,12 @@ const ZUSTAND: Record<string, string> = {
                    matTooltip="Auslösende Nachrichten, die das 2-h-Prüffenster ohne Analyse verlassen haben (einmal je 10-min-Messpunkt gezählt)">
                 <b>{{ d().summe?.verfallen ?? 0 }}</b><span>verfallen</span></div>
               <div class="kpi"><b>{{ d().modell_s_je_fall ?? '—' }}</b><span>s Modell je Fall</span></div>
+              <div class="kpi" matTooltip="Wiederholungen bekannter Fehler: an ihren früheren Befund gehängt, ohne KI (Nachrichten im Zeitraum)">
+                <b>{{ d().summe?.ohne_ki ?? 0 }}</b><span>ohne KI (bekannt)</span></div>
             </div>
+            <div class="lw-meta">Gelernt: {{ d().bekannt?.je_status?.aktiv ?? 0 }} bekannte Fehler aktiv
+              · {{ d().bekannt?.je_status?.widerlegt ?? 0 }} vom Menschen widerlegt
+              · {{ d().bekannt?.wiederholungen ?? 0 }} Wiederholungen seit Beginn ohne KI</div>
             <div class="ki-kurve">
               <span class="ki-lbl">Warteschlange<br><b>{{ d().jetzt?.offen }}</b> Nachr. · {{ d().jetzt?.faelle }} Fälle</span>
               <svg class="spark" viewBox="0 0 100 24" preserveAspectRatio="none">

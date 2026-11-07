@@ -3,12 +3,31 @@ Ende ohne Befund ist benannt, der Systemprompt ist statisch."""
 import asyncio
 import re
 
+import pytest
+
 from app.services.llm_client import Werkzeugantwort
 from app.services.log_watch import filter as flt
 from app.services.log_watch import trichter as tr
 
 
 PROTOKOLL: list = []
+
+
+@pytest.fixture(autouse=True)
+def _ohne_db(monkeypatch):
+    """Die Schleife fragt, welche Werkzeuge verfügbar sind (Konnektoren in der DB) — hier: alle."""
+    async def alle():
+        return {}
+    monkeypatch.setattr(tr.wz, "nicht_verfuegbar", alle)
+    GELERNT.clear()
+
+    async def lerne(befund, titel, relevanz, beleg_ids, lage_ids=None, jetzt=None):
+        GELERNT.append((befund, titel, relevanz, beleg_ids, lage_ids))
+        return 1
+    monkeypatch.setattr(tr.bekannt, "lerne", lerne)
+
+
+GELERNT: list = []
 
 
 async def _bauer(host, stunden):
@@ -55,6 +74,8 @@ def test_trichter_bis_befund(monkeypatch):
                   [_aufruf("lw_befund", titel="t")], [_aufruf("lw_befund", titel="t2")]])
     erg = asyncio.run(tr.analysiere({"start": "host:a", "anzahl": 7, "hosts": ["a"]}, object(), ki, bauer=_bauer, schreiber=_schreiber, lage_bauer=_lage))
     assert erg["befund"] == "ki:abc"
+    # gelernt wird aus Belegen und Lage — nach dem Befund, mit Titel und Relevanz aus lw_befund
+    assert GELERNT == [("ki:abc", "t2", 0, [], ["graylog:m1"])] and erg["gelernt"] == 1
     assert [s["werkzeug"] for s in erg["schritte"]] == ["lw_wissen", "lw_facetten", "lw_befund", "lw_befund"]
     assert erg["schritte"][2]["fehler"].startswith("kein geprüfter Beleg")
     assert "nicht wörtlich" in ki.gesehen[3][-1]          # Ablehnung ging an die KI zurück
