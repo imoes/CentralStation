@@ -63,6 +63,8 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   configuration is unchanged.
 - **ansible01 does not have these two role changes yet.**
 
+---
+
 ## 2026-11-07 — Field documentation becomes a fleet task; clearer reason for unanswered questions
 
 ### Fixed
