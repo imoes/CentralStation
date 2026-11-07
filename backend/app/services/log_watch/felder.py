@@ -127,10 +127,23 @@ def name_von(art: str, bezeichnung: str) -> str:
     return bezeichnung if bezeichnung.startswith(f"{art}:") else f"{art}:{bezeichnung}"
 
 
+def kandidaten(name: str) -> list[str]:
+    """Namen, unter denen eine Anfrage gemeint sein kann. Rein — testbar. Ein Hashtag mit Wert
+    (regelgruppe:syscheck — so fragt das Modell, gemessen 07.11.) meint die Art (hashtag:regelgruppe)."""
+    n = name.strip()
+    out = [n] + [f"{a}:{n}" for a in ARTEN]
+    art, _, wert = n.partition(":")
+    if wert and art not in ARTEN:
+        out.append(f"hashtag:{art}")
+        if art == "signal":
+            out.append(f"signal:{wert}")
+    return list(dict.fromkeys(out))
+
+
 async def nachschlagen(name: str = "") -> dict:
     """Bedeutung eines Eintrags (z. B. hashtag:regelgruppe, feld:roh, signal:neu, oder nur regelgruppe) —
     ohne Namen die ganze Liste. Unbekannt ist ein benannter Zustand mit Hinweis auf lw_feld_anlegen."""
-    from sqlalchemy import or_, select
+    from sqlalchemy import select
 
     from app.core.database import AsyncSessionLocal
     from app.models.log_watch import FeldBedeutung
@@ -138,8 +151,7 @@ async def nachschlagen(name: str = "") -> dict:
         await stelle_bereit(db)
         q = select(FeldBedeutung).order_by(FeldBedeutung.name)
         if name.strip():
-            n = name.strip()
-            q = q.where(or_(FeldBedeutung.name == n, FeldBedeutung.name.in_([f"{a}:{n}" for a in ARTEN])))
+            q = q.where(FeldBedeutung.name.in_(kandidaten(name)))
         rows = (await db.execute(q)).scalars().all()
     eintraege = [{"name": r.name, "art": r.art, "bedeutung": r.bedeutung, "beispiel": r.beispiel,
                   "herkunft": r.herkunft, "quelle": r.quelle} for r in rows]

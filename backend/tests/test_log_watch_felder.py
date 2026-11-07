@@ -30,3 +30,9 @@ def test_ki_bekommt_nachschlagen_anlegen_und_websuche():
     for w in ("lw_feld", "lw_feld_anlegen", "web_suche", "web_seite"):
         assert w in trichter.TRICHTER_WERKZEUGE
     assert "lw_feld" in trichter.SYSTEM and "SKILL" not in trichter.SYSTEM     # nachschlagen statt Prompt
+
+
+def test_hashtag_mit_wert_meint_die_art():
+    """Gemessen 07.11.: das Modell fragt lw_feld(name="regelgruppe:syscheck")."""
+    assert "hashtag:regelgruppe" in felder.kandidaten("regelgruppe:syscheck")
+    assert "signal:neu" in felder.kandidaten("signal:neu") and "hashtag:regel" in felder.kandidaten("regel")
