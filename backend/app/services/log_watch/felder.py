@@ -1,12 +1,12 @@
-"""Bedeutung jedes Felds und jeder Hashtag-Art einer Nachricht — EINE Quelle für den Skill, den die KI vor
-jeder Analyse liest (Nutzer 07.11.: „wenn neue Felder dazukommen, müssen diese dokumentiert werden; die
-Feldbedeutung gehört in den KI-Prompt — wir brauchen einen Skill, den die KI liest, bevor sie analysiert“).
+"""Bedeutung jedes Felds, jeder Hashtag-Art und jedes Signals einer Nachricht (Nutzer 07.11.: „wenn neue
+Felder dazukommen, müssen diese dokumentiert werden“ — „die Felderklärungen werden in der Datenbank abgelegt
+und per MCP-Tool nachgeschlagen; die KI muss nur neue Felder + Beschreibung selber anlegen“).
 
-Neue Felder bleiben nicht still undokumentiert:
-  - Feld der Historie (historie.MAPPING) ohne Eintrag hier → Test schlägt fehl (test_log_watch_felder);
-  - Hashtag-Art, die live vorkommt, aber hier fehlt → `undokumentiert()` nennt sie (KI-Prüfung, Cockpit).
-Der Skill (`skill()`) entsteht aus diesem Register, den Kriterien der geltenden Definition und dem
-Vokabular — er ist statisch je Code-Stand (Prompt-Cache) und wird nicht von Hand gepflegt.
+Quelle der Wahrheit ist die Tabelle `feld_bedeutung`. Dieses Modul bringt den Grundbestand (herkunft system,
+einmal übernommen) und die Methoden: nachschlagen (MCP lw_feld), neu anlegen (lw_feld_anlegen — nur NEUE
+Namen; Vorhandenes ändert nur ein Mensch). Nichts bleibt still undokumentiert:
+  - Feld der Historie (historie.MAPPING) ohne Grundbestand → Test schlägt fehl (test_log_watch_felder);
+  - live vorkommende Hashtag-Art ohne Eintrag in der Tabelle → `undokumentiert()` (Cockpit, Korpus).
 """
 from __future__ import annotations
 
@@ -95,35 +95,106 @@ SIGNALE: dict[str, str] = {
 }
 
 
-def undokumentiert_aus(arten: list[str]) -> list[str]:
-    """Hashtag-Arten ohne Eintrag im Register. Rein — testbar."""
-    return sorted({a for a in arten if a and a not in HASHTAG_ARTEN})
+ARTEN = ("feld", "hashtag", "signal")
+
+
+def grundbestand() -> list[dict]:
+    """Einträge des Code-Registers als Zeilen (name = art:bezeichnung). Rein — testbar."""
+    out = [{"name": f"feld:{n}", "art": "feld", "bedeutung": b + (" (änderbar über Methoden)" if a else " (fest)"),
+            "beispiel": ""} for n, (b, a) in FELDER.items()]
+    out += [{"name": f"hashtag:{n}", "art": "hashtag", "bedeutung": b, "beispiel": bsp} for n, (b, bsp) in HASHTAG_ARTEN.items()]
+    out += [{"name": f"signal:{n}", "art": "signal", "bedeutung": b, "beispiel": f"signal:{n}"} for n, b in SIGNALE.items()]
+    return out
+
+
+async def stelle_bereit(db) -> int:
+    """Grundbestand einmal übernehmen — vorhandene Einträge (auch von KI oder Mensch) bleiben unberührt."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from app.models.log_watch import FeldBedeutung
+    da = set((await db.execute(select(FeldBedeutung.name))).scalars())
+    jetzt = datetime.now(timezone.utc)
+    neu = [FeldBedeutung(**e, herkunft="system", quelle="log_watch/felder.py", angelegt_von="system",
+                         angelegt_at=jetzt) for e in grundbestand() if e["name"] not in da]
+    db.add_all(neu)
+    await db.commit()
+    return len(neu)
+
+
+def name_von(art: str, bezeichnung: str) -> str:
+    return bezeichnung if bezeichnung.startswith(f"{art}:") else f"{art}:{bezeichnung}"
+
+
+async def nachschlagen(name: str = "") -> dict:
+    """Bedeutung eines Eintrags (z. B. hashtag:regelgruppe, feld:roh, signal:neu, oder nur regelgruppe) —
+    ohne Namen die ganze Liste. Unbekannt ist ein benannter Zustand mit Hinweis auf lw_feld_anlegen."""
+    from sqlalchemy import or_, select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.log_watch import FeldBedeutung
+    async with AsyncSessionLocal() as db:
+        await stelle_bereit(db)
+        q = select(FeldBedeutung).order_by(FeldBedeutung.name)
+        if name.strip():
+            n = name.strip()
+            q = q.where(or_(FeldBedeutung.name == n, FeldBedeutung.name.in_([f"{a}:{n}" for a in ARTEN])))
+        rows = (await db.execute(q)).scalars().all()
+    eintraege = [{"name": r.name, "art": r.art, "bedeutung": r.bedeutung, "beispiel": r.beispiel,
+                  "herkunft": r.herkunft, "quelle": r.quelle} for r in rows]
+    if name.strip() and not eintraege:
+        return {"name": name, "unbekannt": True,
+                "hinweis": "Keine Bedeutung hinterlegt — wenn du sie sicher kennst (Quelle: Nachricht, Doku oder "
+                           "web_suche), lege sie mit lw_feld_anlegen an."}
+    return {"eintraege": eintraege, "anzahl": len(eintraege)}
+
+
+async def anlegen(name: str, art: str, bedeutung: str, beispiel: str, quelle: str, von: str) -> dict:
+    """Neuen Eintrag anlegen (KI oder Mensch). Vorhandenes wird NICHT überschrieben (Vorrang: die Bedeutung
+    stammt vom System oder einem Menschen) — die Ablehnung nennt den vorhandenen Eintrag."""
+    from datetime import datetime, timezone
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.log_watch import FeldBedeutung
+    if art not in ARTEN:
+        return {"abgelehnt": f"art muss {', '.join(ARTEN)} sein"}
+    if len((bedeutung or "").strip()) < 10:
+        return {"abgelehnt": "Bedeutung fehlt oder ist zu kurz (mindestens ein Satz)"}
+    if not (quelle or "").strip():
+        return {"abgelehnt": "quelle ist Pflicht: woher die Bedeutung stammt (Nachricht-ID, URL, Doku)"}
+    voll = name_von(art, (name or "").strip())
+    if not voll.split(":", 1)[1]:
+        return {"abgelehnt": "Name fehlt"}
+    async with AsyncSessionLocal() as db:
+        await stelle_bereit(db)
+        da = await db.get(FeldBedeutung, voll)
+        if da is not None:
+            return {"abgelehnt": f"{voll} ist schon beschrieben ({da.herkunft}): {da.bedeutung}"}
+        db.add(FeldBedeutung(name=voll, art=art, bedeutung=bedeutung.strip()[:2000], beispiel=(beispiel or "")[:300],
+                             herkunft="ki" if von == "ki" else "mensch", quelle=quelle.strip()[:2000],
+                             angelegt_von=von, angelegt_at=datetime.now(timezone.utc)))
+        await db.commit()
+    return {"angelegt": voll}
+
+
+def undokumentiert_aus(arten: list[str], bekannt: set[str]) -> list[str]:
+    """Hashtag-Arten ohne Eintrag (bekannt = Namen wie hashtag:regel). Rein — testbar."""
+    return sorted({a for a in arten if a and f"hashtag:{a}" not in bekannt})
 
 
 async def undokumentiert(stunden: float = 24) -> list[str]:
-    """Live vorkommende Hashtag-Arten, die das Register nicht kennt — benannt, nicht still."""
+    """Live vorkommende Hashtag-Arten, die die Tabelle nicht kennt — benannt, nicht still."""
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
     from app.core.opensearch import get_opensearch
+    from app.models.log_watch import FeldBedeutung
     from app.services.log_watch.historie import PRAEFIX
+    async with AsyncSessionLocal() as db:
+        await stelle_bereit(db)
+        bekannt = set((await db.execute(select(FeldBedeutung.name))).scalars())
     r = await get_opensearch().search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
         "size": 0, "query": {"range": {"zeit": {"gte": f"now-{int(stunden)}h"}}},
         "aggs": {"t": {"terms": {"field": "hashtags", "size": 20000}}}})
-    return undokumentiert_aus([b["key"].split(":", 1)[0] for b in r["aggregations"]["t"]["buckets"]])
-
-
-def skill(kriterien: list[dict] | None = None) -> str:
-    """Der Skill, den die KI vor jeder Analyse liest: Felder, Hashtag-Arten, Signale, Relevanz, Kriterien,
-    Themen — erzeugt aus Register, Definition und Vokabular (statisch je Code-Stand)."""
-    from app.services.log_watch.definition import KRITERIEN
-    from app.services.log_watch.vokabular import THEMEN
-    krit = kriterien or [{"id": k.id, "art": k.art, "titel": k.titel} for k in KRITERIEN]
-    z = ["SKILL: Felder und Hashtags einer Nachricht (lies das vor der Analyse)", "",
-         "Felder (fest = Fakt der Quelle, nie geändert; änderbar = Urteil, nur über Methoden mit Grund):"]
-    z += [f"- {n} ({'änderbar' if a else 'fest'}): {b}" for n, (b, a) in FELDER.items()]
-    z += ["", "Hashtag-Arten (art:wert — zugleich Filter, Facette und Netzplan-Knoten):"]
-    z += [f"- {a}: {b} — z. B. {bsp}" for a, (b, bsp) in HASHTAG_ARTEN.items()]
-    z += ["", "Signale (signal:<name>):"] + [f"- {n}: {b}" for n, b in SIGNALE.items()]
-    z += ["", "Relevanz: 0 Routine · 1 normal · 2 auffällig (gespeichert) · 3 dringend (gespeichert, zur KI).",
-          "Kriterien (das erste entscheidet; Vorrang N6 > N2 > N4 > R5/R6 > N3/N5 > übrige R > N1 > N0):"]
-    z += [f"- {k['id']} ({'relevant' if k['art'] == 'relevant' else 'nicht relevant'}): {k['titel']}" for k in krit]
-    z += ["", "Themen (thema:<id>): " + "; ".join(f"{t.id} = {t.text}" for t in THEMEN)]
-    return "\n".join(z)
+    return undokumentiert_aus([b["key"].split(":", 1)[0] for b in r["aggregations"]["t"]["buckets"]], bekannt)

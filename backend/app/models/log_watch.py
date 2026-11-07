@@ -113,3 +113,19 @@ class KiLease(Base):
     fall: Mapped[str] = mapped_column(String(255))
     seit: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     bis: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class FeldBedeutung(Base):
+    """Bedeutung eines Felds, einer Hashtag-Art oder eines Signals (log_watch/felder.py) — die KI schlägt nach
+    (MCP lw_feld) und legt NEUE selbst an (lw_feld_anlegen, herkunft ki); vorhandene überschreibt nur ein
+    Mensch. Grundbestand aus dem Code-Register (herkunft system)."""
+    __tablename__ = "feld_bedeutung"
+
+    name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    art: Mapped[str] = mapped_column(String(20), index=True)
+    bedeutung: Mapped[str] = mapped_column(Text)
+    beispiel: Mapped[str] = mapped_column(String(300), default="")
+    herkunft: Mapped[str] = mapped_column(String(20))
+    quelle: Mapped[str] = mapped_column(Text, default="")
+    angelegt_von: Mapped[str] = mapped_column(String(200))
+    angelegt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

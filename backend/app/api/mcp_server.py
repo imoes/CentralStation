@@ -2274,12 +2274,26 @@ async def lw_wissen(filter: str = "", bedeutung: str = "", stunden: float = 24 *
 
 
 @mcp.tool()
-async def lw_skill() -> dict:
-    """Log-Überwachung: ZUERST lesen — Bedeutung aller Felder und Hashtag-Arten einer Nachricht (host:, thema:,
-    signal:, regel:, befund:, incident: …), Signale, Relevanzstufen, Kriterien R1–R8/N0–N6 und Themen. Dazu die
-    live vorkommenden Hashtag-Arten, die noch nicht dokumentiert sind."""
+async def web_suche(query: str, warum: str) -> dict:
+    """Websuche (SearXNG) — nur wenn unklar ist, was eine Logzeile bedeutet. Nach Fehlermeldung oder Code suchen;
+    Hostnamen, IPs, interne Domains, E-Mail-Adressen und Kennungen werden vor dem Senden entfernt. warum ist Pflicht."""
     from app.services.log_watch import werkzeuge
-    return await werkzeuge.lw_skill()
+    return await werkzeuge.web_suche(query, warum)
+
+
+@mcp.tool()
+async def web_seite(url: str) -> dict:
+    """Eine öffentliche Webseite als Text lesen (keine internen Adressen)."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.web_seite(url)
+
+
+@mcp.tool()
+async def lw_feld(name: str = "") -> dict:
+    """Log-Überwachung: Bedeutung eines Felds, einer Hashtag-Art oder eines Signals nachschlagen (z. B. regelgruppe,
+    hashtag:decoder, feld:roh, signal:neu) — ohne Namen die ganze Liste. Quelle: Tabelle feld_bedeutung."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_feld(name)
 
 
 @mcp.tool()

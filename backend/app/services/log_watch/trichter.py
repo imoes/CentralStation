@@ -70,6 +70,9 @@ Vorgehen als Trichter:
    Außerhalb der Historie, wenn es den Befund ändert: get_checkmk_host (besteht das Problem jetzt
    noch?), search_tickets (gibt es ein Ticket? offen = N2 behandelt), search_knowledge_base (Runbook,
    Abhängigkeiten). Deren Ergebnisse sind Kontext — im Befund nennen, aber nie als Beleg zitieren.
+   Ist dir die Bedeutung eines Felds oder einer Hashtag-Art unklar: lw_feld. Kennt lw_feld sie nicht und
+   weißt du sie sicher, lege sie mit lw_feld_anlegen an (mit Quelle). Weißt du nicht sicher, was eine
+   Logzeile bedeutet: web_suche nach Fehlermeldung oder Code (nie Host/IP), dann web_seite — Kontext.
 3. Mit lw_befund abschließen — immer, auch wenn nichts Relevantes bleibt (dann Relevanz 0 oder 1 und
    kurz, warum).
 
@@ -88,12 +91,6 @@ Regeln:
   folge_von: frühere Befunde (ki:…) zur selben Lage — nie IDs in titel, kern oder fakten.
   hypothesen: je ein Satz."""
 
-
-#: Der Skill, den die KI vor jeder Analyse liest (felder.py, Nutzer 07.11.): Bedeutung aller Felder und
-#: Hashtag-Arten, Signale, Kriterien, Themen — erzeugt aus dem Register, statisch je Code-Stand (Prompt-Cache)
-from app.services.log_watch.felder import skill as _skill  # noqa: E402
-
-SYSTEM_MIT_SKILL = SYSTEM + "\n\n" + _skill()
 
 #: so viele auslösende Nachrichten liest die Prüfung je Lauf (mehr wären ein Rückstau, benannt)
 PRUEF_MAX = 2000
@@ -198,7 +195,7 @@ def _kurz(name: str, erg: dict) -> str:
 #: Dazu drei lesende Quellen außerhalb der Historie (Nutzer, 07.11.) — dieselben wie auf dem MCP-Server.
 TRICHTER_WERKZEUGE = ["lw_suche", "lw_facetten", "lw_netzplan", "lw_nachricht", "lw_gespraech",
                       "lw_definition", "get_checkmk_host", "search_tickets", "search_knowledge_base",
-                      "lw_befund"]
+                      "lw_feld", "lw_feld_anlegen", "web_suche", "web_seite", "lw_befund"]
 
 #: so viele Hosts eines Falls bekommen ein Host-Objekt im Prompt (der Rest wird genannt)
 HOSTS_IM_PROMPT = 3
@@ -276,7 +273,7 @@ async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=
 
 
 async def _schleife(fall: dict, llm_config, llm, prompt: str, verlauf: list[dict]) -> dict:
-    nachrichten = [{"role": "system", "content": SYSTEM_MIT_SKILL}, {"role": "user", "content": prompt}]
+    nachrichten = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
     fehlt = await wz.nicht_verfuegbar()
     tools = wz.openai_tools([n for n in TRICHTER_WERKZEUGE if n not in fehlt])
     schritte: list[dict] = []

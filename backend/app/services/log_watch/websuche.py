@@ -1,0 +1,132 @@
+"""Websuche für Logzeilen, deren Bedeutung die KI nicht sicher kennt (Nutzer 07.11.: „nur bei Logeinträgen, bei
+denen die KI sich nicht sicher ist, was sie bedeuten — z. B. Stack Overflow kann solche Informationen
+liefern“; Suchmaschine: SearXNG auf llm-host03, wie Hermes sucht).
+
+Was die Suche verlässt, ist bereinigt: SearXNG reicht die Anfrage an externe Suchmaschinen weiter, darum
+werden interne Namen entfernt — Hostnamen (cue0148, *.example.com …), IP-Adressen, E-Mail-Adressen, UUIDs,
+lange Hex-Kennungen, Benutzerpfade und Werte von password=/token=/key=. Bleibt danach zu wenig übrig, wird
+nicht gesucht (Grund benannt). Fehlercodes in Großbuchstaben (ORA-12541, AH01114, T1040) bleiben.
+
+`seite(url)` lädt nur öffentliche HTTP(S)-Seiten — nie interne Adressen (keine Anfrage ins eigene Netz über
+die KI). Ergebnisse sind Kontext: im Befund nennen, nie als Beleg zitieren.
+"""
+from __future__ import annotations
+
+import html
+import ipaddress
+import re
+from urllib.parse import urlparse
+
+#: Standard-Adresse; überschreibbar über die Einstellung `log_watch.websuche_url`
+SEARXNG_URL = "http://llm-host03.example.com:8080"
+EINSTELLUNG = "log_watch.websuche_url"
+TREFFER_MAX = 5
+SEITE_MAX = 6000
+INTERNE_DOMAINS = ("example.com", "example.org", "example.net", "zo-intern.de", "local", "intern", "lan")
+
+_MUSTER = [
+    ("Benutzerpfad", re.compile(r"/(?:home|Users)/[^\s/]+\S*")),
+    ("E-Mail", re.compile(r"\b[\w.+-]+@[\w-]+(\.[\w-]+)+\b")),
+    ("URL", re.compile(r"\bhttps?://\S+")),
+    ("UUID", re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")),
+    ("IP", re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b|\b(?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{1,4}\b")),
+    ("interner Name", re.compile(r"\b[\w.-]+\.(?:" + "|".join(re.escape(d) for d in INTERNE_DOMAINS) + r")\b", re.I)),
+    # Hostnamen nach Hausschema (kleinbuchstaben + ≥ 2 Ziffern, z. B. cue0148, nsa383, docker0218) — Fehlercodes in
+    # Großbuchstaben (ORA-12541, AH01114) bleiben
+    ("Hostname", re.compile(r"(?<![\w-])[a-z][a-z-]*\d{2,}[a-z0-9-]*(?![\w-])")),
+    ("Geheimnis", re.compile(r"\b(?:password|passwd|pwd|token|secret|key|apikey|api_key)\s*[=:]\s*\S+", re.I)),
+    ("Kennung", re.compile(r"\b[0-9a-fA-F]{12,}\b")),
+]
+
+
+def bereinige(anfrage: str) -> tuple[str, list[str]]:
+    """Interne Namen aus einer Suchanfrage entfernen. Rückgabe (bereinigt, entfernte Arten). Rein — testbar."""
+    t = anfrage or ""
+    entfernt: list[str] = []
+    for art, m in _MUSTER:
+        if m.search(t):
+            entfernt.append(art)
+            t = m.sub(" ", t)
+    t = re.sub(r"\s+", " ", t).strip(" \"'")
+    return t, sorted(set(entfernt))
+
+
+def oeffentlich(url: str) -> str | None:
+    """None, wenn die URL eine öffentliche HTTP(S)-Adresse ist; sonst der Grund. Rein — testbar."""
+    try:
+        u = urlparse(url)
+    except ValueError:
+        return "URL nicht lesbar"
+    if u.scheme not in ("http", "https") or not u.hostname:
+        return "nur http(s)-Adressen"
+    h = u.hostname.lower()
+    if h == "localhost" or any(h == d or h.endswith("." + d) for d in INTERNE_DOMAINS) or "." not in h:
+        return "interne Adresse — die KI lädt keine Seiten aus dem eigenen Netz"
+    try:
+        ip = ipaddress.ip_address(h)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return "private IP-Adresse"
+    except ValueError:
+        pass
+    return None
+
+
+def text_aus_html(roh: str) -> str:
+    """Lesbarer Text einer HTML-Seite (ohne Skripte/Stile/Navigation). Rein."""
+    t = re.sub(r"(?is)<(script|style|noscript|nav|footer|header|svg)[^>]*>.*?</\1>", " ", roh or "")
+    t = re.sub(r"(?i)<br\s*/?>|</p>|</li>|</h\d>|</pre>|</tr>", "\n", t)
+    t = re.sub(r"(?s)<[^>]+>", " ", t)
+    t = html.unescape(t)
+    t = re.sub(r"[ \t\r\f\v]+", " ", t)
+    return re.sub(r"\n\s*\n+", "\n", t).strip()
+
+
+async def _basis() -> str:
+    from app.core.database import AsyncSessionLocal
+    from app.services.settings import get_setting
+    try:
+        async with AsyncSessionLocal() as db:
+            return ((await get_setting(db, EINSTELLUNG)) or SEARXNG_URL).rstrip("/")
+    except Exception:  # noqa: BLE001
+        return SEARXNG_URL
+
+
+async def suche(anfrage: str, warum: str) -> dict:
+    """Websuche über SearXNG — nur mit Begründung, nur bereinigt."""
+    import httpx
+    if not (warum or "").strip():
+        return {"fehler": "warum ist Pflicht: welche Logzeile ist unklar und was soll die Suche klären?"}
+    q, entfernt = bereinige(anfrage)
+    if len(q.split()) < 2:
+        return {"fehler": "nach dem Entfernen interner Namen bleibt keine sinnvolle Anfrage — suche nach der "
+                          "Fehlermeldung oder dem Code, nicht nach Host oder Adresse", "entfernt": entfernt}
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(f"{await _basis()}/search", params={"q": q, "format": "json"})
+        r.raise_for_status()
+        j = r.json()
+    except Exception as e:  # noqa: BLE001 — Ausfall benannt
+        return {"fehler": f"Websuche nicht erreichbar: {type(e).__name__}: {str(e)[:160]}", "anfrage": q}
+    treffer = [{"titel": x.get("title", ""), "url": x.get("url", ""), "auszug": (x.get("content") or "")[:400],
+                "suchmaschine": x.get("engine", "")} for x in (j.get("results") or [])[:TREFFER_MAX]]
+    return {"anfrage": q, "entfernt": entfernt, "treffer": treffer, "gesamt": len(j.get("results") or []),
+            "hinweis": "Kontext, kein Beleg — im Befund mit URL nennen; Seite lesen mit web_seite(url)"}
+
+
+async def seite(url: str) -> dict:
+    """Eine öffentliche Seite als Text (höchstens SEITE_MAX Zeichen)."""
+    import httpx
+    grund = oeffentlich(url)
+    if grund:
+        return {"fehler": grund, "url": url}
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": "CentralStation"}) as c:
+            r = await c.get(url)
+        r.raise_for_status()
+    except Exception as e:  # noqa: BLE001
+        return {"fehler": f"Seite nicht lesbar: {type(e).__name__}: {str(e)[:160]}", "url": url}
+    if r.url and oeffentlich(str(r.url)):                 # Weiterleitung ins eigene Netz
+        return {"fehler": "Weiterleitung auf eine interne Adresse", "url": url}
+    text = text_aus_html(r.text) if "html" in r.headers.get("content-type", "") else r.text
+    return {"url": str(r.url), "text": text[:SEITE_MAX], "laenge": len(text),
+            **({"gekuerzt": f"{len(text)} Zeichen, gezeigt {SEITE_MAX}"} if len(text) > SEITE_MAX else {})}

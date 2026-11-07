@@ -81,6 +81,8 @@ def kuerze_antwort(werkzeug: str, erg: dict) -> dict:
                              "aktualisiert": str(t.get("updated") or "")[:10], "instanz": t.get("instance"),
                              "stelle": (t.get("match") or "")[:TEXT_MAX]} for t in erg.get("issues") or []],
                 **({"hinweise": erg["notes"]} if erg.get("notes") else {})}
+    if werkzeug == "web_seite":
+        return {**{k: erg[k] for k in ("url", "laenge", "gekuerzt") if k in erg}, "text": (erg.get("text") or "")[:TEXT_MAX * 10]}
     if werkzeug == "search_knowledge_base":
         return {"gesamt": erg.get("count", 0),
                 "artikel": [{"titel": a.get("title"), "url": a.get("url"),

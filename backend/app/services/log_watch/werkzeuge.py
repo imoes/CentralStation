@@ -70,11 +70,26 @@ async def lw_wissen(filter: str = "", bedeutung: str = "", stunden: float = 24 *
                          sortierung="zeit")
 
 
-async def lw_skill() -> dict:
-    """Der Skill der Log-Überwachung: Bedeutung aller Felder und Hashtag-Arten (felder.py) — dasselbe, was
-    die Analyse-KI im Prompt liest; dazu, welche live vorkommenden Hashtag-Arten noch undokumentiert sind."""
+async def lw_feld(name: str = "") -> dict:
+    """Bedeutung eines Felds, einer Hashtag-Art oder eines Signals nachschlagen (Tabelle feld_bedeutung)."""
     from app.services.log_watch import felder
-    return {"skill": felder.skill(), "undokumentiert": await felder.undokumentiert()}
+    return await felder.nachschlagen(name)
+
+
+async def lw_feld_anlegen(name: str, art: str, bedeutung: str, quelle: str, beispiel: str = "") -> dict:
+    """Neue Bedeutung anlegen (nur NEUE Namen; Vorhandenes ändert nur ein Mensch)."""
+    from app.services.log_watch import felder
+    return await felder.anlegen(name, art, bedeutung, beispiel, quelle, "ki")
+
+
+async def web_suche(query: str, warum: str) -> dict:
+    from app.services.log_watch import websuche
+    return await websuche.suche(query, warum)
+
+
+async def web_seite(url: str) -> dict:
+    from app.services.log_watch import websuche
+    return await websuche.seite(url)
 
 
 async def lw_definition() -> dict:
@@ -212,8 +227,22 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                   "Bedeutung — vor jeder Analyse fragen, ob es schon bekannt ist. " + FILTER_HILFE,
                   _p(filter={"type": "string"}, bedeutung={"type": "string"}, stunden={"type": "number"}),
                   False),
-    "lw_skill": (lw_skill, "Vor der Analyse lesen: Bedeutung aller Felder und Hashtag-Arten einer Nachricht, "
-                 "Signale, Relevanz, Kriterien, Themen.", _p(), False),
+    "lw_feld": (lw_feld, "Bedeutung eines Felds, einer Hashtag-Art oder eines Signals nachschlagen, z. B. "
+                "regelgruppe, hashtag:decoder, feld:roh, signal:neu; ohne Namen die ganze Liste.",
+                _p(name={"type": "string"}), False),
+    "lw_feld_anlegen": (lw_feld_anlegen, "Bedeutung eines NEUEN Felds/Hashtags/Signals anlegen, das lw_feld nicht "
+                        "kennt — nur wenn du sie sicher weißt; quelle = woher (Nachricht-ID, URL, Doku). "
+                        "Vorhandenes wird nicht überschrieben.",
+                        _p(name={"type": "string", "_pflicht": True},
+                           art={"type": "string", "enum": ["feld", "hashtag", "signal"], "_pflicht": True},
+                           bedeutung={"type": "string", "_pflicht": True}, quelle={"type": "string", "_pflicht": True},
+                           beispiel={"type": "string"}), True),
+    "web_suche": (web_suche, "Websuche (SearXNG) — NUR wenn du nicht sicher weißt, was eine Logzeile bedeutet. "
+                  "Suche nach Fehlermeldung oder Code (z. B. „ORA-12541 TNS no listener“), nie nach Host, IP oder "
+                  "internen Namen (werden entfernt). warum = welche Zeile, was ist unklar. Kontext, kein Beleg.",
+                  _p(query={"type": "string", "_pflicht": True}, warum={"type": "string", "_pflicht": True}), False),
+    "web_seite": (web_seite, "Eine öffentliche Seite aus web_suche lesen (Text, gekürzt). Keine internen Adressen.",
+                  _p(url={"type": "string", "_pflicht": True}), False),
     "lw_definition": (lw_definition, "Die geltende Relevanz-Definition: Kriterien R1–R8/N0–N6, Objekte, "
                       "Regeln (erste passende entscheidet).", _p(), False),
     "lw_befund": (lw_befund,

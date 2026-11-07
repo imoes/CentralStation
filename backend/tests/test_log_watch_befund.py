@@ -74,7 +74,8 @@ def test_ohne_gepruefte_belege_kein_befund():
 
 
 def test_registry_einzig_lw_befund_schreibt():
-    assert [n for n, (_, _, _, schreibt) in wz.REGISTRY.items() if schreibt] == ["lw_befund"]
+    # schreibend: der Befund und die Bedeutung eines NEUEN Felds (Dokumentation, keine Aktion an einem System)
+    assert [n for n, (_, _, _, schreibt) in wz.REGISTRY.items() if schreibt] == ["lw_feld_anlegen", "lw_befund"]
     namen = [t["function"]["name"] for t in wz.openai_tools()]
     assert namen == list(wz.REGISTRY)
     assert wz.REGISTRY["lw_befund"][2]["required"] == ["titel", "kern", "relevanz", "belege"]
@@ -94,6 +95,7 @@ def test_mcp_bietet_die_lesenden_lw_werkzeuge_aber_nicht_lw_befund():
     lesend = {n for n, (_, _, _, schreibt) in wz.REGISTRY.items() if not schreibt}
     assert lesend <= namen                         # jedes lesende Werkzeug auch im MCP
     assert "lw_befund" not in namen                # Befunde schreibt nur der Trichter
+    assert "lw_feld_anlegen" not in namen          # neue Feldbedeutungen legt nur die Analyse-KI an
 
 
 def test_gespraech_rollen_erschoepfend_und_index():
