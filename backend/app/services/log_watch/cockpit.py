@@ -287,6 +287,13 @@ async def daten(db, typ: str, cfg: dict) -> dict:
         s0 = (await db.execute(select(RasterLauf).where(RasterLauf.quelle == "stufe0")
                                .order_by(RasterLauf.fenster_start.desc()).limit(1))).scalar_one_or_none()
         d = await aktuelle(db)
-        return korpus(katalog, await _zeilen(db, jetzt - timedelta(hours=1)), letzte, d.version,
-                      await historie.aktiv(db), jetzt, s0.werte if s0 else None)
+        from app.services.log_watch.felder import undokumentiert
+        try:
+            undok = await undokumentiert(24)
+        except Exception as e:  # noqa: BLE001 — benannt, nicht still
+            undok = [f"nicht prüfbar: {type(e).__name__}"]
+        return {**korpus(katalog, await _zeilen(db, jetzt - timedelta(hours=1)), letzte, d.version,
+                         await historie.aktiv(db), jetzt, s0.werte if s0 else None),
+                # Hashtag-Arten ohne Bedeutung im Skill der KI (felder.py) — müssen dokumentiert werden
+                "undokumentiert": undok}
     return {"state": "unavailable", "error": f"unbekannter Widget-Typ {typ}"}

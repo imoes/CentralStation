@@ -2274,6 +2274,15 @@ async def lw_wissen(filter: str = "", bedeutung: str = "", stunden: float = 24 *
 
 
 @mcp.tool()
+async def lw_skill() -> dict:
+    """Log-Überwachung: ZUERST lesen — Bedeutung aller Felder und Hashtag-Arten einer Nachricht (host:, thema:,
+    signal:, regel:, befund:, incident: …), Signale, Relevanzstufen, Kriterien R1–R8/N0–N6 und Themen. Dazu die
+    live vorkommenden Hashtag-Arten, die noch nicht dokumentiert sind."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_skill()
+
+
+@mcp.tool()
 async def lw_definition() -> dict:
     """Die geltende Relevanz-Definition: Kriterien R1–R8 / N0–N6, Objekte, Regeln (erste passende entscheidet)."""
     from app.services.log_watch import werkzeuge

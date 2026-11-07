@@ -89,6 +89,12 @@ Regeln:
   hypothesen: je ein Satz."""
 
 
+#: Der Skill, den die KI vor jeder Analyse liest (felder.py, Nutzer 07.11.): Bedeutung aller Felder und
+#: Hashtag-Arten, Signale, Kriterien, Themen — erzeugt aus dem Register, statisch je Code-Stand (Prompt-Cache)
+from app.services.log_watch.felder import skill as _skill  # noqa: E402
+
+SYSTEM_MIT_SKILL = SYSTEM + "\n\n" + _skill()
+
 #: so viele auslösende Nachrichten liest die Prüfung je Lauf (mehr wären ein Rückstau, benannt)
 PRUEF_MAX = 2000
 
@@ -270,7 +276,7 @@ async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=
 
 
 async def _schleife(fall: dict, llm_config, llm, prompt: str, verlauf: list[dict]) -> dict:
-    nachrichten = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
+    nachrichten = [{"role": "system", "content": SYSTEM_MIT_SKILL}, {"role": "user", "content": prompt}]
     fehlt = await wz.nicht_verfuegbar()
     tools = wz.openai_tools([n for n in TRICHTER_WERKZEUGE if n not in fehlt])
     schritte: list[dict] = []

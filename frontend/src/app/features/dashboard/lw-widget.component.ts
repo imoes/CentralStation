@@ -182,6 +182,13 @@ const ZUSTAND: Record<string, string> = {
                 Stufe 0 · {{ s.text }}
               </span>
             }
+            @if ((d().undokumentiert ?? []).length) {
+              <span class="chip z-fehler" matTooltip="Hashtag-Arten ohne Bedeutung im Skill der KI (backend log_watch/felder.py) — bitte dokumentieren">
+                Undokumentiert: {{ d().undokumentiert.join(', ') }}
+              </span>
+            } @else if (d().undokumentiert) {
+              <span class="chip z-ok" matTooltip="Jede live vorkommende Hashtag-Art hat ihre Bedeutung im Skill der KI">Felder dokumentiert</span>
+            }
             @for (n of nichtZugeordnet(); track n.grund) {
               <span class="chip z-info" matTooltip="Quellnamen ohne CheckMK-Host (Grund benannt, nicht geraten)">
                 Hosts {{ n.grund }}: {{ n.anzahl }}

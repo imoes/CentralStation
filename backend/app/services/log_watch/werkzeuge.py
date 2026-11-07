@@ -70,6 +70,13 @@ async def lw_wissen(filter: str = "", bedeutung: str = "", stunden: float = 24 *
                          sortierung="zeit")
 
 
+async def lw_skill() -> dict:
+    """Der Skill der Log-Überwachung: Bedeutung aller Felder und Hashtag-Arten (felder.py) — dasselbe, was
+    die Analyse-KI im Prompt liest; dazu, welche live vorkommenden Hashtag-Arten noch undokumentiert sind."""
+    from app.services.log_watch import felder
+    return {"skill": felder.skill(), "undokumentiert": await felder.undokumentiert()}
+
+
 async def lw_definition() -> dict:
     from app.core.database import AsyncSessionLocal
     from app.services.log_watch.definition import KRITERIEN, aktuelle
@@ -205,6 +212,8 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                   "Bedeutung — vor jeder Analyse fragen, ob es schon bekannt ist. " + FILTER_HILFE,
                   _p(filter={"type": "string"}, bedeutung={"type": "string"}, stunden={"type": "number"}),
                   False),
+    "lw_skill": (lw_skill, "Vor der Analyse lesen: Bedeutung aller Felder und Hashtag-Arten einer Nachricht, "
+                 "Signale, Relevanz, Kriterien, Themen.", _p(), False),
     "lw_definition": (lw_definition, "Die geltende Relevanz-Definition: Kriterien R1–R8/N0–N6, Objekte, "
                       "Regeln (erste passende entscheidet).", _p(), False),
     "lw_befund": (lw_befund,
