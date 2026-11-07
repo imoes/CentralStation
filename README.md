@@ -1587,6 +1587,11 @@ The AI only works when a check is true, and it only writes its own analysis.
   shape the kind (host circle, finding diamond, tag rectangle). Per node: `dringend`, `dringend_offen`,
   `offen`, `befunde`, `zuletzt`; one sentence (`satz`) names the hot spots. A click selects an object;
   filter/exclude are buttons. The NetBox map remains as the switch "Infrastruktur (NetBox)".
+- **Every message is an object** (`nachricht.py`): fixed fields (`zeit`, `quelle`, `host`, `text`, `roh` …)
+  never change; changeable fields only through methods (`verknuepfe`, `markiere`, `urteile`,
+  `neu_bewerten`), each appending `{zeit, wer, was, grund}` to `aenderungen`; precedence human > AI > rule.
+  API: `GET /api/log-watch/nachrichten/{id}`, `POST …/{id}/urteil`, `POST …/{id}/hashtags` (sysadmin),
+  `POST /api/log-watch/nachrichten/aendern` (one method on a filter's result, admin).
 - **Incidents as objects** (`incident_objekt.py`, job every 5 min): each active incident is a filter
   (`log_cluster` → `muster:`, `fleet` → `dienst:` + hosts, `critical` → `host:` + `signal:schaden`,
   `host` → `host:`); its messages carry `incident:<id>` and it is a node (triangle) of the error graph.

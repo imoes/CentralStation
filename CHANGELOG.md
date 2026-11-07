@@ -10,6 +10,72 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 36: every message is an object
+
+You asked (2026-11-07): is every OpenSearch entry an object that can be changed like in object-oriented
+programming — "die API muss dahin gehen, dass jede Nachricht ein Objekt ist".
+
+### What changed
+
+- **Before:** six places changed stored messages, each with its own script:
+  - evidence of a finding;
+  - repeats of a known error;
+  - what an analysis saw;
+  - incident marking;
+  - R7;
+  - the vector.
+
+  No human could change a verdict, no change had an author or a reason, and stored messages could not
+  be re-judged under a new rule.
+- **Now (`nachricht.py`):**
+  - **Fixed fields** (`zeit`, `quelle`, `host`, `text`, `roh` …) never change.
+  - **Changeable fields** change only through methods:
+    - `verknuepfe` (`befund:`, `incident:`);
+    - `markiere` (hashtags; not `quelle:`/`host:`, which mirror fixed fields);
+    - `urteile` (verdict, relevance, criteria);
+    - `neu_bewerten` (current vocabulary and rule set).
+  - Every change appends `{zeit, wer, was, grund}` to `aenderungen` and sets `geaendert`.
+  - The precedence human > AI > rule is enforced in the write script itself.
+- **One write path:** evidence, repeats, seen messages, incident marking and R7 now go through these
+  methods. The vector stays outside; it is technical, not content.
+- **API:**
+
+  | Endpoint | Role |
+  |---|---|
+  | `GET /api/log-watch/nachrichten/{id}`: fixed and changeable fields, links (findings, incidents), history | logged in |
+  | `POST …/{id}/urteil`, `POST …/{id}/hashtags`: one message, reason required | admin or sysadmin |
+  | `POST /api/log-watch/nachrichten/aendern`: one method on the result of a filter; an empty filter is refused | admin |
+  | `POST /api/log-watch/bekannt/{id}/vergessen` | now also sysadmin |
+
+### Fixed
+
+- **The false `oom` messages are re-judged.** 36 on jump012 and 2 on mon-beta; the 2 real OOMs are
+  unchanged. Example: before "relevant, 3, R5 R7, thema:oom signal:schaden"; after "nicht_relevant,
+  1, N1", with the history entry "regel: neu bewertet … — Vokabular-Korrektur …".
+- **A reason consisting only of the appended author email** would have passed; the reason is now
+  checked first.
+- **Removing a hashtag failed** (ambiguous `List.remove` in painless) and now uses `removeIf`.
+
+### Evidence (live, 2026-11-07, logged in as thomas.kluge@example.org, role sysadmin)
+
+- `GET` 200 (9 fixed fields, link to finding `980b594836`); an unknown ID gives 404.
+- Hashtag `test:objekt-api` added (200, history "mensch: +test:objekt-api — …") and removed again
+  (history "mensch: -test:objekt-api"). A second removal is "unveraendert", without a new entry.
+- Refused with a reason:
+  - `host:anders` → 422, "spiegelt ein festes Feld";
+  - a verdict without a reason → 422;
+  - a relevant verdict with N1 → 422;
+  - a bulk change as sysadmin → 403.
+- Tests: `test_log_watch_nachricht.py` (5); full suite 850 passed.
+
+### What is still missing
+
+- **No screen yet** to judge or tag a message (the API exists).
+- **`neu_bewerten` covers themes and the rule set**, not source-specific signals that only the raster
+  sees at read time (e.g. the outbreak events of the error clusters).
+
+---
+
 ## 2026-11-07 — Log watch, part 35: a false "out of memory" and the kernel rule counted like before
 
 Found while checking the shadow candidates of the incident rules.
