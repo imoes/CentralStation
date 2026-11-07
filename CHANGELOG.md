@@ -89,6 +89,107 @@ Otherwise the name is the ECS name with underscores, the scheme Filebeat already
 
 ---
 
+## 2026-11-07 — Log watch, part 39: field meanings in the database; web search for unclear log lines
+
+You said (2026-11-07):
+- new fields must be documented, and "die Felderklärungen werden in der Datenbank abgelegt und per
+  MCP-Tool nachgeschlagen; die KI muss nur neue Felder + Beschreibung selber anlegen";
+- like Hermes, the AI needs internet search, "nur bei Logeinträgen, bei denen die KI sich nicht
+  sicher ist" — SearXNG on llm-host03;
+- "der letzte Post in einem Forum ist meistens die Lösung".
+
+### What is new
+
+- **Table `feld_bedeutung`** (migration 0062): every field, hashtag kind and signal of a message with
+  meaning, example, origin (system | ki | mensch), source and author.
+  - It is seeded once from the code register: 69 entries, including all 33 hashtag kinds measured live.
+  - Tools:
+    - `lw_feld` looks up (funnel and MCP);
+    - `lw_feld_anlegen` lets the analysis AI create only NEW entries and requires a source; existing
+      ones only a human changes.
+  - The corpus tile names live hashtag kinds without an entry.
+  - A test fails for any field of the history without a meaning.
+- **The skill text left the prompt again** (≈ 7 300 characters per AI turn). The prompt points to
+  `lw_feld`.
+- **`web_suche` / `web_seite`** over SearXNG (`http://llm-host03.example.com:8080`, plain HTTP;
+  setting `log_watch.websuche_url`), for the funnel and on MCP.
+  - **Query cleaning:** before a query leaves, internal names are removed: host names after the house
+    scheme, `*.example.com`/`example.org`/…, IPs, mail addresses, UUIDs, long IDs, `password=`/`token=`
+    values, user paths. Upper-case error codes stay (ORA-12541, AH01114).
+  - **Page access:** pages are read only from public addresses, also after redirects.
+  - **Stack Exchange** is read through its public API, because the site answers 403 to scripts, also
+    with a browser user agent. The newest answer is added to the best-rated ones.
+  - **Long pages keep their end:** in a forum the solution is usually the last post.
+  - **Results are context, never evidence.**
+
+### Evidence (live, 2026-11-07)
+
+- `lw_feld regelgruppe` → "Wazuh-Regelgruppe".
+- Overwriting `hashtag:regel` is refused with the existing meaning.
+- An unknown name gets a hint to `lw_feld_anlegen`.
+- Search "cue0148.example.com ORA-12541 TNS no listener 10.0.188.48" went out as "ORA-12541 TNS no
+  listener" (removed: IP, internal name). It returned results in 0.9 s, among them Stack Overflow and
+  Oracle docs.
+- `web_seite` read the Stack Overflow question through the API (1 419 characters, 232 calls of the
+  daily quota left).
+- `http://llm-host03.example.com:8080/` was refused as an internal address.
+- Tests: `test_log_watch_felder.py`, `test_log_watch_websuche.py`; full suite 864 passed.
+
+### What is still missing
+
+- **Meanings of Graylog source fields** (e.g. the new `servicename`, `error_type`) are not in the
+  table; it covers the fields and hashtags of the history.
+- **The Stack Exchange quota without a key** is 300 calls a day.
+
+---
+
+## 2026-11-07 — Log watch, part 38: incidents are opened and mailed by the rule system
+
+You approved switching all four kinds (outbreak, fleet, critical, host).
+
+### What changed
+
+- **Definition v8** (author thomas.kluge@example.org, with reason) sets I-AUSBRUCH, I-FLOTTE,
+  I-KRITISCH and I-HOST to active.
+  - For these kinds only the rule system opens and mails incidents.
+  - The old error-cluster paths stay the measurement and stopped opening.
+- **The backtested brakes apply to the rules** (project note "not to be reversed"):
+  - the outbreak needs the pattern's episode ≥ 30 min old and still active;
+  - the fleet needs an open, non-recurring, unmuted fleet episode (the nightly order server is no
+    incident);
+  - host: the first urgent message ≥ 15 min old, the last ≤ 15 min;
+  - cooldown of 3 h, i.e. reopened without a new mail;
+  - grouping by shared hosts within 30 min;
+  - held-back candidates are listed with their reason.
+- **911 old host incidents** that were open without any update for over 24 h were closed with the
+  stated reason.
+- **The incident jobs tolerate a busy minute** (`misfire_grace_time` 120 s). Before, every second run
+  was skipped ("missed by 0:00:10").
+
+### Evidence (live, 2026-11-07)
+
+- **First active run (12:54 UTC):** 6 incidents opened, each with its rule in the context:
+  - I-KRITISCH mon02 (`segfault`, 9 messages);
+  - I-HOST nss14, nsa298, mon03, fst010, vpp0266.
+- **Mails:** 6 deliveries with AI triage (`triage=ok`). 3 mails went to thomas.kluge@example.org
+  (mon02, mon03, vpp0266 are in his host scope of 145 hosts). For nss14, nsa298 and fst010 nobody has
+  them in scope, so 0 mails.
+- **The old path opened 0 incidents** after the switch (critical 1/0, host 5/0 rule/old).
+- **Run 13:04 UTC with the brakes:** 3 incidents continued, 0 new mails, 2 held back ("nicht mehr
+  aktiv": nss14, nsa298 were single bursts).
+- **Shadow comparison of openings before switching** (30 min): old host incidents only from
+  test/stage hosts and routine lines (`mu-cueapp05.test`, `mu-img-cuesolr02.stage`, `docker0209` …).
+  The rule found mon02, the switches nsa274/280/383 and Proxmox vpp0266, which the old path missed.
+
+### What is still missing
+
+- **31 log-outbreak incidents** have been open without an update for over 24 h; not closed, not
+  approved.
+- **The fleet rule relies on the old fleet statistics** as measurement. Without them it would open
+  nothing.
+
+---
+
 ## 2026-11-07 — Log watch, part 37: readable names; a finding opens its host overview
 
 You said (2026-11-07):
