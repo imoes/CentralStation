@@ -515,11 +515,14 @@ async def start_scheduler() -> None:
                        coalesce=True)
     _scheduler.add_job(run_log_ki_pruefung, "cron", minute="*/10",
                        id="log_watch_ki_pruefung", replace_existing=True, max_instances=1, coalesce=True)
-    # nach dem Raster (minute 1-59/5): neue Nachrichten sind dann geschrieben
+    # nach dem Raster (minute 1-59/5): neue Nachrichten sind dann geschrieben. misfire_grace_time: gemessen
+    # 07.11. fiel jeder zweite Lauf aus („missed by 0:00:10“ — Standard-Toleranz 1 s bei vollem Scheduler)
     _scheduler.add_job(run_incident_objekte, "cron", minute="3-59/5",
-                       id="log_watch_incident_objekte", replace_existing=True, max_instances=1, coalesce=True)
+                       id="log_watch_incident_objekte", replace_existing=True, max_instances=1, coalesce=True,
+                       misfire_grace_time=120)
     _scheduler.add_job(run_incident_regeln, "cron", minute="4-59/5",
-                       id="log_watch_incident_regeln", replace_existing=True, max_instances=1, coalesce=True)
+                       id="log_watch_incident_regeln", replace_existing=True, max_instances=1, coalesce=True,
+                       misfire_grace_time=120)
     from app.services.log_watch.trichter import AGENTEN
     _scheduler.add_job(run_log_trichter, "interval", minutes=1,
                        id="log_watch_trichter", replace_existing=True, max_instances=AGENTEN,
