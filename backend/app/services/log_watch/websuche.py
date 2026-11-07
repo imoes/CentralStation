@@ -113,12 +113,52 @@ async def suche(anfrage: str, warum: str) -> dict:
             "hinweis": "Kontext, kein Beleg — im Befund mit URL nennen; Seite lesen mit web_seite(url)"}
 
 
+#: Stack-Exchange-Seiten lassen keine Skripte auf die Webseite (gemessen 07.11.: 403 auch mit Browser-Kennung) —
+#: die öffentliche API liefert Frage und beste Antworten (ohne Schlüssel 300 Abrufe/Tag, Rest wird genannt)
+_SE_SITES = {"stackoverflow.com": "stackoverflow", "serverfault.com": "serverfault", "superuser.com": "superuser",
+             "askubuntu.com": "askubuntu"}
+
+
+def stackexchange(url: str) -> tuple[str, str] | None:
+    """(site, frage_id) einer Stack-Exchange-Frage-URL, sonst None. Rein — testbar."""
+    u = urlparse(url)
+    h = (u.hostname or "").lower().removeprefix("www.")
+    site = _SE_SITES.get(h) or (h.split(".")[0] if h.endswith(".stackexchange.com") else None)
+    m = re.match(r"/questions/(\d+)", u.path or "")
+    return (site, m.group(1)) if site and m else None
+
+
+async def _stackexchange(site: str, frage: str, url: str) -> dict:
+    import httpx
+    api = "https://api.stackexchange.com/2.3"
+    async with httpx.AsyncClient(timeout=20) as c:
+        q = (await c.get(f"{api}/questions/{frage}", params={"site": site, "filter": "withbody"})).json()
+        a = (await c.get(f"{api}/questions/{frage}/answers", params={"site": site, "order": "desc", "sort": "votes",
+                                                                     "filter": "withbody", "pagesize": 3})).json()
+    if q.get("error_message"):
+        return {"fehler": f"Stack Exchange: {q['error_message']}", "url": url}
+    f = (q.get("items") or [{}])[0]
+    teile = [f"FRAGE: {html.unescape(f.get('title', ''))}\n{text_aus_html(f.get('body', ''))}"]
+    for x in a.get("items") or []:
+        teile.append(f"ANTWORT (Punkte {x.get('score')}{', akzeptiert' if x.get('is_accepted') else ''}):\n"
+                     f"{text_aus_html(x.get('body', ''))}")
+    text = "\n\n".join(teile)
+    return {"url": url, "text": text[:SEITE_MAX], "laenge": len(text), "quelle": "api.stackexchange.com",
+            "kontingent_rest": a.get("quota_remaining")}
+
+
 async def seite(url: str) -> dict:
     """Eine öffentliche Seite als Text (höchstens SEITE_MAX Zeichen)."""
     import httpx
     grund = oeffentlich(url)
     if grund:
         return {"fehler": grund, "url": url}
+    se = stackexchange(url)
+    if se:
+        try:
+            return await _stackexchange(*se, url)
+        except Exception as e:  # noqa: BLE001
+            return {"fehler": f"Stack Exchange nicht lesbar: {type(e).__name__}: {str(e)[:160]}", "url": url}
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": "CentralStation"}) as c:
             r = await c.get(url)

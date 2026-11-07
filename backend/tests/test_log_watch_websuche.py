@@ -32,3 +32,10 @@ def test_ohne_grund_keine_suche():
     import asyncio
     assert "warum" in asyncio.run(ws.suche("ORA-12541 TNS", ""))["fehler"]
     assert "keine sinnvolle Anfrage" in asyncio.run(ws.suche("cue0148.example.com 10.1.1.1", "unklar"))["fehler"]
+
+
+def test_stackexchange_urls():
+    assert ws.stackexchange("https://stackoverflow.com/questions/13358656/oracle-client-ora-12541") == ("stackoverflow", "13358656")
+    assert ws.stackexchange("https://unix.stackexchange.com/questions/42/x") == ("unix", "42")
+    assert ws.stackexchange("https://serverfault.com/questions/7") == ("serverfault", "7")
+    assert ws.stackexchange("https://docs.oracle.com/x") is None
