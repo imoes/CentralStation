@@ -56,9 +56,25 @@ the only lever for more cases per hour.
 
 ### What is still missing
 
-- **The effect on throughput is not yet measured.** To compare after the rollout: prompt tokens read by
-  strata per hour, and findings per hour. Before the rollout: 1.51 million tokens in 2 h, 21–33
-  findings per hour.
+- **Measured after the rollout (07:57–08:57 UTC, 30 cases) against 05:34–07:34 (67 cases): more
+  complete, not faster.** My estimate of "a quarter to a third more capacity" was wrong.
+
+  | | Before | After |
+  |---|---|---|
+  | Cut tool answers | 137 `lw_suche` (plus 31 others) | 0 `lw_suche`; 7 others (`lw_nachricht` 4, `lw_netzplan` 2, `lw_gespraech` 1) |
+  | `lw_suche` per call | 5 024 characters | 3 003 characters |
+  | Steps per case | 3.7 AI turns, 2.9 searches, 0.2 full messages | 5.3 AI turns, 3.8 searches, 0.5 full messages |
+  | Characters per case | about 33 800 | about 33 100 |
+  | Cases per hour | 33.5 | 30 |
+  | Findings per hour | 21–33 | 29 |
+  | strata tokens read per hour | 754 000 | 590 000, all clients |
+
+  - The AI makes up for the shorter answers with more calls, so the volume per case stays the same.
+  - The lower strata load comes from fewer cases, not from smaller cases.
+  - Limits of this comparison: one hour against two, a different time of day, a different mix of
+    cases.
+  - What remains is the quality gain: the AI now sees complete answers with facets instead of JSON cut
+    off mid-hit.
 
 ---
 
