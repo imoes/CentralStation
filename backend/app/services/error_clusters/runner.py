@@ -350,6 +350,13 @@ def cluster_context(ev: Event, base_url: str) -> dict:
 
 # ── Ereignisse → Feed + Incident ─────────────────────────────────────────────
 
+async def _regeln_uebernehmen(art: str) -> bool:
+    """Entscheidet das Regelwerk für diese Incident-Art (aktive Incident-Regel)? Dann eröffnet und meldet
+    der alte Weg nicht mehr — seine Ereignisse speisen weiter das Raster (signal:neu/anstieg/…)."""
+    from app.services.log_watch.incident_regeln import regeln_uebernehmen
+    return await regeln_uebernehmen(art)
+
+
 async def _handle(db, rt: _Runtime, events: list[Event], base_url: str) -> None:
     from app.models.alert import Alert
     from app.services.error_clusters.incident import close_cluster_incident, open_cluster_incident
@@ -407,7 +414,7 @@ async def _handle(db, rt: _Runtime, events: list[Event], base_url: str) -> None:
                 }, [{"external_id": ext_id, "source": "graylog"}])
                 rt.incident_ids[ep.id] = leader_inc
             continue
-        if ev.mail or (ev.action == "reopen" and ep.id in rt.incident_ids):
+        if (ev.mail or (ev.action == "reopen" and ep.id in rt.incident_ids)) and not await _regeln_uebernehmen("log_cluster"):
             inc = await open_cluster_incident(
                 db, kind="log_cluster", title=title, severity=severity,
                 primary_host=(ctx["docker_hosts"] or ctx["hosts"] or [""])[0], context=ctx,

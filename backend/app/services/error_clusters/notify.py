@@ -58,6 +58,11 @@ def fmt_rate(count: float | None, seconds: float) -> str:
 
 
 def subject(ctx: dict, title: str, followup: bool = False) -> str:
+    from app.services.log_watch.incident_regeln import lesbar
+    if ctx.get("regel"):
+        # Incident aus einer Regel des Regelwerks: Name der Regel, was, wie viele — ohne Platzhalter
+        head = "KI-Einschätzung" if followup else "Incident"
+        return f"[CentralStation] {head}: {lesbar(title)}"
     n_cont = len(ctx.get("containers") or [])
     if ctx.get("kind") == "critical":
         # Kritisches Ereignis (critical.py): Art, Host, Wiederholung — keine Zeilenrate.
@@ -66,7 +71,8 @@ def subject(ctx: dict, title: str, followup: bool = False) -> str:
         return (f"[CentralStation] {head}: {ctx.get('label')} auf {host} · "
                 f"{ctx.get('events')}× in {ctx.get('window_hours')} h")
     head = "KI-Einschätzung" if followup else "Fehlerausbruch"
-    short = title.split(": ", 1)[-1].split(" · ")[0]
+    # Drain-Platzhalter (<NUM> <TS> <IP> …) tilgen — gemessen 07.11.: der Betreff war unlesbar
+    short = lesbar(title.split(": ", 1)[-1].split(" · ")[0])
     return (f"[CentralStation] {head}: {short} · {n_cont} {ctx.get('entity_kind') or 'Container'} · "
             f"{fmt_rate(ctx.get('count15'), 900)}")
 
@@ -116,7 +122,12 @@ def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
                        for e in (ctx.get("examples") or [])[:3])
     reasons = "".join(f"<li>{_esc(r)}</li>" for r in ctx.get("reasons") or [])
     critical_kind = ctx.get("kind") == "critical"
-    if critical_kind:
+    if ctx.get("regel"):
+        volume = (f'<p style="margin:4px 0"><b>{fmt_int(ctx.get("nachrichten"))} relevante Meldungen</b> · '
+                  f'{len(ctx.get("hosts") or [])} Hosts · {fmt_int(ctx.get("quellen"))} Quellen in '
+                  f'{_esc(ctx.get("fenster_min"))} min — Regel {_esc(ctx.get("regel"))} '
+                  f'„{_esc(ctx.get("regel_name"))}“, Filter <code>{_esc(ctx.get("regel_filter"))}</code></p>')
+    elif critical_kind:
         volume = (f'<p style="margin:4px 0">Erstes Ereignis {_esc(_hm(ctx.get("started_at")))} UTC, '
                   f'zuletzt {_esc(_hm(ctx.get("until")))} UTC · <b>{fmt_int(ctx.get("events"))}×</b> '
                   f'in {_esc(ctx.get("window_hours"))} h (je Ereignis ein 5-min-Fenster)</p>')
@@ -130,6 +141,10 @@ def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
         links.append(f'<a href="{_esc(incident_url)}">Incident öffnen (Timeline, An Konsole übergeben)</a>')
     if ctx.get("graylog_url"):
         links.append(f'<a href="{_esc(ctx["graylog_url"])}">In Graylog ansehen</a>')
+    if incident_url and "/feed?incident=" in incident_url:
+        # der Incident als Objekt: seine Nachrichten im Fehler-Netzplan (incident_objekt.py)
+        base, _, iid = incident_url.partition("/feed?incident=")
+        links.append(f'<a href="{_esc(base)}/topology?modus=fehler&amp;filter=incident:{_esc(iid)}">Im Fehler-Netzplan</a>')
     return f"""<div style="font-family:Arial,sans-serif;font-size:14px;max-width:760px">
     {''.join(rows)}
     <h4 style="margin:16px 0 4px">Warum gemeldet</h4><ul>{reasons}</ul>
@@ -475,6 +490,9 @@ async def on_events(events, rt, cfg, base_url: str) -> None:
     auf dessen Takt zu warten. Dessen eigene Grenzen (generative_enabled, nur kürzlich
     angesehene Lagebilder) gelten weiter.
     """
+    from app.services.log_watch.incident_regeln import regeln_uebernehmen
+    if await regeln_uebernehmen("log_cluster"):
+        return                      # das Regelwerk meldet diese Art (log_watch/incident_regeln.py)
     from app.core.tasks import run_background
     mails = [ev for ev in events if ev.mail]
     for ev in mails:
@@ -566,6 +584,9 @@ def digest_note(ec) -> str:
 
 async def on_fleet(items: list[dict], cfg) -> None:
     """Flotten-Cluster (fleet.run) über denselben Zustellweg melden."""
+    from app.services.log_watch.incident_regeln import regeln_uebernehmen
+    if await regeln_uebernehmen("fleet"):
+        return                      # das Regelwerk meldet diese Art (log_watch/incident_regeln.py)
     from app.core.tasks import run_background
     for it in items:
         run_background(deliver(it["ctx"], it["title"], it["cluster_id"], it["incident_id"], cfg,
@@ -578,6 +599,9 @@ async def on_fleet(items: list[dict], cfg) -> None:
 
 async def on_critical(items: list[dict], cfg) -> None:
     """Kritische Ereignisse (critical.process) melden — mit den CheckMK-Alerts des Hosts."""
+    from app.services.log_watch.incident_regeln import regeln_uebernehmen
+    if await regeln_uebernehmen("critical"):
+        return                      # das Regelwerk meldet diese Art (log_watch/incident_regeln.py)
     from app.core.database import AsyncSessionLocal
     from app.core.tasks import run_background
     for it in items:

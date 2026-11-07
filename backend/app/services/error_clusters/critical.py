@@ -195,6 +195,9 @@ async def process(db, found: dict[tuple[str, str], Found], b: datetime, report: 
         }
         title = f"Kritisches Ereignis: {sig.label} auf {host} · {recent}× in {th.critical_repeat_hours} h"
         await db.flush()
+        from app.services.log_watch.incident_regeln import regeln_uebernehmen
+        if await regeln_uebernehmen("critical"):
+            continue                          # das Regelwerk eröffnet kritische Incidents (incident_regeln.py)
         inc = await open_cluster_incident(db, kind="critical", title=title, severity=sig.severity,
                                           primary_host=host, context={"cluster_id": str(ep.id), **ctx},
                                           member_docs=[])

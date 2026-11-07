@@ -179,6 +179,9 @@ async def _host_incident(host: str, docs: list[dict], window_start: datetime,
         # Ein einzelner kritischer Alert ist ein Alert, kein Incident.
         if len(docs) < 2 and len(sources) < 2:
             return None
+        from app.services.log_watch.incident_regeln import regeln_uebernehmen
+        if await regeln_uebernehmen("host"):
+            return None                   # das Regelwerk eröffnet Host-Incidents (incident_regeln.py)
         incident = Incident(id=uuid.uuid4(), title="", primary_host=host, severity=sev,
                             status="open", created_at=now, updated_at=now, kind="host")
         db.add(incident)

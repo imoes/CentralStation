@@ -7,14 +7,20 @@ Incident für muster:x“. Gezählt wird über die Historie (cs-logs-*), dieselb
 
 Schattenbetrieb: Regeln im Modus `test` eröffnen nichts. Jeder Lauf hält fest, welche Kandidaten sie
 hätten und welche Incidents die alten Schwellen (error_clusters) im selben Zeitraum eröffnet haben —
-je Art: beide, nur neu, nur alt. Erst mit diesem Vergleich wird umgeschaltet (Schritt 4).
+je Art: beide, nur neu, nur alt.
+
+Umschalten (Schritt 4) ist eine Regel im Modus `aktiv` — eine neue Version der Definition, kein zweiter
+Schalter: für deren Art (`incident_art`) eröffnet und meldet nur noch das Regelwerk
+(`regeln_uebernehmen`), die alten Schwellen liefern weiter ihre Signale ans Raster, eröffnen aber nichts.
+Ein Regel-Incident wird fortgeschrieben, solange sein Schlüssel Kandidat ist, und geschlossen, wenn er
+ein volles Fenster lang unter den Mindestwerten bleibt — kein Limbo.
 """
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
 
-from app.services.log_watch.regelwerk import INCIDENT, Regel
+from app.services.log_watch.regelwerk import AKTIV, INCIDENT, Regel
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +101,152 @@ def vergleiche(kandidaten: list[dict], alt: dict[str, set[str]]) -> dict:
     return out
 
 
+# ── Umschalten: aktive Regeln eröffnen und melden ───────────────────────────
+
+_UEBERNOMMEN: dict = {"t": 0.0, "arten": frozenset()}
+
+
+async def regeln_uebernehmen(art: str) -> bool:
+    """Entscheidet für diese Incident-Art das Regelwerk (eine aktive Incident-Regel dieser Art)? Die alten
+    Schwellen (error_clusters) fragen das vor dem Eröffnen und Melden. 60 s zwischengespeichert."""
+    import time
+
+    if time.monotonic() - _UEBERNOMMEN["t"] > 60:
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.services.log_watch.definition import aktuelle
+            async with AsyncSessionLocal() as db:
+                d = await aktuelle(db)
+            _UEBERNOMMEN["arten"] = frozenset(r.incident_art for r in d.regeln
+                                              if r.aktion == INCIDENT and r.modus == AKTIV)
+        except Exception as e:  # noqa: BLE001 — im Zweifel bleibt der alte Weg zuständig (nichts geht verloren)
+            log.warning("Incident-Regeln: aktive Arten nicht lesbar: %s", e)
+            _UEBERNOMMEN["arten"] = frozenset()
+        _UEBERNOMMEN["t"] = time.monotonic()
+    return art in _UEBERNOMMEN["arten"]
+
+
+def lesbar(text: str) -> str:
+    """Drain-Platzhalter (<NUM>, <TS>, <IP> …) aus einem Muster für Betreff/Titel tilgen. Rein."""
+    import re
+    t = re.sub(r"<[A-Z]{2,6}>", "…", text or "")
+    t = re.sub(r"…(\s+…)+", "…", t)          # nur direkt aufeinanderfolgende Platzhalter
+    return re.sub(r"\s+", " ", t).strip(" …")[:120]
+
+
+def kontext(k: dict, regel: Regel, beispiele: list[str], titel_muster: str = "") -> dict:
+    """Incident- und Mail-Kontext eines Kandidaten — so, dass incident_objekt.filter_von und
+    schluessel_alt denselben Schlüssel wiederfinden. Rein — testbar."""
+    art, schl = regel.incident_art, k["schluessel"]
+    wert = schl.split(":", 1)[1] if ":" in schl else schl
+    ctx = {"regel": regel.id, "regel_name": regel.name, "regel_filter": regel.filter, "schluessel": schl,
+           "fenster_min": regel.fenster_min, "nachrichten": k["nachrichten"], "quellen": k["quellen"],
+           "hosts": k.get("host_liste") or [], "examples": beispiele[:3],
+           "reasons": [f"Regel {regel.id} „{regel.name}“: {regel.filter} — "
+                       + ", ".join(f"{k[m]} {m} (mindestens {v})" for m, v in (regel.mindestens or {}).items())
+                       + f" in {regel.fenster_min} min"],
+           "containers": [{"name": h, "count": 0} for h in k.get("host_liste") or []],
+           "entity_kind": "Host", "template": titel_muster or schl}
+    if art == "log_cluster":
+        ctx["template_key"] = wert
+    elif art == "fleet":
+        ctx["service"] = wert
+    return ctx
+
+
+def titel(regel: Regel, k: dict, titel_muster: str = "") -> str:
+    was = lesbar(titel_muster) if titel_muster else k["schluessel"].split(":", 1)[-1]
+    return f"{regel.name}: {was} · {k['hosts']} Hosts · {k['nachrichten']} Meldungen"[:300]
+
+
+async def _beispiele(schluessel: str, regel: Regel, objekte: dict, jetzt: datetime) -> list[str]:
+    from app.core.opensearch import get_opensearch
+    from app.services.log_watch import filter as flt
+    from app.services.log_watch.historie import PRAEFIX
+    f = f"{regel.filter} {incident_tag(schluessel)}"
+    r = await get_opensearch().search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
+        "size": 3, "sort": [{"relevanz": "desc"}, {"zeit": "desc"}], "_source": ["text"],
+        "query": {"bool": {"filter": [flt.opensearch(f, objekte), {"range": {"zeit": {
+            "gte": (jetzt - timedelta(minutes=regel.fenster_min)).isoformat()}}}]}}})
+    return [(h["_source"].get("text") or "")[:600] for h in r["hits"]["hits"]]
+
+
+def incident_tag(schluessel: str) -> str:
+    """Schlüssel → Filterausdruck (Werte mit Leerzeichen in Anführungszeichen)."""
+    from app.services.log_watch.incident_objekt import _tag
+    art, _, wert = schluessel.partition(":")
+    return _tag(art, wert)
+
+
+async def eroeffne(regel: Regel, k: dict, objekte: dict, jetzt: datetime) -> dict:
+    """Aktiver Kandidat → Incident eröffnen oder fortschreiben (gleiche Art, gleicher Schlüssel, offen);
+    nur ein NEUER Incident wird gemeldet. Rückgabe {incident, neu}."""
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.error_cluster import LogTemplate
+    from app.models.workflow import Incident
+    from app.services.error_clusters.incident import OPEN, cluster_context, open_cluster_incident
+
+    async with AsyncSessionLocal() as db:
+        offen = (await db.execute(select(Incident).where(Incident.kind == regel.incident_art,
+                                                         Incident.status.in_(OPEN)))).scalars().all()
+        for inc in offen:
+            c = cluster_context(inc) or {}
+            if c.get("schluessel") == k["schluessel"] or k["schluessel"] in schluessel_alt(
+                    inc.kind, inc.primary_host, c):
+                inc.updated_at = jetzt
+                await db.commit()
+                return {"incident": str(inc.id), "neu": False}
+        muster = ""
+        if regel.gruppe == "muster":
+            t = await db.get(LogTemplate, k["schluessel"].split(":", 1)[1])
+            muster = t.template if t else ""
+        ctx = kontext(k, regel, await _beispiele(k["schluessel"], regel, objekte, jetzt), muster)
+        hosts = ctx["hosts"] or [k["schluessel"].split(":", 1)[1]]
+        inc = await open_cluster_incident(
+            db, kind=regel.incident_art, title=titel(regel, k, muster),
+            severity="high" if k["nachrichten"] >= 2 * max((regel.mindestens or {}).values() or [1]) else "medium",
+            primary_host=hosts[0], context={**ctx, "hosts": hosts}, member_docs=[])
+        await db.commit()
+        return {"incident": str(inc.id), "neu": True, "ctx": {**ctx, "hosts": hosts}, "titel": inc.title}
+
+
+async def melde(incident_id: str, ctx: dict, titel_text: str) -> None:
+    """Derselbe Zustellweg wie bisher (notify.deliver: KI-Einschätzung, Empfänger nach Host-Scope, Rezept) —
+    ein Mail-Weg; cluster_id ist hier der Incident (keine Fehler-Cluster-Episode)."""
+    from app.core.database import AsyncSessionLocal
+    from app.services.error_clusters import notify
+    from app.services.settings import get_error_cluster_config
+    async with AsyncSessionLocal() as db:
+        cfg = await get_error_cluster_config(db)
+    await notify.deliver(ctx, titel_text, incident_id, incident_id, cfg)
+
+
+async def schliesse_ruhige(regeln: list[Regel], kandidaten: list[dict], jetzt: datetime) -> int:
+    """Regel-Incidents schließen, deren Schlüssel ein volles Fenster lang kein Kandidat war."""
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.workflow import Incident
+    from app.services.error_clusters.incident import OPEN, close_cluster_incident, cluster_context
+    aktiv = {r.id: r for r in regeln if r.modus == AKTIV}
+    lebend = {(k["regel"], k["schluessel"]) for k in kandidaten}
+    n = 0
+    async with AsyncSessionLocal() as db:
+        for inc in (await db.execute(select(Incident).where(Incident.status.in_(OPEN)))).scalars().all():
+            c = cluster_context(inc) or {}
+            r = aktiv.get(c.get("regel"))
+            if r is None or (r.id, c.get("schluessel")) in lebend:
+                continue
+            if inc.updated_at < jetzt - timedelta(minutes=r.fenster_min):
+                await close_cluster_incident(db, str(inc.id),
+                                             f"Regel {r.id}: {r.fenster_min} min unter den Mindestwerten")
+                n += 1
+        await db.commit()
+    return n
+
+
 async def lauf(jetzt: datetime | None = None) -> dict:
     """Ein Messpunkt des Schattenbetriebs (raster_lauf „incident-regeln“)."""
     from sqlalchemy import select
@@ -128,7 +280,28 @@ async def lauf(jetzt: datetime | None = None) -> dict:
             continue
         alt.setdefault(inc.kind, set()).update(schluessel_alt(inc.kind, inc.primary_host, cluster_context(inc), kanon))
     kand = await auswerten(regeln, d.objekte, jetzt)
-    return {"definition_v": d.version, "regeln": [{"id": r.id, "modus": r.modus, "fenster_min": r.fenster_min}
+    # Umschalten: aktive Regeln eröffnen/fortschreiben und melden; Ruhige schließen
+    aktiv = {r.id: r for r in regeln if r.modus == AKTIV}
+    eroeffnet, fortgeschrieben, gemeldet, fehler = 0, 0, 0, []
+    for k in kand:
+        r = aktiv.get(k["regel"])
+        if r is None:
+            continue
+        try:
+            e = await eroeffne(r, k, d.objekte, jetzt)
+            if e["neu"]:
+                eroeffnet += 1
+                from app.core.tasks import run_background
+                run_background(melde(e["incident"], e["ctx"], e["titel"]), name=f"incident_regel_{e['incident'][:8]}")
+                gemeldet += 1
+            else:
+                fortgeschrieben += 1
+        except Exception as ex:  # noqa: BLE001 — ein Kandidat darf den Lauf nicht abbrechen
+            fehler.append({"schluessel": k["schluessel"], "fehler": f"{type(ex).__name__}: {str(ex)[:160]}"})
+    geschlossen = await schliesse_ruhige(regeln, kand, jetzt) if aktiv else 0
+    return {"definition_v": d.version,
+            "aktiv": {"eroeffnet": eroeffnet, "fortgeschrieben": fortgeschrieben, "gemeldet": gemeldet,
+                      "geschlossen": geschlossen, "fehler": fehler[:10]}, "regeln": [{"id": r.id, "modus": r.modus, "fenster_min": r.fenster_min}
                                                   for r in regeln],
             "kandidaten": len(kand), "je_regel": {r.id: sum(1 for k in kand if k["regel"] == r.id) for r in regeln},
             "vergleich": vergleiche(kand, alt), "beispiele": kand[:20]}

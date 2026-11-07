@@ -298,6 +298,9 @@ async def run(db, cfg, base_url: str) -> list[dict]:
                 ep.incident_id = uuid.UUID(leader_inc)
                 await add_pattern(db, leader_inc, pattern, members)
                 continue
+            from app.services.log_watch.incident_regeln import regeln_uebernehmen
+            if await regeln_uebernehmen("fleet"):
+                continue                     # das Regelwerk eröffnet Flotten-Incidents (incident_regeln.py)
             ep.notified_rate = ep.notified_entities = len(hit.hosts)
             ep.notified_at = now
             sev = "critical" if any(s == "critical" for _, s in hit.alerts) else "high"

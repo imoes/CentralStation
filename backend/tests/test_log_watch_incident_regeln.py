@@ -35,3 +35,39 @@ def test_vergleich_je_art():
     v = ir.vergleiche(kand, {"log_cluster": {"muster:k1", "muster:k2"}, "fleet": {"dienst:x"}})
     assert v["log_cluster"]["beide"] == 1 and v["log_cluster"]["nur_neu"] == 1 and v["log_cluster"]["nur_alt"] == 1
     assert v["host"]["nur_neu"] == 1 and v["fleet"]["nur_alt"] == 1
+
+
+def test_lesbarer_betreff_ohne_platzhalter():
+    assert ir.lesbar("Nov <NUM> <TS> <NUM>] [proxy_http:error] [pid <NUM>:tid <HEX>] [client <IP>] AH01114: "
+                     "HTTP: failed to make connection") == \
+        "Nov …] [proxy_http:error] [pid …:tid …] [client …] AH01114: HTTP: failed to make connection"
+    from app.services.error_clusters import notify
+    s = notify.subject({"containers": [], "count15": 10}, "Fehlerausbruch: Nov <NUM> <TS> foo <IP> bar")
+    assert "<NUM>" not in s and "<IP>" not in s
+
+
+def test_regel_incident_kontext_findet_seinen_schluessel_wieder():
+    """Der Kontext eines Regel-Incidents ergibt über schluessel_alt/filter_von denselben Schlüssel —
+    sonst würde jeder Lauf einen neuen Incident eröffnen."""
+    from app.services.log_watch import incident_objekt as io
+    for rid, schl, art in (("I-FLOTTE", "dienst:Filesystem /", "fleet"), ("I-AUSBRUCH", "muster:k1", "log_cluster"),
+                           ("I-HOST", "host:cue0148.example.com", "host")):
+        r = _regel(rid)
+        k = {"regel": rid, "art": art, "schluessel": schl, "nachrichten": 9, "hosts": 6, "quellen": 2,
+             "host_liste": ["cue0148.example.com"]}
+        ctx = ir.kontext(k, r, ["Beispiel"])
+        assert schl in ir.schluessel_alt(art, ctx["hosts"][0], ctx)
+        assert io.filter_von(art, ctx["hosts"][0], ctx) is not None
+        assert ctx["reasons"][0].startswith(f"Regel {rid}")
+    assert ir.titel(_regel("I-FLOTTE"), {"schluessel": "dienst:Filesystem /", "hosts": 6, "nachrichten": 9}) \
+        == "Flotten-Ausfall eines Dienstes: Filesystem / · 6 Hosts · 9 Meldungen"
+
+
+def test_regel_mail_nennt_regel_und_netzplan():
+    from app.services.error_clusters import notify
+    k = {"regel": "I-FLOTTE", "art": "fleet", "schluessel": "dienst:Filesystem /", "nachrichten": 9, "hosts": 6,
+         "quellen": 1, "host_liste": ["a", "b"]}
+    ctx = ir.kontext(k, _regel("I-FLOTTE"), ["Filesystem / CRIT 97 %"])
+    html = notify.render_html(ctx, None, "https://hal.example.com/feed?incident=abc", pending=False)
+    assert "Regel I-FLOTTE" in html and "/topology?modus=fehler&amp;filter=incident:abc" in html
+    assert notify.subject(ctx, ir.titel(_regel("I-FLOTTE"), k)).startswith("[CentralStation] Incident: Flotten-Ausfall")
