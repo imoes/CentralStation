@@ -10,6 +10,82 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 34: incidents follow the rule system (definition v7); one mail path
+
+Steps 3 and 4 of the incident refactor you asked for (2026-11-07: "der Incident muss nach dem Logik-Update
+(Regel-System) refactort werden"; "mache alle Schritte und teste alle neuen Funktionen auch den
+Mail-Versand von Incidents").
+
+### What is new
+
+- **Third action `incident`** in the one rule table (rule = filter + action). An incident rule has:
+  - a group: `muster`, `dienst` or `host`;
+  - a window in minutes;
+  - minimum values: messages, hosts, sources;
+  - the kind of incident it opens.
+
+  The per-message verdict (`bewerte`) skips these rules, so relevance is unchanged.
+- **The four current ways are standard rules, in test mode** (definition v7):
+
+  | Rule | Filter | Group / window / minimum | Old path |
+  |---|---|---|---|
+  | I-AUSBRUCH | `quelle:graylog signal:dringend !signal:schaden` | muster / 30 min / 1 message | log-cluster immediate |
+  | I-FLOTTE | `quelle:checkmk zustand:crit` | dienst / 45 min / 5 hosts | fleet |
+  | I-KRITISCH | `quelle:graylog signal:schaden` | host / 360 min / 3 messages | critical |
+  | I-HOST | `relevanz>=3` | host / 30 min / 2 messages | host incident |
+- **Shadow mode** (`incident_regeln.py`, every 5 min, `raster_lauf` "incident-regeln"). For each kind,
+  in the window of its own rule, it compares what the rules would open with what the old thresholds
+  opened, in three counts: both, only new, only old.
+- **Switching is a rule in mode `aktiv`**, as a new definition version, not a second switch:
+  - for that kind only the rule system opens and mails;
+  - the old paths (`runner`, `fleet`, `critical`, `process_alerts`, and their mails) step aside, but
+    keep feeding the raster signals.
+- **Active rule incidents:**
+  - one incident per key, updated while the key stays a candidate;
+  - mailed when new, through the existing `notify.deliver` (AI triage, recipients by host scope,
+    recipe) — one mail path;
+  - closed after a full window below the minimum values, so they do not hang in limbo.
+- **Readable mail subject.** Drain placeholders (`<NUM> <TS> <IP>` …) are removed, also on the old path.
+  Rule mails name rule, filter and values, and link the incident in the error network graph.
+
+### Evidence (2026-11-07, live data, new code in a one-off container)
+
+- **Shadow run:** 9 candidates (I-AUSBRUCH 2, I-KRITISCH 2, I-HOST 5); a run takes 5 s.
+
+  | Kind | both | only new | only old |
+  |---|---|---|---|
+  | log_cluster | 2 | 0 | 1 |
+  | critical | 0 | 2 (jump012, mon02) | 0 |
+  | host | 1 | 4 | 15 |
+
+  The 15 host incidents only the old path opened come from routine syslog lines (`dockerd`,
+  `salt-minion`) that the rule system judges not relevant. For docker0160 and docker0209 the history
+  holds 0 messages in that window. The old path opens incidents from noise; the rules do not.
+- **Measurement corrected on the way.** The first comparison counted the old side over the largest
+  window (6 h) for every kind and showed 11 and 46 "only old". The windows are now per kind.
+- **Mail, new path, end to end:** a rule mail for the real candidate I-KRITISCH on jump012 was sent to
+  thomas.kluge@example.org and accepted by the relay.
+  - Subject: "[CentralStation] Incident: Kritische Kernelmeldung gehäuft: jump012.example.com · 1 Hosts
+    · 28 Meldungen".
+  - Reason: "Regel I-KRITISCH … quelle:graylog signal:schaden — 28 nachrichten (mindestens 3) in
+    360 min".
+  - 3 examples from the history.
+- **Tests:** `test_log_watch_incident_regeln.py` (6) and `test_log_watch_regelwerk.py`; full suite 842
+  passed.
+
+### What is still missing
+
+- **Not deployed.** The restart guard stopped because a user console is running. Definition v7 is
+  already in the database; the running code keeps its v6 rules until the deploy.
+- **Not switched.** All incident rules are in test mode. Switching follows when the shadow mode has
+  produced several hours of comparison numbers; they will be shown before switching.
+- **The fleet rule has no "≥ 3× the 7-day median"** as the old one has. A daily recurring job could
+  open an incident that the old path held back.
+- **The critical rule counts messages, not five-minute windows.** The history stores several lines
+  per window.
+
+---
+
 ## 2026-11-07 — Log watch, part 33: an incident is an object of the search; an open ticket means handled
 
 You asked (2026-11-07): an incident must be an object of search and filter, and shown in the network graph;
