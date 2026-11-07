@@ -213,10 +213,10 @@ async def anlegen(name: str, art: str, bedeutung: str, beispiel: str, quelle: st
     voll = name_von(art, (name or "").strip())
     if not voll.split(":", 1)[1]:
         return {"abgelehnt": "Name fehlt"}
-    if art == "hashtag" and not re.fullmatch(r"[a-z][a-z0-9-]{1,30}", voll.split(":", 1)[1]):
-        return {"abgelehnt": "Name einer Hashtag-Art: klein, a-z, 0-9, - (2–31 Zeichen), z. B. ursache"}
-    if art == "hashtag" and voll.split(":", 1)[1] in NICHT_ERFINDBAR:
-        return {"abgelehnt": f"{voll} ist ein festes Feld bzw. eine Verknüpfung"}
+    if art == "hashtag":
+        grund = artname_fehler(voll.split(":", 1)[1])
+        if grund:
+            return {"abgelehnt": grund}
     async with AsyncSessionLocal() as db:
         await stelle_bereit(db)
         da = await db.get(FeldBedeutung, voll)
@@ -231,6 +231,34 @@ async def anlegen(name: str, art: str, bedeutung: str, beispiel: str, quelle: st
 
 #: Tag-Arten, die niemand erfindet: feste Felder und Verknüpfungen (nachricht.FESTE_TAG_ARTEN, VERKNUEPFUNG)
 NICHT_ERFINDBAR = frozenset({"quelle", "host", "befund", "incident"})
+
+
+#: Namen, unter denen eine vorhandene Art schon existiert — gemessen 07.11.: die KI legte hashtag:standort an,
+#: das ist ort (Identität: ein Ding, ein Name)
+SYNONYME = {"standort": "ort", "location": "ort", "site": "ort", "rechenzentrum": "ort",
+            "rechner": "host", "server": "host", "hostname": "host", "maschine": "host",
+            "service": "dienst", "check": "dienst", "symptom": "thema", "kategorie": "thema",
+            "pattern": "muster", "vorlage": "muster", "template": "muster",
+            "kritikalität": "kritikalitaet", "criticality": "kritikalitaet", "hostgruppe": "hg", "gruppe": "hg",
+            "anwendung": "app", "container": "app", "applikation": "app", "zustand": "zustand"}
+
+
+def artname_fehler(name: str) -> str:
+    """Grund, warum `name` keine neue Hashtag-Art sein kann — leer heißt: erlaubt. Rein.
+    Eine Art ist eine Eigenschaft OHNE Wert (komponente, nicht komponente-sensecommon — gemessen 07.11.: die KI
+    legte je Wert eine eigene Art an); der Wert steht hinter dem Doppelpunkt: komponente:sensecommon."""
+    if not re.fullmatch(r"[a-z][a-z0-9]{1,30}", name or ""):
+        teil = (name or "").split("-", 1)
+        tipp = f" — Art {teil[0]}, Wert {teil[1]}: {teil[0]}:{teil[1]}" if len(teil) == 2 and teil[0] else ""
+        return ("Name einer Hashtag-Art: ein Wort, klein, a-z und 0-9 (2–31 Zeichen) — die Eigenschaft, nicht "
+                f"ihr Wert{tipp}")
+    if name in NICHT_ERFINDBAR:
+        return f"{name} ist ein festes Feld bzw. eine Verknüpfung"
+    if name in SYNONYME and SYNONYME[name] != name:
+        return f"{name} gibt es schon als Art {SYNONYME[name]} — nimm {SYNONYME[name]}:<wert> (ein Ding, ein Name)"
+    if name in HASHTAG_ARTEN:
+        return f"{name} ist eine Art des Systems — ihre Bedeutung steht schon in lw_feld"
+    return ""
 
 
 def erfindbar(registriert: set[str]) -> set[str]:

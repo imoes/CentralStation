@@ -259,7 +259,10 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                         "nicht kennt — nur mit Belegen: [{id, zitat}] aus einer Nachricht oder [{url, zitat}] aus einer "
                         "mit web_seite gelesenen Seite; das Zitat muss dort wörtlich stehen (der Code prüft). "
                         "Vorhandenes wird nicht überschrieben. Ein eigenes Tag-Feld (neue Hashtag-Art, z. B. ursache) "
-                        "registrierst du hier mit art='hashtag' — erst dann gilt es im Befund.",
+                        "registrierst du hier mit art='hashtag' — erst dann gilt es im Befund. Vorher lw_feld() ohne "
+                        "Namen lesen: keine zweite Art für Vorhandenes (Standort = ort). Die Art ist die Eigenschaft "
+                        "(komponente), der Wert steht im Tag (komponente:sensecommon). Das Zitat muss die Bedeutung "
+                        "stützen, nicht nur irgendwo stehen.",
                         _p(name={"type": "string", "_pflicht": True},
                            art={"type": "string", "enum": ["feld", "hashtag", "signal", "quellfeld"], "_pflicht": True},
                            bedeutung={"type": "string", "_pflicht": True},

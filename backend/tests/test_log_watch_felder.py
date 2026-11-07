@@ -83,3 +83,12 @@ def test_feld_anlegen_belege_gegen_gelesene_seite():
 def test_web_prompt_verlangt_zitate_aus_der_seite():
     assert "wörtlich auf der Seite" in felder.PROMPT_QUELLFELD_WEB and "letzten Beitrag" in felder.PROMPT_QUELLFELD_WEB
     assert felder.WEB_JE_LAUF >= 1
+
+
+def test_neue_hashtag_art_ist_eigenschaft_ohne_wert_und_kein_synonym():
+    """Gemessen 07.11.: die KI legte hashtag:standort (= ort) und komponente-sensecommon (Wert im Namen) an."""
+    from app.services.log_watch.felder import artname_fehler
+    assert artname_fehler("komponente") == "" and artname_fehler("ursache") == ""
+    assert "komponente:sensecommon" in artname_fehler("komponente-sensecommon")
+    assert "nimm ort" in artname_fehler("standort")
+    assert "festes Feld" in artname_fehler("host") and "Art des Systems" in artname_fehler("thema")

@@ -135,3 +135,17 @@ def test_zustellung_wird_am_incident_vermerkt():
     z = zustellung(None, 1, ["a@x.de"], "ok", t)
     assert z == [{"zeit": t.isoformat(), "mails": 1, "empfaenger": ["a@x.de"], "triage": "ok"}]
     assert len(zustellung([{}] * 25, 0, [], "none", t)) == 20 and zustellung([{}] * 25, 0, [], "none", t)[-1]["mails"] == 0
+
+
+def test_abgebrochene_meldung_wird_nachgeholt():
+    """Gemessen 07.11.: Incidents von 16:09 ohne Zustellvermerk (Neustart 16:19 brach die Meldung ab)."""
+    from datetime import datetime, timedelta, timezone
+    from app.services.log_watch.incident_regeln import nachzuholen
+    j = datetime(2026, 11, 7, 16, 40, tzinfo=timezone.utc)
+    inc = [("a", {"regel": "I-HOST"}, j - timedelta(minutes=31)),                       # fehlt → nachholen
+           ("b", {"regel": "I-HOST", "zustellungen": [{"mails": 0}]}, j - timedelta(minutes=31)),  # gemeldet (0 Empfänger)
+           ("c", {"regel": "I-HOST"}, j - timedelta(minutes=3)),                         # läuft vielleicht noch
+           ("d", {"regel": "I-HOST"}, j - timedelta(hours=3)),                           # zu alt
+           ("e", {}, j - timedelta(minutes=31)),                                         # alter Weg, kein Regel-Incident
+           ("f", {"regel": "I-HOST"}, j - timedelta(minutes=31))]                        # in Arbeit
+    assert nachzuholen(inc, {"f"}, j) == ["a"]

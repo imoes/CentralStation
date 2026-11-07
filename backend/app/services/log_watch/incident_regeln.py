@@ -309,6 +309,22 @@ async def eroeffne(regel: Regel, k: dict, objekte: dict, jetzt: datetime) -> dic
         return {"incident": str(inc.id), "neu": True, "ctx": {**ctx, "hosts": hosts}, "titel": inc.title}
 
 
+#: Meldungen, die dieser Prozess gerade zustellt — nach einem Neustart leer; dann holt `nachzuholen` sie nach.
+#: Gemessen 07.11.: zwei I-HOST-Incidents von 16:09 blieben ohne Zustellvermerk, der Neustart um 16:19 brach
+#: die Meldung (Triage durch das Modell) ab — vorher ging so eine Mail still verloren.
+_IN_ARBEIT: set[str] = set()
+NACHHOLEN_STUNDEN = 2
+NACHHOLEN_AB_MIN = 10          # einer laufenden Meldung (Triage braucht Minuten) Zeit lassen
+
+
+def nachzuholen(incidents: list[tuple[str, dict, datetime]], in_arbeit: set[str], jetzt: datetime) -> list[str]:
+    """(id, Kontext, eröffnet) offener Regel-Incidents → IDs, deren Meldung fehlt: kein Zustellvermerk, nicht in
+    Arbeit, älter als NACHHOLEN_AB_MIN, jünger als NACHHOLEN_STUNDEN. Rein — testbar."""
+    return [i for i, c, t in incidents
+            if c.get("regel") and "zustellungen" not in c and i not in in_arbeit
+            and timedelta(minutes=NACHHOLEN_AB_MIN) <= jetzt - t <= timedelta(hours=NACHHOLEN_STUNDEN)]
+
+
 async def melde(incident_id: str, ctx: dict, titel_text: str) -> None:
     """Derselbe Zustellweg wie bisher (notify.deliver: KI-Einschätzung, Empfänger nach Host-Scope, Rezept) —
     ein Mail-Weg; cluster_id ist hier der Incident (keine Fehler-Cluster-Episode)."""
@@ -317,7 +333,31 @@ async def melde(incident_id: str, ctx: dict, titel_text: str) -> None:
     from app.services.settings import get_error_cluster_config
     async with AsyncSessionLocal() as db:
         cfg = await get_error_cluster_config(db)
-    await notify.deliver(ctx, titel_text, incident_id, incident_id, cfg)
+    _IN_ARBEIT.add(incident_id)
+    try:
+        await notify.deliver(ctx, titel_text, incident_id, incident_id, cfg)
+    finally:
+        _IN_ARBEIT.discard(incident_id)
+
+
+async def _hole_meldungen_nach(jetzt: datetime) -> list[str]:
+    """Meldungen offener Regel-Incidents ohne Zustellvermerk erneut anstoßen (nach Neustart abgebrochen)."""
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
+    from app.core.tasks import run_background
+    from app.models.workflow import Incident
+    from app.services.error_clusters.incident import OPEN, cluster_context
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(Incident).where(
+            Incident.status.in_(OPEN), Incident.created_at >= jetzt - timedelta(hours=NACHHOLEN_STUNDEN)))).scalars().all()
+        kandidaten = [(str(i.id), cluster_context(i) or {}, i.created_at, i.title) for i in rows]
+    ids = nachzuholen([(i, c, t) for i, c, t, _ in kandidaten], _IN_ARBEIT, jetzt)
+    for i, c, _t, titel_text in kandidaten:
+        if i in ids:
+            ctx = {k: v for k, v in c.items() if k != "type"}
+            run_background(melde(i, ctx, titel_text), name=f"incident_regel_nachholen_{i[:8]}")
+    return ids
 
 
 async def schliesse_ruhige(regeln: list[Regel], kandidaten: list[dict], jetzt: datetime) -> int:
@@ -438,9 +478,11 @@ async def lauf(jetzt: datetime | None = None) -> dict:
                 fortgeschrieben += 1
         except Exception as ex:  # noqa: BLE001 — ein Kandidat darf den Lauf nicht abbrechen
             fehler.append({"schluessel": k["schluessel"], "fehler": f"{type(ex).__name__}: {str(ex)[:160]}"})
+    nachgeholt = await _hole_meldungen_nach(jetzt) if aktiv else []
     geschlossen = await schliesse_ruhige(regeln, kand, jetzt) if aktiv else 0
     return {"definition_v": d.version,
             "aktiv": {"eroeffnet": eroeffnet, "fortgeschrieben": fortgeschrieben, "gemeldet": gemeldet,
+                      "nachgeholt": nachgeholt,
                       "geschlossen": geschlossen, "fehler": fehler[:10],
                       # nicht eröffnet, mit Grund (Mindestalter, Wiederkehr, stumm …) — nichts still
                       "zurueckgehalten": zurueckgehalten[:20]}, "regeln": [{"id": r.id, "modus": r.modus, "fenster_min": r.fenster_min}

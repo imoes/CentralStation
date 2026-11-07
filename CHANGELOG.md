@@ -10,6 +10,45 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Lost incident mails are sent later; rules for new tag kinds; first uses observed
+
+### Fixed
+
+- **An incident mail cut off by a restart is now sent later.** Rule incidents report in the background
+  (the model triage takes minutes); a backend restart in that time ended the report silently.
+  - Measured 07.11.: the I-HOST incidents `b82c2125` (nsa323) and `f51d7cfc` (docker0146) from 16:09 had no
+    delivery record after the restart at 16:19.
+  - Now every incident-rule run (every 5 min) resends open rule incidents that have no delivery record. Only
+    incidents ≥ 10 min and ≤ 2 h old are picked up, and none that are being reported right now
+    (`incident_regeln.nachzuholen`). The run names them under `nachgeholt`.
+  - Test: `test_abgebrochene_meldung_wird_nachgeholt`.
+- **New hashtag kinds must be a property without a value, and not a second name for an existing kind.**
+  - The AI had registered `hashtag:standort`; that is `ort`. Its quote, "Processes: 0 (warn/crit below 1/1)",
+    does not support the meaning.
+  - It had also registered `komponente-sensecommon` and `komponente-eventshandlers`, putting the value into the
+    kind's name.
+  - `felder.artname_fehler` now refuses:
+    - names with a value part, and suggests the form instead (`komponente:sensecommon`);
+    - synonyms of existing kinds (`standort` → `ort` and others);
+    - system kinds and fixed fields.
+  - The tool description also requires that the quote supports the meaning.
+  - Test: `test_neue_hashtag_art_ist_eigenschaft_ohne_wert_und_kein_synonym`.
+
+### Observed live (first uses, 07.11.)
+
+- **Peer question asked by an agent itself.** At 16:28:14 agent `…-d3a3f3` asked about docker0132: "Du hast
+  vorhin docker0132 wegen Wazuh 5104 (veth promiscuous) bewertet …". Nobody was analysing the host, so the
+  status is `niemand`, as intended.
+- **Own tag kinds registered by the AI, with checked quotes:** `angriffsziel` (firewall URL target, quoted from
+  firewall messages) and `komponente-…` (Defender sensor components). `standort` and the `komponente-*` names
+  break the new rules; existing entries are not deleted, and a human corrects or removes them.
+- **Field documentation ran for the first time at 16:18** and created 10 source-field meanings (e.g.
+  `checkmk.in_downtime`, `wazuh.rule.groups`).
+- **Incident mails delivered with a record:** at 16:29, 3 mails went to the subscriber (jump012, cue0148,
+  cue0112). Incidents outside the subscriber's host scope record `mails: 0`.
+
+---
+
 ## 2026-11-07 — Exclusion filters moved into the rule set (test mode); peer question verified live
 
 ### Changed
