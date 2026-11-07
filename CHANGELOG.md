@@ -66,8 +66,8 @@ the research tool's, where you see at a glance where the problems are, and every
 
 ### What is still missing
 
-- **Backend not yet redeployed** with the "seen" marking for new findings: the restart guard stopped
-  because a user container is running. The backfill ran in a one-off container.
+- ~~Backend not yet redeployed~~ — correction: deployed 2026-11-07 11:07 UTC after you approved stopping
+  the user container; new findings now mark what they saw.
 - **Incidents are not yet objects** of the graph and search (see the design proposal).
 - No suggestions while typing in the graph's filter input (the feed has them).
 
