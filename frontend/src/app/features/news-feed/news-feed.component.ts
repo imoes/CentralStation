@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { ActivatedRoute, Router } from '@angular/router';
 import { skip } from 'rxjs';
+import { Feldwert, bereichFuer, escapeWert, felderVon, hostFeld, praedikat, zurSuche } from './feed-query';
 import { ComputerService } from '../../core/services/computer.service';
 import { I18nService } from '../../core/services/i18n.service';
 import { MatCardModule } from '@angular/material/card';
@@ -131,6 +132,7 @@ interface FeedItem {
   location_city: string | null;
   external_url: string | null;
   external_id?: string | null;
+  tags?: string[] | null;
   collab?: FeedItemCollab;
 }
 
@@ -178,6 +180,7 @@ const SEVERITY_COLOR: Record<string, string> = {
     MatSlideToggleModule, MatSelectModule, MatFormFieldModule, MatInputModule,
     MatDialogModule,
   ],
+  host: { '(document:click)': 'schliesseMenue()', '(document:keydown.escape)': 'schliesseMenue()' },
   template: `
     @if (showScrollTop()) {
       <button mat-raised-button color="primary" class="scroll-top-btn" (click)="scrollToTop()">
@@ -233,9 +236,23 @@ const SEVERITY_COLOR: Record<string, string> = {
       <!-- ── Cross-source search bar (all cs-feed-* indices) ────────────────── -->
       <div class="glog-bar">
         <mat-icon class="glog-bar-icon">search</mat-icon>
-        <input class="glog-input" type="text" [(ngModel)]="searchQuery"
-               (keyup.enter)="runFeedSearch()"
+        <input #suchFeld class="glog-input" type="text" [(ngModel)]="searchQuery" autocomplete="off"
+               (input)="onSuchEingabe()" (keydown)="onSuchTaste($event)" (blur)="vsOffen.set(false)"
                [placeholder]="i18n.t('feed.search_placeholder')">
+        <!-- Vorschläge beim Texample wie im Recherche-Tool: vollständige Suchen mit Trefferzahl -->
+        @if (vsOffen() && vorschlaege().length) {
+          <div class="vs-box" role="listbox">
+            @for (v of vorschlaege(); track v.q; let i = $index) {
+              <div class="vs-row" role="option" [class.on]="i === vsSel()"
+                   (mousedown)="$event.preventDefault(); waehleVorschlag(v)">
+                <mat-icon class="vs-ic">{{ v.art === 'feld' ? 'label' : 'search' }}</mat-icon>
+                <span class="vs-q">{{ v.q }}</span>
+                <span class="vs-n">{{ v.anzahl != null ? (v.anzahl | number) + ' Treffer' : 'Feld' }}</span>
+              </div>
+            }
+            <div class="vs-fuss">↑↓ wählen · Enter übernehmen · Esc schließen · Zahl = Treffer dieser Suche im gewählten Zeitraum</div>
+          </div>
+        }
         <select class="glog-range" [(ngModel)]="searchRangeSec">
           @for (r of searchRanges; track r.sec) {
             <option [ngValue]="r.sec">{{ r.label }}</option>
@@ -253,6 +270,9 @@ const SEVERITY_COLOR: Record<string, string> = {
           </button>
         }
       </div>
+      @if (suchHinweis()) {
+        <div class="glog-fehler"><mat-icon>error_outline</mat-icon>{{ suchHinweis() }}</div>
+      }
 
       <!-- ── Filter panel ───────────────────────────────────────────────────── -->
       @if (showFilters()) {
@@ -488,9 +508,44 @@ const SEVERITY_COLOR: Record<string, string> = {
         @if (searchActive()) {
           <div class="search-active-banner">
             <mat-icon>search</mat-icon>
-            <span>Suche über alle Quellen: <b>{{ activeSearchQuery() }}</b> · {{ searchRangeLabel() }} · {{ items().length }} Treffer</span>
+            <span>Suche über alle Quellen: <b>{{ activeSearchQuery() }}</b> · {{ searchRangeLabel() }} ·
+              {{ (suchGesamt() ?? items().length) | number }} Treffer@if ((suchGesamt() ?? 0) > items().length) {, die neuesten {{ items().length }} gezeigt}</span>
             <span class="glog-spacer"></span>
             <button mat-icon-button (click)="clearFeedSearch()" matTooltip="Suche zurücksetzen"><mat-icon>close</mat-icon></button>
+          </div>
+        }
+
+        <!-- Top-Werte eines Felds (Graylog „Show top values“) — Zahlen zur selben Suche -->
+        @if (topWerte(); as t) {
+          <div class="top-werte">
+            <div class="tw-kopf">
+              <mat-icon>bar_chart</mat-icon>
+              <span>Top-Werte <b>{{ t.feld }}</b> · {{ t.bereich }}@if (t.q) { · Suche: <code>{{ t.q }}</code>}
+                @if (t.gesamt != null) { · {{ t.gesamt | number }} Treffer}</span>
+              <span class="glog-spacer"></span>
+              <button mat-icon-button (click)="topWerte.set(null)" matTooltip="Schließen"><mat-icon>close</mat-icon></button>
+            </div>
+            @if (t.fehler) { <div class="tw-fehler">{{ t.fehler }}</div> }
+            @if (t.laedt) { <mat-spinner diameter="18"></mat-spinner> }
+            @for (w of t.werte ?? []; track w.wert) {
+              <div class="tw-zeile">
+                <span class="tw-wert" [title]="'' + w.wert">@if (w.wert === '') { <i>(leer)</i> } @else { {{ w.wert }} }</span>
+                <span class="tw-balken"><span [style.width.%]="100 * w.anzahl / (t.gesamt || 1)"></span></span>
+                <span class="tw-n">{{ w.anzahl | number }}</span>
+                <button mat-icon-button (click)="topWertAktion(t, w.wert, false)" matTooltip="Zur Suche hinzufügen"><mat-icon>add_circle_outline</mat-icon></button>
+                <button mat-icon-button (click)="topWertAktion(t, w.wert, true)" matTooltip="Aus Ergebnis ausschließen"><mat-icon>remove_circle_outline</mat-icon></button>
+              </div>
+            }
+            @if (t.fehlend) {
+              <div class="tw-zeile">
+                <span class="tw-wert"><i>(Feld fehlt)</i></span>
+                <span class="tw-balken"><span [style.width.%]="100 * t.fehlend / (t.gesamt || 1)"></span></span>
+                <span class="tw-n">{{ t.fehlend | number }}</span>
+                <button mat-icon-button (click)="topWertAktion(t, null, false)" matTooltip="Nur Treffer ohne dieses Feld"><mat-icon>add_circle_outline</mat-icon></button>
+                <button mat-icon-button (click)="topWertAktion(t, null, true)" matTooltip="Nur Treffer mit diesem Feld"><mat-icon>remove_circle_outline</mat-icon></button>
+              </div>
+            }
+            @if (t.andere) { <div class="tw-rest">weitere Werte: {{ t.andere | number }} Treffer</div> }
           </div>
         }
 
@@ -510,16 +565,16 @@ const SEVERITY_COLOR: Record<string, string> = {
             <!-- LCARS header bar: plain text only — no Material components.
                  Hidden in Classic/Holo, shown in LCARS via CSS. -->
             <div class="lcars-header">
-              <span class="lh-source">{{ sourceLabel(item.source) }}</span>
+              <span class="lh-source" (contextmenu)="feldMenue($event, item, { feld: 'source', wert: item.source })">{{ sourceLabel(item.source) }}</span>
               <span class="lh-dot">·</span>
-              <span class="lh-sev" [attr.data-sev]="item.severity">{{ item.severity | uppercase }}</span>
+              <span class="lh-sev" [attr.data-sev]="item.severity" (contextmenu)="feldMenue($event, item, { feld: 'severity', wert: item.severity })">{{ item.severity | uppercase }}</span>
               @if (itemHostLabel(item)) {
                 <span class="lh-dot">·</span>
-                <span class="lh-host host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Host-Cockpit öffnen'">{{ itemHostLabel(item) }}</span>
+                <span class="lh-host host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" (contextmenu)="hostMenue($event, item)" [matTooltip]="'Klick: Host-Cockpit · Rechtsklick: Suche'">{{ itemHostLabel(item) }}</span>
               }
               @if (item.location_name) {
                 <span class="lh-dot">·</span>
-                <span class="lh-loc">{{ item.location_name }}</span>
+                <span class="lh-loc" (contextmenu)="feldMenue($event, item, { feld: 'location_name', wert: item.location_name })">{{ item.location_name }}</span>
               }
               @if (occurrences(item); as occ) {
                 <span class="lh-dot">·</span>
@@ -567,23 +622,25 @@ const SEVERITY_COLOR: Record<string, string> = {
                 <div class="card-meta-row">
                   <span class="source-label"
                     [style.color]="sourceColor(item.source)"
-                    [attr.data-source-label]="item.source">
+                    [attr.data-source-label]="item.source"
+                    (contextmenu)="feldMenue($event, item, { feld: 'source', wert: item.source })">
                     {{ sourceLabel(item.source) }}
                   </span>
                   <span class="severity-badge"
                     [style.background]="severityColor(item.severity) + '22'"
                     [style.color]="severityColor(item.severity)"
-                    [attr.data-sev-badge]="item.severity">
+                    [attr.data-sev-badge]="item.severity"
+                    (contextmenu)="feldMenue($event, item, { feld: 'severity', wert: item.severity })">
                     {{ item.severity }}
                   </span>
                   @if (item.location_name) {
-                    <span class="location-tag">
+                    <span class="location-tag" (contextmenu)="feldMenue($event, item, { feld: 'location_name', wert: item.location_name })">
                       <mat-icon style="font-size:12px;height:12px;width:12px">location_on</mat-icon>
                       {{ item.location_name }}{{ item.location_city ? ' · ' + item.location_city : '' }}
                     </span>
                   }
                   @if (itemHostLabel(item)) {
-                    <span class="host-tag host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" [matTooltip]="'Host-Cockpit öffnen'">
+                    <span class="host-tag host-clickable" (click)="openHostCockpit($event, itemHostLabel(item))" (contextmenu)="hostMenue($event, item)" [matTooltip]="'Klick: Host-Cockpit · Rechtsklick: Suche'">
                       <mat-icon style="font-size:12px;height:12px;width:12px">dns</mat-icon>
                       {{ itemHostLabel(item) }}
                     </span>
@@ -628,6 +685,21 @@ const SEVERITY_COLOR: Record<string, string> = {
                   {{ expanded.has(item.id) ? 'Weniger anzeigen' : 'Mehr anzeigen' }}
                 </button>
               }
+            }
+
+            <!-- Felder wie in Graylogs Nachrichtenansicht: Klick oder Rechtsklick → Suche -->
+            <button type="button" class="felder-btn" (click)="toggleFelder(item.id)">
+              <mat-icon>{{ felderOffen().has(item.id) ? 'expand_less' : 'data_object' }}</mat-icon>
+              Felder ({{ felderVon(item).length }})
+            </button>
+            @if (felderOffen().has(item.id)) {
+              <div class="feld-liste">
+                @for (fw of felderVon(item); track $index) {
+                  <div class="feld-eintrag" (click)="feldMenue($event, item, fw)" (contextmenu)="feldMenue($event, item, fw)">
+                    <span class="feld-name">{{ fw.feld }}</span><span class="feld-wert">{{ fw.wert }}</span>
+                  </div>
+                }
+              </div>
             }
 
             <!-- AI Insight -->
@@ -1025,6 +1097,23 @@ const SEVERITY_COLOR: Record<string, string> = {
       </div>
     }
 
+    <!-- Feldmenü wie Graylogs Wertaktionen (Add to query / Exclude from results / Show top values) -->
+    @if (menu(); as m) {
+      <div class="feld-menue" role="menu" [style.left.px]="m.x" [style.top.px]="m.y" (click)="$event.stopPropagation()">
+        <div class="fm-kopf"><b>{{ m.fw.feld }}</b> = {{ m.fw.wert ?? '(fehlt)' }}</div>
+        <button type="button" role="menuitem" (click)="menuAktion('add')">
+          <mat-icon>add_circle_outline</mat-icon><span>Zur Suche hinzufügen</span><code>{{ menuTerm(false) }}</code></button>
+        <button type="button" role="menuitem" (click)="menuAktion('exclude')">
+          <mat-icon>remove_circle_outline</mat-icon><span>Aus Ergebnis ausschließen</span><code>{{ menuTerm(true) }}</code></button>
+        <button type="button" role="menuitem" (click)="menuAktion('neu')">
+          <mat-icon>search</mat-icon><span>Neue Suche nur mit diesem Wert</span></button>
+        <button type="button" role="menuitem" (click)="menuAktion('top')">
+          <mat-icon>bar_chart</mat-icon><span>Top-Werte dieses Felds</span></button>
+        <button type="button" role="menuitem" (click)="menuAktion('copy')">
+          <mat-icon>content_copy</mat-icon><span>Wert kopieren</span></button>
+      </div>
+    }
+
   `,
   styles: [`
     .scroll-top-btn {
@@ -1069,6 +1158,55 @@ const SEVERITY_COLOR: Record<string, string> = {
       border-radius: 8px; font-size: 13px; background: color-mix(in srgb, var(--mat-sys-primary) 10%, transparent);
       color: var(--mat-sys-on-surface); }
     .search-active-banner mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--mat-sys-primary); }
+    .glog-bar { position: relative; }
+    .glog-fehler { display: flex; align-items: center; gap: 6px; margin: -10px 0 12px; padding: 4px 12px; font-size: 12.5px;
+      color: var(--mat-sys-error, #b3261e); }
+    .glog-fehler mat-icon { font-size: 16px; height: 16px; width: 16px; }
+    .vs-box { position: absolute; left: 0; right: 0; top: 100%; z-index: 950; margin-top: 2px; overflow: hidden;
+      background: var(--mat-sys-surface, #fff); color: var(--mat-sys-on-surface); border: 1px solid var(--mat-sys-primary);
+      border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.25); }
+    .vs-row { display: flex; gap: 10px; align-items: center; padding: 6px 12px; cursor: pointer; font-size: 13.5px; }
+    .vs-row.on, .vs-row:hover { background: color-mix(in srgb, var(--mat-sys-primary) 14%, transparent); }
+    .vs-ic { flex: none; font-size: 16px; height: 16px; width: 16px; color: var(--mat-sys-on-surface-variant); }
+    .vs-q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; font-size: 12.5px; }
+    .vs-n { flex: none; font-size: 12px; color: var(--mat-sys-on-surface-variant); }
+    .vs-fuss { padding: 4px 12px 6px; font-size: 11.5px; color: var(--mat-sys-on-surface-variant);
+      border-top: 1px solid var(--mat-sys-outline-variant, #ddd); }
+    .feld-menue { position: fixed; z-index: 1000; min-width: 260px; max-width: 420px; padding: 4px 0;
+      background: var(--mat-sys-surface, #fff); color: var(--mat-sys-on-surface); border: 1px solid var(--mat-sys-outline-variant, #ccc);
+      border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+    .fm-kopf { padding: 6px 12px; font-size: 12px; color: var(--mat-sys-on-surface-variant); overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; border-bottom: 1px solid var(--mat-sys-outline-variant, #ddd); }
+    .feld-menue button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; border: none; background: none;
+      color: inherit; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+    .feld-menue button:hover { background: color-mix(in srgb, var(--mat-sys-primary) 12%, transparent); }
+    .feld-menue mat-icon { font-size: 18px; height: 18px; width: 18px; flex: none; }
+    .feld-menue code { margin-left: auto; padding-left: 8px; font-size: 11px; color: var(--mat-sys-on-surface-variant);
+      max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .felder-btn { display: inline-flex; align-items: center; gap: 4px; margin: 4px 0; padding: 2px 6px; border: none; background: none;
+      color: var(--mat-sys-on-surface-variant); font: inherit; font-size: 12px; cursor: pointer; }
+    .felder-btn mat-icon { font-size: 16px; height: 16px; width: 16px; }
+    .feld-liste { display: grid; grid-template-columns: 1fr; gap: 1px; margin: 2px 0 8px; font-size: 12px;
+      border: 1px solid var(--mat-sys-outline-variant, #ddd); border-radius: 6px; overflow: hidden; }
+    .feld-eintrag { display: flex; gap: 10px; padding: 3px 8px; cursor: pointer; min-width: 0; }
+    .feld-eintrag:hover { background: color-mix(in srgb, var(--mat-sys-primary) 10%, transparent); }
+    .feld-name { flex: 0 0 38%; color: var(--mat-sys-on-surface-variant); font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; }
+    .feld-wert { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .top-werte { margin-bottom: 12px; padding: 8px 12px; border-radius: 8px; font-size: 13px;
+      background: var(--mat-sys-surface-container, #f1f1f4); }
+    .tw-kopf { display: flex; align-items: center; gap: 6px; }
+    .tw-kopf mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--mat-sys-primary); }
+    .tw-kopf code { font-size: 12px; }
+    .tw-fehler { color: var(--mat-sys-error, #b3261e); padding: 4px 0; }
+    .tw-zeile { display: flex; align-items: center; gap: 8px; }
+    .tw-wert { flex: 0 0 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tw-balken { flex: 1; height: 6px; border-radius: 3px; background: var(--mat-sys-outline-variant, #ddd); overflow: hidden; }
+    .tw-balken span { display: block; height: 100%; background: var(--mat-sys-primary); }
+    .tw-n { flex: none; width: 70px; text-align: right; font-variant-numeric: tabular-nums; }
+    .tw-rest { font-size: 12px; color: var(--mat-sys-on-surface-variant); padding-top: 4px; }
+    :host-context(html.cs-theme-lcars) .vs-box, :host-context(html.cs-theme-lcars) .feld-menue { background: #15120c; color: #ffe8a0; border-color: #ffcc66; }
+    :host-context(html.cs-theme-lcars) .top-werte { background: #15120c; color: #ffe8a0; }
+    :host-context(html.cs-theme-lcars) .tw-balken span { background: #ffcc66; }
 
     /* LCARS theme */
     :host-context(html.cs-theme-lcars) .glog-bar { background: #15120c; border: 1px solid #2a1d0a; border-radius: 0 12px 12px 0; border-left: 6px solid #ffcc66; }
@@ -1745,6 +1883,23 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     { label: '5 days', sec: 432000 },   { label: '7 days', sec: 604800 },
     { label: '14 days', sec: 1209600 }, { label: '30 days', sec: 2592000 },
   ];
+  // ── Suche wie in Graylog (feed-query.ts) + Vorschläge wie im Recherche-Tool ──
+  /** Gesamtzahl der Suche (X-Total-Count) — die Liste zeigt höchstens 200 */
+  suchGesamt = signal<number | null>(null);
+  /** Syntaxfehler der Suche oder der Eingabe — benannt, nie als „0 Treffer“ */
+  suchHinweis = signal('');
+  vorschlaege = signal<{ q: string; art: 'feld' | 'wert'; anzahl: number | null }[]>([]);
+  vsOffen = signal(false);
+  vsSel = signal(-1);
+  menu = signal<{ x: number; y: number; fw: Feldwert; alterSek: number } | null>(null);
+  topWerte = signal<any | null>(null);
+  felderOffen = signal<Set<string>>(new Set());
+  /** Index-Muster aus der URL (?index=) — sonst alle cs-feed-* */
+  private suchIndex = '';
+  private vsTimer?: ReturnType<typeof setTimeout>;
+  private vsNr = 0;
+  @ViewChild('suchFeld') private suchFeld?: ElementRef<HTMLInputElement>;
+  readonly felderVon = felderVon;
   showSettings = signal(false);
   showFilters = signal(false);
   showSearchManager = signal(false);
@@ -1859,6 +2014,18 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     // React to query-param changes when already on /feed (same-route navigation).
     // skip(1) ignores the initial emission already handled by applyRouteParams().
     this.route.queryParamMap.pipe(skip(1)).subscribe(params => {
+      const q = params.get('q');
+      if (q && !params.get('search_id')) {
+        const range = Number(params.get('range')) || 2592000;
+        // eigene Navigation aus runFeedSearch(): nichts zu tun
+        if (q === this.activeSearchQuery() && range === this.searchRangeSec && this.searchActive()) return;
+        this.searchQuery = q;
+        this.searchRangeSec = range;
+        this.suchIndex = params.get('index') || '';
+        this.runFeedSearch();
+        return;
+      }
+      if (this.searchActive()) { this.searchActive.set(false); this.activeSearchQuery.set(''); this.searchQuery = ''; }
       this.severityFilter = params.get('severity') ?? '';
       this.hostFilter     = params.get('host')     ?? '';
       const highlight     = params.get('highlight');
@@ -1950,8 +2117,17 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     const params = this.route.snapshot.queryParamMap;
     const source = params.get('source');
     this.routeSearchId = params.get('search_id') || '';
-    this.routeQuery = params.get('q') || '';
-    this.routeIndex = params.get('index') || '';
+    // ?q= ist die Suchleiste (eine Suche, ein Weg) — Zeitraum aus ?range=, sonst 30 Tage wie früher
+    // (Links von Bridge/Dashboard hatten keinen Zeitraum)
+    this.routeQuery = '';
+    this.routeIndex = '';
+    const q = params.get('q');
+    if (q && !this.routeSearchId) {
+      this.searchQuery = q;
+      this.searchRangeSec = Number(params.get('range')) || 2592000;
+      this.suchIndex = params.get('index') || '';
+      queueMicrotask(() => this.runFeedSearch());
+    }
     this.highlightId = params.get('highlight') || '';
     if (source) {
       this.routeSourceSet = true;
@@ -2442,16 +2618,30 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   runFeedSearch() {
     const q = (this.searchQuery || '').trim();
     if (!q) { this.clearFeedSearch(); return; }
+    this.vsOffen.set(false);
     this.searching.set(true);
     this.searchActive.set(true);
     this.activeSearchQuery.set(q);
+    this.suchHinweis.set('');
+    // Die Suche steht in der URL — teilbar, übersteht Neuladen (wie Graylogs Suchseite)
+    const qp: Record<string, string | number> = { q, range: this.searchRangeSec };
+    if (this.suchIndex) qp['index'] = this.suchIndex;
+    this.router.navigate(['/feed'], { queryParams: qp });
     const params: any = { q, time_range_seconds: this.searchRangeSec, limit: 200 };
-    this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params }).subscribe({
-      next: data => { this.items.set(data); this.searching.set(false); },
-      error: () => {
+    if (this.suchIndex) params.index = this.suchIndex;
+    this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params, observe: 'response' }).subscribe({
+      next: r => {
+        this.items.set(r.body ?? []);
+        const n = r.headers.get('X-Total-Count');
+        this.suchGesamt.set(n != null ? Number(n) : null);
+        this.searching.set(false);
+      },
+      error: e => {
         this.searching.set(false);
         this.items.set([]);
-        this.snackBar.open('Suche fehlgeschlagen', 'OK', { duration: 5000 });
+        this.suchGesamt.set(null);
+        // 400 = Syntax: der Grund steht unter der Suchleiste, statt still „0 Treffer“
+        this.suchHinweis.set(e?.status === 400 ? (e.error?.detail ?? 'Suche nicht lesbar') : 'Suche fehlgeschlagen');
       },
     });
   }
@@ -2460,7 +2650,126 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.searchActive.set(false);
     this.activeSearchQuery.set('');
     this.searchQuery = '';
+    this.suchGesamt.set(null);
+    this.suchHinweis.set('');
+    this.topWerte.set(null);
+    this.suchIndex = '';
+    this.router.navigate(['/feed'], { queryParams: {} });
     this.load(true);
+  }
+
+  // ── Vorschläge beim Texample ────────────────────────────────────────────
+  onSuchEingabe() {
+    clearTimeout(this.vsTimer);
+    const eingabe = this.searchQuery || '';
+    if (!eingabe.trim()) { this.vorschlaege.set([]); this.suchHinweis.set(''); return; }
+    const nr = ++this.vsNr;
+    this.vsTimer = setTimeout(() => {
+      this.http.get<any>(`${environment.apiUrl}/feed/vorschlaege`, {
+        params: { q: eingabe, time_range_seconds: this.searchRangeSec },
+      }).subscribe({
+        next: r => {
+          if (nr !== this.vsNr) return;                 // veraltete Antwort
+          this.vorschlaege.set(r.vorschlaege ?? []);
+          this.vsSel.set(-1);
+          this.vsOffen.set(true);
+          this.suchHinweis.set(r.fehler ?? '');
+        },
+        error: () => { if (nr === this.vsNr) this.vorschlaege.set([]); },
+      });
+    }, 150);
+  }
+
+  onSuchTaste(e: KeyboardEvent) {
+    const n = this.vorschlaege().length;
+    const offen = this.vsOffen() && n > 0;
+    if (e.key === 'ArrowDown' && offen) { e.preventDefault(); this.vsSel.set((this.vsSel() + 1) % n); }
+    else if (e.key === 'ArrowUp' && offen) { e.preventDefault(); this.vsSel.set((this.vsSel() - 1 + n) % n); }
+    else if (e.key === 'Escape') { this.vsOffen.set(false); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (offen && this.vsSel() >= 0) this.waehleVorschlag(this.vorschlaege()[this.vsSel()]);
+      else this.runFeedSearch();
+    }
+  }
+
+  waehleVorschlag(v: { q: string; art: 'feld' | 'wert' }) {
+    this.searchQuery = v.q;
+    if (v.art === 'feld') {                             // Feldname: weiter texample, Werte vorschlagen
+      this.suchFeld?.nativeElement.focus();
+      this.onSuchEingabe();
+    } else {
+      this.runFeedSearch();
+    }
+  }
+
+  // ── Feldwerte: Rechtsklick wie in Graylog ─────────────────────────────
+  feldMenue(e: MouseEvent, item: FeedItem, fw: Feldwert) {
+    e.preventDefault();
+    e.stopPropagation();
+    const alterSek = Math.max(0, (Date.now() - new Date(item.created_at).getTime()) / 1000);
+    this.menu.set({ x: Math.min(e.clientX, window.innerWidth - 430), y: Math.min(e.clientY, window.innerHeight - 230),
+                    fw, alterSek });
+  }
+
+  hostMenue(e: MouseEvent, item: FeedItem) {
+    const fw = hostFeld(item);
+    if (fw) this.feldMenue(e, item, fw);
+  }
+
+  schliesseMenue() { this.menu.set(null); }
+
+  menuTerm(ausschliessen: boolean): string {
+    const m = this.menu();
+    return m ? praedikat(m.fw, ausschliessen) : '';
+  }
+
+  /** Graylog: an die laufende Suche anhängen; ohne laufende Suche beginnt eine neue — mit einem
+   *  Zeitraum, der den angeklickten Eintrag enthält (sonst fände die Suche ihn selbst nicht). */
+  private sucheMit(term: string, neu: boolean, alterSek: number) {
+    const basis = !neu && this.searchActive() ? this.activeSearchQuery() : '';
+    if (neu || !this.searchActive()) {
+      this.searchRangeSec = Math.max(this.searchRangeSec, bereichFuer(alterSek, this.searchRanges.map(r => r.sec)));
+    }
+    this.searchQuery = zurSuche(basis, term);
+    this.runFeedSearch();
+  }
+
+  menuAktion(art: 'add' | 'exclude' | 'neu' | 'top' | 'copy') {
+    const m = this.menu();
+    this.menu.set(null);
+    if (!m) return;
+    if (art === 'add' || art === 'exclude') this.sucheMit(praedikat(m.fw, art === 'exclude'), false, m.alterSek);
+    else if (art === 'neu') this.sucheMit(praedikat(m.fw, false), true, m.alterSek);
+    else if (art === 'top') this.zeigeTopWerte(m.fw.feld);
+    else navigator.clipboard?.writeText(String(m.fw.wert ?? '')).then(
+      () => this.snackBar.open('Wert kopiert', '', { duration: 1500 }));
+  }
+
+  zeigeTopWerte(feld: string) {
+    const q = this.searchActive() ? this.activeSearchQuery() : '';
+    const bereich = this.searchRangeLabel();
+    this.topWerte.set({ feld, q, bereich, laedt: true });
+    const params: any = { feld, q, time_range_seconds: this.searchRangeSec };
+    if (this.suchIndex) params.index = this.suchIndex;
+    this.http.get<any>(`${environment.apiUrl}/feed/werte`, { params }).subscribe({
+      next: r => this.topWerte.set({ ...r, q, bereich }),
+      error: e => this.topWerte.set({ feld, q, bereich, fehler: e?.error?.detail ?? 'Top-Werte nicht verfügbar' }),
+    });
+  }
+
+  /** Wert aus den Top-Werten in die Suche — über das gezählte Feld (z. B. metadata.host.keyword). */
+  topWertAktion(t: any, wert: string | number | null, ausschliessen: boolean) {
+    const fw: Feldwert = { feld: t.gezaehlt_ueber ?? t.feld, wert };
+    this.searchQuery = zurSuche(t.q ?? '', praedikat(fw, ausschliessen));
+    this.runFeedSearch();
+    this.zeigeTopWerte(t.feld);
+  }
+
+  toggleFelder(id: string) {
+    const s = new Set(this.felderOffen());
+    s.has(id) ? s.delete(id) : s.add(id);
+    this.felderOffen.set(s);
   }
 
   itemHostLabel(item: FeedItem): string {

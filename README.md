@@ -541,7 +541,36 @@ When an item is opened directly from a widget or an external source:
 | `search_id` | UUID | run a saved search directly |
 | `index` | string | OpenSearch index pattern (direct mode) |
 | `q` | string | Lucene query string (direct mode) |
+| `time_range_seconds` | int | `q` only: created_at within the last N seconds |
 | `highlight_id` | string | pin + highlight an item |
+
+With `q` the response carries the header `X-Total-Count` (the list is capped at `limit`). A query
+OpenSearch cannot parse is HTTP 400 with the reason, never an empty list. Shard failures count too:
+with a time range OpenSearch answers a syntax error as HTTP 200 with `_shards.failed`.
+
+### Feed search like Graylog
+
+The search bar on `/feed` works like Graylog 5.2's search (`feed-query.ts`, ported from Graylog's
+`QueryHelper.escape`/`addToQuery` and its value actions):
+
+- **Right-click on a value** (source, severity, host, location in the card header) or click on any
+  line under **Felder** (`source`, `tags`, every `metadata.*` field) opens the field menu:
+  - *Zur Suche hinzufügen* appends `feld:wert` with AND;
+  - *Aus Ergebnis ausschließen* appends `NOT feld:wert`;
+  - *Neue Suche nur mit diesem Wert*, *Top-Werte dieses Felds*, *Wert kopieren*.
+
+  Text values under `metadata.*` are matched exactly through `.keyword`. An empty value is `feld:""`,
+  a missing field `_exists_:feld`. Without a running search, a new one starts with a time range that
+  contains the clicked item.
+- **Top values** (`GET /api/feed/werte?feld=&q=&time_range_seconds=`): the most frequent values of a
+  field within the same search, plus "other values" and "field missing", each with + / − to add or
+  exclude.
+- **Suggestions while typing** (`GET /api/feed/vorschlaege?q=&time_range_seconds=`), like the research
+  tool: up to 9 complete queries. After `feld:` the field's values in the current result; after a word,
+  matching hosts, containers, services, tags and field names. The number is the hit count of that exact
+  query (one `_msearch`). An unreadable input shows its reason under the bar.
+- **The search is in the URL** (`?q=…&range=…`), so it can be bookmarked and survives a reload. Links
+  with `?q=` and no range search 30 days.
 
 ---
 

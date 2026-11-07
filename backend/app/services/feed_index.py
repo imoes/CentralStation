@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -807,21 +808,14 @@ def _normalise_query_string(q: str) -> str:
     return q
 
 
-async def search_by_query(
-    index_pattern: str,
-    query_string: str,
-    size: int = 50,
-    from_: int = 0,
-    user_id: str | None = None,
-    host_scope: list[str] | None = None,
-    since_seconds: int | None = None,
-    db: Any = None,
-) -> list[dict]:
-    """Execute an OpenSearch Lucene query string against an index pattern.
+class FeedQueryFehler(ValueError):
+    """Die Suche ist nicht lesbar (Lucene-Syntax) — mit dem Grund von OpenSearch, nie still leer."""
 
-    since_seconds: when set, restrict results to created_at within the last N seconds.
-    """
-    os_client = get_opensearch()
+
+async def _abfrage(query_string: str, user_id: str | None = None, host_scope: list[str] | None = None,
+                   since_seconds: int | None = None, db: Any = None) -> dict:
+    """Die Abfrage einer Feed-Suche (Lucene `query_string`, Zeitraum, Sichtbarkeit, Ausschlüsse) —
+    EINE Definition für Treffer, Trefferzahl und Top-Werte."""
     if query_string:
         query: dict = {
             "query_string": {
@@ -880,6 +874,26 @@ async def search_by_query(
     else:
         body_query = query
 
+    return body_query
+
+
+async def search_by_query(
+    index_pattern: str,
+    query_string: str,
+    size: int = 50,
+    from_: int = 0,
+    user_id: str | None = None,
+    host_scope: list[str] | None = None,
+    since_seconds: int | None = None,
+    db: Any = None,
+) -> list[dict]:
+    """Execute an OpenSearch Lucene query string against an index pattern.
+
+    since_seconds: when set, restrict results to created_at within the last N seconds.
+    Errors give [] (callers are background jobs); the feed search page uses suche_seite().
+    """
+    os_client = get_opensearch()
+    body_query = await _abfrage(query_string, user_id, host_scope, since_seconds, db)
     body = {
         "query": body_query,
         "sort": [{"created_at": {"order": "desc"}}],
@@ -892,6 +906,94 @@ async def search_by_query(
     except Exception as e:
         log.warning("OpenSearch search_by_query failed (%s): %s", index_pattern, e)
         return []
+
+
+def _grund(e: Exception) -> str:
+    """Der lesbare Grund einer OpenSearch-Ablehnung (query_shard_exception → reason)."""
+    info = getattr(e, "info", None)
+    if isinstance(info, dict):
+        err = info.get("error") or {}
+        for c in (err.get("root_cause") or [])[:1]:
+            return str(c.get("reason") or c.get("type"))[:300]
+        if err.get("reason"):
+            return str(err["reason"])[:300]
+    return str(e)[:300]
+
+
+def _pruefe_shards(resp: dict) -> None:
+    """Teilfehler sind Fehler: mit Zeitraum überspringt OpenSearch Indizes ohne passende Daten und
+    parst die Suche nur auf den übrigen — dann kommt ein Syntaxfehler als HTTP 200 mit
+    `_shards.failed` (gemessen 07.11.: `source:(` über 24 h → 0 Treffer, 4 von 7 Shards gescheitert)."""
+    sh = resp.get("_shards") or {}
+    if sh.get("failed"):
+        f = (sh.get("failures") or [{}])[0].get("reason") or {}
+        raise FeedQueryFehler(str(f.get("reason") or f.get("type") or "Suche auf einem Teil der Indizes gescheitert")[:300])
+
+
+async def suche_seite(index_pattern: str, query_string: str, size: int = 50, from_: int = 0,
+                      user_id: str | None = None, since_seconds: int | None = None,
+                      db: Any = None) -> tuple[list[dict], int]:
+    """Feed-Suche wie in Graylog: (Treffer, Gesamtzahl). Eine unlesbare Suche ist FeedQueryFehler
+    mit Grund — sie sieht nie aus wie „0 Treffer“."""
+    from opensearchpy.exceptions import RequestError
+    body = {"query": await _abfrage(query_string, user_id, None, since_seconds, db),
+            "sort": [{"created_at": {"order": "desc"}}], "from": from_, "size": size,
+            "track_total_hits": True}
+    try:
+        resp = await get_opensearch().search(index=index_pattern, body=body, ignore_unavailable=True)
+    except RequestError as e:
+        raise FeedQueryFehler(_grund(e)) from e
+    _pruefe_shards(resp)
+    return [h["_source"] for h in resp["hits"]["hits"]], resp["hits"]["total"]["value"]
+
+
+#: Feldnamen, die eine Top-Werte-Abfrage annimmt (kein Skript, keine Wildcards)
+_FELDNAME = re.compile(r"^[A-Za-z_][\w.]{0,120}$")
+_ZAEHLBAR = {"keyword", "long", "integer", "short", "byte", "double", "float", "boolean", "date", "ip"}
+
+
+async def _zaehlfeld(os_client, index_pattern: str, feld: str) -> str:
+    """Das zählbare Feld zu `feld`: keyword/Zahl direkt, ein Textfeld über sein `.keyword`
+    (dynamisches Mapping). Nicht zählbar oder unbekannt → FeedQueryFehler mit Grund."""
+    try:
+        fm = await os_client.indices.get_field_mapping(index=index_pattern, fields=[feld, f"{feld}.keyword"])
+    except Exception as e:  # noqa: BLE001
+        raise FeedQueryFehler(f"Mapping nicht lesbar: {_grund(e)}") from e
+    typen: dict[str, str] = {}
+    for idx in (fm or {}).values():
+        for name, m in (idx.get("mappings") or {}).items():
+            for v in (m.get("mapping") or {}).values():
+                typen.setdefault(name, v.get("type", ""))
+    for kandidat in (feld, f"{feld}.keyword"):
+        if typen.get(kandidat) in _ZAEHLBAR:
+            return kandidat
+    raise FeedQueryFehler(f"Feld {feld} ist Freitext ({typen[feld]}) ohne .keyword — nicht zählbar"
+                          if feld in typen else f"Feld {feld} gibt es in {index_pattern} nicht")
+
+
+async def top_werte(index_pattern: str, query_string: str, feld: str, since_seconds: int | None = None,
+                    user_id: str | None = None, db: Any = None, size: int = 10) -> dict:
+    """Graylogs „Show top values“: die häufigsten Werte eines Felds im Ergebnis der Suche, dazu
+    „andere“ und „fehlend“ (Treffer ohne das Feld) — jede Zahl bezieht sich auf dieselbe Suche."""
+    from opensearchpy.exceptions import RequestError
+    if not _FELDNAME.match(feld or ""):
+        raise FeedQueryFehler(f"Feldname {feld!r} ungültig")
+    os_client = get_opensearch()
+    agg_feld = await _zaehlfeld(os_client, index_pattern, feld)
+    body = {"size": 0, "track_total_hits": True,
+            "query": await _abfrage(query_string, user_id, None, since_seconds, db),
+            "aggs": {"werte": {"terms": {"field": agg_feld, "size": max(1, min(size, 50))}},
+                     "fehlend": {"missing": {"field": agg_feld}}}}
+    try:
+        resp = await os_client.search(index=index_pattern, body=body, ignore_unavailable=True)
+    except RequestError as e:
+        raise FeedQueryFehler(_grund(e)) from e
+    _pruefe_shards(resp)
+    a = resp["aggregations"]
+    return {"feld": feld, "gezaehlt_ueber": agg_feld, "gesamt": resp["hits"]["total"]["value"],
+            "werte": [{"wert": b.get("key_as_string", b["key"]), "anzahl": b["doc_count"]}
+                      for b in a["werte"]["buckets"]],
+            "andere": a["werte"].get("sum_other_doc_count", 0), "fehlend": a["fehlend"]["doc_count"]}
 
 
 async def get_user_checkmk_host_scope(db, user_id: str) -> list[str]:
@@ -1249,3 +1351,133 @@ async def search_recent_ai_clusters(host: str, limit: int = 3) -> list[dict]:
     except Exception as e:
         log.warning("search_recent_ai_clusters failed: %s", e)
         return []
+
+
+# ── Vorschläge beim Texample (wie recherche-stack/web/vorschlag.js) ────────────
+# Jeder Vorschlag ist eine vollständige Suche; seine Zahl ist das, was die Suche findet (ein _msearch
+# zählt alle Vorschläge). Kandidaten kommen aus dem Ergebnis der bisherigen Eingabe: nach `source:`
+# die Quellen, die es dort gibt; nach `cue01` die passenden Hosts.
+
+#: Wertfelder, aus denen ein freies Wort ergänzt wird (gemessen 07.11.: die häufigsten Suchziele)
+VORSCHLAG_FELDER = ("metadata.host", "metadata.agent", "metadata.container_name", "metadata.service",
+                    "metadata.application", "metadata.hostgroups", "tags", "source", "severity", "location_name")
+KERN_FELDER = ("source", "severity", "type", "status", "title", "body", "tags", "location_name",
+               "location_city", "ai_insight", "created_at")
+VORSCHLAG_MAX = 9
+_feldnamen_cache: dict[str, tuple[float, list[str]]] = {}
+
+
+def escape_wert(v) -> str:
+    """Graylogs QueryHelper.escape (5.2) — dieselbe Regel wie frontend feed-query.ts escapeWert."""
+    s = str(v).replace("\r\n", " ").replace("\n", " ").replace("<br>", " ")
+    if s == "":
+        return '""'                     # leerer Wert ≠ fehlendes Feld (gemessen 07.11.: 16 379 leere container_name)
+    if " " in s:
+        return '"' + re.sub(r'(["\\])', r"\\\1", s) + '"'
+    return re.sub(r'(&&|\|\||[:\\/+\-!(){}\[\]^"~*?$])', r"\\\1", s)
+
+
+def zerlege(eingabe: str) -> tuple[str, str]:
+    """Eingabe → (Basis, angefangenes Wort). Endet sie auf Leerzeichen oder steht ein Anführungszeichen
+    offen, gibt es kein angefangenes Wort."""
+    if not eingabe or eingabe[-1].isspace() or eingabe.count('"') % 2:
+        return eingabe.strip(), ""
+    m = re.search(r"(\S+)$", eingabe)
+    return eingabe[:m.start()].strip(), m.group(1)
+
+
+def _ohne_operator(basis: str) -> str:
+    return re.sub(r"\s*\b(AND|OR|NOT)\s*$", "", basis).strip()
+
+
+def _regex_praefix(praefix: str) -> str:
+    """Präfix als Lucene-RegExp, Groß-/Kleinschreibung egal (terms include)."""
+    out = []
+    for c in praefix:
+        if c.isalpha():
+            out.append(f"[{c.lower()}{c.upper()}]")
+        elif c in '.?+*|{}[]()"\\#@&<>~':
+            out.append("\\" + c)
+        else:
+            out.append(c)
+    return "".join(out) + ".*"
+
+
+async def _feldnamen(index_pattern: str) -> list[str]:
+    import time
+    t, namen = _feldnamen_cache.get(index_pattern, (0.0, []))
+    if time.monotonic() - t < 600 and namen:
+        return namen
+    mp = await get_opensearch().indices.get_mapping(index=index_pattern)
+    meta = set()
+    for v in (mp or {}).values():
+        meta |= set(((v.get("mappings") or {}).get("properties") or {}).get("metadata", {}).get("properties") or {})
+    namen = list(KERN_FELDER) + sorted(f"metadata.{k}" for k in meta)
+    _feldnamen_cache[index_pattern] = (time.monotonic(), namen)
+    return namen
+
+
+async def vorschlaege(eingabe: str, since_seconds: int | None = None, user_id: str | None = None,
+                      db: Any = None, index_pattern: str = "cs-feed-*") -> dict:
+    """Bis zu VORSCHLAG_MAX Suchen, die die Eingabe fortsetzen, mit der Trefferzahl der echten Suche.
+    Eine unlesbare Basis ist `fehler` (live sichtbar, wie Graylogs Syntaxprüfung)."""
+    from opensearchpy.exceptions import RequestError
+    basis, wort = zerlege(eingabe or "")
+    leer = {"eingabe": eingabe, "basis": basis, "vorschlaege": []}
+    if not wort or wort.startswith(("-", "!", "(", '"')) or wort.upper() in ("AND", "OR", "NOT"):
+        return leer
+    os_client = get_opensearch()
+    feld, praefix = (wort.split(":", 1) if ":" in wort else (None, wort))
+    out: list[dict] = []
+    if feld is None:
+        out += [{"q": f"{basis} {n}:".strip(), "art": "feld", "feld": n, "anzahl": None}
+                for n in await _feldnamen(index_pattern) if n.lower().startswith(praefix.lower())][:3]
+        agg_felder = []
+        for f in VORSCHLAG_FELDER:
+            agg_felder.append(f"{f}.keyword" if f.startswith("metadata.") else f)
+    else:
+        if not _FELDNAME.match(feld) or feld == "_exists_":
+            return leer
+        try:
+            agg_felder = [await _zaehlfeld(os_client, index_pattern, feld)]
+        except FeedQueryFehler as e:
+            return {**leer, "fehler": str(e)}
+    if praefix or feld is not None:
+        inc = _regex_praefix(praefix) if praefix else ".*"
+        body = {"size": 0, "query": await _abfrage(_ohne_operator(basis), user_id, None, since_seconds, db),
+                # execution_hint map: mit regex-include über globale Ordinals scheiterte `source` auf
+                # cs-feed-checkmk/-coroot mit index_out_of_bounds_exception (gemessen 07.11., Teilfehler)
+                "aggs": {f"f{i}": {"terms": {"field": af, "size": VORSCHLAG_MAX, "include": inc,
+                                             "execution_hint": "map"}}
+                         for i, af in enumerate(agg_felder)}}
+        try:
+            r = await os_client.search(index=index_pattern, body=body, ignore_unavailable=True)
+            _pruefe_shards(r)
+        except RequestError as e:
+            return {**leer, "fehler": f"Suche nicht lesbar: {_grund(e)}"}
+        except FeedQueryFehler as e:
+            return {**leer, "fehler": f"Suche nicht lesbar: {e}"}
+        kandidaten = []
+        for i, af in enumerate(agg_felder):
+            for b in (r.get("aggregations") or {}).get(f"f{i}", {}).get("buckets", []):
+                wert = b.get("key_as_string", b["key"])
+                kandidaten.append((b["doc_count"], af, wert))
+        kandidaten.sort(key=lambda k: -k[0])
+        gesehen = set()
+        for _n, af, wert in kandidaten:
+            q = f"{basis} {af}:{escape_wert(wert)}".strip()
+            if q not in gesehen and len(out) < VORSCHLAG_MAX:
+                gesehen.add(q)
+                out.append({"q": q, "art": "wert", "feld": af, "wert": wert, "anzahl": None})
+    werte = [v for v in out if v["art"] == "wert"]
+    if werte:
+        nd: list[dict] = []
+        for v in werte:
+            nd += [{"index": index_pattern, "ignore_unavailable": True},
+                   {"size": 0, "track_total_hits": True,
+                    "query": await _abfrage(v["q"], user_id, None, since_seconds, db)}]
+        m = await os_client.msearch(body=nd)
+        for v, resp in zip(werte, m.get("responses") or []):
+            v["anzahl"] = ((resp.get("hits") or {}).get("total") or {}).get("value") if "error" not in resp else None
+        out = [v for v in out if v["art"] == "feld" or v["anzahl"]]
+    return {**leer, "vorschlaege": out}

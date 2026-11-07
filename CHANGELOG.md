@@ -10,6 +10,63 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Feed search like Graylog: add or exclude a value, top values, suggestions
+
+You asked (2026-11-07): search in the feed like in Graylog, right-click a field to add it to the search
+or exclude it; and suggestions while typing, like the research tool.
+
+### What is new
+
+- **Field menu** on the feed: right-click source, severity, host or location in a card header, or
+  click any line under the new **Felder** list (`source`, `tags`, every `metadata.*` field).
+  - *Zur Suche hinzufügen* (`feld:wert`, AND) and *Aus Ergebnis ausschließen* (`NOT feld:wert`) as in
+    Graylog 5.2. The rules are ported from Graylog's source (`QueryHelper.escape`, `addToQuery`,
+    `AddToQueryHandler`, `ExcludeFromQueryHandler`, branch 5.2).
+  - *Neue Suche nur mit diesem Wert*, *Top-Werte dieses Felds*, *Wert kopieren*.
+- **Top values** of a field within the current search, with "other values" and "field missing".
+- **Suggestions while typing**: up to 9 complete queries with the hit count of that exact query.
+- **The search is in the URL** (`?q=&range=`).
+
+### What has changed
+
+- A query OpenSearch cannot read is now an error with its reason, shown under the search bar. Before,
+  it was "0 hits".
+- The banner shows the total number of hits, and says when only the newest 200 are listed.
+
+### Fixed
+
+- **Syntax errors hidden by the time range.** With a time range, OpenSearch answered `source:(` with
+  HTTP 200, 0 hits and 4 of 7 shards failed; this now counts as an error.
+- **Empty value ≠ missing field.** Graylog's escaping turns an empty value into `feld:`; here it is
+  `feld:""`.
+
+### Evidence (live, read-only, 2026-11-07, last 24 h)
+
+- `source:graylog`: 17 667 hits in 0.01 s; `source:(` → "Failed to parse query [source:(]".
+- Top values of `metadata.container_name` within `source:graylog`: empty value 16 379, field missing
+  114, other values 602.
+  - Cross-check of the right-click terms: `metadata.container_name.keyword:""` finds 16 379, and
+    `NOT _exists_:metadata.container_name.keyword` finds 114. Both are the same numbers as the top
+    values.
+- Suggestions, 10–40 ms each: `source:` → graylog 17 667, checkmk 1 392, wazuh 813, coroot 27;
+  `severity:crit` → `severity:critical` 599; `source:graylog AND cue` → `tags:cue` 5 129, then hosts
+  `cue0222` 269, `cue0115` 215 …
+- A terms aggregation with a regex include on `source` failed on `cs-feed-checkmk` and
+  `cs-feed-coroot` (`index_out_of_bounds_exception`); with `execution_hint: map` no shard fails and the
+  counts are unchanged.
+- Tests: `test_feed_suche_graylog.py` (10), Node checks of `feed-query.ts` (escaping, add/exclude,
+  empty vs missing, fields of an item); full backend suite 825 passed, 142 skipped.
+
+### What is still missing
+
+- **Two search languages:** the feed uses Lucene (as Graylog does), the log-watch history its own
+  hashtag filter language. A right-click in the cockpit graph does not exist yet.
+- **No "did you mean …?"** for typos, and suggestions are ordered by count, not by AI relevance as in
+  the research tool.
+- **Paging** of search results: the newest 200 are listed, the total is named.
+
+---
+
 ## 2026-11-07 — Log watch, part 30: the funnel learns — a known error no longer goes to the AI
 
 You asked (2026-11-07): "Wenn die KI bereits ein Problem untersucht hat und der selbe Fehler wieder

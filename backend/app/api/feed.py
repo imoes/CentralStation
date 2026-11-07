@@ -11,7 +11,7 @@ import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -145,6 +145,7 @@ async def _fetch_and_index_teams(
 async def get_feed(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    response: Response,
     limit: int = Query(50, le=200),
     offset: int = Query(0),
     sources: str | None = Query(None, description="Comma-separated source filter"),
@@ -177,16 +178,18 @@ async def get_feed(
                 raise HTTPException(403, "Not your search")
             index_pattern = saved.index_pattern
             query_string = saved.query_string
-        return await feed_index.search_by_query(
-            index_pattern=index_pattern,
-            query_string=query_string,
-            user_id=str(user.id),
-            host_scope=None,   # no scope filter on explicit text search
-            since_seconds=time_range_seconds,
-            from_=offset,
-            size=limit,
-            db=db,             # apply exclusion filters consistently
-        )
+        # Suche wie in Graylog: unlesbare Syntax ist ein benannter Fehler (400), nie „0 Treffer“;
+        # die Gesamtzahl steht in X-Total-Count (die Liste ist auf `limit` gekappt)
+        try:
+            items, gesamt = await feed_index.suche_seite(
+                index_pattern=index_pattern, query_string=query_string, user_id=str(user.id),
+                since_seconds=time_range_seconds, from_=offset, size=limit,
+                db=db,             # apply exclusion filters consistently
+            )
+        except feed_index.FeedQueryFehler as e:
+            raise HTTPException(400, f"Suche nicht lesbar: {e}")
+        response.headers["X-Total-Count"] = str(gesamt)
+        return items
 
     min_age = (prefs.feed_checkmk_min_age_minutes if prefs else None) or 5
     enabled = (prefs.feed_sources_enabled if prefs else None) or ["checkmk", "graylog", "wazuh"]
@@ -302,6 +305,39 @@ async def get_feed(
             pass  # collab enrichment is non-critical
 
     return items
+
+
+@router.get("/werte")
+async def feed_top_werte(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    feld: str = Query(..., max_length=120, description="Feldname, z. B. source, tags, metadata.container_name"),
+    q: str = Query("", max_length=4000),
+    index: str | None = Query(None),
+    time_range_seconds: int | None = Query(None, ge=60, le=2592000),
+    size: int = Query(10, ge=1, le=50),
+):
+    """Graylogs „Show top values“: häufigste Werte eines Felds im Ergebnis derselben Suche wie
+    GET /feed/?q= — mit „andere“ und „fehlend“, damit nichts still fehlt."""
+    from app.services import feed_index
+    try:
+        return await feed_index.top_werte(index or "cs-feed-*", q, feld, time_range_seconds,
+                                          str(user.id), db, size)
+    except feed_index.FeedQueryFehler as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/vorschlaege")
+async def feed_vorschlaege(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    q: str = Query("", max_length=4000, description="Eingabe bis zum Cursor"),
+    time_range_seconds: int | None = Query(None, ge=60, le=2592000),
+):
+    """Vorschläge beim Texample wie im Recherche-Tool: bis zu 9 vollständige Suchen mit der
+    Trefferzahl der echten Suche; eine unlesbare Eingabe kommt als `fehler`."""
+    from app.services import feed_index
+    return await feed_index.vorschlaege(q, time_range_seconds, str(user.id), db)
 
 
 @router.get("/checkmk-filter-values")
