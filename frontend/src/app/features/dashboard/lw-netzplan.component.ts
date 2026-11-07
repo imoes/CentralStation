@@ -150,16 +150,18 @@ export class LwNetzplanComponent {
         formatter: (p: { dataType: string; data: { id?: string; anzahl: number; source?: string; target?: string } }) =>
           p.dataType === 'edge'
             ? `${p.data.source} — ${p.data.target}<br>gemeinsam in ${p.data.anzahl} Nachrichten`
-            : `${p.data.id}<br>${p.data.anzahl} Nachrichten`,
+            : `${(p.data as any).titel ? '<b>' + (p.data as any).titel + '</b><br>' : ''}${p.data.id}<br>${p.data.anzahl} Nachrichten`,
       },
       series: [{
         type: 'graph', layout: 'force', roam: true, draggable: true,
         // Schwerkraft hält unverbundene Teilgraphen im Bild (gemessen: 0,08 schob CheckMK unter die Liste)
         force: { repulsion: 140, edgeLength: [40, 110], gravity: 0.25, layoutAnimation: false },
-        label: { show: true, fontSize: 10, color: dunkel ? '#ddd' : '#333', formatter: (p: { data: { wert: string } }) =>
-          p.data.wert.length > 22 ? p.data.wert.slice(0, 21) + '…' : p.data.wert },
+        // lesbarer Name zuerst (Regel-Beschreibung, Technik, Thema, Muster-Text …), sonst der Wert
+        label: { show: true, fontSize: 10, color: dunkel ? '#ddd' : '#333', formatter: (p: { data: { wert: string; titel?: string } }) => {
+          const w = p.data.titel || p.data.wert;
+          return w.length > 22 ? w.slice(0, 21) + '…' : w; } },
         data: knoten.map(k => ({
-          id: k.id, name: k.id, wert: k.wert, anzahl: k.anzahl,
+          id: k.id, name: k.id, wert: k.wert, titel: (k as any).titel, anzahl: k.anzahl,
           symbolSize: 8 + 26 * Math.sqrt(k.anzahl / max),
           itemStyle: { color: this.farbe(k.art), borderColor: k.fokus ? (dunkel ? '#fff' : '#111') : 'transparent',
                       borderWidth: k.fokus ? 2 : 0 },

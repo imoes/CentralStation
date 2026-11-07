@@ -92,3 +92,14 @@ def test_fehler_sicht_waehlt_problemobjekte_nicht_kontext():
     # ein Kontext-Tag im Filter bleibt sichtbar (der Netzplan zeigt, wovon er ausgeht)
     k = suche.knoten_waehlen(b, 15, {"netz:intern"}, 0, arten=suche.FEHLER_ARTEN, je_art=suche.FEHLER_JE_ART)
     assert k[0]["id"] == "netz:intern" and k[0]["fokus"]
+
+
+def test_lesbare_namen_fuer_kennungen():
+    """Nutzer 07.11.: „die Regeln haben keine aussagekräftigen Namen, nur R550 oder so“ — Name aus der Quelle."""
+    from app.services.log_watch import suche
+    roh = {"rule": {"description": "Integrity checksum changed.",
+                    "mitre": {"id": "T1565.001, T1040", "technique": "Stored Data Manipulation, Network Sniffing"}}}
+    assert suche.name_aus_roh("regel", "550", roh) == "Integrity checksum changed."
+    assert suche.name_aus_roh("mitre-technik", "T1040", roh) == "Network Sniffing"
+    assert suche.name_aus_roh("mitre-technik", "T9999", {"rule": {"mitre": {"technique": "X"}}}) == "X"
+    assert suche.name_aus_roh("regel", "1", {}) == ""

@@ -199,6 +199,7 @@ async def netzplan(filtertext: str = "", *, stunden: float = 24, knoten: int = 1
             kn = kanten(adj["aggregations"]["m"]["buckets"], ids)
         zustand(k, adj["aggregations"]["z"]["buckets"])
         await _befund_titel(os_client, k)
+        await _namen(os_client, k, q)
     return {"filter": filtertext, "gesamt": gesamt, "knoten": k, "kanten": kn,
             "ausgeblendet_naben": naben,
             "zeitraum": {"seit": seit.isoformat(), "bis": bis.isoformat(), "stunden": stunden},
@@ -268,6 +269,61 @@ async def _befund_titel(os_client, knoten: list[dict]) -> None:
     for x in knoten:
         if x["art"] == "befund":
             x["titel"] = titel.get(f"ki:{x['wert']}") or ""
+
+
+#: Arten, deren Wert eine Kennung ist (regel:550, T1040, Muster-Hash) — sie bekommen einen lesbaren Namen
+#: aus der Quelle (Nutzer 07.11.: „die Regeln haben keine aussagekräftigen Namen, nur R550 oder so“)
+NAMEN_AUS_ROH = {"regel": "roh.rule.description", "mitre-technik": "roh.rule.mitre.technique"}
+
+
+def name_aus_roh(art: str, wert: str, roh: dict) -> str:
+    """Name einer Kennung aus den Originalfeldern einer Nachricht. Rein — testbar. MITRE: die Listen
+    (ids, techniques) sind beim Speichern zu „a, b“ verbunden (historie._flach) — gleiche Stelle."""
+    rule = (roh or {}).get("rule") or {}
+    if art == "regel":
+        return str(rule.get("description") or "")
+    if art == "mitre-technik":
+        mitre = rule.get("mitre") or {}
+        ids = [x.strip() for x in str(mitre.get("id") or "").split(",")]
+        namen = [x.strip() for x in str(mitre.get("technique") or "").split(",")]
+        if wert in ids and len(ids) == len(namen):
+            return namen[ids.index(wert)]
+        return namen[0] if len(namen) == 1 else ""
+    return ""
+
+
+async def _namen(os_client, knoten: list[dict], q: dict) -> None:
+    """Lesbare Namen für Kennungs-Knoten: Wazuh-Regel und MITRE-Technik aus der Quelle, Thema aus dem
+    Vokabular, Muster aus seinem Text — der Hashtag bleibt die Identität, der Name steht daneben."""
+    from app.services.log_watch.vokabular import THEMEN
+    themen = {t.id: t.text for t in THEMEN}
+    roh_k = [x for x in knoten if x["art"] in NAMEN_AUS_ROH and not x.get("titel")]
+    if roh_k:
+        res = await os_client.search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
+            "size": 0, "query": q, "aggs": {"n": {"filters": {"filters": {
+                f"n{i}": {"term": {"hashtags": x["id"]}} for i, x in enumerate(roh_k)}},
+                "aggs": {"t": {"top_hits": {"size": 1, "_source": ["roh.rule"]}}}}}})
+        b = res["aggregations"]["n"]["buckets"]
+        for i, x in enumerate(roh_k):
+            hits = ((b.get(f"n{i}") or {}).get("t") or {}).get("hits", {}).get("hits") or []
+            if hits:
+                x["titel"] = name_aus_roh(x["art"], x["wert"], hits[0]["_source"].get("roh") or {})
+    muster = [x for x in knoten if x["art"] == "muster" and not x.get("titel")]
+    if muster:
+        from sqlalchemy import select
+
+        from app.core.database import AsyncSessionLocal
+        from app.models.error_cluster import LogTemplate
+        from app.services.log_watch.incident_regeln import lesbar
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(select(LogTemplate.key, LogTemplate.template)
+                                     .where(LogTemplate.key.in_([x["wert"] for x in muster])))).all()
+        texte = {k: lesbar(t) for k, t in rows}
+        for x in muster:
+            x["titel"] = texte.get(x["wert"], "")
+    for x in knoten:
+        if x["art"] == "thema" and not x.get("titel"):
+            x["titel"] = themen.get(x["wert"], "")
 
 
 def satz(knoten: list[dict], gesamt: int, stunden: float) -> str:

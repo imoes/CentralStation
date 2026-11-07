@@ -3,6 +3,7 @@ import { Component, computed, inject, input } from '@angular/core';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ThemeService } from '../../core/services/theme.service';
 import { befundForm } from './befund-form';
+import { Router } from '@angular/router';
 
 /**
  * KI-Cockpit: Widgets der Log-Überwachung (lw_*). Daten aus
@@ -38,9 +39,12 @@ const ZUSTAND: Record<string, string> = {
               <summary>
                 <span class="bef-rel" [matTooltip]="'Relevanz ' + b.relevanz + ' von 3'">{{ b.relevanz }}</span>
                 <span class="bef-titel">{{ b.titel }}</span>
-                <span class="bef-host">{{ b.hostKurz }}</span>
+                <!-- Host-Übersicht: der Host im Fehler-Netzplan mit allem, was an ihm hängt -->
+                <a class="bef-host bef-link" (click)="$event.preventDefault(); $event.stopPropagation(); zuHost(b.host)"
+                   [matTooltip]="'Host-Übersicht: ' + b.host + ' mit Befunden, Incidents und Verknüpfungen'">{{ b.hostKurz }}</a>
                 <span class="bef-zeit">{{ b.zeit | date:'HH:mm' }}</span>
               </summary>
+              <button class="bef-uebersicht" (click)="zuHost(b.host)">Host-Übersicht {{ b.hostKurz }} → Befunde, Incidents, Verknüpfungen</button>
               <!-- Lesbar in Sekunden: Kern (ein Satz), Fakten als Liste, Bezüge als Marke, Rest aufklappbar -->
               <div class="bef-kern">{{ b.form.kern }}</div>
               @if (b.form.folge.length) {
@@ -226,6 +230,9 @@ const ZUSTAND: Record<string, string> = {
     .bef-titel { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .bef-host, .bef-zeit { opacity: .7; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .bef-text { margin: 6px 0; line-height: 1.4; }
+    .bef-link { cursor: pointer; text-decoration: underline dotted; }
+    .bef-uebersicht { font: inherit; font-size: 11px; margin: 4px 0; padding: 2px 8px; border-radius: 6px; cursor: pointer;
+      border: 1px solid rgba(127,127,127,.4); background: transparent; color: inherit; }
     .bef-kern { margin: 6px 0 4px; font-size: 13.5px; font-weight: 600; line-height: 1.4; }
     .bef-folge { display: inline-block; font-size: 10.5px; padding: 0 7px; border-radius: 8px; margin-bottom: 4px;
       background: rgba(127,127,127,.2); cursor: help; }
@@ -320,6 +327,15 @@ export class LwWidgetComponent {
   });
 
   readonly STATUS: Record<string, string> = { offen: 'offen', gestuetzt: 'gestützt', widerlegt: 'widerlegt' };
+
+  private readonly router = inject(Router);
+
+  /** Host-Übersicht im Fehler-Netzplan: Filter auf den Host, der Host vorausgewählt (Steckbrief rechts). */
+  zuHost(host: string) {
+    if (!host) return;
+    const tag = /[\s()"]/.test(host) ? `host:"${host}"` : `host:${host}`;
+    this.router.navigate(['/topology'], { queryParams: { modus: 'fehler', filter: tag, auswahl: `host:${host}`, stunden: 24 } });
+  }
 
   readonly befunde = computed(() =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

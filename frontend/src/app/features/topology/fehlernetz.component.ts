@@ -91,6 +91,7 @@ export function tagFilter(tag: string, ausschliessen = false): string {
             <div class="st-kopf">
               <span class="st-art">{{ k.art }}</span>
               <span class="st-name" [title]="k.id">{{ k.titel || k.wert }}</span>
+              @if (k.titel) { <span class="st-meta">{{ k.id }}</span> }
             </div>
             <div class="st-stufe" [style.border-color]="stufenFarbe(k.stufe)">{{ STUFE_TEXT[k.stufe] }}</div>
             @if (k.incident) {
@@ -123,7 +124,7 @@ export function tagFilter(tag: string, ausschliessen = false): string {
             <div class="st-sub">Verknüpft (an denselben Nachrichten)</div>
             @for (v of nachbarn(k); track v.id) {
               <button class="st-zeile" (click)="waehle(v.id)">
-                <i class="punkt" [style.background]="stufenFarbe(v.stufe)"></i>{{ v.id }} <span class="dim">{{ v.anzahl }}</span>
+                <i class="punkt" [style.background]="stufenFarbe(v.stufe)"></i>{{ v.titel ? v.titel + ' (' + v.id + ')' : v.id }} <span class="dim">{{ v.anzahl }}</span>
               </button>
             }
             @if (!nachbarn(k).length) { <div class="dim">—</div> }
@@ -194,7 +195,7 @@ export function tagFilter(tag: string, ausschliessen = false): string {
             <div class="st-sub">Wo sind die Probleme?</div>
             @for (k of brennpunkte(); track k.id) {
               <button class="st-zeile" (click)="waehle(k.id)">
-                <i class="punkt" [style.background]="stufenFarbe(k.stufe)"></i>{{ k.titel || k.id }}
+                <i class="punkt" [style.background]="stufenFarbe(k.stufe)"></i>{{ k.titel ? k.titel + ' (' + k.id + ')' : k.id }}
                 <span class="dim">{{ k.dringend_offen ? k.dringend_offen + ' unbearbeitet' : k.dringend + ' dringend' }}</span>
               </button>
             }
@@ -378,6 +379,9 @@ export class FehlernetzComponent implements OnInit {
     if (f) this.filter.set(f.match(/!?[\w.-]+:(?:"[^"]*"|\S+)|\S+/g) ?? []);
     const h = Number(p.get('stunden'));
     if (h) this.stunden.set(h);
+    // vorausgewähltes Objekt (z. B. aus der Kachel KI-Befunde: der Host mit allem, was daran hängt)
+    const a = p.get('auswahl');
+    if (a) this.auswahlId.set(a);
   }
 
   stufenFarbe(stufe: string): string {
@@ -411,7 +415,7 @@ export class FehlernetzComponent implements OnInit {
       tooltip: {
         formatter: (p: { dataType: string; data: any }) => p.dataType === 'edge'
           ? `${p.data.source} — ${p.data.target}<br>gemeinsam in ${p.data.anzahl} Nachrichten`
-          : `<b>${p.data.titel || p.data.id}</b><br>${STUFE_TEXT[p.data.stufe]}<br>${p.data.anzahl} Nachrichten · `
+          : `<b>${p.data.titel || p.data.id}</b>${p.data.titel ? '<br><span style="opacity:.7">' + p.data.id + '</span>' : ''}<br>${STUFE_TEXT[p.data.stufe]}<br>${p.data.anzahl} Nachrichten · `
             + `${p.data.dringend} dringend · ${p.data.dringend_offen} davon ohne Befund`,
       },
       series: [{
@@ -420,7 +424,8 @@ export class FehlernetzComponent implements OnInit {
         label: {
           show: true, fontSize: 11, color: dunkel ? '#eee' : '#222',
           formatter: (p: { data: any }) => {
-            const w = (p.data.art === 'befund' || p.data.art === 'incident') ? (p.data.titel || p.data.wert) : p.data.wert;
+            // lesbarer Name zuerst (Regel-Beschreibung, Technik, Thema, Muster-Text …), sonst der Wert
+            const w = p.data.titel || p.data.wert;
             const t = w.length > 26 ? w.slice(0, 25) + '…' : w;
             return p.data.dringend_offen ? `${t}  ⚠ ${p.data.dringend_offen}` : t;
           },
