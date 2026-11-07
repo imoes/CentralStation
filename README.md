@@ -1587,6 +1587,10 @@ The AI only works when a check is true, and it only writes its own analysis.
   shape the kind (host circle, finding diamond, tag rectangle). Per node: `dringend`, `dringend_offen`,
   `offen`, `befunde`, `zuletzt`; one sentence (`satz`) names the hot spots. A click selects an object;
   filter/exclude are buttons. The NetBox map remains as the switch "Infrastruktur (NetBox)".
+- **Incidents as objects** (`incident_objekt.py`, job every 5 min): each active incident is a filter
+  (`log_cluster` → `muster:`, `fleet` → `dienst:` + hosts, `critical` → `host:` + `signal:schaden`,
+  `host` → `host:`); its messages carry `incident:<id>` and it is a node (triangle) of the error graph.
+  Open incidents with a ticket make matching messages `signal:behandelt` (N2).
 - **Known errors: the funnel learns** (`bekannt.py`, index `cs-log-bekannt`). If the AI has already
   analysed an error and the same error comes back, the AI does nothing.
   - **Same error** = same error key, built from the group key the raster writes on every message:

@@ -10,6 +10,58 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 33: an incident is an object of the search; an open ticket means handled
+
+You asked (2026-11-07): an incident must be an object of search and filter, and shown in the network graph;
+and incidents must follow the logic of the rule system. These are steps 1 and 2 of that refactor; steps 3
+and 4 (incident rules in the rule system, one mail path) follow.
+
+### What is new
+
+- **An incident is a filter** in the one filter language (`incident_objekt.py`):
+
+  | Kind | Filter |
+  |---|---|
+  | `log_cluster` | `muster:` of its Drain patterns, across all hosts |
+  | `fleet` | `dienst:"<service>"` on its hosts |
+  | `critical` | `host:<host> signal:schaden` |
+  | `host` | `host:<host>` |
+
+  Messages in its window (from 15 min before it opened) carry `incident:<id>`, the same name as on
+  console sessions. A job every 5 minutes marks active incidents.
+- **Incidents are nodes of the error network graph:** a triangle with title, kind and status, and a
+  button that opens the incident with its timeline.
+- **An open ticket on an incident means handled (N2).** Messages its filter matches get
+  `signal:behandelt` with the reason "Ticket IMIT-… am Incident …". This is fed to the raster per run as
+  current state, not as part of the versioned definition. Before, N2 knew only CheckMK acknowledgements
+  and downtimes.
+
+### Evidence (live, 2026-11-07)
+
+- **First run:** 329 active incidents in 11.3 s; 2 170 messages marked; 0 without a filter, 0 errors.
+- **The error graph shows 4 incidents** with titles, e.g. "Fehlerausbruch: … postfix/main.cf … ·
+  29 Hosts" (log cluster, 75 messages) and "mu-img-atlas01.example.com: 5 Alerts" (host).
+- **Mail path of incidents, end to end:** a test mail for the newest real immediate outbreak (incident
+  `7613e91a…`) was rendered with the live code and sent through the SMTP connector "Mail Proxy"
+  (`mailrelay.example.com`). The relay accepted it (1 sent); the incident link is in the HTML. The only
+  recipient with immediate mails switched on is thomas.kluge@example.org.
+- Tests: `test_log_watch_incident_objekt.py` (6): filter per kind, the filter hits exactly its messages,
+  window, node choice, handled from a ticket; full suite 835 passed.
+
+### What is still missing
+
+- **Lifecycle:** 1 285 host incidents are "open", only 146 were updated in 6 h. They hang in limbo,
+  because `resolve_inactive_host_incidents` does not set `updated_at`.
+- **No incident has a ticket today** (0 in the database), so "handled" has no live effect yet. A test
+  ticket in Jira was not created (an outward action).
+- **`mailed_at` is set even when 0 mails went out** (`notify.py`). It is not proof of delivery.
+- **The mail subject shows the raw placeholders** of the pattern (`<NUM> <TS> … <IP>`) and links only to
+  the feed.
+- **Steps 3 and 4:** incident rules in the rule system (test mode against the old thresholds), then one
+  mail path.
+
+---
+
 ## 2026-11-07 — Log watch, part 32: the infrastructure map becomes an error network graph
 
 You asked (2026-11-07): the infrastructure map is not up to date; the goal is an error network graph like
