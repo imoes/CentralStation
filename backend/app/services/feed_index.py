@@ -5,6 +5,8 @@ Retention: configurable per source via DELETE by query (daily scheduler job).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import itertools
 import logging
 import re
@@ -812,8 +814,108 @@ class FeedQueryFehler(ValueError):
     """Die Suche ist nicht lesbar (Lucene-Syntax) — mit dem Grund von OpenSearch, nie still leer."""
 
 
+@dataclass(frozen=True)
+class Zeitraum:
+    """Zeitraum einer Feed-Suche wie in Graylog: relativ (letzte N Sekunden) ODER absolut (von–bis, z. B. nach
+    einem Zoom im Histogramm — Graylogs OnZoom setzt ebenfalls einen absoluten Zeitraum, nicht den Suchtext).
+    Ein Begriff für Treffer, Trefferzahl, Top-Werte, Vorschläge und Histogramm."""
+    sekunden: int | None = None
+    von: datetime | None = None
+    bis: datetime | None = None
+
+    @staticmethod
+    def aus(z: "Zeitraum | int | None") -> "Zeitraum":
+        return z if isinstance(z, Zeitraum) else Zeitraum(sekunden=z if z and z > 0 else None)
+
+    def grenzen(self, jetzt: datetime) -> tuple[datetime | None, datetime | None]:
+        """(von, bis) — ohne Zeitraum (None, None): dann bestimmen die Treffer die Spanne."""
+        if self.von or self.bis:
+            return self.von, self.bis or jetzt
+        if self.sekunden:
+            return jetzt - timedelta(seconds=self.sekunden), jetzt
+        return None, None
+
+    def filter(self, jetzt: datetime) -> dict | None:
+        von, bis = self.grenzen(jetzt)
+        if von is None and bis is None:
+            return None
+        r: dict = {}
+        if von is not None:
+            r["gte"] = von.isoformat()
+        if self.von or self.bis:          # absolut: halboffen [von, bis) — ein Balken zählt nur einmal
+            r["lt"] = bis.isoformat()
+        return {"range": {"created_at": r}}
+
+
+#: Graylog 5.2 AutoInterval.boundaries (Skalierung 1.0), 1:1: (Spanne bis einschließlich, Intervall,
+#: OpenSearch-Angabe). Quelle: graylog2-server …/searchtypes/pivot/buckets/AutoInterval.java
+_MS = 0.001
+AUTO_INTERVALLE: tuple[tuple[float, float, dict], ...] = (
+    (20 * _MS, 1 * _MS, {"fixed_interval": "1ms"}), (200 * _MS, 5 * _MS, {"fixed_interval": "5ms"}),
+    (500 * _MS, 10 * _MS, {"fixed_interval": "10ms"}), (1, 20 * _MS, {"fixed_interval": "20ms"}),
+    (2, 40 * _MS, {"fixed_interval": "40ms"}), (10, 200 * _MS, {"fixed_interval": "200ms"}),
+    (30, 500 * _MS, {"fixed_interval": "500ms"}), (60, 1, {"fixed_interval": "1s"}),
+    (120, 2, {"fixed_interval": "2s"}), (240, 5, {"fixed_interval": "5s"}), (420, 10, {"fixed_interval": "10s"}),
+    (600, 20, {"fixed_interval": "20s"}), (1800, 30, {"fixed_interval": "30s"}), (3600, 60, {"fixed_interval": "1m"}),
+    (7200, 120, {"fixed_interval": "2m"}), (14400, 300, {"fixed_interval": "5m"}),
+    (43200, 600, {"fixed_interval": "10m"}), (57600, 900, {"fixed_interval": "15m"}),
+    (86400, 1800, {"fixed_interval": "30m"}), (2 * 86400, 3600, {"fixed_interval": "1h"}),
+    (4 * 86400, 7200, {"fixed_interval": "2h"}), (10 * 86400, 14400, {"fixed_interval": "4h"}),
+    (12 * 86400, 21600, {"fixed_interval": "6h"}), (28 * 86400, 43200, {"fixed_interval": "12h"}),
+    (60 * 86400, 86400, {"fixed_interval": "1d"}), (120 * 86400, 2 * 86400, {"fixed_interval": "2d"}),
+    (180 * 86400, 3 * 86400, {"fixed_interval": "3d"}), (365 * 86400, 7 * 86400, {"fixed_interval": "7d"}),
+    (730 * 86400, 14 * 86400, {"fixed_interval": "14d"}),
+)
+_MONAT = (30 * 86400, {"calendar_interval": "1M"})
+
+
+def intervall_fuer(spanne_s: float) -> tuple[float, dict]:
+    """(Intervall in s, OpenSearch-Angabe) für eine Spanne — wie Graylogs AutoInterval.toDateInterval. Rein."""
+    for bis, iv, angabe in AUTO_INTERVALLE:
+        if spanne_s <= bis:
+            return iv, angabe
+    return _MONAT
+
+
+async def histogramm(index_pattern: str, query_string: str, zeit: "Zeitraum | int | None" = None,
+                     user_id: str | None = None, db: Any = None) -> dict:
+    """Graylogs Nachrichtenhistogramm: Treffer derselben Suche je Intervall, leere Intervalle als 0
+    (nichts verschwindet still). Ohne Zeitraum bestimmen erster und letzter Treffer die Spanne."""
+    from opensearchpy.exceptions import RequestError
+    zr = Zeitraum.aus(zeit)
+    jetzt = datetime.now(timezone.utc)
+    query = await _abfrage(query_string, user_id, None, zr, db)
+    os_client = get_opensearch()
+    von, bis = zr.grenzen(jetzt)
+    try:
+        if von is None:
+            r = await os_client.search(index=index_pattern, ignore_unavailable=True, body={
+                "size": 0, "query": query, "aggs": {"a": {"min": {"field": "created_at"}},
+                                                    "b": {"max": {"field": "created_at"}}}})
+            _pruefe_shards(r)
+            a, b = r["aggregations"]["a"].get("value"), r["aggregations"]["b"].get("value")
+            if a is None:
+                return {"gesamt": 0, "balken": [], "intervall_s": None, "von": None, "bis": None,
+                        "zeitfeld": "created_at"}
+            von = datetime.fromtimestamp(a / 1000, timezone.utc)
+            bis = datetime.fromtimestamp(b / 1000, timezone.utc) + timedelta(milliseconds=1)
+        iv_s, angabe = intervall_fuer((bis - von).total_seconds())
+        resp = await os_client.search(index=index_pattern, ignore_unavailable=True, body={
+            "size": 0, "track_total_hits": True, "query": query,
+            "aggs": {"zeit": {"date_histogram": {
+                "field": "created_at", **angabe, "min_doc_count": 0,
+                "extended_bounds": {"min": int(von.timestamp() * 1000), "max": int(bis.timestamp() * 1000) - 1}}}}})
+    except RequestError as e:
+        raise FeedQueryFehler(_grund(e)) from e
+    _pruefe_shards(resp)
+    return {"gesamt": resp["hits"]["total"]["value"], "intervall_s": iv_s,
+            "von": von.isoformat(), "bis": bis.isoformat(), "zeitfeld": "created_at",
+            "balken": [{"zeit": datetime.fromtimestamp(x["key"] / 1000, timezone.utc).isoformat(),
+                        "anzahl": x["doc_count"]} for x in resp["aggregations"]["zeit"]["buckets"]]}
+
+
 async def _abfrage(query_string: str, user_id: str | None = None, host_scope: list[str] | None = None,
-                   since_seconds: int | None = None, db: Any = None) -> dict:
+                   since_seconds: "Zeitraum | int | None" = None, db: Any = None) -> dict:
     """Die Abfrage einer Feed-Suche (Lucene `query_string`, Zeitraum, Sichtbarkeit, Ausschlüsse) —
     EINE Definition für Treffer, Trefferzahl und Top-Werte."""
     if query_string:
@@ -831,9 +933,9 @@ async def _abfrage(query_string: str, user_id: str | None = None, host_scope: li
         query = {"match_all": {}}
 
     filter_clauses: list[dict] = []
-    if since_seconds and since_seconds > 0:
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=since_seconds)
-        filter_clauses.append({"range": {"created_at": {"gte": cutoff.isoformat()}}})
+    zeitfilter = Zeitraum.aus(since_seconds).filter(datetime.now(timezone.utc))
+    if zeitfilter:
+        filter_clauses.append(zeitfilter)
     must_not: list[dict] = []
     if db is not None:
         must_not.extend(await get_exclusion_must_not_clauses(db, user_id))

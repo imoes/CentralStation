@@ -141,6 +141,25 @@ async def _fetch_and_index_teams(
     return items
 
 
+def _zeitraum(time_range_seconds: int | None, von: str | None, bis: str | None):
+    """Relativer oder absoluter Zeitraum (feed_index.Zeitraum). Absolut schlägt relativ; unlesbar → 400 mit Grund."""
+    from datetime import datetime, timezone
+
+    from app.services.feed_index import Zeitraum
+    if not von and not bis:
+        return Zeitraum.aus(time_range_seconds)
+    try:
+        v = datetime.fromisoformat(von.replace("Z", "+00:00")) if von else None
+        b = datetime.fromisoformat(bis.replace("Z", "+00:00")) if bis else None
+    except ValueError:
+        raise HTTPException(400, f"Zeitraum nicht lesbar: von={von!r} bis={bis!r} (ISO 8601 erwartet)")
+    v = v.replace(tzinfo=v.tzinfo or timezone.utc) if v else None
+    b = b.replace(tzinfo=b.tzinfo or timezone.utc) if b else None
+    if v and b and v >= b:
+        raise HTTPException(400, "Zeitraum leer: von muss vor bis liegen")
+    return Zeitraum(von=v, bis=b)
+
+
 @router.get("/")
 async def get_feed(
     user: CurrentUser,
@@ -160,6 +179,8 @@ async def get_feed(
     index: str | None = Query(None, description="OpenSearch index pattern for direct query mode"),
     q: str | None = Query(None, description="OpenSearch Lucene query string for direct query mode"),
     time_range_seconds: int | None = Query(None, ge=60, le=2592000, description="Restrict q results to created_at within the last N seconds"),
+    von: str | None = Query(None, description="Absoluter Zeitraum (ISO 8601), schlägt time_range_seconds"),
+    bis: str | None = Query(None, description="Absoluter Zeitraum, Ende exklusiv"),
     highlight_id: str | None = Query(None, description="Fetch this item by ID and pin it at the top"),
 ):
     """Return unified news feed from OpenSearch, sorted by created_at desc."""
@@ -183,7 +204,7 @@ async def get_feed(
         try:
             items, gesamt = await feed_index.suche_seite(
                 index_pattern=index_pattern, query_string=query_string, user_id=str(user.id),
-                since_seconds=time_range_seconds, from_=offset, size=limit,
+                since_seconds=_zeitraum(time_range_seconds, von, bis), from_=offset, size=limit,
                 db=db,             # apply exclusion filters consistently
             )
         except feed_index.FeedQueryFehler as e:
@@ -315,14 +336,34 @@ async def feed_top_werte(
     q: str = Query("", max_length=4000),
     index: str | None = Query(None),
     time_range_seconds: int | None = Query(None, ge=60, le=2592000),
+    von: str | None = Query(None), bis: str | None = Query(None),
     size: int = Query(10, ge=1, le=50),
 ):
     """Graylogs „Show top values“: häufigste Werte eines Felds im Ergebnis derselben Suche wie
     GET /feed/?q= — mit „andere“ und „fehlend“, damit nichts still fehlt."""
     from app.services import feed_index
     try:
-        return await feed_index.top_werte(index or "cs-feed-*", q, feld, time_range_seconds,
+        return await feed_index.top_werte(index or "cs-feed-*", q, feld, _zeitraum(time_range_seconds, von, bis),
                                           str(user.id), db, size)
+    except feed_index.FeedQueryFehler as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/histogramm")
+async def feed_histogramm(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    q: str = Query("", max_length=4000),
+    index: str | None = Query(None),
+    time_range_seconds: int | None = Query(None, ge=60, le=2592000),
+    von: str | None = Query(None), bis: str | None = Query(None),
+):
+    """Graylogs Nachrichtenhistogramm zur selben Suche wie GET /feed/?q=: Treffer je Intervall (Intervall nach
+    Graylogs AutoInterval), leere Intervalle als 0."""
+    from app.services import feed_index
+    try:
+        return await feed_index.histogramm(index or "cs-feed-*", q, _zeitraum(time_range_seconds, von, bis),
+                                           str(user.id), db)
     except feed_index.FeedQueryFehler as e:
         raise HTTPException(400, str(e))
 
@@ -333,11 +374,12 @@ async def feed_vorschlaege(
     db: Annotated[AsyncSession, Depends(get_db)],
     q: str = Query("", max_length=4000, description="Eingabe bis zum Cursor"),
     time_range_seconds: int | None = Query(None, ge=60, le=2592000),
+    von: str | None = Query(None), bis: str | None = Query(None),
 ):
     """Vorschläge beim Texample wie im Recherche-Tool: bis zu 9 vollständige Suchen mit der
     Trefferzahl der echten Suche; eine unlesbare Eingabe kommt als `fehler`."""
     from app.services import feed_index
-    return await feed_index.vorschlaege(q, time_range_seconds, str(user.id), db)
+    return await feed_index.vorschlaege(q, _zeitraum(time_range_seconds, von, bis), str(user.id), db)
 
 
 @router.get("/checkmk-filter-values")

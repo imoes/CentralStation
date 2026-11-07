@@ -147,3 +147,31 @@ def test_teilfehler_der_shards_ist_ein_fehler(monkeypatch):
 
 def test_leerer_wert_ist_nicht_fehlendes_feld():
     assert fi.escape_wert("") == '""'
+
+
+def test_histogramm_intervall_wie_graylog_autointerval():
+    """Graylog 5.2 AutoInterval.boundaries (openClosed): Spanne → Intervall."""
+    from app.services.feed_index import intervall_fuer
+    assert intervall_fuer(900) == (30, {"fixed_interval": "30s"})          # 15 min
+    assert intervall_fuer(1800) == (30, {"fixed_interval": "30s"})         # Grenze gehört nach unten
+    assert intervall_fuer(1801) == (60, {"fixed_interval": "1m"})
+    assert intervall_fuer(86400) == (1800, {"fixed_interval": "30m"})      # 1 Tag
+    assert intervall_fuer(7 * 86400) == (14400, {"fixed_interval": "4h"})
+    assert intervall_fuer(30 * 86400) == (86400, {"fixed_interval": "1d"})
+    assert intervall_fuer(800 * 86400)[1] == {"calendar_interval": "1M"}
+    # 30 Tage → höchstens ~60 Balken, 15 min → 30 Balken
+    for spanne in (900, 3600, 86400, 2592000):
+        iv, _ = intervall_fuer(spanne)
+        assert 15 <= spanne / iv <= 60, spanne
+
+
+def test_zeitraum_relativ_und_absolut_halboffen():
+    from datetime import datetime, timedelta, timezone
+    from app.services.feed_index import Zeitraum
+    jetzt = datetime(2026, 11, 7, 15, tzinfo=timezone.utc)
+    assert Zeitraum.aus(None).filter(jetzt) is None and Zeitraum.aus(0).filter(jetzt) is None
+    assert Zeitraum.aus(900).filter(jetzt) == {"range": {"created_at": {"gte": (jetzt - timedelta(seconds=900)).isoformat()}}}
+    v, b = jetzt - timedelta(minutes=5), jetzt
+    assert Zeitraum(von=v, bis=b).filter(jetzt) == {"range": {"created_at": {"gte": v.isoformat(), "lt": b.isoformat()}}}
+    assert Zeitraum(von=v, bis=b).grenzen(jetzt) == (v, b)
+    assert Zeitraum.aus(Zeitraum(von=v)) == Zeitraum(von=v)

@@ -10,6 +10,40 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Feed search: message histogram over time, as in Graylog
+
+You asked (07.11.): the search should look like Graylog or the research tool, and the bars showing frequency ×
+time were missing. Graylog's source was checked for this.
+
+### What is new
+
+- **Histogram above the hits.** One bar per interval shows the hits of the **same** search, so text, time range,
+  visibility and exclusions all apply.
+  - Empty intervals show as 0.
+  - The header names the total, the interval per bar and the highest bar.
+  - The axis shows start, middle and end, and each bar's tooltip shows its count and time span.
+- **Interval as in Graylog.** `feed_index.AUTO_INTERVALLE` is a 1:1 copy of Graylog 5.2
+  `AutoInterval.boundaries` (scaling 1.0, `graylog2-server/…/searchtypes/pivot/buckets/AutoInterval.java`).
+  For example, 15 min gives 30 s bars, 1 day gives 30 min bars, 30 days gives 1 day bars.
+- **Zoom as in Graylog's `OnZoom`.** A click on a bar, or a drag across several bars, sets an **absolute time
+  range** `[from, to)`.
+  - The search text stays the same: in Graylog too, the time range is a separate part of the search.
+  - The time range appears as a chip in place of the relative selection; × returns to the relative range.
+  - URL: `?q=…&von=…&bis=…`.
+  - The same time range (`feed_index.Zeitraum`) applies to hits, hit count, top values, suggestions and the
+    histogram.
+- **API:** `GET /api/v1/feed/histogramm?q=&time_range_seconds=|von=&bis=`. `GET /feed/`, `/feed/werte` and
+  `/feed/vorschlaege` also accept `von`/`bis` (ISO 8601). An unreadable or empty time range returns 400 with the
+  reason.
+- Evidence, live against `cs-feed-*` 07.11.: for each test search, histogram total = hit count of the search =
+  sum of the bars.
+  - `source:graylog`, 1 h: 762 = 762 = 762, in 61 bars of 60 s.
+  - `source:checkmk`, 1 day: 1 207 = 1 207 = 1 207, in 49 bars of 30 min.
+  - Absolute 5 min: 40 = 40.
+  - Tests: `test_histogramm_intervall_wie_graylog_autointerval`, `test_zeitraum_relativ_und_absolut_halboffen`.
+
+---
+
 ## 2026-11-07 — A rebuilt console image no longer causes nine parallel recreates
 
 ### Fixed

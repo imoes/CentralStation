@@ -253,11 +253,19 @@ const SEVERITY_COLOR: Record<string, string> = {
             <div class="vs-fuss">↑↓ wählen · Enter übernehmen · Esc schließen · Zahl = Treffer dieser Suche im gewählten Zeitraum</div>
           </div>
         }
-        <select class="glog-range" [(ngModel)]="searchRangeSec">
-          @for (r of searchRanges; track r.sec) {
-            <option [ngValue]="r.sec">{{ r.label }}</option>
-          }
-        </select>
+        @if (zeitVon()) {
+          <!-- absoluter Zeitraum nach Zoom im Histogramm (Graylog OnZoom) — × zurück zum relativen -->
+          <span class="glog-abs" matTooltip="Absoluter Zeitraum (Ende exklusiv) — × zurück zu „{{ relativLabel() }}“">
+            <mat-icon>schedule</mat-icon>{{ zeitText(zeitVon()) }} – {{ zeitText(zeitBis()) }}
+            <button type="button" (click)="zeitZurueck()" aria-label="Zeitraum zurücksetzen"><mat-icon>close</mat-icon></button>
+          </span>
+        } @else {
+          <select class="glog-range" [(ngModel)]="searchRangeSec">
+            @for (r of searchRanges; track r.sec) {
+              <option [ngValue]="r.sec">{{ r.label }}</option>
+            }
+          </select>
+        }
         <button mat-flat-button color="primary" class="glog-go"
                 (click)="runFeedSearch()" [disabled]="searching()">
           @if (searching()) { <mat-spinner diameter="18"></mat-spinner> }
@@ -508,11 +516,41 @@ const SEVERITY_COLOR: Record<string, string> = {
         @if (searchActive()) {
           <div class="search-active-banner">
             <mat-icon>search</mat-icon>
-            <span>Suche über alle Quellen: <b>{{ activeSearchQuery() }}</b> · {{ searchRangeLabel() }} ·
+            <span>Suche über alle Quellen: <b>{{ activeSearchQuery() }}</b> · {{ zeitLabel() }} ·
               {{ (suchGesamt() ?? items().length) | number }} Treffer@if ((suchGesamt() ?? 0) > items().length) {, die neuesten {{ items().length }} gezeigt}</span>
             <span class="glog-spacer"></span>
             <button mat-icon-button (click)="clearFeedSearch()" matTooltip="Suche zurücksetzen"><mat-icon>close</mat-icon></button>
           </div>
+          <!-- Nachrichtenhistogramm wie in Graylog: Treffer derselben Suche je Intervall (AutoInterval) -->
+          @if (histo(); as h) {
+            <div class="histo" (mouseleave)="ziehEnde(false)">
+              <div class="histo-kopf">
+                @if (h.fehler) { <span class="histo-fehler">{{ h.fehler }}</span> }
+                @else if (h.laedt) { <span>Histogramm wird geladen …</span> }
+                @else {
+                  <span>{{ h.gesamt | number }} Treffer · je Balken {{ intervallText(h.intervall_s) }} ·
+                    höchster Balken {{ histoMax() | number }}</span>
+                  <span class="glog-spacer"></span>
+                  <span class="histo-tipp">Klick oder Ziehen über Balken = Zeitraum eingrenzen</span>
+                }
+              </div>
+              @if (h.balken?.length) {
+                <div class="histo-balken" (mouseup)="ziehEnde(true)">
+                  @for (b of h.balken; track b.zeit; let i = $index) {
+                    <div class="hb" [class.sel]="imZug(i)" (mousedown)="ziehStart(i, $event)" (mouseenter)="ziehUeber(i)"
+                         [matTooltip]="balkenTip(b)" matTooltipShowDelay="150">
+                      <span [style.height.%]="hoehe(b.anzahl)"></span>
+                    </div>
+                  }
+                </div>
+                <div class="histo-achse">
+                  <span>{{ zeitText(h.von) }}</span><span>{{ zeitText(mitteZeit()) }}</span><span>{{ zeitText(h.bis) }}</span>
+                </div>
+              } @else if (!h.laedt && !h.fehler) {
+                <div class="histo-leer">Keine Treffer im Zeitraum.</div>
+              }
+            </div>
+          }
         }
 
         <!-- Top-Werte eines Felds (Graylog „Show top values“) — Zahlen zur selben Suche -->
@@ -1159,6 +1197,24 @@ const SEVERITY_COLOR: Record<string, string> = {
       color: var(--mat-sys-on-surface); }
     .search-active-banner mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--mat-sys-primary); }
     .glog-bar { position: relative; }
+    .glog-abs { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; padding: 2px 4px 2px 8px; border-radius: 6px;
+      font-size: 12.5px; white-space: nowrap; background: color-mix(in srgb, var(--mat-sys-primary) 12%, transparent); }
+    .glog-abs mat-icon { font-size: 16px; height: 16px; width: 16px; }
+    .glog-abs button { border: 0; background: none; cursor: pointer; padding: 0; display: inline-flex; color: inherit; }
+    .histo { margin: -6px 0 12px; padding: 6px 10px 4px; border-radius: 8px; user-select: none;
+      background: var(--mat-sys-surface-container-low, rgba(0,0,0,.03)); }
+    .histo-kopf { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mat-sys-on-surface-variant); margin-bottom: 4px; }
+    .histo-tipp { font-size: 11px; opacity: .75; }
+    .histo-fehler { color: var(--mat-sys-error, #b3261e); }
+    .histo-balken { display: flex; align-items: flex-end; gap: 1px; height: 72px; cursor: crosshair; }
+    .hb { flex: 1; height: 100%; display: flex; align-items: flex-end; min-width: 2px; }
+    .hb span { display: block; width: 100%; background: var(--mat-sys-primary); border-radius: 1px 1px 0 0; }
+    .hb:hover span, .hb.sel span { background: var(--mat-sys-tertiary, #7d5260); }
+    .hb.sel { background: color-mix(in srgb, var(--mat-sys-tertiary, #7d5260) 15%, transparent); }
+    .histo-achse { display: flex; justify-content: space-between; font-size: 11px; color: var(--mat-sys-on-surface-variant); margin-top: 2px; }
+    .histo-leer { font-size: 12px; padding: 8px 0; color: var(--mat-sys-on-surface-variant); }
+    :host-context(html.cs-theme-lcars) .hb span { background: #ffcc66; }
+    :host-context(html.cs-theme-lcars) .hb:hover span, :host-context(html.cs-theme-lcars) .hb.sel span { background: #ff9966; }
     .glog-fehler { display: flex; align-items: center; gap: 6px; margin: -10px 0 12px; padding: 4px 12px; font-size: 12.5px;
       color: var(--mat-sys-error, #b3261e); }
     .glog-fehler mat-icon { font-size: 16px; height: 16px; width: 16px; }
@@ -1893,6 +1949,14 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   vsSel = signal(-1);
   menu = signal<{ x: number; y: number; fw: Feldwert; alterSek: number } | null>(null);
   topWerte = signal<any | null>(null);
+  /** Nachrichtenhistogramm der aktiven Suche (GET /feed/histogramm) */
+  histo = signal<any | null>(null);
+  histoMax = computed(() => Math.max(1, ...((this.histo()?.balken ?? []).map((b: any) => b.anzahl))));
+  /** absoluter Zeitraum (ISO) nach Zoom — schlägt searchRangeSec, wie Graylogs absolute Zeitauswahl */
+  zeitVon = signal<string | null>(null);
+  zeitBis = signal<string | null>(null);
+  private ziehA: number | null = null;
+  private ziehB = signal<number | null>(null);
   felderOffen = signal<Set<string>>(new Set());
   /** Index-Muster aus der URL (?index=) — sonst alle cs-feed-* */
   private suchIndex = '';
@@ -2018,9 +2082,13 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       if (q && !params.get('search_id')) {
         const range = Number(params.get('range')) || 2592000;
         // eigene Navigation aus runFeedSearch(): nichts zu tun
-        if (q === this.activeSearchQuery() && range === this.searchRangeSec && this.searchActive()) return;
+        const von = params.get('von'), bis = params.get('bis');
+        if (q === this.activeSearchQuery() && range === this.searchRangeSec && this.searchActive()
+            && von === this.zeitVon() && bis === this.zeitBis()) return;
         this.searchQuery = q;
         this.searchRangeSec = range;
+        this.zeitVon.set(von && bis ? von : null);
+        this.zeitBis.set(von && bis ? bis : null);
         this.suchIndex = params.get('index') || '';
         this.runFeedSearch();
         return;
@@ -2125,6 +2193,9 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (q && !this.routeSearchId) {
       this.searchQuery = q;
       this.searchRangeSec = Number(params.get('range')) || 2592000;
+      const von = params.get('von'), bis = params.get('bis');
+      this.zeitVon.set(von && bis ? von : null);
+      this.zeitBis.set(von && bis ? bis : null);
       this.suchIndex = params.get('index') || '';
       queueMicrotask(() => this.runFeedSearch());
     }
@@ -2625,10 +2696,12 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.suchHinweis.set('');
     // Die Suche steht in der URL — teilbar, übersteht Neuladen (wie Graylogs Suchseite)
     const qp: Record<string, string | number> = { q, range: this.searchRangeSec };
+    if (this.zeitVon()) { qp['von'] = this.zeitVon()!; qp['bis'] = this.zeitBis()!; }
     if (this.suchIndex) qp['index'] = this.suchIndex;
     this.router.navigate(['/feed'], { queryParams: qp });
-    const params: any = { q, time_range_seconds: this.searchRangeSec, limit: 200 };
+    const params: any = { q, ...this.zeitParams(), limit: 200 };
     if (this.suchIndex) params.index = this.suchIndex;
+    this.ladeHistogramm(q);
     this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params, observe: 'response' }).subscribe({
       next: r => {
         this.items.set(r.body ?? []);
@@ -2653,6 +2726,9 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     this.suchGesamt.set(null);
     this.suchHinweis.set('');
     this.topWerte.set(null);
+    this.histo.set(null);
+    this.zeitVon.set(null);
+    this.zeitBis.set(null);
     this.suchIndex = '';
     this.router.navigate(['/feed'], { queryParams: {} });
     this.load(true);
@@ -2666,7 +2742,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     const nr = ++this.vsNr;
     this.vsTimer = setTimeout(() => {
       this.http.get<any>(`${environment.apiUrl}/feed/vorschlaege`, {
-        params: { q: eingabe, time_range_seconds: this.searchRangeSec },
+        params: { q: eingabe, ...this.zeitParams() },
       }).subscribe({
         next: r => {
           if (nr !== this.vsNr) return;                 // veraltete Antwort
@@ -2746,11 +2822,93 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       () => this.snackBar.open('Wert kopiert', '', { duration: 1500 }));
   }
 
+  // ── Zeitraum + Histogramm (Graylog: AutoInterval, OnZoom setzt einen absoluten Zeitraum) ──
+  /** Ein Zeitraum für Treffer, Top-Werte, Vorschläge und Histogramm */
+  zeitParams(): Record<string, string | number> {
+    return this.zeitVon() ? { von: this.zeitVon()!, bis: this.zeitBis()! } : { time_range_seconds: this.searchRangeSec };
+  }
+
+  relativLabel(): string { return this.searchRangeLabel(); }
+
+  zeitLabel(): string {
+    return this.zeitVon() ? `${this.zeitText(this.zeitVon())} – ${this.zeitText(this.zeitBis())}` : this.searchRangeLabel();
+  }
+
+  zeitText(iso: string | null | undefined): string {
+    if (!iso) return '–';
+    const d = new Date(iso);
+    const mitSek = (this.histo()?.intervall_s ?? 60) < 60;
+    return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+                                       ...(mitSek ? { second: '2-digit' } : {}) });
+  }
+
+  intervallText(s: number | null | undefined): string {
+    if (s == null) return '–';
+    if (s < 1) return `${Math.round(s * 1000)} ms`;
+    if (s < 60) return `${s} s`;
+    if (s < 3600) return `${s / 60} min`;
+    if (s < 86400) return `${s / 3600} h`;
+    return `${s / 86400} d`;
+  }
+
+  mitteZeit(): string | null {
+    const b = this.histo()?.balken ?? [];
+    return b.length ? b[Math.floor(b.length / 2)].zeit : null;
+  }
+
+  hoehe(n: number): number { return n ? Math.max(2, 100 * n / this.histoMax()) : 0; }
+
+  balkenTip(b: { zeit: string; anzahl: number }): string {
+    const h = this.histo();
+    const ende = new Date(new Date(b.zeit).getTime() + (h?.intervall_s ?? 0) * 1000).toISOString();
+    return `${b.anzahl.toLocaleString('de-DE')} Treffer · ${this.zeitText(b.zeit)} – ${this.zeitText(ende)}`;
+  }
+
+  private ladeHistogramm(q: string) {
+    const params: any = { q, ...this.zeitParams() };
+    if (this.suchIndex) params.index = this.suchIndex;
+    this.histo.set({ laedt: true, balken: [] });
+    this.http.get<any>(`${environment.apiUrl}/feed/histogramm`, { params }).subscribe({
+      next: r => this.histo.set(r),
+      error: e => this.histo.set({ fehler: e?.error?.detail ?? 'Histogramm nicht verfügbar', balken: [] }),
+    });
+  }
+
+  ziehStart(i: number, ev: MouseEvent) { ev.preventDefault(); this.ziehA = i; this.ziehB.set(i); }
+  ziehUeber(i: number) { if (this.ziehA != null) this.ziehB.set(i); }
+  imZug(i: number): boolean {
+    const b = this.ziehB();
+    return this.ziehA != null && b != null && i >= Math.min(this.ziehA, b) && i <= Math.max(this.ziehA, b);
+  }
+
+  /** Klick = ein Balken, Ziehen = Spanne → absoluter Zeitraum [Anfang, Ende) und neue Suche */
+  ziehEnde(uebernehmen: boolean) {
+    const a = this.ziehA, b = this.ziehB();
+    this.ziehA = null;
+    this.ziehB.set(null);
+    const h = this.histo();
+    if (!uebernehmen || a == null || b == null || !h?.balken?.length) return;
+    const [i, j] = [Math.min(a, b), Math.max(a, b)];
+    const von = h.balken[i].zeit;
+    const ende = new Date(h.balken[j].zeit).getTime() + h.intervall_s * 1000;
+    const bis = new Date(Math.min(ende, new Date(h.bis).getTime())).toISOString();
+    this.zeitVon.set(new Date(von).toISOString());
+    this.zeitBis.set(bis);
+    this.runFeedSearch();
+  }
+
+  /** zurück zum relativen Zeitraum der Auswahl */
+  zeitZurueck() {
+    this.zeitVon.set(null);
+    this.zeitBis.set(null);
+    if (this.searchActive()) this.runFeedSearch();
+  }
+
   zeigeTopWerte(feld: string) {
     const q = this.searchActive() ? this.activeSearchQuery() : '';
-    const bereich = this.searchRangeLabel();
+    const bereich = this.zeitLabel();
     this.topWerte.set({ feld, q, bereich, laedt: true });
-    const params: any = { feld, q, time_range_seconds: this.searchRangeSec };
+    const params: any = { feld, q, ...this.zeitParams() };
     if (this.suchIndex) params.index = this.suchIndex;
     this.http.get<any>(`${environment.apiUrl}/feed/werte`, { params }).subscribe({
       next: r => this.topWerte.set({ ...r, q, bereich }),

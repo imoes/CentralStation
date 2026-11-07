@@ -569,8 +569,14 @@ The search bar on `/feed` works like Graylog 5.2's search (`feed-query.ts`, port
   tool: up to 9 complete queries. After `feld:` the field's values in the current result; after a word,
   matching hosts, containers, services, tags and field names. The number is the hit count of that exact
   query (one `_msearch`). An unreadable input shows its reason under the bar.
-- **The search is in the URL** (`?q=…&range=…`), so it can be bookmarked and survives a reload. Links
-  with `?q=` and no range search 30 days.
+- **Message histogram** (`GET /api/feed/histogramm?q=&time_range_seconds=` or `&von=&bis=`), as in
+  Graylog: the hits of the same search per interval; empty intervals are 0. The interval follows Graylog's
+  `AutoInterval` table (15 min → 30 s, 1 day → 30 min, 30 days → 1 day). Clicking a bar, or dragging across
+  bars, sets an absolute time range `[von, bis)`, like Graylog's zoom. The search text stays as it is, a chip
+  replaces the range selection, and × returns to the relative range. Hits, top values and suggestions use
+  the same time range.
+- **The search is in the URL** (`?q=…&range=…`, after a zoom also `&von=…&bis=…`), so it can be bookmarked
+  and survives a reload. Links with `?q=` and no range search 30 days.
 
 ---
 
