@@ -1587,6 +1587,15 @@ The AI only works when a check is true, and it only writes its own analysis.
   shape the kind (host circle, finding diamond, tag rectangle). Per node: `dringend`, `dringend_offen`,
   `offen`, `befunde`, `zuletzt`; one sentence (`satz`) names the hot spots. A click selects an object;
   filter/exclude are buttons. The NetBox map remains as the switch "Infrastruktur (NetBox)".
+- **Field meanings** (table `feld_bedeutung`, `felder.py`): every field, hashtag kind and signal with meaning,
+  example, origin (system | ki | mensch) and source. `lw_feld` looks up (funnel, MCP; `regelgruppe:syscheck`
+  finds the kind); `lw_feld_anlegen` lets the analysis AI create only new entries with a source. The corpus tile
+  names live hashtag kinds without an entry; a test fails for undocumented history fields.
+- **Web search for unclear log lines** (`websuche.py`): `web_suche(query, warum)` over SearXNG
+  (`http://llm-host03.example.com:8080`, setting `log_watch.websuche_url`) and `web_seite(url)`. Internal names
+  (hosts, IPs, internal domains, mails, UUIDs, secrets, user paths) are removed before a query leaves; pages only
+  from public addresses; Stack Exchange through its API with the newest answer; long pages keep their end (in a
+  forum the last post is usually the solution). Results are context, never evidence.
 - **Every message is an object** (`nachricht.py`): fixed fields (`zeit`, `quelle`, `host`, `text`, `roh` …)
   never change; changeable fields only through methods (`verknuepfe`, `markiere`, `urteile`,
   `neu_bewerten`), each appending `{zeit, wer, was, grund}` to `aenderungen`; precedence human > AI > rule.
