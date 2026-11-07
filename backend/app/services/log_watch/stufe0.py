@@ -88,6 +88,20 @@ async def zaehle(gl, regeln: list[dict], knoten: set[str]) -> dict[str, dict]:
 # ── Widerspruchsprüfung: Themen, die Stufe 0 bei Container-Logs verwirft ───────
 
 _BEHALTEN_WORT = re.compile(r'contains\(to_string\(\$message\._msg_lc\),\s*"([^"]+)"\)')
+#: regex("…", to_string($message._msg_lc)) im Behalten-Block (seit 07.11. 13:54 UTC: unsere Themen-Ausdrücke)
+_BEHALTEN_REGEX = re.compile(r'regex\("((?:[^"\\]|\\.)*)",\s*to_string\(\$message\._msg_lc\)\)')
+
+
+def _literal(s: str) -> str:
+    """Graylog-Zeichenkettenliteral → Wert (\\\\ → \\, \\" → ")."""
+    return re.sub(r"\\(.)", r"\1", s)
+
+
+def behalte_ausdruecke(quelltext: str) -> list[str]:
+    """Die regex()-Muster über _msg_lc aus einem Regeltext, als Wert (nicht als Literal)."""
+    return [_literal(m) for m in _BEHALTEN_REGEX.findall(quelltext)]
+
+
 #: Themen, die eine Verwerf-Regel über ein FELD behält, nicht über ein Wort: (Muster im Regeltext, Thema)
 _BEHALTEN_FELD = ((re.compile(r"http_response_code\)\s*>=\s*400"), "http-5xx"),)
 
@@ -98,6 +112,7 @@ def widersprueche(regeln: list[dict], themen) -> list[dict]:
     Eine Regel der Form „Container-Log ohne eines dieser Wörter → verwerfen“ (Behalte-Liste aus
     dem Regeltext) entfernt jede Zeile eines Themas, die keines der Wörter enthält: das Raster
     sieht dieses Thema aus Container-Logs dann nur, wenn die Zeile zufällig ein Fehlerwort trägt.
+    Ein regex()-Zweig über _msg_lc im Behalten-Block zählt ebenfalls als „behält“.
     """
     out = []
     for r in regeln:
@@ -105,19 +120,34 @@ def widersprueche(regeln: list[dict], themen) -> list[dict]:
         if 'has_field("container_name")' not in q or "NOT (" not in q:
             continue
         woerter = [w.lower() for w in _BEHALTEN_WORT.findall(q)]
-        if not woerter:
+        ausdruecke = []
+        for a in behalte_ausdruecke(q):
+            try:
+                ausdruecke.append(re.compile(a))
+            except re.error:      # Java-Eigenheit, die Python nicht kennt: Zweig zählt nicht als „behält“
+                pass
+        if not woerter and not ausdruecke:
             continue
         ueber_feld = {t for muster, t in _BEHALTEN_FELD if muster.search(q)}
         for t in themen:
             if not t.beispiel or t.id in ueber_feld:
                 continue
-            if not any(w in t.beispiel.lower() for w in woerter):
+            zeile = t.beispiel.lower()                       # _msg_lc ist die kleingeschriebene Zeile
+            if not any(w in zeile for w in woerter) and not any(rx.search(zeile) for rx in ausdruecke):
                 out.append({"regel": r["titel"], "thema": t.id, "thema_text": t.text,
                             "beispiel": t.beispiel, "behaelt_nur_mit": woerter})
     return out
 
 
 # ── Graylog-Regeltext aus unserem Vokabular (eine Quelle für Graylog und Raster) ──
+
+def themen_ausdruck_stand(regeln: list[dict], themen) -> list[dict]:
+    """Je Verwerf-Regel mit Themen-Ausdruck: entspricht er noch themen_regex(themen)? Der Ausdruck
+    wird von Hand in Graylog eingespielt — ändert sich das Vokabular, veraltet er still."""
+    soll = themen_regex(themen)
+    return [{"regel": r["titel"], "aktuell": soll in behalte_ausdruecke(r.get("quelltext") or "")}
+            for r in regeln if any(a.startswith("(?is).*(?:") for a in behalte_ausdruecke(r.get("quelltext") or ""))]
+
 
 def themen_regex(themen) -> str:
     """Ein Java-kompatibler Ausdruck aus den Mustern der Themen (für Graylogs regex()).
@@ -129,14 +159,16 @@ def themen_regex(themen) -> str:
 
 
 def zaehlregel(verwerf_quelltext: str, themen, name: str = "count_topic_would_drop") -> str:
-    """Zählregel für Schritt 1: Bedingung = Verwerf-Bedingung UND Themen-Ausdruck; Aktion setzt
-    nur ein Feld an einer Nachricht, die ohnehin verworfen wird — keine Wirkung auf Daten, aber
-    ihr Trefferzähler misst, wie viele Themen-Zeilen heute an Stufe 0 verloren gehen."""
+    """Zählregel „durch Themen gerettet“ (Bedeutung seit 07.11. 13:54 UTC, Name in Graylog unverändert):
+    Bedingung = Verwerf-Bedingung OHNE den Themen-Zweig UND Themen-Ausdruck — also die Zeilen, die
+    allein der Themen-Ausdruck vor dem Verwerfen bewahrt. Setzt kein Feld (die Zeilen bleiben ja
+    erhalten); gemessen wird nur ihr Trefferzähler."""
     m = re.search(r"\bwhen\b(.*)\bthen\b", verwerf_quelltext, re.S)
     if not m:
         raise ValueError("Verwerf-Regel ohne when … then")
-    bedingung = m.group(1).strip()
+    bedingung = re.sub(r"\s*OR\s+" + _BEHALTEN_REGEX.pattern + r"\.matches\s*==\s*true", "",
+                       m.group(1)).strip()
     muster = themen_regex(themen).replace("\\", "\\\\").replace('"', '\\"')
     return (f'rule "{name}"\nwhen\n  ({bedingung})\n'
             f'  AND regex("{muster}", to_string($message._msg_lc)).matches == true\n'
-            f'then\n  set_field("_topic_would_drop", "1");\nend')
+            f'then\nend')

@@ -349,6 +349,7 @@ async def run_raster() -> None:
                             "geaendert": r["geaendert"], **zaehlung.get(r["titel"], {})} for r in regeln],
                 "verworfen_pro_stunde": sum(z.get("pro_stunde", 0) for z in zaehlung.values()),
                 "widersprueche": stufe0.widersprueche(regeln, THEMEN),
+                "themen_ausdruck": stufe0.themen_ausdruck_stand(regeln, THEMEN),
                 "vollstaendig": all(z.get("vollstaendig") for z in zaehlung.values()),
             })
         except Exception as e:  # noqa: BLE001

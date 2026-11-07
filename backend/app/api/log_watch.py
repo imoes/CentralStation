@@ -212,7 +212,9 @@ async def get_stufe0(db: Annotated[AsyncSession, Depends(get_db)]):
     from app.services.log_watch.vokabular import THEMEN
     return {"knoten": sorted(knoten), "gemessen": letzte.fenster_start if letzte else None,
             "regeln": [{**r, "zaehlung": zaehlung.get(r["titel"])} for r in regeln],
-            "widersprueche": stufe0.widersprueche(regeln, THEMEN)}
+            "widersprueche": stufe0.widersprueche(regeln, THEMEN),
+            # der von Hand eingespielte Themen-Ausdruck: noch gleich dem Vokabular?
+            "themen_ausdruck": stufe0.themen_ausdruck_stand(regeln, THEMEN)}
 
 
 @router.get("/suche")

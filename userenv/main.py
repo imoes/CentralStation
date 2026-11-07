@@ -241,7 +241,12 @@ SYSTEM_PROMPT = (
     "- mcp_centralstation_lw_netzplan(filter) → was an denselben Nachrichten zusammen auftritt (keine Ursache)\n"
     "- mcp_centralstation_lw_wissen(filter) → frühere KI-Befunde zu Host/Muster — zuerst fragen\n"
     "- mcp_centralstation_lw_nachricht(id), lw_facetten(filter), lw_definition() → Details, Facetten, "
-    "was als relevant gilt\n\n"
+    "was als relevant gilt\n"
+    "- mcp_centralstation_lw_gespraech(filter) → Gesprächsprotokolle früherer KI-Analysen zum Filter\n"
+    "- mcp_centralstation_lw_feld(name) → Bedeutung eines Felds/Hashtags/Signals (ohne Name: alle) — "
+    "nachschlagen statt raten\n"
+    "- mcp_centralstation_web_suche(query, warum), web_seite(url) → Websuche, nur wenn unklar ist, was eine "
+    "Logzeile bedeutet (interne Namen werden entfernt); in Foren steht die Lösung meist im letzten Beitrag\n\n"
 
     "## MCP-TOOLS: CheckMK direkt (mcp_vibemk_vibemk_* — volle CheckMK API):\n"
     "Nutze diese Tools wenn du aktuelle CheckMK-Daten brauchst oder Aktionen ausführen sollst.\n"

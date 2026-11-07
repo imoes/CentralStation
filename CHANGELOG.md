@@ -10,6 +10,42 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Stage 0 check understands the topic regex; console agents get the new tools
+
+### Changed
+
+- **The stage 0 contradiction check now counts a `regex(...)` branch as "kept".** Since 13:54 UTC the Graylog
+  rule `drop_container_noise` keeps container lines that match our topic expression
+  (`stufe0.themen_regex`, imported by hand by the Graylog peer session). The check only knew the keep
+  words and the HTTP ≥ 400 field. So it still reported 15 topics as dropped although Graylog keeps them.
+  - Evidence, live against Graylog, 07.11.: `widersprueche()` returned 15 topics before the change
+    (absturz, auth-fail, cert, … zugriff) and returns `[]` after it.
+- **New observation point `themen_ausdruck`** in `/api/log-watch/stufe0` and in every 15-min stage 0 run.
+  It shows whether the expression imported into Graylog still equals our vocabulary. Someone imports it by
+  hand, so a vocabulary change would otherwise leave it stale without any sign.
+  - Evidence, live 07.11.: `[{"regel": "drop_container_noise", "aktuell": true}]`.
+  - A test confirms that an expression missing one topic shows `aktuell: false`.
+- **The counting rule generator (`stufe0.zaehlregel`) follows the new meaning in Graylog.** The rule now
+  counts lines **saved by the topic expression alone**: the drop condition without the topic branch, AND
+  the topic expression. It sets no field. The rule name in Graylog stays `count_topic_would_drop`.
+  - It is not a drop rule, so neither the stage 0 list nor the cockpit lists it, and no label had to change.
+- **Hermes system prompt lists `lw_gespraech`, `lw_feld`, `web_suche`, `web_seite`.** Claude and Codex console
+  sessions see these tools from the MCP server itself.
+  - Evidence: a user transcript in the console container shows `deferred_tools_delta` at 13:23:16 UTC adding
+    `lw_feld`, `web_seite` and `web_suche` to the running session, with no restart.
+  - That session has not called them yet. It called `host_capabilities`, `search_tickets` and
+    `search_knowledge_base`.
+
+### Still missing
+
+- The Hermes prompt change reaches a console only after a userenv image rebuild and the next container start.
+  Hermes loads its tool list at startup.
+- The "saved by topics" counter (≈ 36/h, peer measurement) is not yet shown in the cockpit.
+- The dead rule `mark_would_drop_container` is in no pipeline. Deleting it is a Graylog change and needs
+  approval.
+
+---
+
 ## 2026-11-07 — Graylog: fields checked stream by stream, wrong fields fixed, missing fields added
 
 You asked (2026-11-07): go through the messages of every Graylog stream, check that the existing fields

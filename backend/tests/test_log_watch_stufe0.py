@@ -86,4 +86,36 @@ def test_zaehlregel_aus_vokabular_und_verwerfbedingung():
     assert not rx.match("get /api/items 200 12ms user=4711")                 # Routine nicht
     regel = s0.zaehlregel(CONTAINER_NOISE["quelltext"], betroffen)
     assert regel.startswith('rule "count_topic_would_drop"') and "drop_message" not in regel
-    assert 'has_field("container_name")' in regel and 'set_field("_topic_would_drop", "1")' in regel
+    assert 'has_field("container_name")' in regel and "set_field" not in regel   # zählt nur
+
+
+def _mit_themen_zweig(themen):
+    """drop_container_noise wie seit 07.11. 13:54 UTC: Behalten-Block plus regex(themen_regex) über _msg_lc."""
+    literal = s0.themen_regex(themen).replace("\\", "\\\\").replace('"', '\\"')
+    q = CONTAINER_NOISE["quelltext"].replace(
+        '\n  )\nthen', f'\n    OR regex("{literal}", to_string($message._msg_lc)).matches == true\n  )\nthen')
+    assert q != CONTAINER_NOISE["quelltext"]
+    return {"titel": "drop_container_noise", "quelltext": q}
+
+
+def test_themen_zweig_im_behalten_block_hebt_widersprueche_auf():
+    from app.services.log_watch.vokabular import THEMEN
+    regel = _mit_themen_zweig(THEMEN)
+    assert s0.behalte_ausdruecke(regel["quelltext"]) == [s0.themen_regex(THEMEN)]   # Literal → Wert
+    assert s0.widersprueche([regel], THEMEN) == []
+    assert s0.themen_ausdruck_stand([regel], THEMEN) == [{"regel": "drop_container_noise", "aktuell": True}]
+
+
+def test_veralteter_themen_ausdruck_wird_benannt():
+    from app.services.log_watch.vokabular import THEMEN
+    regel = _mit_themen_zweig(THEMEN[:-1])                       # ein Thema fehlt im eingespielten Ausdruck
+    assert s0.themen_ausdruck_stand([regel], THEMEN) == [{"regel": "drop_container_noise", "aktuell": False}]
+    assert s0.themen_ausdruck_stand([CONTAINER_NOISE], THEMEN) == []   # ohne Themen-Zweig: nichts zu prüfen
+
+
+def test_zaehlregel_zaehlt_die_durch_themen_geretteten():
+    from app.services.log_watch.vokabular import THEMEN
+    regel = s0.zaehlregel(_mit_themen_zweig(THEMEN)["quelltext"], THEMEN)
+    # der Themen-Zweig ist aus dem Behalten-Block entfernt und steht genau einmal als UND-Bedingung da
+    assert regel.count("regex(") == 1 and "AND regex(" in regel
+    assert "set_field" not in regel and "drop_message" not in regel
