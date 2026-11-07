@@ -229,11 +229,14 @@ async def suche_historie(_user: CurrentUser, db: Annotated[AsyncSession, Depends
 @router.get("/netzplan")
 async def netzplan_historie(_user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)],
                             filter: str = Query("", max_length=2000), stunden: float = Query(24, gt=0, le=24 * 30),
-                            knoten: int = Query(15, ge=2, le=40)):
-    """Netzplan zum Filter: Knoten = Hashtags, Kante = gemeinsam an derselben Nachricht."""
+                            knoten: int = Query(15, ge=2, le=40),
+                            sicht: str = Query("alles", pattern="^(alles|fehler)$")):
+    """Netzplan zum Filter: Knoten = Hashtags, Kante = gemeinsam an derselben Nachricht. `sicht=fehler`:
+    Problemobjekte (Hosts, Befunde, Themen …) nach „dringend und unbearbeitet“ statt Kontext-Tags nach Menge."""
     from app.services.log_watch import suche
     from app.services.log_watch.definition import aktuelle
-    return await suche.netzplan(filter, stunden=stunden, knoten=knoten, objekte=(await aktuelle(db)).objekte)
+    return await suche.netzplan(filter, stunden=stunden, knoten=knoten, objekte=(await aktuelle(db)).objekte,
+                                sicht=sicht)
 
 
 # ── Bekannte Fehler: was die KI schon untersucht hat (bekannt.py) ─────────────

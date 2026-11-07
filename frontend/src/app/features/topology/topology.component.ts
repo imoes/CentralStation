@@ -12,6 +12,8 @@ import { environment } from '../../../environments/environment';
 import { ThemeService } from '../../core/services/theme.service';
 import { AuthService } from '../../core/auth/auth.service';
 import { I18nService } from '../../core/services/i18n.service';
+import { ActivatedRoute, Router } from '@angular/router';
+import { FehlernetzComponent } from './fehlernetz.component';
 
 interface TopologyNode {
   id: string;
@@ -67,8 +69,18 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
     MatTooltipModule,
     MatSnackBarModule,
     NgxEchartsDirective,
+    FehlernetzComponent,
   ],
   template: `
+    <!-- Zwei Sichten (Nutzer 07.11.): Fehler-Netzplan = wo sind die Probleme (Standard);
+         Infrastruktur = wie hängt es zusammen (NetBox). Nichts verschwindet still. -->
+    <div class="topo-modus">
+      <button [class.an]="modus() === 'fehler'" (click)="setzeModus('fehler')"><mat-icon>bug_report</mat-icon> Fehler-Netzplan</button>
+      <button [class.an]="modus() === 'infra'" (click)="setzeModus('infra')"><mat-icon>account_tree</mat-icon> Infrastruktur (NetBox)</button>
+    </div>
+    @if (modus() === 'fehler') {
+      <div class="topo-fehler"><cs-fehlernetz></cs-fehlernetz></div>
+    } @else {
     <div class="topo-shell">
       <div class="topo-topbar">
         <h2 class="topo-title">
@@ -150,9 +162,16 @@ const CAT = ['site', 'cluster', 'host', 'vm', 'service'];
         ></div>
       }
     </div>
+    }
   `,
   styles: [`
     :host { display: block; }
+    .topo-modus { display: flex; gap: 6px; padding: 8px 16px 0; }
+    .topo-modus button { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 13px; cursor: pointer;
+      padding: 5px 12px; border-radius: 16px; border: 1px solid rgba(127,127,127,.4); background: transparent; color: inherit; }
+    .topo-modus button.an { background: var(--mat-sys-primary, #1565c0); color: var(--mat-sys-on-primary, #fff); border-color: transparent; }
+    .topo-modus mat-icon { font-size: 18px; height: 18px; width: 18px; }
+    .topo-fehler { height: calc(100vh - 120px); padding: 8px 16px; box-sizing: border-box; }
 
     .topo-shell {
       display: flex; flex-direction: column;
@@ -388,8 +407,24 @@ export class TopologyComponent implements OnInit, OnDestroy {
     };
   });
 
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
+  readonly modus = signal<'fehler' | 'infra'>('fehler');
+  private infraGeladen = false;
+
   ngOnInit(): void {
-    this.load(false);
+    const m = this.route.snapshot.queryParamMap.get('modus');
+    this.setzeModus(m === 'infra' ? 'infra' : 'fehler');
+  }
+
+  /** NetBox wird erst geladen, wenn die Infrastruktur-Sicht gezeigt wird. */
+  setzeModus(m: 'fehler' | 'infra'): void {
+    this.modus.set(m);
+    this.router.navigate([], { queryParams: { modus: m }, queryParamsHandling: 'merge', replaceUrl: true });
+    if (m === 'infra' && !this.infraGeladen) {
+      this.infraGeladen = true;
+      this.load(false);
+    }
   }
 
   onChartInit(ec: any): void {
