@@ -40,8 +40,8 @@ const ART_FARBE: Record<string, Record<string, string>> = {
         }
         @if (!auswahl().length) { <span class="np-hinweis">Knoten anklicken: wird zum Filter</span> }
       </div>
-      @if (fehler()) {
-        <div class="np-leer">{{ fehler() }}</div>
+      @if (fehler() || netz()?.fehler) {
+        <div class="np-leer">{{ fehler() || netz()?.fehler }}</div>
       } @else if (netz() && !netz()!.knoten.length) {
         <div class="np-leer">Keine relevanten Nachrichten zu diesem Filter im Zeitraum</div>
       } @else {
@@ -108,7 +108,15 @@ export class LwNetzplanComponent {
   readonly basis = computed(() => String(this.config()?.['filter'] ?? ''));
   readonly stunden = computed(() => Number(this.config()?.['hours'] ?? 24));
   /** Ohne Auswahl gilt die Antwort des Widget-Datenendpunkts, danach die eigene Suche. */
-  readonly netz = computed<Netz | null>(() => this.auswahl().length ? this.geladen() : (this.daten() as Netz));
+  readonly netz = computed<Netz | null>(() => {
+    const n = (this.auswahl().length ? this.geladen() : this.daten()) as Netz | null;
+    // Antwort ohne Knotenliste (Abruf gescheitert, z. B. während eines Backend-Neustarts — gemessen 07.11.:
+    // TypeError in der Vorlage leerte das ganze Dashboard) → benannter Fehler statt Absturz
+    if (n && !Array.isArray(n.knoten)) {
+      return { gesamt: 0, knoten: [], kanten: [], fehler: (n as any).error || (n as any).fehler || 'Netzplan nicht geladen' };
+    }
+    return n;
+  });
   readonly filter = computed(() => [this.basis(), ...this.auswahl()].filter(Boolean).join(' '));
   readonly naben = computed(() => this.netz()?.ausgeblendet_naben ?? []);
   readonly arten = computed(() => [...new Set((this.netz()?.knoten ?? []).map(k => k.art))]);
