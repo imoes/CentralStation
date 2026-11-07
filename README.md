@@ -1581,6 +1581,12 @@ The AI only works when a check is true, and it only writes its own analysis.
 
   The MCP tools answer in full.
 
+- **Error network graph** (`/topology`, default view; `GET /api/log-watch/netzplan?sicht=fehler`): nodes are
+  problem objects (hosts, findings, topics, services, rules, MITRE techniques …) ordered by "urgent and
+  not yet analysed". Colour is the stage (red `dringend_offen`, orange `dringend`, yellow `auffaellig`),
+  shape the kind (host circle, finding diamond, tag rectangle). Per node: `dringend`, `dringend_offen`,
+  `offen`, `befunde`, `zuletzt`; one sentence (`satz`) names the hot spots. A click selects an object;
+  filter/exclude are buttons. The NetBox map remains as the switch "Infrastruktur (NetBox)".
 - **Known errors: the funnel learns** (`bekannt.py`, index `cs-log-bekannt`). If the AI has already
   analysed an error and the same error comes back, the AI does nothing.
   - **Same error** = same error key, built from the group key the raster writes on every message:

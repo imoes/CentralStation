@@ -10,6 +10,69 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-07 — Log watch, part 32: the infrastructure map becomes an error network graph
+
+You asked (2026-11-07): the infrastructure map is not up to date; the goal is an error network graph like
+the research tool's, where you see at a glance where the problems are, and every node is an object
+(host or tag).
+
+### What is new
+
+- **`/topology` opens the Fehler-Netzplan.** The NetBox view remains as the switch "Infrastruktur
+  (NetBox)" and loads only when it is shown.
+- **One search over the history** (`GET /api/log-watch/netzplan?sicht=fehler`). Nodes are problem
+  objects: hosts, AI findings, topics, services, rules, MITRE techniques, apps, remote hosts.
+  - They are ordered by "urgent and not yet analysed", then by urgent, then by volume.
+  - Context tags (source, network, criticality, location) stay filters.
+- **Colour = problem state, shape = kind of object:**
+  - red: urgent (relevance 3) and on no finding;
+  - orange: urgent, analysed;
+  - yellow: relevant;
+  - a host is a circle, an AI finding a diamond (with its title), a tag a rectangle.
+- **One sentence above the graph** says where the problems are, e.g. "8420 relevante Nachrichten in
+  24 h · dringend und ohne Befund: cue0149 (16), cue0111 (15), cue0148 (13)."
+- **A click selects an object** (as in the research tool). On the right you see:
+  - its stage and numbers;
+  - its AI findings and linked objects;
+  - its messages;
+  - buttons *Filtern*, *Ausschließen*, *Cockpit*.
+
+  Without a selection the right column lists the hot spots, red first. The search is in the URL
+  (`?modus=fehler&filter=&stunden=`).
+
+### Fixed
+
+- **"Handled" had two meanings.**
+  - The AI check (`trichter.offene`) treated everything an analysis' start filter matched as seen.
+  - Only the 2–3 cited messages carried `befund:<id>`.
+
+  Now everything the analysis saw carries the finding's hashtag (`bekannt.markiere_gesehen`, same
+  definition). The backfill covered 1 609 messages from 388 findings; 6 findings had no stored start
+  filter and were skipped.
+- **Node choice by volume** filled every node with context tags (`netz:intern` 6 075,
+  `kritikalitaet:prod` 5 872 …) and showed no host.
+
+### Evidence (live, 2026-11-07, logged in as a real user)
+
+- `/topology` renders the graph and the sentence; the right column lists the hot spots
+  (`regel:533`, `cue0148`, `nsa383` …).
+- **Stages before and after the backfill** (same 24 h):
+  - 22 red and 0 orange → 18 red and 9 orange;
+  - unhandled urgent on cue0148: 87 → 13; on cue0111: 67 → 15;
+  - findings shown as nodes: 0 → 4.
+- Graph query 0.15 s.
+- Tests: `test_log_watch_suche.py` (problem state, sentence, choice of problem objects),
+  `test_log_watch_bekannt.py`, `test_log_watch_trichter.py`; full suite 830 passed.
+
+### What is still missing
+
+- **Backend not yet redeployed** with the "seen" marking for new findings: the restart guard stopped
+  because a user container is running. The backfill ran in a one-off container.
+- **Incidents are not yet objects** of the graph and search (see the design proposal).
+- No suggestions while typing in the graph's filter input (the feed has them).
+
+---
+
 ## 2026-11-07 — Log watch, part 31: a finding you can read in seconds
 
 You said (2026-11-07): the output of the findings must be formatted better; "with this output I can't
