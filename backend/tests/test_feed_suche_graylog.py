@@ -197,3 +197,9 @@ def test_historie_eintrag_hat_echte_feldnamen():
     felder = {(x["feld"], x["wert"]) for x in e["felder"]}
     assert {("host", "a.example.com"), ("hashtags", "thema:oom"), ("kriterien", "R5"), ("roh.level", 3)} <= felder
     assert not any(x["feld"] in ("roh.x.y", "roh.leer") for x in e["felder"])
+
+
+def test_fremde_standort_kennung_wird_benannt_nicht_gefiltert():
+    from app.services.feed_index import historie_suche_aus_filtern as f
+    q, nicht = f(None, None, None, ["kassel", "KAS-0"])
+    assert q == "hashtags:(ort\\:KAS\\-0)" and any("kassel" in n for n in nicht)

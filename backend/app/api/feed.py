@@ -259,9 +259,12 @@ async def get_feed(
     if korpus == "historie":
         # Nutzer 07.11.2026: „Ereignisse“ zeigt nur eingestufte Nachrichten (Relevanz, Hashtags, Urteil); die
         # Filter des Feeds werden zur Suche über die Historie, nicht anwendbare kommen als Kopfzeile zurück
+        # nur ausdrücklich gesetzte Filter: die gespeicherten CheckMK-Voreinstellungen (Standort, Kritikalität,
+        # OS, VE) galten im Rohfeed nur für CheckMK-Meldungen (_apply_metadata_filters) — auf die ganze Historie
+        # angewendet leerten sie den Feed (gemessen 07.11.: kassel/muenchen + prod → 0 Treffer)
         q_hist, nicht = feed_index.historie_suche_aus_filtern(
-            sources.split(",") if sources else None, severity, host, effective_location,
-            effective_criticality, effective_hostgroup, effective_os, effective_ve)
+            sources.split(",") if sources else None, severity, host, location, criticality,
+            effective_hostgroup, os, ve)
         try:
             items, gesamt = await feed_index.suche_seite(feed_index.HISTORIE_INDEX, q_hist, from_=offset,
                                                          size=limit)

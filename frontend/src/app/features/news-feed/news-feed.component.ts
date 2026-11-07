@@ -936,13 +936,9 @@ const SEVERITY_COLOR: Record<string, string> = {
         @if (!loading() && visibleItems().length === 0) {
           <div class="empty-state">
             <mat-icon>check_circle_outline</mat-icon>
-            @if (hostFilter) {
-              <p>Keine offenen Alerts für „{{ hostFilter }}"</p>
-              <span>Dieser Host hat aktuell keine Meldungen im Feed (ggf. nur Metrik-Auslastung).</span>
-            } @else {
-              <p>Keine neuen Meldungen</p>
-              <span>Alle Systeme sind ruhig.</span>
-            }
+            <!-- 0 Treffer ist ein Suchergebnis, keine Entwarnung: die verwendete Suche steht da (X-Feed-Suche) -->
+            <p>Keine eingestuften Nachrichten für diese Auswahl</p>
+            <span>@if (hostFilter) {Host „{{ hostFilter }}“ · }Suche: {{ feedSuche() || 'alle Quellen' }}</span>
           </div>
         }
 
@@ -1964,6 +1960,8 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   readonly vordefiniert = VORDEFINIERT;
   /** Filter, die die Historie nicht kennt (Kopfzeile X-Filter-Nicht-Anwendbar) — benannt statt still */
   nichtAnwendbar = signal('');
+  /** die Suche, die der Feed ohne Suchleiste über die Historie stellt (Kopfzeile X-Feed-Suche) */
+  feedSuche = signal('');
   /** Nachrichtenhistogramm der aktiven Suche (GET /feed/histogramm) */
   histo = signal<any | null>(null);
   histoMax = computed(() => Math.max(1, ...((this.histo()?.balken ?? []).map((b: any) => b.anzahl))));
@@ -2438,6 +2436,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
       next: (resp) => {
         const data = resp.body ?? [];
         this.nichtAnwendbar.set(resp.headers.get('X-Filter-Nicht-Anwendbar') ?? '');
+        this.feedSuche.set(resp.headers.get('X-Feed-Suche') ?? '');
         // Discard regular-feed responses that arrived after a text search became active.
         // loadMore() fires load(false) without a guard, so this races with runFeedSearch().
         if (this.searchActive()) {

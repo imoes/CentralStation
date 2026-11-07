@@ -878,7 +878,14 @@ def historie_suche_aus_filtern(quellen=None, schwere=None, host=None, orte=None,
             nicht.append(f"Schwere {schwere}")
     if host:
         teile.append(f"host:*{escape_wert(str(host).strip().lower())}*")
-    for art, werte in (("ort", orte), ("kritikalitaet", kritikalitaeten), ("hg", hostgruppen)):
+    # Orte der Historie heißen wie die Standorte im Hostverzeichnis (MUE-0, KAS-0); die Standort-Kennungen der
+    # Rohmeldungen (kassel, muenchen) sind andere Werte — sie werden benannt statt still nichts zu treffen
+    o = _liste(orte)
+    fremde_orte = [x for x in o if not re.fullmatch(r"[A-Z]{2,4}-\d+", x)]
+    if fremde_orte:
+        nicht.append("Standort " + "/".join(fremde_orte) + " (Kennung der Rohmeldungen; Orte heißen z. B. MUE-0)")
+    for art, werte in (("ort", [x for x in o if x not in fremde_orte]), ("kritikalitaet", kritikalitaeten),
+                       ("hg", hostgruppen)):
         w = _liste(werte)
         if w:
             teile.append("hashtags:(" + " OR ".join(escape_wert(f"{art}:{x}") for x in w) + ")")

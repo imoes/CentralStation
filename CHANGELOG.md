@@ -59,6 +59,14 @@ You decided (07.11.):
   - They still apply to raw messages (bridge counts, work list, topology, dashboard, sysadmin agent) until they
     are moved into the rule set as rules. Without that step the agent would get the noise again at once.
   - One switch `feed_index.AUSSCHLUSSFILTER_AKTIV` turns them off everywhere.
+- **Fixed on the same day:**
+  - The saved CheckMK presets (location `kassel`/`muenchen`, criticality `prod`, OS, VE) had been applied to the
+    whole history and emptied the feed. Measured in the browser: 0 entries with the user's login.
+  - In the raw feed they only applied to CheckMK messages. Now only explicitly set filters apply.
+  - A location ID from the raw messages (`kassel`) is named, because places in the history are called e.g.
+    `KAS-0`.
+  - The empty state no longer says "Alle Systeme sind ruhig". It names the search used, because 0 hits is a
+    result, not an all-clear.
 - Evidence, live against `cs-logs-*` 07.11.:
   - Feed from the history: 12 127 entries; the first is a KI finding with 18 fields.
   - Predefined filters over 1 h, each with search = histogram = sum of bars: Relevant 583, Dringend 109,
