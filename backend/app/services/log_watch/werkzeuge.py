@@ -76,10 +76,15 @@ async def lw_feld(name: str = "") -> dict:
     return await felder.nachschlagen(name)
 
 
-async def lw_feld_anlegen(name: str, art: str, bedeutung: str, quelle: str, beispiel: str = "") -> dict:
-    """Neue Bedeutung anlegen (nur NEUE Namen; Vorhandenes ändert nur ein Mensch)."""
+async def lw_feld_anlegen(name: str, art: str, bedeutung: str, belege: list, beispiel: str = "") -> dict:
+    """Neue Bedeutung anlegen — nur mit geprüften Zitaten (nur NEUE Namen; Vorhandenes ändert nur ein Mensch)."""
     from app.services.log_watch import felder
-    return await felder.anlegen(name, art, bedeutung, beispiel, quelle, "ki")
+    ok, gruende = await felder.pruefe_belege_feld(belege)
+    if not ok:
+        return {"abgelehnt": "kein geprüftes Zitat — " + "; ".join(gruende[:4])}
+    quelle = "geprüfte Zitate: " + "; ".join(f"„{b['zitat']}“ ({b.get('id') or b.get('url')})" for b in ok)
+    return {**await felder.anlegen(name, art, bedeutung, beispiel, quelle, "ki"),
+            **({"verworfen": gruende} if gruende else {})}
 
 
 async def web_suche(query: str, warum: str) -> dict:
@@ -230,12 +235,16 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
     "lw_feld": (lw_feld, "Bedeutung eines Felds, einer Hashtag-Art oder eines Signals nachschlagen, z. B. "
                 "regelgruppe, hashtag:decoder, feld:roh, signal:neu; ohne Namen die ganze Liste.",
                 _p(name={"type": "string"}), False),
-    "lw_feld_anlegen": (lw_feld_anlegen, "Bedeutung eines NEUEN Felds/Hashtags/Signals anlegen, das lw_feld nicht "
-                        "kennt — nur wenn du sie sicher weißt; quelle = woher (Nachricht-ID, URL, Doku). "
+    "lw_feld_anlegen": (lw_feld_anlegen, "Bedeutung eines NEUEN Felds/Hashtags/Signals/Quellfelds anlegen, das lw_feld "
+                        "nicht kennt — nur mit Belegen: [{id, zitat}] aus einer Nachricht oder [{url, zitat}] aus einer "
+                        "mit web_seite gelesenen Seite; das Zitat muss dort wörtlich stehen (der Code prüft). "
                         "Vorhandenes wird nicht überschrieben.",
                         _p(name={"type": "string", "_pflicht": True},
-                           art={"type": "string", "enum": ["feld", "hashtag", "signal"], "_pflicht": True},
-                           bedeutung={"type": "string", "_pflicht": True}, quelle={"type": "string", "_pflicht": True},
+                           art={"type": "string", "enum": ["feld", "hashtag", "signal", "quellfeld"], "_pflicht": True},
+                           bedeutung={"type": "string", "_pflicht": True},
+                           belege={"type": "array", "_pflicht": True, "items": {"type": "object", "properties": {
+                               "id": {"type": "string"}, "url": {"type": "string"}, "zitat": {"type": "string"}},
+                               "required": ["zitat"]}},
                            beispiel={"type": "string"}), True),
     "web_suche": (web_suche, "Websuche (SearXNG) — NUR wenn du nicht sicher weißt, was eine Logzeile bedeutet. "
                   "Suche nach Fehlermeldung oder Code (z. B. „ORA-12541 TNS no listener“), nie nach Host, IP oder "

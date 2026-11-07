@@ -52,3 +52,34 @@ def test_ki_korrigiert_nichts():
     import asyncio
     assert "abgelehnt" in asyncio.run(felder.korrigiere("hashtag:regel", "egal egal egal", "x", "ki"))
     assert "KEINE Bedeutung einzelner Werte" in felder.PROMPT_QUELLFELD
+
+
+def test_feldbeschreibung_nur_mit_geprueftem_zitat():
+    """Nutzer 07.11.: „Antworte nur mit Fakten, die du belegen kannst — wie im Recherche-Tool mit geprüften Zitaten“."""
+    quelle = felder.quellfeld_prompt("checkmk", "host_state", "long", "kategorie", [{"wert": 0, "anzahl": 900}])
+    ok, gr = felder.pruefe_zitate("Zustand des Hosts", ["host_state"], quelle)
+    assert ok == ["host_state"] and gr == []
+    # erfundene Code-Zuordnung (gemessen: host_state mit Service-Codes) ohne Zitat → abgelehnt
+    ok, gr = felder.pruefe_zitate("Statuscode 0=OK, 1=Warning", ["host_state"], quelle)
+    assert any("0=OK" in g for g in gr)
+    ok, gr = felder.pruefe_zitate("irgendwas", ["steht nirgends"], quelle)
+    assert ok == [] and "kein geprüftes Zitat" in gr
+
+
+def test_feld_anlegen_belege_gegen_gelesene_seite():
+    import asyncio
+
+    from app.services.log_watch import websuche
+    websuche.merke("https://docs.example.org/x", "The field servicename holds the syslog program name.")
+    ok, gr = asyncio.run(felder.pruefe_belege_feld([
+        {"url": "https://docs.example.org/x", "zitat": "holds the syslog program name"},
+        {"url": "https://docs.example.org/x", "zitat": "steht da nicht drin"},
+        {"url": "https://ungelesen.example.org/", "zitat": "irgendein Zitat hier"}]))
+    assert [b["zitat"] for b in ok] == ["holds the syslog program name"]
+    assert any("nicht wörtlich" in g for g in gr) and any("erst mit web_seite" in g for g in gr)
+
+
+
+def test_web_prompt_verlangt_zitate_aus_der_seite():
+    assert "wörtlich auf der Seite" in felder.PROMPT_QUELLFELD_WEB and "letzten Beitrag" in felder.PROMPT_QUELLFELD_WEB
+    assert felder.WEB_JE_LAUF >= 1

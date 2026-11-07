@@ -152,12 +152,38 @@ async def _stackexchange(site: str, frage: str, url: str) -> dict:
         teile.append(f"ANTWORT (Punkte {x.get('score')}{', akzeptiert' if x.get('is_accepted') else ''}):\n"
                      f"{text_aus_html(x.get('body', ''))}")
     text = "\n\n".join(teile)
-    return {"url": url, "text": text[:SEITE_MAX], "laenge": len(text), "quelle": "api.stackexchange.com",
+    return {"url": url, "text": text[:SEITE_MAX], "_voll": text, "laenge": len(text), "quelle": "api.stackexchange.com",
             "kontingent_rest": a.get("quota_remaining")}
+
+
+#: zuletzt gelesene Seiten (URL → voller Text) — Zitate aus einer Seite werden gegen DIESEN Text geprüft
+_GELESEN: dict[str, tuple[float, str]] = {}
+GELESEN_MAX_S = 3600
+
+
+def merke(url: str, text: str) -> None:
+    import time
+    _GELESEN[url] = (time.monotonic(), text or "")
+    for u in [u for u, (t, _x) in _GELESEN.items() if time.monotonic() - t > GELESEN_MAX_S]:
+        _GELESEN.pop(u, None)
+
+
+def gelesen(url: str) -> str | None:
+    import time
+    e = _GELESEN.get(url)
+    return e[1] if e and time.monotonic() - e[0] <= GELESEN_MAX_S else None
 
 
 async def seite(url: str) -> dict:
     """Eine öffentliche Seite als Text (höchstens SEITE_MAX Zeichen)."""
+    erg = await _seite(url)
+    if erg.get("text") is not None:
+        merke(url, erg.pop("_voll", None) or erg["text"])
+    erg.pop("_voll", None)
+    return erg
+
+
+async def _seite(url: str) -> dict:
     import httpx
     grund = oeffentlich(url)
     if grund:
@@ -177,7 +203,7 @@ async def seite(url: str) -> dict:
     if r.url and oeffentlich(str(r.url)):                 # Weiterleitung ins eigene Netz
         return {"fehler": "Weiterleitung auf eine interne Adresse", "url": url}
     text = text_aus_html(r.text) if "html" in r.headers.get("content-type", "") else r.text
-    return {"url": str(r.url), "text": kuerze_mit_ende(text), "laenge": len(text),
+    return {"url": str(r.url), "text": kuerze_mit_ende(text), "_voll": text, "laenge": len(text),
             **({"gekuerzt": f"{len(text)} Zeichen: Anfang und Ende gezeigt (in Foren steht die Lösung meist im "
                             f"letzten Beitrag)"} if len(text) > SEITE_MAX else {})}
 

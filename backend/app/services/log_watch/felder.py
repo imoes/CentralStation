@@ -163,6 +163,38 @@ async def nachschlagen(name: str = "") -> dict:
     return {"eintraege": eintraege, "anzahl": len(eintraege)}
 
 
+async def pruefe_belege_feld(belege: list) -> tuple[list[dict], list[str]]:
+    """Belege einer neuen Feldbedeutung aus der Analyse: {id, zitat} (Nachricht der Historie) oder {url, zitat}
+    (mit web_seite gelesene Seite) — das Zitat muss wörtlich dort stehen (wie befund.pruefe_belege)."""
+    from app.services.log_watch import websuche
+    from app.services.log_watch.befund import ZITAT_MIN, _norm, lies_dokumente
+    docs = await lies_dokumente([str(b.get("id")) for b in belege if isinstance(b, dict) and b.get("id")])
+    ok, gruende = [], []
+    for b in belege or []:
+        z = str((b or {}).get("zitat") or "")
+        if len(_norm(z)) < ZITAT_MIN:
+            gruende.append(f"Zitat kürzer als {ZITAT_MIN} Zeichen")
+        elif b.get("id"):
+            d = docs.get(str(b["id"]))
+            if d is None:
+                gruende.append(f"{b['id']}: keine Nachricht der Historie")
+            elif _norm(z) not in _norm(d.get("text", "")):
+                gruende.append(f"{b['id']}: Zitat steht nicht wörtlich im Text")
+            else:
+                ok.append({"id": str(b["id"]), "zitat": z})
+        elif b.get("url"):
+            t = websuche.gelesen(str(b["url"]))
+            if t is None:
+                gruende.append(f"{b['url']}: Seite erst mit web_seite lesen")
+            elif _norm(z) not in _norm(t):
+                gruende.append(f"{b['url']}: Zitat steht nicht wörtlich auf der Seite")
+            else:
+                ok.append({"url": str(b["url"]), "zitat": z})
+        else:
+            gruende.append("Beleg braucht id (Nachricht) oder url (gelesene Seite)")
+    return ok, gruende
+
+
 async def anlegen(name: str, art: str, bedeutung: str, beispiel: str, quelle: str, von: str) -> dict:
     """Neuen Eintrag anlegen (KI oder Mensch). Vorhandenes wird NICHT überschrieben (Vorrang: die Bedeutung
     stammt vom System oder einem Menschen) — die Ablehnung nennt den vorhandenen Eintrag."""
@@ -221,13 +253,25 @@ async def undokumentiert(stunden: float = 24) -> list[str]:
 
 #: so viele Felder beschreibt ein Lauf — der Job läuft nur, wenn kein Agent arbeitet (strata ist der Engpass)
 QUELLFELDER_JE_LAUF = 10
+#: so viele davon dürfen je Lauf zusätzlich im Web recherchiert werden (Nutzer 07.11.: „eventuell auch mit
+#: einer Webrecherche — diese Fakten oder Zitate sind auch erlaubt“)
+WEB_JE_LAUF = 3
+
+PROMPT_QUELLFELD_WEB = """Du beschreibst ein Feld aus einem Log-System für eine Analyse-KI. Gegeben: das Feld und der
+Text einer Webseite (Dokumentation, Forum). Antworte nur mit Fakten, die du belegen kannst — wie im
+Recherche-Tool mit geprüften Zitaten. In Foren steht die Lösung meist im letzten Beitrag.
+Antworte NUR mit JSON: {"bedeutung": "<1–2 Sätze Deutsch>", "belege": ["<wörtliches Zitat aus der Seite>", …],
+"sicher": true|false}. Jedes Zitat muss wörtlich auf der Seite stehen; der Code prüft das. Passt die Seite nicht
+zum Feld: sicher=false."""
 #: Rollen, deren Felder beschrieben werden (ignorieren = Kennungen/Zeitstempel ohne Inhalt)
 BESCHREIBEN_ROLLEN = ("entitaet", "kategorie", "kennung", "messwert", "freitext", "unbekannt")
 
 PROMPT_QUELLFELD = """Du beschreibst ein Feld aus einem Log-System (Graylog, Wazuh oder CheckMK) für eine
 Analyse-KI. Gegeben: Quelle, Feldname, Typ, Rolle und gemessene Beispielwerte mit Anzahl.
+Antworte nur mit Fakten, die du belegen kannst — wie im Recherche-Tool mit geprüften Zitaten.
 Antworte NUR mit JSON: {"bedeutung": "<1–2 Sätze Deutsch: was das Feld enthält und wofür es taugt>",
-"sicher": true|false}. sicher=true nur, wenn Name und Werte die Bedeutung eindeutig zeigen; sonst false
+"belege": ["<wörtliches Zitat aus Feldname oder Beispielwerten, das die Bedeutung trägt>", …], "sicher": true|false}.
+Jedes Zitat muss wörtlich im Feldnamen oder in den Beispielwerten stehen; der Code prüft das. sicher=true nur, wenn Name und Werte die Bedeutung eindeutig zeigen; sonst false
 und keine Vermutung als Tatsache. Erfinde KEINE Bedeutung einzelner Werte oder Codes (z. B. „0=OK“), die nicht
 aus den Beispielwerten selbst hervorgeht — gemessen 07.11.: host_state wurde mit den Service-Codes beschrieben."""
 
@@ -235,6 +279,26 @@ aus den Beispielwerten selbst hervorgeht — gemessen 07.11.: host_state wurde m
 def quellfeld_prompt(quelle: str, feld: str, typ: str, rolle: str, beispiele: list) -> str:
     werte = ", ".join(f"{b.get('wert')!r} ({b.get('anzahl')})" for b in (beispiele or [])[:8]) or "keine"
     return f"Quelle: {quelle}\nFeld: {feld}\nTyp: {typ}\nRolle: {rolle}\nBeispielwerte (Anzahl): {werte}"
+
+
+def pruefe_zitate(bedeutung: str, belege: list, quelltext: str) -> tuple[list[str], list[str]]:
+    """Zitate einer Feldbeschreibung gegen den Quelltext (Feldname, Typ, Beispielwerte) prüfen. Rein — testbar.
+    Rückgabe (geprüft, Gründe der Ablehnung). Eine Wert-Zuordnung in der Bedeutung („0=OK“, „1 = DOWN“) gilt nur,
+    wenn sie selbst in einem geprüften Zitat steht — gemessen 07.11.: host_state bekam erfundene Service-Codes."""
+    import re
+
+    def n(x: str) -> str:
+        return re.sub(r"\s+", " ", str(x or "")).strip().lower()
+    q = n(quelltext)
+    geprueft = [z for z in belege or [] if isinstance(z, str) and len(n(z)) >= 3 and n(z) in q]
+    gruende = [f"Zitat steht nicht im Feldnamen oder den Beispielwerten: {z!r}" for z in belege or []
+               if isinstance(z, str) and z not in geprueft]
+    if not geprueft:
+        gruende.append("kein geprüftes Zitat")
+    for m in re.finditer(r"\b\d+\s*=\s*[A-Za-zÄÖÜäöü]+", bedeutung or ""):
+        if not any(n(m.group(0)) in n(z) for z in geprueft):
+            gruende.append(f"Wert-Zuordnung {m.group(0)!r} ohne Zitat")
+    return geprueft, gruende
 
 
 def lies_antwort(raw: str) -> dict | None:
@@ -278,7 +342,8 @@ async def beschreibe_quellfelder(llm=None, grenze: int = QUELLFELDER_JE_LAUF) ->
     async with AsyncSessionLocal() as db:
         cfg = await get_active_llm_config(db)
     felder, offen = await offene_quellfelder(grenze)
-    erg = {"offen_vorher": offen, "angelegt": [], "unsicher": [], "fehler": []}
+    erg = {"offen_vorher": offen, "angelegt": [], "aus_web": [], "unsicher": [], "unbelegt": [], "web_ohne_beleg": [],
+           "fehler": []}
     for f in felder:
         try:
             raw = await llm(cfg, [{"role": "system", "content": PROMPT_QUELLFELD},
@@ -289,13 +354,25 @@ async def beschreibe_quellfelder(llm=None, grenze: int = QUELLFELDER_JE_LAUF) ->
             erg["fehler"].append({"feld": f"{f.quelle}.{f.feld}", "fehler": f"{type(e).__name__}: {str(e)[:120]}"})
             continue
         a = lies_antwort(raw)
-        if a is None or not a["sicher"]:
-            erg["unsicher"].append(f"{f.quelle}.{f.feld}")
+        quelltext = quellfeld_prompt(f.quelle, f.feld, f.typ, f.rolle, f.beispielwerte or [])
+        geprueft, gruende = (pruefe_zitate(a["bedeutung"], a.get("belege") or [], quelltext)
+                             if a and a["sicher"] else ([], ["unsicher"]))
+        if gruende:
+            # zweite Stufe: Webrecherche — Zitate aus der gelesenen Seite sind ebenfalls Belege
+            if len(erg["aus_web"]) + len(erg["web_ohne_beleg"]) < WEB_JE_LAUF:
+                w = await _aus_dem_web(llm, cfg, f, quelltext)
+                if w.get("angelegt"):
+                    erg["aus_web"].append(w["angelegt"])
+                    continue
+                erg["web_ohne_beleg"].append({"feld": f"{f.quelle}.{f.feld}", "grund": w.get("grund")})
+            (erg["unsicher"] if gruende == ["unsicher"] else erg["unbelegt"]).append(
+                f"{f.quelle}.{f.feld}" if gruende == ["unsicher"] else {"feld": f"{f.quelle}.{f.feld}",
+                                                                           "gruende": gruende[:3]})
             continue
         bsp = str((f.beispielwerte or [{}])[0].get("wert", ""))[:200]
         r = await anlegen(f"{f.quelle}.{f.feld}", "quellfeld", a["bedeutung"], bsp,
-                          f"Feldkatalog: Name, Typ {f.typ}, Rolle {f.rolle} und Beispielwerte "
-                          f"(Modell {getattr(cfg, 'model', '?')})", "ki")
+                          f"Feldkatalog (Name, Typ {f.typ}, Rolle {f.rolle}, Beispielwerte); geprüfte Zitate: "
+                          + "; ".join(f"„{z}“" for z in geprueft) + f" (Modell {getattr(cfg, 'model', '?')})", "ki")
         (erg["angelegt"] if "angelegt" in r else erg["fehler"]).append(r.get("angelegt") or r)
     return erg
 
@@ -322,3 +399,36 @@ async def korrigiere(name: str, bedeutung: str, quelle: str, von: str) -> dict:
         e.angelegt_von, e.angelegt_at = von, datetime.now(timezone.utc)
         await db.commit()
     return {"korrigiert": name, "vorher": alt}
+
+
+
+async def _aus_dem_web(llm, cfg, f, quelltext: str) -> dict:
+    """Ein Quellfeld per Webrecherche beschreiben: suchen, die beste Seite lesen, beschreiben lassen — nur mit
+    Zitaten, die wörtlich auf der Seite stehen (websuche.gelesen). Rückgabe {angelegt} oder {grund}."""
+    from app.services.log_watch import websuche
+    produkt = {"checkmk": "Checkmk", "wazuh": "Wazuh", "graylog": "Graylog"}.get(f.quelle, f.quelle)
+    s = await websuche.suche(f"{produkt} {f.feld} field", f"Bedeutung des Quellfelds {f.quelle}.{f.feld} unklar")
+    treffer = [t for t in s.get("treffer") or [] if t.get("url", "").startswith("http")]
+    if not treffer:
+        return {"grund": s.get("fehler") or "keine Treffer"}
+    for t in treffer[:2]:
+        seite = await websuche.seite(t["url"])
+        voll = websuche.gelesen(t["url"])
+        if not voll:
+            continue
+        raw = await llm(cfg, [{"role": "system", "content": PROMPT_QUELLFELD_WEB},
+                              {"role": "user", "content": f"{quelltext}\n\nSeite {t['url']}:\n{seite.get('text', '')}"}],
+                        temperature=0.1, reasoning_effort="low")
+        a = lies_antwort(raw)
+        if not a or not a["sicher"]:
+            continue
+        geprueft, gruende = pruefe_zitate(a["bedeutung"], a.get("belege") or [], voll + "\n" + quelltext)
+        if gruende:
+            continue
+        r = await anlegen(f"{f.quelle}.{f.feld}", "quellfeld", a["bedeutung"],
+                          str((f.beispielwerte or [{}])[0].get("wert", ""))[:200],
+                          f"Webrecherche {t['url']}; geprüfte Zitate: " + "; ".join(f"„{z}“" for z in geprueft)
+                          + f" (Modell {getattr(cfg, 'model', '?')})", "ki")
+        if r.get("angelegt"):
+            return r
+    return {"grund": "keine Seite mit geprüftem Zitat"}
