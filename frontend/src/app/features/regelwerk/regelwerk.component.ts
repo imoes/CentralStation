@@ -298,7 +298,11 @@ export class RegelwerkComponent implements OnInit {
   t(id: string): Treffer { return this.treffer()[id] ?? { treffer: 0, verdraengt: 0, test: 0, letzter: null }; }
   mindestText(r: Regel): string { return Object.entries(r.mindestens ?? {}).map(([k, v]) => `${v} ${k}`).join(', ') || '—'; }
   wechsel(v: any): [string, number][] { return Object.entries(v.je_wechsel ?? {}) as [string, number][]; }
-  testTreffer(v: any): [string, number][] { return Object.entries(v.test_treffer ?? {}) as [string, number][]; }
+  /** jede Regel im Testmodus mit ihrer Zahl — auch 0 (nichts fehlt still) */
+  testTreffer(v: any): [string, number][] {
+    const t = v.test_treffer ?? {};
+    return this.entwurf().filter(r => r.modus === 'test' && r.aktion !== 'incident').map(r => [r.id, t[r.id] ?? 0]);
+  }
 
   private vergleich(r: Regel) {
     return { name: r.name, filter: r.filter, aktion: r.aktion, kriterium: r.kriterium, modus: r.modus };
