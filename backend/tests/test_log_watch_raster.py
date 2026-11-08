@@ -263,7 +263,8 @@ def test_checkmk_kriterien_nur_fuer_aenderungen():
 
 def _t(quelle, host, urteil="relevant", anzahl=1, bekannt=True, kriterien=("R2",)):
     rel = 2 if urteil == "relevant" else 1
-    return r.Treffer(quelle, f"s:{quelle}", host, rel, ["g"], [f"host:{host}"], anzahl,
+    # R7 braucht seit 08.11. symptomtragende Partner (traegt_symptom) — hier: ein Thema aus dem Vokabular
+    return r.Treffer(quelle, f"s:{quelle}", host, rel, ["g"], [f"host:{host}", "thema:timeout"], anzahl,
                      host_bekannt=bekannt, urteil=urteil, kriterien=list(kriterien))
 
 
@@ -289,7 +290,7 @@ def test_kontingent_und_zaehle():
     assert z["je_regel"] == {"default": 103} and z["regel_verdraengt"] == {} == z["regel_test"]
     assert z["gespeichert_waere"] == 3 and z["bytes_waere"] == 3 * 1468
     assert z["unbekannte_hosts"] == ["x"] and z["nicht_zugeordnet"] == {"unbekannt": 1}
-    assert z["top_hashtags"] == [("host:h9", 3)]
+    assert set(z["top_hashtags"]) == {("host:h9", 3), ("thema:timeout", 3)}
 
 
 def test_zusammenfassung_rechnet_ueber_abgedeckte_fenster_hoch():

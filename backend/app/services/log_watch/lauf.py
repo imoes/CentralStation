@@ -84,6 +84,30 @@ async def _zuletzt(quelle: str) -> datetime | None:
                                  .where(RasterLauf.quelle == quelle))).scalar()
 
 
+async def _wechsel_24h() -> dict[tuple[str, str], int]:
+    """Zustandswechsel je (Host, dienst:<service>) in 24 h — die Historie speichert bei CheckMK nur Änderungen,
+    ihre Zahl je Paar ist also die Zahl der Wechsel (raster.FLATTER_N)."""
+    from app.core.opensearch import get_opensearch
+    from app.services.log_watch.historie import PRAEFIX
+    out: dict[tuple[str, str], int] = {}
+    nach = None
+    while True:
+        comp: dict = {"sources": [{"h": {"terms": {"field": "host"}}}, {"s": {"terms": {"field": "schluessel"}}}],
+                      "size": 2000}
+        if nach:
+            comp["after"] = nach
+        r = await get_opensearch().search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
+            "size": 0, "query": {"bool": {"filter": [{"term": {"quelle": "checkmk"}},
+                                                     {"range": {"zeit": {"gte": "now-24h"}}}]}},
+            "aggs": {"p": {"composite": comp}}})
+        a = r["aggregations"]["p"]
+        for b in a["buckets"]:
+            out[(b["key"]["h"], b["key"]["s"])] = b["doc_count"]
+        nach = a.get("after_key")
+        if not nach or not a["buckets"]:
+            return out
+
+
 #: Tagesmuster je Host|Service, eine Stunde gültig — das Muster ändert sich nicht in Minuten (tagesmuster.py)
 _TAGESMUSTER: dict[str, tuple[datetime, dict]] = {}
 TAGESMUSTER_GUELTIG = timedelta(hours=1)
@@ -338,7 +362,7 @@ async def run_raster() -> None:
             probleme = await adapter["checkmk"].k.get_problems(include_unknown=True,
                                                                include_handled=True)
             await _tagesmuster_anreichern(adapter["checkmk"].k, probleme, jetzt)
-            abgleich = bewerte_checkmk(_checkmk_vorher, probleme, verz, d)
+            abgleich = bewerte_checkmk(_checkmk_vorher, probleme, verz, d, wechsel=await _wechsel_24h())
             _checkmk_vorher = abgleich.zustand
             _merke(bc, abgleich.treffer)
             werte = zaehle(abgleich.treffer, _kontingent, _stunde(bc))

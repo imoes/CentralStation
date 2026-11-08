@@ -128,11 +128,15 @@ def bewerte(regeln: list[Regel], tags: set[str], felder: dict | None = None) -> 
 
 #: Standardregeln als Filtertexte (filter.py) — Reihenfolge = vereinbarter Vorrang
 #: (N6 > N2 > N4 > R5/R6 vor N3/N5 > N3/N5 vor übrigen R > R vor N1 > Default N0).
-#: (id, kriterium, name, aktion, filter, stufe_block)
+#: (id, kriterium, name, aktion, filter, stufe_block[, modus]) — modus test: zählt nur, bis ein Mensch sie im
+#: Regel-Editor scharf schaltet (Kalibrierung 08.11., „VI“: die Intuition misst erst, dann entscheidet der Mensch)
 STANDARD_FILTER = (
     ("N6", "N6", "Stumm geschaltet", BLOCK, "signal:stumm", 0),
     ("N2", "N2", "Bekannt und behandelt", BLOCK, "signal:behandelt", 1),
     ("N4", "N4", "Rauschen", BLOCK, "@Rauschen", 0),
+    # Wazuh-Inventar vor R6: netstat-Änderung 533 (4 095/Tag), syscheck 550 (2 317/Tag, 348 Hosts), rootcheck-
+    # Signatur 510 („Trojaned /bin/passwd“ auf 82 Hosts zugleich = Signatur-Fehlmeldung) — Level 7, keine Symptome
+    ("N1-INV", "N1", "Wazuh-Inventar (netstat, syscheck, rootcheck-Signatur)", BLOCK, "@Wazuh-Inventar", 1, TEST),
     ("R5", "R5", "Schaden an Ressourcen", FORWARD, "signal:schaden", 1),
     ("R6", "R6", "Sicherheit", FORWARD, "quelle:wazuh level>=7", 1),
     ("R6-FW", "R6", "Firewall-Bedrohung", FORWARD, "quelle:firewall signal:bedrohung", 1),
@@ -141,6 +145,8 @@ STANDARD_FILTER = (
     # Nutzer 08.11.: ein Dateisystem, das sich täglich füllt und bereinigt wird (Trendalarm im Muster), ist Routine —
     # vor R1, sonst machte „zustand:crit @Produktion“ jeden Trend-CRIT relevant (tagesmuster.py)
     ("N1-TAG", "N1", "Bekanntes Tagesmuster (Trendalarm)", BLOCK, "signal:tagesmuster", 1),
+    # Flattern: ≥ FLATTER_N Zustandswechsel in 24 h sind EIN Problem, nicht N relevante Nachrichten (raster.py)
+    ("N1-FLAT", "N1", "Flattern (Zustandswechsel gehäuft)", BLOCK, "signal:flattern", 1, TEST),
     ("R1", "R1", "Störung in Produktion", FORWARD, "zustand:crit @Produktion", 1),
     ("R2", "R2", "Neues Muster", FORWARD, "signal:neu", 1),
     ("R3", "R3", "Ausbreitung", FORWARD, "signal:ausbreitung", 1),
@@ -178,8 +184,9 @@ STANDARD_INCIDENT = (
 def standard_regeln(objekte: dict[str, str]) -> list[Regel]:
     """Standardregeln, übersetzt mit den Objekten der Definition — Urteilsregeln, dann Incident-Regeln."""
     from app.services.log_watch.filter import bedingung
-    return ([Regel(rid, krit, name, aktion, bedingung(text, objekte), stufe_block=stufe, filter=text)
-             for rid, krit, name, aktion, text, stufe in STANDARD_FILTER]
+    return ([Regel(rid, krit, name, aktion, bedingung(text, objekte), stufe_block=stufe, filter=text,
+                   modus=(rest[0] if rest else AKTIV))
+             for rid, krit, name, aktion, text, stufe, *rest in STANDARD_FILTER]
             + [Regel(rid, krit, name, INCIDENT, bedingung(text, objekte), modus=TEST, filter=text,
                      gruppe=gr, fenster_min=fm, mindestens=dict(mi), incident_art=art)
                for rid, krit, name, text, gr, fm, mi, art in STANDARD_INCIDENT])

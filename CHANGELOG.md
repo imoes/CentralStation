@@ -65,6 +65,54 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-08 — The intuition calibrated against real messages; the system described as a VI
+
+You asked (08.11.): check the analysis logic the way an analyst would search by fields, test the assumptions as
+searches against real messages until the logic holds, and describe the system as a VI (virtuelle Intelligenz):
+an intuition that analyses everything automatically, a consciousness that sees only what is pre-filtered, and
+learning that becomes intuition over time. The skill is `~/skills/vi-gedaechtnis` (MCP endpoint "vi Gedächtnis").
+
+### Checked
+
+- **The eight searches an analyst runs for an alarm** (isolated?, spread?, new or chronic?, handled?, cross-source?,
+  already said?, symptom wave?, urgent?) all run on the existing fields and hashtags. Tested on the live case
+  cue0111 / pattern 7c74c2c5… (`vi_gedaechtnis_pruefung`).
+
+### Changed (measured, then fixed)
+
+- **R7 "Zusammentreffen" only between symptom-bearing hits.** In 24 h there were 1 232 R7 hits; 619 had as their only
+  partner Wazuh level-7 inventory rules (533 netstat ports changed 361×, 550 syscheck 128×, 510 rootcheck
+  signature). Both sides became urgent and went to the AI. Now a partner counts only with a symptom: a topic from
+  the vocabulary, a symptom signal (schaden, anstieg, ausbreitung, frist, bedrohung), CheckMK CRIT, or Wazuh ≥ the
+  urgent level. Simulated on the same 24 h: 129 host×window → 11 on 5 hosts; what remains is firewall+graylog
+  (web01) and checkmk+graylog (mon03). 574 of 605 R7 messages would no longer be urgent. Code standard v11.
+- **Flapping is one problem, not N messages.** 23 host|service pairs had ≥ 4 state changes in 24 h ("OMD mue
+  performance" 60, "OMD kas performance" 55); 282 of their messages were stored as relevant. The raster now sets
+  `signal:flattern` with the count, from the history (`lauf._wechsel_24h`). Rule **N1-FLAT** is in **test mode**:
+  it counts, a human switches it on in the rule editor.
+- **Wazuh inventory as a test rule.** `regel:533` alone gave 4 095 relevant messages per day, all level 7. New
+  object `@Wazuh-Inventar` = `quelle:wazuh regel:(533 OR 550 OR 510) level<10` and rule **N1-INV** in **test
+  mode**, before R6. Note: 510 "Trojaned version of /bin/passwd" fired on 82 hosts at once — the known signature
+  false positive, named as such.
+- **`checkmk.state_type` corrected with a primary source.** The docs pages do not describe the column; Livestatus
+  itself does (`GET columns`, monitoring.example.com site im, 08.11. 10:35 UTC): "Type of the current state (0:
+  soft, 1: hard)".
+- Tests: `test_r7_nur_zwischen_symptomtragenden_treffern`, `test_flattern_ist_ein_signal_und_testregel`,
+  `test_wazuh_inventar_zaehlt_im_test_und_bleibt_r6` (908 in total).
+
+### Measured, not yet fixed
+
+- **Prompt caching does not take effect on strata.** Three calls with the identical 1 214-token static prompt head
+  (`trichter.SYSTEM`) returned `timings.cache_n = 0` and `prompt_ms ≈ 2 420` each time, even with
+  `cache_prompt: true`. The static head is the "trained intuition" in the prompt; the server does not reuse it.
+  The fix is on llm-host03 (production), so it needs approval.
+
+### Still missing
+
+- Rules N1-FLAT and N1-INV in the live definition (v14), so the editor shows their test hits.
+
+---
+
 ## 2026-11-08 — Answers to peer questions reach the asker; delivery checked live
 
 ### Changed

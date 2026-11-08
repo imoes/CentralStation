@@ -86,6 +86,8 @@ STANDARD_OBJEKTE = {
     # Ansible: Nutzer 07.11.2026 — Modulaufrufe auf dem Zielhost (raster.SELBST_APPS → app:ansible)
     "Selbst-erzeugt": "dienst:Check_MK* OR app:ansible",
     "Routine-Quellen": "quelle:(graylog OR switch)",
+    # Wazuh-Regeln, die Inventar melden, kein Symptom (gemessen 08.11.; Regel N1-INV im Testmodus)
+    "Wazuh-Inventar": "quelle:wazuh regel:(533 OR 550 OR 510) level<10",
 }
 
 PARAMETER = {
@@ -102,7 +104,7 @@ PARAMETER = {
 }
 
 #: Version der Definition, die dieser Code als Standard mitbringt, und warum es sie gibt.
-CODE_VERSION = 10
+CODE_VERSION = 11
 AENDERUNGEN = {
     1: "Festgelegt mit dem Nutzer am 06.11.2026",
     2: "R6 umfasst Firewall-Bedrohungen (Sinkhole, Stufe ab medium) — Nutzer 06.11.2026: "
@@ -131,6 +133,10 @@ AENDERUNGEN = {
         "0148/0149), melden über die CheckMK-Trendvorhersage WARN/CRIT. Folgt der Alarm dem gemessenen Tagesmuster "
         "(≥ 3 Tage Hub ≥ 15 Pp mit Rückgang auf den Grundwert), ist er Routine (N1, Regel N1-TAG vor R1); über dem "
         "bisherigen Tageshöchststand, ohne Bereinigung oder an der Prozentgrenze bleibt er ein echter Fehler",
+    11: "Kalibrierung der Intuition (Nutzer 08.11.2026, „VI“): R7 Zusammentreffen nur zwischen SYMPTOMTRAGENDEN "
+        "Treffern (gemessen: 619 von 1 232 R7 hatten als Partner nur Wazuh-Level-7-Inventar; simuliert 129 → 11 "
+        "Host×Fenster); neu im Testmodus: N1-INV Wazuh-Inventar (533/550/510, Level < 10), N1-FLAT Flattern "
+        "(≥ 4 Zustandswechsel je Host|Dienst in 24 h, gemessen 23 Paare, bis 60 Wechsel)",
 }
 
 def als_daten() -> tuple[list[dict], dict]:

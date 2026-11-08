@@ -318,9 +318,16 @@ class CheckmkAbgleich:
     kritikalitaeten: Counter = field(default_factory=Counter)
 
 
+#: ab so vielen Zustandswechseln je Host|Dienst in 24 h flattert ein Dienst (gemessen 08.11.: 23 Paare ≥ 4,
+#: „OMD mue performance“ 60 Wechsel — 282 Nachrichten als relevant gespeichert; ein Analyst sieht EIN Problem)
+FLATTER_N = 4
+
+
 def bewerte_checkmk(vorher: dict[str, str] | None, probleme: list[dict],
-                    verz: Hostverzeichnis, d: Definition = STANDARD) -> CheckmkAbgleich:
-    """Nur Änderungen sind Nachrichten: neues Problem oder anderer Zustand."""
+                    verz: Hostverzeichnis, d: Definition = STANDARD,
+                    wechsel: dict[tuple[str, str], int] | None = None) -> CheckmkAbgleich:
+    """Nur Änderungen sind Nachrichten: neues Problem oder anderer Zustand. `wechsel`: Zustandswechsel je
+    (kanonischer Host, dienst:<service>) in 24 h aus der Historie → signal:flattern ab FLATTER_N (lauf.py)."""
     jetzt = {f"{p['host']}|{p['service']}": p["severity"] for p in probleme}
     krit = Counter((p.get("metadata") or {}).get("criticality") or "(leer)" for p in probleme)
     if vorher is None:
@@ -353,6 +360,10 @@ def bewerte_checkmk(vorher: dict[str, str] | None, probleme: list[dict],
             signale.add("behandelt")
             gruende.append("quittiert" if p.get("acknowledged") else "in Downtime")
         kanon, e, htags = _host_tags(p["host"], verz)
+        w = (wechsel or {}).get((kanon, f"dienst:{p['service']}"), 0)
+        if w >= FLATTER_N:
+            signale.add("flattern")
+            gruende.append(f"flattert: {w} Zustandswechsel in 24 h")
         th = [t.id for t in themen(p.get("output") or "")]
         tags = (["quelle:checkmk", f"dienst:{p['service']}", f"zustand:{_ZUSTAND_TAG.get(sev, sev)}"]
                 + ([f"kritikalitaet:{crit}"] if crit else []) + htags
@@ -365,20 +376,36 @@ def bewerte_checkmk(vorher: dict[str, str] | None, probleme: list[dict],
 
 # ── Quellenübergreifend ────────────────────────────────────────────────────────
 
-def quellenuebergreifend(treffer: list[Treffer]) -> set[str]:
-    """Hosts, die zugleich in mindestens zwei Quellen relevant sind: deren relevante
-    Treffer bekommen R7 und werden dringend (3).
+#: Signale, die ein Symptom benennen (nicht nur „neu“ oder „Level 7“)
+SYMPTOM_SIGNALE = frozenset({"signal:schaden", "signal:anstieg", "signal:ausbreitung", "signal:frist",
+                             "signal:bedrohung"})
+
+
+def traegt_symptom(t: Treffer, wazuh_dringend: int = 12) -> bool:
+    """Trägt der Treffer ein Symptom? Thema aus dem Vokabular, ein Symptom-Signal, CheckMK CRIT oder Wazuh ab der
+    dringenden Stufe. Rein. Gemessen 08.11.: von 1 232 R7-Treffern in 24 h hatten 619 als Partner nur Wazuh-Level-7-
+    Inventar (533 netstat, 550 syscheck, 510 rootcheck-Signatur) — ohne Symptom kein Zusammentreffen."""
+    tags = set(t.hashtags)
+    return (any(x.startswith("thema:") for x in tags) or bool(tags & SYMPTOM_SIGNALE) or "zustand:crit" in tags
+            or (t.quelle == "wazuh" and int((t.felder or {}).get("level") or 0) >= wazuh_dringend))
+
+
+def quellenuebergreifend(treffer: list[Treffer], wazuh_dringend: int = 12) -> set[str]:
+    """Hosts, auf denen mindestens zwei Quellen zugleich einen SYMPTOMTRAGENDEN relevanten Treffer haben: diese
+    Treffer bekommen R7 und werden dringend (3). Simuliert 08.11. an 24 h: 129 Host×Fenster → 11 (5 Hosts),
+    übrig blieben Firewall+Graylog (web01) und CheckMK+Graylog (mon03) — was ein Analyst meint.
 
     Gemeinsames Auftreten im selben Zeitraum ist KEINE belegte Ursache — der Grund sagt
     das ausdrücklich (kein post hoc). Nicht relevante Treffer bleiben, was sie sind.
     """
     quellen: dict[str, set[str]] = {}
     for t in treffer:
-        if t.urteil == RELEVANT and t.host_bekannt:
+        if t.urteil == RELEVANT and t.host_bekannt and traegt_symptom(t, wazuh_dringend):
             quellen.setdefault(t.host, set()).add(t.quelle)
     hosts = {h for h, q in quellen.items() if len(q) >= 2}
     for t in treffer:
-        if t.host in hosts and t.urteil == RELEVANT and "R7" not in t.kriterien:
+        if (t.host in hosts and t.urteil == RELEVANT and "R7" not in t.kriterien
+                and traegt_symptom(t, wazuh_dringend)):
             andere = sorted(quellen[t.host] - {t.quelle})
             t.relevanz = 3
             t.kriterien = sorted(set(t.kriterien) | {"R7"})

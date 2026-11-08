@@ -569,6 +569,12 @@ The search bar on `/feed` works like Graylog 5.2's search (`feed-query.ts`, port
   tool: up to 9 complete queries. After `feld:` the field's values in the current result; after a word,
   matching hosts, containers, services, tags and field names. The number is the hit count of that exact
   query (one `_msearch`). An unreadable input shows its reason under the bar.
+- **The log watch as a VI (virtuelle Intelligenz).** The *intuition* (raster, rules, signals, known errors) sees
+  everything and judges without a model; the *consciousness* (agentic AI) sees only what passes
+  (`relevanz>=3 OR signal:neu`). What it learns (known errors, test rules, field meanings, tag kinds) becomes
+  intuition. The skill `~/skills/vi-gedaechtnis` reads this memory over the API and runs the eight analyst
+  searches for a host; the MCP server `example-skills` applies the same idea to itself (memory, learning, reflexes,
+  loop — see `~/skills/MCP.md`).
 - **Rule editor** (`/regelwerk`, admin/sysadmin), like a firewall's policy view.
   - Rules in order, with filter, action, criterion and test/active, plus hits, displaced and test hits per rule
     (`GET /api/log-watch/regeln/treffer`).
