@@ -19,7 +19,7 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 
-from app.services.log_watch import bekannt, rueckfrage
+from app.services.log_watch import bekannt, rueckfrage, vi_bruecke
 from app.services.log_watch import werkzeuge as wz
 
 log = logging.getLogger(__name__)
@@ -280,8 +280,14 @@ async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=
               + json.dumps(objekte, ensure_ascii=False, default=str)
               # nur in der Flotte (fall["_agent"]) — ohne Agent gibt es keine Kollegen
               + ("\n\n" + kollegen_text(await kollegen(fall["_agent"])) if fall.get("_agent") else ""))
+    # Kollektiv-Gedächtnis (vi-mcp, Konnektor vi_mcp): was andere Instanzen zu Hosts/Themen des Falls wissen;
+    # die Analyse ist dort eine Handlung (vi_vorher/vi_nachher). Ohne Konnektor: leer, nichts ändert sich.
+    kollektiv, vorher_id = (await vi_bruecke.vor_analyse(fall, lage)) if fall.get("_agent") else ("", None)
+    if kollektiv:
+        prompt += "\n\n" + kollektiv
     verlauf: list[dict] = [{"rolle": "worker", "text": prompt}]
     ergebnis: dict = {}
+    t_analyse = time.monotonic()
     try:
         ergebnis = await _schleife(fall, llm_config, llm, prompt, verlauf)
     except Exception as e:  # noqa: BLE001 — das Protokoll wird trotzdem geschrieben
@@ -295,6 +301,8 @@ async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=
                                             _dt.now(timezone.utc)))
         except Exception as e:  # noqa: BLE001 — Protokoll-Ausfall benannt, Analyse bleibt gültig
             ergebnis["protokoll_fehler"] = f"{type(e).__name__}: {str(e)[:200]}"
+    if fall.get("_agent"):          # nur die Flotte meldet ans Kollektiv (wie kollegen)
+        await vi_bruecke.nach_analyse(fall, ergebnis, int((time.monotonic() - t_analyse) * 1000), vorher_id)
     if ergebnis.get("befund"):
         # gesehen hat die Analyse die Lage des Falls und, was sie zitiert hat
         try:

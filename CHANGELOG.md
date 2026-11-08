@@ -65,6 +65,39 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-08 — New connector "vi-mcp": CentralStation joins the collective memory
+
+You decided (08.11.): "Wir brauchen einen neuen Konnektor." CentralStation becomes one instance of the collective
+VI memory (vi-mcp, a separate project by session mutkluge-64, running on llm-host03 behind nginx with TLS).
+Instances have an internal memory (their own context) and share an external one, so they learn from each other.
+
+### What is new
+
+- **Connector type `vi_mcp`** (Admin → Konnektoren): base URL = the MCP endpoint
+  (`https://llm-host03.example.com/vi-mcp/mcp`), credential `token` (encrypted). Instance "centralstation",
+  without reflex right. "Verbindung testen" runs `initialize` + `vi_status`.
+  - Speaks MCP Streamable HTTP: JSON-RPC per POST, JSON or SSE answers, `Mcp-Session-Id`. After a service
+    restart the old session answers 404; the connector signs in again once.
+- **The bridge in the log watch** (`log_watch/vi_bruecke.py`), three ways, each with a named failure:
+  - **Before an analysis:** `vi_vorher` for the action "analyse" with the hosts and topics of the case, plus
+    `vi_erinnere` for what *other* instances know (`!instanz:centralstation`). The result is a prompt section
+    "Kollektiv-Gedächtnis … Kontext, kein Beleg". Without a connector the prompt is unchanged.
+  - **After an analysis:** `vi_nachher` with ok, duration and the finding's core. Only the fleet reports.
+  - **Every 15 min (:09/:24/:39/:54):** learned knowledge goes up as insights with hashtags and source: known errors
+    (one per finding, `herkunft:log-ueberwachung`, no own statistics signals) and field meanings by AI or human.
+    Nothing raw leaves: no message texts, no tool results, no finding bodies. Run record `vi-bruecke`.
+- Evidence, live 08.11. ~12:00 UTC with the centralstation token: `test_connection` → "vi-mcp 0.1.1 verbunden …
+  Gespräch 20261108007 (Instanz centralstation)"; `vi_erinnere` answers; a wrong session id → 404 → new session.
+  Tests: `test_log_watch_vi_bruecke.py` (912 in total).
+
+### Still missing
+
+- The connector is not created yet in this instance; the first push and the first prompt section follow then.
+- `kontext_hashtags` in `vi_vorher` needs vi-mcp 0.2.0 (the connector already sends them and falls back).
+- Confirming/refuting insights of other instances from the analysis is not wired yet (vi-mcp 0.2.0 rules).
+
+---
+
 ## 2026-11-08 — The intuition calibrated against real messages; the system described as a VI
 
 You asked (08.11.): check the analysis logic the way an analyst would search by fields, test the assumptions as

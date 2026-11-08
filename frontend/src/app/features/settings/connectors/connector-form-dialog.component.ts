@@ -50,6 +50,7 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string }[] = [
   { value: 'gitlab',       label: 'GitLab (Versionskontrolle)' },
   { value: 'awx',          label: 'AWX-NG (Ansible Automation)' },
   { value: 'llm',          label: 'KI-Modell (LLM)' },
+  { value: 'vi_mcp',       label: 'vi-mcp (Kollektiv-Gedächtnis der VI)' },
 ];
 
 const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
@@ -102,6 +103,10 @@ const CRED_FIELDS: Record<ConnectorType, CredField[]> = {
     { key: 'email',       label: 'E-Mail',   type: 'text'     },
     { key: 'password',    label: 'Passwort', type: 'password' },
     { key: 'project_ids', label: '',         type: '_hidden'  },
+  ],
+  vi_mcp: [
+    { key: 'token', label: 'Token der Instanz „centralstation“', type: 'password',
+      hint: 'Basis-URL ist der MCP-Endpunkt, z. B. https://llm-host03.example.com/vi-mcp/mcp; Token legt vi-mcp je Instanz an (ohne Reflex-Recht)' },
   ],
   aikb: [
     { key: 'api_token', label: 'API Token (aikb_…)', type: 'password',

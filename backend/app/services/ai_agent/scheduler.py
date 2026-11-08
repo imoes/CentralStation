@@ -420,6 +420,18 @@ async def run_feld_doku() -> None:
     await feld_doku_als_aufgabe("zeitplan")
 
 
+async def run_vi_bruecke() -> None:
+    """Gelerntes der Log-Überwachung ins Kollektiv-Gedächtnis vi-mcp schreiben (log_watch/vi_bruecke.py)."""
+    from app.services.log_watch import vi_bruecke
+    from app.services.log_watch.lauf import _speichere
+    b = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    try:
+        await _speichere("vi-bruecke", b, await vi_bruecke.hochschreiben())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("vi-Brücke fehlgeschlagen: %s", e)
+        await _speichere("vi-bruecke", b, {"fehler": f"{type(e).__name__}: {str(e)[:300]}"})
+
+
 async def run_incident_housekeeping() -> None:
     """host-Incidents schließen, deren Mitglieder alle erledigt sind (Sicherheitsnetz).
 
@@ -536,6 +548,9 @@ async def start_scheduler() -> None:
     _scheduler.add_job(run_incident_objekte, "cron", minute="3-59/5",
                        id="log_watch_incident_objekte", replace_existing=True, max_instances=1, coalesce=True,
                        misfire_grace_time=120)
+    _scheduler.add_job(run_vi_bruecke, "cron", minute="9,24,39,54",
+                       id="log_watch_vi_bruecke", replace_existing=True, max_instances=1, coalesce=True,
+                       misfire_grace_time=300)
     _scheduler.add_job(run_feld_doku, "cron", minute="17,47",
                        id="log_watch_feld_doku", replace_existing=True, max_instances=1, coalesce=True,
                        misfire_grace_time=300)

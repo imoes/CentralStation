@@ -98,6 +98,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
     from app.services.connectors.gitlab import GitLabConnector
     from app.services.connectors.awx import AWXConnector
     from app.services.connectors.llm import LLMConnector
+    from app.services.connectors.vi_mcp import ViMcpConnector
 
     mapping = {
         "checkmk": CheckMKConnector,
@@ -117,6 +118,7 @@ def get_connector(connector_type: str, base_url: str | None, credentials: dict) 
         "gitlab": GitLabConnector,
         "awx": AWXConnector,
         "llm": LLMConnector,
+        "vi_mcp": ViMcpConnector,
         "awx_ng": _AwxNgConnector,
         "mcp_server": _GenericConnector,
         "ssh": _SshConnector,
