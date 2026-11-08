@@ -939,6 +939,13 @@ async def create_session(
         except Exception as exc:  # noqa: BLE001
             log.warning("vibemk registration failed for %s: %s", user.id, exc)
 
+        # Lokale VI (Gedächtnis der Konsole, Instanz konsole) — für Hermes und Codex hier, für claude_cli
+        # zusätzlich mit Hook in userenv_manager._konfiguriere_vi.
+        from app.services import vi_konsole as _vk
+        _vi_cfg = await _vk.lade(db)
+        if _vi_cfg:
+            extra_servers[_vk.SERVER_NAME] = _vk.mcp_server(_vi_cfg)
+
         awx_res = await db.execute(
             _sel(ConnectorConfig).where(
                 ConnectorConfig.type == "awx_ng",

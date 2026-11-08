@@ -44,3 +44,29 @@ def test_ohne_vi_werden_nur_die_vi_hooks_entfernt():
 def test_host_fuer_proxy_ausnahme():
     assert vk.host_von("http://vi-mcp:8765/mcp") == "vi-mcp"
     assert vk.host_von(None) == "vi-mcp"
+
+
+def test_mcp_eintrag_fuer_hermes_und_codex():
+    srv = vk.mcp_server({"url": "http://vi-mcp:8765/mcp", "token": "T"})
+    assert srv == {"transport": "streamable-http", "url": "http://vi-mcp:8765/mcp", "headers": {"Authorization": "Bearer T"}}
+
+
+def test_codex_konfiguration_traegt_kopfzeilen_der_zusatzserver():
+    from app.services.userenv_manager import _codex_config_toml
+    toml = _codex_config_toml({"vi": vk.mcp_server({"url": "http://vi-mcp:8765/mcp", "token": "T"})}, cs_user_id="")
+    assert "[mcp_servers.vi]" in toml and 'url = "http://vi-mcp:8765/mcp"' in toml
+    assert 'http_headers = { "Authorization" = "Bearer T" }' in toml.split("[mcp_servers.vi]")[1]
+
+
+def test_briefing_nennt_die_vi_statt_store_knowledge():
+    from app.services.userenv_manager import agent_instructions
+    for kb in (True, False):
+        t = agent_instructions("marvin", kb_available=kb)
+        assert "vi_erinnere" in t and "vi_lerne" in t and "store_knowledge" not in t
+
+
+def test_wissens_werkzeuge_sind_vom_mcp_server_entfernt():
+    import pathlib
+    quelle = pathlib.Path("app/api/mcp_server.py").read_text()
+    for name in ("store_knowledge", "search_knowledge", "update_knowledge", "forget_knowledge"):
+        assert f"async def {name}(" not in quelle, name

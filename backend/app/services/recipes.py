@@ -188,15 +188,16 @@ async def distill(db, inc, *, session_id: str, user, summary: str) -> dict | Non
              parsed["title"][:40], scope_type, scope_key[:24], len(parsed["steps"]),
              len(parsed["other_commands"]), len(calls))
     try:
-        from app.services.knowledge_index import store_knowledge
-        await store_knowledge({
-            "kind": "runbook", "title": parsed["title"], "problem": parsed["problem"],
-            "solution": parsed["solution"] + ("\n\nPrüfschritte: " + "; ".join(
-                f"{s['template']} {s['params'] or ''}".strip() for s in parsed["steps"]) if parsed["steps"] else ""),
-            "host": inc.primary_host or "", "tags": [scope_type, scope_key, "rezept"],
-            "source": "recipe", "session_id": session_id, "confidence": 0.8})
+        from app.services import vi_konsole
+        pruef = ("; Prüfschritte: " + "; ".join(f"{s['template']} {s['params'] or ''}".strip()
+                                                for s in parsed["steps"])) if parsed["steps"] else ""
+        r = await vi_konsole.lerne(
+            db, f"Rezept: {parsed['title']}. Problem: {parsed['problem']} Lösung: {parsed['solution']}{pruef}",
+            ["herkunft:rezept", f"rezept:{scope_type}", *([f"host:{inc.primary_host}"] if inc.primary_host else [])],
+            f"CentralStation Rezept {rec.id} aus Konsolen-Sitzung {session_id}, Incident {inc.id}", 2, ausgang="gut")
+        log.info("recipes: VI %s", r[:120])
     except Exception as exc:  # noqa: BLE001
-        log.debug("recipes: cs-knowledge mirror failed: %s", exc)
+        log.warning("recipes: VI mirror failed: %s", exc)
     return summary_of(rec)
 
 

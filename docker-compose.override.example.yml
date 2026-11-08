@@ -17,7 +17,7 @@ services:
       args:
         HTTP_PROXY: http://proxy.example.com:3128
         HTTPS_PROXY: http://proxy.example.com:3128
-        NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,.example.com
+        NO_PROXY: localhost,127.0.0.1,db,redis,opensearch,vi-mcp,.example.com
     # Environment: Proxy zur Laufzeit (ausgehende Verbindungen des Backends).
     environment:
       HTTP_PROXY: http://proxy.example.com:3128

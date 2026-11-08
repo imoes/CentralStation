@@ -484,9 +484,9 @@ async def run_ide_reaper() -> None:
 
 
 async def run_knowledge_housekeeping() -> None:
-    """Löscht abgelaufene Erkenntnisse (lesson/pattern) + hard-deleted Skills."""
-    from app.services.knowledge_index import expire_old_knowledge, expire_disabled_skills
-    deleted_k = await expire_old_knowledge()
+    """Hard-deleted Skills entfernen. cs-knowledge ist seit 08.11.2026 abgeschaltet (Wissen liegt in der VI)."""
+    from app.services.knowledge_index import expire_disabled_skills
+    deleted_k = 0
     deleted_s = await expire_disabled_skills()
     if deleted_k or deleted_s:
         logger.info("Knowledge housekeeping: %d knowledge + %d skills removed",

@@ -67,6 +67,23 @@ def host_von(url: str | None) -> str:
     return (urlparse(url).hostname if url else None) or STANDARD_HOST
 
 
+def mcp_server(vi: dict) -> dict:
+    """Eintrag für die MCP-Konfiguration von Hermes und Codex (Form wie extra_servers). Rein."""
+    return {"transport": "streamable-http", "url": vi["url"], "headers": {"Authorization": f"Bearer {vi['token']}"}}
+
+
+async def lerne(db, text: str, hashtags: list[str], quelle: str, wichtigkeit: int = 1, ausgang: str | None = None) -> str:
+    """Erkenntnis in die lokale VI (Instanz konsole) — ersetzt die Spiegelung nach cs-knowledge.
+    Ohne Konfiguration: benannt übersprungen, nicht still."""
+    vi = await lade(db)
+    if vi is None:
+        return "übersprungen: VI für die Konsole nicht konfiguriert (vi.konsole_url/vi.konsole_token)"
+    from app.services.connectors.vi_mcp import ViMcpConnector
+    from app.services.log_watch.vi_bruecke import vi_tag
+    tags = sorted({t for t in (vi_tag(h) for h in hashtags) if t})
+    return await ViMcpConnector(vi["url"], {"token": vi["token"]}).lerne(text, tags, quelle, wichtigkeit, ausgang=ausgang)
+
+
 async def lade(db) -> dict | None:
     """{url, token} der Konsolen-Instanz, oder None (VI für die Konsole aus)."""
     from app.services.settings import get_setting

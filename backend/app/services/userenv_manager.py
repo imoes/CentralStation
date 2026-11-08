@@ -959,9 +959,29 @@ ist jederzeit erlaubt.)
 - SSH-Fehler sofort und vollständig melden (exit code + stderr), nicht ausweichen
 - subprocess.run() immer mit timeout=120 aufrufen
 """
+    content += _VI_SECTION
     if kb_available:
         content += _KB_SECTION
     return content
+
+
+#: Gedächtnis der Konsole: die lokale VI (vi-mcp, MCP-Server „vi“, Instanz konsole). Ersetzt seit 08.11.2026
+#: store_knowledge/search_knowledge (cs-knowledge, abgeschaltet).
+_VI_SECTION = """
+## GEDÄCHTNIS — die VI (MCP-Server `vi`)
+Bevor du ein Problem untersuchst, frag die VI, ob es schon bekannt oder gelöst ist:
+
+    vi_erinnere(filter="host:<hostname> OR dienst:<dienst> OR <stichwort>")
+
+Filter: `art:wert` (UND), `(a OR b)`, `!art:wert`, freie Wörter (Volltext). `vi_vertiefe` grenzt weiter ein.
+Nach einer **verifizierten** Lösung lege sie ab — ein Satz, Hashtags `art:wert` (ohne Leerzeichen im Wert) und
+eine Quelle (Befehl, Ausgabe, Ticket):
+
+    vi_lerne(text="…", hashtags=["host:…", "dienst:…", "thema:…"], quelle="…", ausgang="gut")
+
+Ist ein Eintrag falsch oder veraltet: `vi_widerlege(id, grund)`; bestätigt er sich: `vi_bestaetige(id, grund)`.
+Keine Zugangsdaten in die VI. Hinweise der VI sind Kontext, kein Beleg — prüfe sie am System.
+"""
 
 
 #: Abschnitt zur Wissensdatenbank — nur in der Anleitung, wenn aikb nutzbar ist.
@@ -1000,8 +1020,8 @@ Findest du nichts, sag es so: „In der Wissensdatenbank ist dazu nichts dokumen
 Liefert das Werkzeug einen Fehler, ist das etwas anderes — dann ist die Datenbank nicht
 erreichbar, und daraus folgt **nicht**, dass nichts dokumentiert ist.
 
-Eigene Erkenntnisse legst du mit `store_knowledge` ab; das ist das Gedächtnis dieser
-Konsole, getrennt von der Wissensdatenbank.
+Eigene Erkenntnisse gehören in die VI (MCP-Server `vi`, siehe oben) — das ist das
+Gedächtnis dieser Konsole, getrennt von der Wissensdatenbank.
 """
 
 
@@ -1305,20 +1325,18 @@ def _codex_config_toml(mcp_servers: dict | None, cs_user_id: str = "", model: st
         'default_tools_approval_mode = "approve"',
         'tool_timeout_sec = 120',
     ]
-    # Personal MCP connectors (e.g. VibeMK) — only streamable-http servers; codex
-    # connects to their URL directly. Bearer tokens (if any) are passed via env var.
+    # Personal MCP connectors (e.g. VibeMK), the local VI („vi“) — only streamable-http servers; codex
+    # connects to their URL directly, with their headers (Bearer/Basic) as http_headers.
     for name, srv in (mcp_servers or {}).items():
         url = (srv.get("url") or "").rstrip("/")
         if not url or name == "centralstation":
             continue
         safe = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in name)
-        parts += [
-            '',
-            f'[mcp_servers.{safe}]',
-            f'url = "{url}"',
-            'default_tools_approval_mode = "approve"',
-            'tool_timeout_sec = 60',
-        ]
+        parts += ['', f'[mcp_servers.{safe}]', f'url = "{url}"']
+        kopf = srv.get("headers") or {}
+        if kopf:
+            parts.append("http_headers = { " + ", ".join(f'"{k}" = "{v}"' for k, v in kopf.items()) + " }")
+        parts += ['default_tools_approval_mode = "approve"', 'tool_timeout_sec = 60']
     return "\n".join(parts) + "\n"
 
 

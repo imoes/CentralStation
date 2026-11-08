@@ -421,6 +421,10 @@ BROWSER_READ = {"navigate", "navigate_back", "snapshot", "take_screenshot", "tab
 #: Der CentralStation-MCP-Server prüft die Freigabe selbst (mcp_server._require_write);
 #: zweimal fragen hieße, dass eine Stelle die Regel nicht kennt.
 SELF_GUARDED_SERVERS = {"centralstation"}
+#: Das Gedächtnis der Konsole (lokale VI, vi-mcp): es handelt nie selbst in der Welt, schreibt nur in sich selbst,
+#: und die Rechte der Instanz (kein Reflex-, kein Freigabe-Recht) prüft vi-mcp selbst. Ohne diese Zeile wäre
+#: schon vi_erinnere gesperrt („erinnere“ ist kein Lese-Verb).
+MEMORY_SERVERS = {"vi"}
 
 
 def _mcp_parts(tool: str) -> tuple[str, str] | None:
@@ -440,7 +444,7 @@ def _mcp_parts(tool: str) -> tuple[str, str] | None:
 
 
 def _mcp_is_write(server: str, name: str) -> bool:
-    if server in SELF_GUARDED_SERVERS:
+    if server in SELF_GUARDED_SERVERS or server in MEMORY_SERVERS:
         return False
     if server == "playwright":
         return name.removeprefix("browser_") not in BROWSER_READ

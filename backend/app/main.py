@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("OpenSearch index setup deferred: %s", exc)
-        # Ensure Living Documentation indices (cs-knowledge, cs-skills)
+        # Ensure Living Documentation index cs-skills (cs-knowledge abgeschaltet 08.11.2026 → lokale VI)
         try:
             from app.services.knowledge_index import ensure_knowledge_indices
             await ensure_knowledge_indices()

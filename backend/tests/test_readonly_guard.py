@@ -389,3 +389,13 @@ def test_codex_hook_is_admin_enforced() -> None:
     assert group["hooks"][0]["command"] == "python3 /opt/cs-readonly-guard.py"
     dockerfile = (_GUARD.parent / "Dockerfile").read_text()
     assert "COPY userenv/codex-requirements.toml /etc/codex/requirements.toml" in dockerfile
+
+
+@pytest.mark.parametrize("tool", [
+    "mcp__vi__vi_erinnere", "mcp__vi__vi_lerne", "mcp__vi__vi_widerlege", "mcp__vi__vi_vertiefe",
+    "mcp_vi_vi_erinnere", "mcp_vi_vi_lerne",
+])
+def test_vi_ist_gedaechtnis_nicht_systemaenderung(tool) -> None:
+    """Die lokale VI (MCP-Server „vi“) ist das Gedächtnis der Konsole: nie gesperrt — ihre Rechte prüft vi-mcp.
+    Ohne MEMORY_SERVERS wäre schon vi_erinnere gesperrt (08.11.2026 gefunden)."""
+    assert guard._mcp_is_write(*guard._mcp_parts(tool)) is False, tool

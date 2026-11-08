@@ -65,6 +65,38 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-08 — Knowledge index switched off; all console agents use the local VI
+
+You decided (08.11.): „andere agenten auch einrichten. wissensidex deaktivieren und erlangtes wissen in die lokale vi
+übernehmen“.
+
+### What has changed
+
+- **Hermes and Codex consoles get the local VI** too (MCP server `vi`, instance `konsole`, Bearer token). Codex now
+  passes the headers of additional MCP servers as `http_headers` — before, headers were dropped silently (this also
+  affected the Basic auth of `awx-ng`). Hermes and Codex have no hook (vi-mcp ships one only for Claude Code); the
+  Hermes prompt and the CLI briefing tell the agent to ask the VI first (`vi_erinnere`) and to store verified solutions
+  (`vi_lerne`, `vi_widerlege`, `vi_bestaetige`).
+- **Knowledge index `cs-knowledge` switched off:** the MCP tools `store_knowledge`, `search_knowledge`,
+  `update_knowledge`, `forget_knowledge` are gone, the index is no longer created, its expiry job no longer runs.
+  The two automatic mirrors write into the VI instead: recipes (`herkunft:rezept`) and console sessions marked as
+  solved (`herkunft:konsole-geloest`), both with `ausgang: gut`. The skill library (`cs-skills`) stays.
+- **Console write guard:** the server `vi` is the console's memory, not a system change — without this every `vi_*`
+  tool was blocked („erinnere“ is no read verb). Rights of the instance (no reflex, no release right) are checked by
+  vi-mcp itself.
+
+### What was fixed
+
+- The backend reached `vi-mcp` through the proxy (HTTP 503): its image bakes the lowercase `no_proxy` from the build
+  arguments, which Python prefers over `NO_PROXY`. `vi-mcp` is now in the backend's build-time `NO_PROXY` too.
+  Earlier tests had set both variables by hand and missed it.
+
+### Still missing
+
+- The index `cs-knowledge` itself is kept (not deleted); its 12 entries are taken over into the VI (see below).
+
+---
+
 ## 2026-11-08 — The console uses the local VI (MCP server „vi“ + vi-mcp hook)
 
 You noticed (08.11.): your console only called `search_knowledge` and `store_knowledge` for knowledge. Those go to

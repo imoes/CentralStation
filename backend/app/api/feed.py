@@ -1194,26 +1194,21 @@ async def computer_resolve_alert(
     except Exception as _res_exc:
         log.warning("computer-resolve: marking session resolved failed: %s", _res_exc)
 
-    # Living Documentation: Erkenntnis in cs-knowledge speichern
+    # Gelöste Sitzung → Erkenntnis in der lokalen VI (bis 08.11.2026: cs-knowledge)
     try:
-        from app.services.knowledge_index import store_knowledge
+        from app.services import vi_konsole
         # cmk:<host>:<service> → Dienst und Host; bis 2026-10-11 landete hier "cmk"/"ecl".
         _parts = external_id.split(":")
         _service = _parts[2] if _parts[0] == "cmk" and len(_parts) > 2 else ""
         _host = _parts[1] if _parts[0] == "cmk" and len(_parts) > 1 else ""
-        await store_knowledge({
-            "kind": "lesson",
-            "service": _service,
-            "host": _host,
-            "title": summary[:120],
-            "problem": external_id,
-            "solution": summary,
-            "tags": [_service, "gelöst", "computer-session"] if _service else ["gelöst", "computer-session"],
-            "source": "computer_session",
-            "confidence": 0.85,
-        })
+        _r = await vi_konsole.lerne(
+            db, f"Gelöst ({external_id}): {summary}"[:1000],
+            ["herkunft:konsole-geloest", *([f"dienst:{_service}"] if _service else []),
+             *([f"host:{_host}"] if _host else [])],
+            f"CentralStation Konsolen-Sitzung als gelöst markiert: {external_id}", 2, ausgang="gut")
+        log.info("computer-resolve: VI %s", _r[:120])
     except Exception as _know_exc:
-        log.debug("computer-resolve: cs-knowledge write failed: %s", _know_exc)
+        log.warning("computer-resolve: VI write failed: %s", _know_exc)
 
     log.info("computer-resolve: Lernkommentar gespeichert für %s (%d Zeichen)", external_id[:24], len(summary))
     return {"ok": True, "comment": comment_body}

@@ -1326,66 +1326,9 @@ async def gitlab_create_merge_request(project: str, source_branch: str, target_b
     return {"iid": mr.get("iid"), "title": mr.get("title"), "web_url": mr.get("web_url"), "state": mr.get("state")}
 
 
-# ── Living Documentation ───────────────────────────────────────────
-
-@mcp.tool()
-async def store_knowledge(
-    kind: str,
-    title: str,
-    problem: str = "",
-    solution: str = "",
-    service: str = "",
-    host: str = "",
-    tags: list[str] = [],
-    confidence: float = 0.8,
-    session_id: str = "",
-) -> dict:
-    """Speichert eine Erkenntnis in der Living Documentation (cs-knowledge OpenSearch-Index).
-
-    Nutze dieses Tool proaktiv wenn du:
-    - Ein Problem gelöst hast das wieder auftreten könnte (kind="lesson")
-    - Service-Abhängigkeiten identifiziert hast (kind="dependency")
-    - Ein wiederkehrendes Muster erkannt hast (kind="pattern")
-    - Eine bewährte Vorgehensweise dokumentieren möchtest (kind="runbook")
-
-    Speichere NUR verifizierte Erkenntnisse. confidence < 0.5 → nicht speichern.
-
-    kind: "lesson"|"dependency"|"pattern"|"runbook"
-    confidence: 0.0–1.0 (wie sicher bist du dir?)
-    """
-    from app.services.knowledge_index import store_knowledge as _store
-    doc_id = await _store({
-        "kind": kind, "title": title, "problem": problem,
-        "solution": solution, "service": service, "host": host,
-        "tags": tags, "confidence": confidence,
-        "source": "hermes", "session_id": session_id,
-    })
-    return {"stored": True, "id": doc_id, "kind": kind, "title": title}
-
-
-@mcp.tool()
-async def search_knowledge(
-    query: str,
-    kind: str = "",
-    service: str = "",
-    limit: int = 5,
-) -> list[dict]:
-    """Sucht in der Living Documentation nach bekannten Lösungen und Erkenntnissen.
-
-    Rufe dies auf BEVOR du ein Problem untersuchst — vielleicht wurde es schon gelöst.
-    Gibt Erkenntnisse mit Confidence-Score zurück, höchste zuerst.
-
-    kind: Optional Filter: "lesson"|"dependency"|"pattern"|"runbook"
-    service: Optional Filter auf einen bestimmten Service (z.B. "graylog")
-    """
-    from app.services.knowledge_index import search_knowledge as _search
-    results = await _search(
-        query=query,
-        kind=kind or None,
-        service=service or None,
-        limit=limit,
-    )
-    return results
+# ── Living Documentation (cs-knowledge) ─────────────────────────
+# Abgeschaltet 08.11.2026 (Nutzer: „wissensidex deaktivieren und erlangtes wissen in die lokale vi übernehmen“):
+# Erkenntnisse gehören in die VI — MCP-Server „vi“ (vi_erinnere, vi_lerne, vi_widerlege), Instanz konsole.
 
 
 # ── Skill-Bibliothek ───────────────────────────────────────────────
@@ -1441,49 +1384,6 @@ async def store_skill(
         content=content, tags=tags, version=version,
         author="hermes", user_id="", visibility="public",
     )
-
-
-@mcp.tool()
-async def update_knowledge(
-    doc_id: str,
-    title: str = "",
-    problem: str = "",
-    solution: str = "",
-    confidence: float = 0.0,
-    tags: list[str] = [],
-) -> dict:
-    """Aktualisiert eine bestehende Erkenntnis in der Living Documentation (Patch).
-
-    Nur die übergebenen, nicht-leeren Felder werden überschrieben.
-    doc_id: die 'id' aus search_knowledge-Ergebnissen.
-
-    Nutze dies wenn:
-    - Eine Lösung sich geändert hat oder die bisherige falsch/unvollständig war
-    - Du mehr Details zu einer bekannten Erkenntnis ergänzen möchtest
-    Workflow: search_knowledge(...) → doc_id ermitteln → update_knowledge(doc_id, ...)
-    """
-    from app.services.knowledge_index import update_knowledge as _upd
-    ok = await _upd(
-        doc_id,
-        title=title or None,
-        problem=problem or None,
-        solution=solution or None,
-        confidence=confidence if confidence > 0 else None,
-        tags=tags if tags else None,
-    )
-    return {"updated": ok, "id": doc_id}
-
-
-@mcp.tool()
-async def forget_knowledge(doc_id: str) -> dict:
-    """Löscht eine einzelne Erkenntnis dauerhaft aus der Living Documentation.
-
-    doc_id: die 'id' aus search_knowledge-Ergebnissen.
-    Nur aufrufen wenn der Nutzer explizit bittet, eine Erkenntnis zu löschen/vergessen.
-    """
-    from app.services.knowledge_index import forget_knowledge as _forget
-    ok = await _forget(doc_id)
-    return {"deleted": ok, "id": doc_id}
 
 
 # ── Project MCP tools ──────────────────────────────────────────────
