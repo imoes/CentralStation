@@ -72,8 +72,8 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
 
 ### What is new
 
-- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.14.2`, built by `vi-mcp/Dockerfile` from
-  `vi-mcp/pakete/vi-mcp_0.14.2-1_all.deb` = the GitHub release v0.14.2, checked against SHA-256 `ca0341c0…171c` from the
+- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.14.3`, built by `vi-mcp/Dockerfile` from
+  `vi-mcp/pakete/vi-mcp_0.14.3-1_all.deb` = the GitHub release v0.14.3, checked against SHA-256 `59941c90…6405` from the
   release's SHA256SUMS; the build aborts on a mismatch). Listens only inside the Compose
   network (`vi-mcp:8765`), no published port; memory and configuration in the volumes `vi-mcp-daten`/`vi-mcp-konfig`.
   Instance `centralstation` created; its token lies 0600 in `~/.config/vi-mcp/token-centralstation-lokal`, never printed.
@@ -100,7 +100,10 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
      session found none of the fake host, the IP, „centralstation“, „hal.“ or the instance names in its network database.
   4. `vi_netz_vergiss`: own revocation in the log book, content deleted, tombstone kept; llm-host03's revocation arrived,
      the local quarantine is empty again.
+  The vi-mcp session confirmed on llm-host03: object, full text, tags, vector and p2p mapping gone, tombstone kept, log
+  chain intact; both sides „eintraege 7 · inhalte 5 · grabsteine 3 · verstoesse 0 · gabelungen 0 · mitglieder 2“.
   Cleaned up afterwards: test insight refuted locally, test instance `pruef-zweit` deleted, test pace back to default.
+  Then updated to v0.14.3 (15:38 UTC); status unchanged, member, llm-host03 reachable.
   The network token of instance `centralstation` lies 0600 in `~/.config/vi-mcp/netz-token-centralstation-lokal`.
 - The connector `vi_mcp` still points to llm-host03; it moves to `http://vi-mcp:8765/mcp` only once the exchange works,
   otherwise CentralStation would lose the collective.
