@@ -89,12 +89,36 @@ Instances have an internal memory (their own context) and share an external one,
 - Evidence, live 08.11. ~12:00 UTC with the centralstation token: `test_connection` → "vi-mcp 0.1.1 verbunden …
   Gespräch 20261108007 (Instanz centralstation)"; `vi_erinnere` answers; a wrong session id → 404 → new session.
   Tests: `test_log_watch_vi_bruecke.py` (912 in total).
+- **Connector created** 08.11. (row `55299483…`, audit entry, token encrypted). Deployed 13:34:59 UTC (backend +
+  frontend; the midday deploy had aborted because two AI leases did not drain within 400 s — the wait is now 15 min,
+  the lease maximum).
+- **First run of the bridge, 13:39 UTC** (`raster_lauf` quelle `vi-bruecke`): 96 insights written, 4 rejected,
+  826 ms. On vi-mcp: `vi_erinnere instanz:centralstation herkunft:log-ueberwachung` lists them (e.g. "Bekannter
+  Fehler (Relevanz 3 …): Solr p999 … cue0124" with host:/dienst:/ort:/kritikalitaet: tags).
+
+### What was fixed (found by that first run)
+
+- **The watermark was never stored**: `set_setting` does not commit (same as `runner.py:154` does explicitly); every
+  15 min the same 96 objects would have gone up again. Fixed with a commit; stopgap set by hand to 13:34:58 UTC so
+  the 13:54 run did not duplicate. Evidence: setting `log_watch.vi_bruecke_stand` absent after the run, present after.
+- **Hashtags with spaces are rejected by vi-mcp** (`dienst:MSSQL Blocked Sessions`, `dienst:CPU utilization FPC: …`
+  — its filter language splits on spaces; TAG regex `^[a-z][a-z0-9_-]{0,30}:[^\s()]+$`). The bridge now sends
+  `dienst:MSSQL-Blocked-Sessions`; the peer confirmed spaces stay forbidden. The 4 rejected objects of the first run
+  are not resent (they lie before the watermark).
+- **Backlog order**: the known-errors list is sorted by last occurrence, not by learning time; with a 50-per-run cap
+  the watermark would have jumped past unsent entries. Now oldest-first, 50 per run, watermark = last of the run.
+- vi-mcp moved from 0.1.1 to 0.10.0 during the day: `kontext_hashtags` is accepted; known errors go up with
+  `ausgang: "schlecht"` (0.10.0) so the server's sleep can match experiences against them; hints starting with
+  "[Selbst]" (the VI's self-narration) and "Im Langzeitlager passen" (entries unused for 180 days) are dropped from
+  the case prompt.
 
 ### Still missing
 
-- The connector is not created yet in this instance; the first push and the first prompt section follow then.
-- `kontext_hashtags` in `vi_vorher` needs vi-mcp 0.2.0 (the connector already sends them and falls back).
-- Confirming/refuting insights of other instances from the analysis is not wired yet (vi-mcp 0.2.0 rules).
+- The first fleet analysis with a "Kollektiv-Gedächtnis" prompt section after the deploy (14:xx) — see next entry.
+- Confirming/refuting insights of other instances and answering `vi_frage` questions from the analysis are not
+  wired yet.
+- The ~450 known errors learned before 08.11. 13:34 UTC are not pushed (watermark starts there); a one-off backfill
+  only on request.
 
 ---
 
