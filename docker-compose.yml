@@ -157,6 +157,35 @@ services:
     profiles: ["vibemk"]
     command: ["--version"]
 
+  # Lokale VI (vi-mcp aus dem Debian-Paket): internes Gedächtnis von CentralStation. Kein Port nach außen —
+  # nur Backend und Netzdienst erreichen sie im Compose-Netz. Instanz anlegen (Token EINMAL, nicht ins Log):
+  #   docker compose run --rm -u root vi-mcp vi-mcp instanz centralstation
+  vi-mcp:
+    build:
+      context: .
+      dockerfile: vi-mcp/Dockerfile
+    image: centralstation-vi-mcp:0.14.0
+    restart: unless-stopped
+    volumes:
+      - vi-mcp-daten:/var/lib/vi-mcp
+      - vi-mcp-konfig:/etc/vi-mcp
+
+  # Netzdienst: gleicht das lokale Gedächtnis mit anderen VIs ab (z. B. llm-host03), signiert, anonymisiert,
+  # Fremdes in Quarantäne. Eigener Nutzer, eigenes Volume, kein Zugriff auf vi-mcp-daten.
+  # Läuft erst nach `vi-mcp netz einrichten …` — daher Profil „netz“: docker compose --profile netz up -d vi-p2p
+  vi-p2p:
+    image: centralstation-vi-mcp:0.14.0
+    profiles: ["netz"]
+    restart: unless-stopped
+    user: vi-p2p
+    command: ["vi-mcp", "netz", "lauf"]
+    volumes:
+      - vi-p2p-daten:/var/lib/vi-p2p
+      - vi-p2p-konfig:/etc/vi-p2p
+    depends_on:
+      vi-mcp:
+        condition: service_healthy
+
   nginx:
     image: nginx:alpine
     restart: unless-stopped
@@ -172,3 +201,7 @@ services:
 
 volumes:
   probe-ssh:
+  vi-mcp-daten:
+  vi-mcp-konfig:
+  vi-p2p-daten:
+  vi-p2p-konfig:

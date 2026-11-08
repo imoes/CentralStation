@@ -569,6 +569,8 @@ The search bar on `/feed` works like Graylog 5.2's search (`feed-query.ts`, port
   tool: up to 9 complete queries. After `feld:` the field's values in the current result; after a word,
   matching hosts, containers, services, tags and field names. The number is the hit count of that exact
   query (one `_msearch`). An unreadable input shows its reason under the bar.
+- **Local VI (Compose service `vi-mcp`).** vi-mcp from its Debian package runs inside CentralStation as the internal
+  memory; the network service `vi-p2p` (profile `netz`) will exchange it with other VIs. Set-up: `vi-mcp/Dockerfile`.
 - **Collective memory (connector `vi_mcp`).** CentralStation is one instance of the shared VI memory vi-mcp.
   Before an analysis the fleet asks what other instances know about the case's hosts and topics (prompt section
   "Kollektiv-Gedächtnis", context not evidence), reports the analysis as an action, and every 15 min pushes known

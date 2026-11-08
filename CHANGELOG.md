@@ -65,6 +65,38 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-08 — A local VI inside CentralStation (vi-mcp from the Debian package)
+
+You decided (08.11.): the local VI runs **in CentralStation**, installed from the vi-mcp Debian package; this host
+(hal) is the test host for networking it with the server on llm-host03.
+
+### What is new
+
+- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.14.0`, built by `vi-mcp/Dockerfile` from
+  `vi-mcp/pakete/vi-mcp_0.14.0-1_all.deb`, checked against SHA-256 `ce70d3c3…ad91e5`). Listens only inside the Compose
+  network (`vi-mcp:8765`), no published port; memory and configuration in the volumes `vi-mcp-daten`/`vi-mcp-konfig`.
+  Instance `centralstation` created; its token lies 0600 in `~/.config/vi-mcp/token-centralstation-lokal`, never printed.
+- **Compose service `vi-p2p`** (same image, user `vi-p2p`, own volumes, `vi-mcp netz lauf`), profile `netz` — it starts
+  only after `vi-mcp netz einrichten …`, because in mode `standalone` it ends at once.
+- Evidence 08.11. 15:16 UTC: container healthy, log "vi-mcp 0.14.0 auf http://0.0.0.0:8765/mcp … Instanzen
+  centralstation"; from the backend container with the connector code: `test_connection` → "vi-mcp 0.14.0 verbunden …
+  Instanz centralstation".
+
+### What was fixed
+
+- The backend sent requests to `vi-mcp` through the HTTP proxy (HTTP 503). `vi-mcp` is now in the backend's runtime
+  `NO_PROXY` (override and template); effective with the next backend restart. Evidence: same request without proxy → "ok".
+
+### Still missing
+
+- **Networking with llm-host03 is not set up**: it needs a `vi-p2p` peerhost there, the founder's public key and the
+  invitation of this host's key — asked of the vi-mcp session, no answer yet. Until then the local memory is empty.
+- The connector `vi_mcp` still points to llm-host03; it moves to `http://vi-mcp:8765/mcp` only once the exchange works,
+  otherwise CentralStation would lose the collective.
+- Package 0.14.0 is the vi-mcp session's build, not yet a GitHub release (its changelog ends at 0.13.0).
+
+---
+
 ## 2026-11-08 — New connector "vi-mcp": CentralStation joins the collective memory
 
 You decided (08.11.): "Wir brauchen einen neuen Konnektor." CentralStation becomes one instance of the collective
