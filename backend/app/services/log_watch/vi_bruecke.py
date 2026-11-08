@@ -76,7 +76,8 @@ def abschnitt(vorher: dict | str | None, erinnert: str, fehler: str | None) -> s
         z.append(f"  nicht erreichbar: {fehler}")
         return "\n".join(z)
     hinweise = (vorher or {}).get("hinweise") if isinstance(vorher, dict) else None
-    for h in (hinweise or [])[:6]:
+    # vi-mcp ≥ 0.4.0 streut alle 25 Handlungen die Selbst-Erzählung der VI ein („[Selbst] …“) — kein Fallwissen
+    for h in [h for h in (hinweise or []) if not str(h).startswith("[Selbst]")][:6]:
         z.append("  " + str(h)[:300])
     if erinnert and not erinnert.startswith("nichts im Gedächtnis"):
         z += ["  " + l[:300] for l in erinnert.splitlines()[1:9]]

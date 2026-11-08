@@ -53,5 +53,6 @@ def test_reize_filter_und_abschnitt():
                                        "!instanz:centralstation !art:antwort !art:erfahrung")
     a = vb.abschnitt({"hinweise": ["Gelernt: cue0111 trägt CUE Print"]}, "2 Objekte zu …:\n  [erkenntnis:1] x", None)
     assert "Kollektiv-Gedächtnis" in a and "cue0111 trägt CUE Print" in a and "[erkenntnis:1] x" in a
+    assert "[Selbst]" not in vb.abschnitt({"hinweise": ["[Selbst] Ich bin die VI …", "echt"]}, "", None)   # vi-mcp ≥ 0.4.0
     assert "nicht erreichbar: HTTP 503" in vb.abschnitt(None, "", "HTTP 503")
     assert "nichts bekannt" in vb.abschnitt({"hinweise": []}, "nichts im Gedächtnis zu „x“", None)
