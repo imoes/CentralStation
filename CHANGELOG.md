@@ -107,9 +107,9 @@ learning that becomes intuition over time. The skill is `~/skills/vi-gedaechtnis
   `cache_prompt: true`. The static head is the "trained intuition" in the prompt; the server does not reuse it.
   The fix is on llm-host03 (production), so it needs approval.
 
-### Still missing
-
-- Rules N1-FLAT and N1-INV in the live definition (v14), so the editor shows their test hits.
+- **Live since definition v14** (08.11., author thomas.kluge@example.org; the user asked to retry after the first
+  attempt was blocked). Check against the live rules: `regel:533` level 7 → R6 decides, N1-INV counts as a test hit;
+  a CRIT with `signal:flattern` → R1 decides, N1-FLAT counts. The editor shows both under "Test".
 
 ---
 
