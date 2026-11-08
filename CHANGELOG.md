@@ -73,7 +73,8 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
 ### What is new
 
 - **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.14.0`, built by `vi-mcp/Dockerfile` from
-  `vi-mcp/pakete/vi-mcp_0.14.0-1_all.deb`, checked against SHA-256 `ce70d3c3…ad91e5`). Listens only inside the Compose
+  `vi-mcp/pakete/vi-mcp_0.14.0-1_all.deb` = the GitHub release v0.14.0, checked against SHA-256 `4fcfaf83…3a6e` from the
+  release's SHA256SUMS; the build aborts on a mismatch). Listens only inside the Compose
   network (`vi-mcp:8765`), no published port; memory and configuration in the volumes `vi-mcp-daten`/`vi-mcp-konfig`.
   Instance `centralstation` created; its token lies 0600 in `~/.config/vi-mcp/token-centralstation-lokal`, never printed.
 - **Compose service `vi-p2p`** (same image, user `vi-p2p`, own volumes, `vi-mcp netz lauf`), profile `netz` — it starts
@@ -93,7 +94,13 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
   invitation of this host's key — asked of the vi-mcp session, no answer yet. Until then the local memory is empty.
 - The connector `vi_mcp` still points to llm-host03; it moves to `http://vi-mcp:8765/mcp` only once the exchange works,
   otherwise CentralStation would lose the collective.
-- Package 0.14.0 is the vi-mcp session's build, not yet a GitHub release (its changelog ends at 0.13.0).
+- **Corrected:** the first image (15:16 UTC) came from an interim build (SHA-256 `ce70d3c3…`, changelog ending at 0.13.0),
+  not from the release. Rebuilt from the release at 15:18 UTC; data and instance in the volumes stayed.
+- **Before networking, a decision is yours** (vi-mcp session, 08.11.): llm-host03 is not a peerhost yet; that needs an
+  nginx route with TLS on the production host. The network carries only anonymised, proven, shared knowledge
+  (insights, rules, searches, skills; host names, IPs, users become `<host>`, `<ip>`, `<nutzer>`), imported via
+  quarantine and release, then mode `test`. Private experiences, cached answers and conversations stay on their server.
+  So the local VI gets **no host-specific knowledge** from llm-host03 and is **no fail-over cache**.
 
 ---
 
