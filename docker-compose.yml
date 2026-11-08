@@ -164,7 +164,7 @@ services:
     build:
       context: .
       dockerfile: vi-mcp/Dockerfile
-    image: centralstation-vi-mcp:0.15.0
+    image: centralstation-vi-mcp:0.16.0
     restart: unless-stopped
     volumes:
       - vi-mcp-daten:/var/lib/vi-mcp
@@ -174,7 +174,7 @@ services:
   # Fremdes in Quarantäne. Eigener Nutzer, eigenes Volume, kein Zugriff auf vi-mcp-daten.
   # Läuft erst nach `vi-mcp netz einrichten …` — daher Profil „netz“: docker compose --profile netz up -d vi-p2p
   vi-p2p:
-    image: centralstation-vi-mcp:0.15.0
+    image: centralstation-vi-mcp:0.16.0
     profiles: ["netz"]
     restart: unless-stopped
     user: vi-p2p

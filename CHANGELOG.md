@@ -162,8 +162,8 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
 
 ### What is new
 
-- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.15.0`, built by `vi-mcp/Dockerfile` from
-  `vi-mcp/pakete/vi-mcp_0.15.0-1_all.deb` = the GitHub release v0.15.0, checked against SHA-256 `edafb736…3636` from the
+- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.16.0`, built by `vi-mcp/Dockerfile` from
+  `vi-mcp/pakete/vi-mcp_0.16.0-1_all.deb` = the GitHub release v0.16.0 (signature checked), SHA-256 `d42fa029…fe56` from the
   release's SHA256SUMS; the build aborts on a mismatch). Listens only inside the Compose
   network (`vi-mcp:8765`), no published port; memory and configuration in the volumes `vi-mcp-daten`/`vi-mcp-konfig`.
   Instance `centralstation` created; its token lies 0600 in `~/.config/vi-mcp/token-centralstation-lokal`, never printed.
@@ -193,8 +193,8 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
   The vi-mcp session confirmed on llm-host03: object, full text, tags, vector and p2p mapping gone, tombstone kept, log
   chain intact; both sides „eintraege 7 · inhalte 5 · grabsteine 3 · verstoesse 0 · gabelungen 0 · mitglieder 2“.
   Cleaned up afterwards: test insight refuted locally, test instance `pruef-zweit` deleted, test pace back to default.
-  Then updated to v0.14.3 (15:38 UTC) and v0.15.0 (16:10 UTC; hook script unchanged, same SHA-256); status unchanged,
-  member, llm-host03 reachable.
+  Then updated to v0.14.3 (15:38 UTC), v0.15.0 (16:10 UTC) and v0.16.0 (16:40 UTC, with `aktualisieren.sh`: signature
+  valid, 4 volumes backed up, „ok vi-mcp 0.16.0“, 0 violations, console hook unchanged); member, llm-host03 reachable.
   The network token of instance `centralstation` lies 0600 in `~/.config/vi-mcp/netz-token-centralstation-lokal`.
 - The connector `vi_mcp` still points to llm-host03; it moves to `http://vi-mcp:8765/mcp` only once the exchange works,
   otherwise CentralStation would lose the collective.
