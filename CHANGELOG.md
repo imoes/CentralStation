@@ -65,6 +65,30 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-08 — Incidents outside every scope go to all subscribers; sysadmin commits rule versions
+
+You decided (07.11.):
+- Incidents outside every host scope go to all subscribers.
+- sysadmin may commit rule-set versions.
+- `Example-external` is an external firewall zone.
+- The sshd session lines count as noise (N4).
+
+### Changed
+
+- **Recipients of incident mails** (`notify.waehle_empfaenger`).
+  - Subscribers whose host scope covers the incident get it; an empty scope means everything.
+  - If nobody's scope covers it, **all subscribers** get it. Before, nobody did: measured 07.11., e.g. the
+    cue fleet, mssql06 and web01 from 15:09 on had `mails: 0`.
+  - The delivery record names the choice under `empfaenger_wahl` ("host-scope" or "kein Scope trifft — alle
+    Abonnenten").
+  - Test: `test_ohne_scope_bekommen_alle_abonnenten`.
+- **sysadmin may commit new rule-set versions.**
+  - `POST /log-watch/definition` now allows `RequireSysAdmin`.
+  - In the rule editor the "Übernehmen" button is enabled for admin and sysadmin.
+  - Every version still needs a reason, and its author goes into the audit log.
+
+---
+
 ## 2026-11-07 — Agents know which colleagues are analysing which hosts
 
 ### Changed

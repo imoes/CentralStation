@@ -224,6 +224,37 @@ def _hm(iso: str | None) -> str:
         return str(iso or "")
 
 
+#: Grund der Empfängerwahl — steht im Zustellvermerk am Incident
+IM_SCOPE, OHNE_SCOPE = "host-scope", "kein Scope trifft — alle Abonnenten"
+
+
+def waehle_empfaenger(abonnenten: list[tuple[str, list[str]]], hosts: list[str]) -> tuple[list[str], str]:
+    """(E-Mail, Host-Scope) der Abonnenten → (Empfänger, Grund). Wer den Incident im Scope hat (leerer Scope =
+    alles), bekommt ihn; trifft niemandes Scope, bekommen ihn alle Abonnenten (Nutzer 07.11.2026 — vorher ging
+    so ein Incident an niemanden, z. B. cue-Flotte, mssql06, web01). Rein — testbar."""
+    from app.services.error_clusters.incident import host_matches
+    treffer = sorted({m for m, scope in abonnenten if not scope or any(host_matches(x, hosts) for x in scope)})
+    if treffer:
+        return treffer, IM_SCOPE
+    return sorted({m for m, _ in abonnenten}), OHNE_SCOPE
+
+
+async def empfaenger(db, hosts: list[str]) -> tuple[list[str], str]:
+    """Abonnenten der Sofort-Mail mit ihrem Host-Scope → waehle_empfaenger."""
+    from app.models.user import User
+    from app.models.workflow import UserPreference
+    from app.services.feed_index import get_user_checkmk_host_scope
+
+    rows = await db.execute(select(User, UserPreference)
+                            .join(UserPreference, UserPreference.user_id == User.id))
+    abonnenten = []
+    for user, prefs in rows.all():
+        ns = prefs.notification_settings or {}
+        if ns.get("error_cluster_immediate") and getattr(user, "is_active", True) and user.email:
+            abonnenten.append((user.email, await get_user_checkmk_host_scope(db, str(user.id))))
+    return waehle_empfaenger(abonnenten, hosts)
+
+
 async def recipients(db, hosts: list[str]) -> list[str]:
     """Angemeldete Nutzer, deren Host-Scope den Cluster berührt (leerer Scope = alles)."""
     from app.models.user import User
@@ -435,7 +466,7 @@ async def deliver(ctx: dict, title: str, cluster_id: str, incident_id: str | Non
 
     async with AsyncSessionLocal() as db:
         app_url = await _public_url(db)
-        to = await recipients(db, ctx.get("hosts") or []) if cfg.mail_enabled else []
+        to, wahl = await empfaenger(db, ctx.get("hosts") or []) if cfg.mail_enabled else ([], "Mail abgeschaltet")
         try:
             from app.services.recipes import for_cluster, summary_of
             ctx["recipe"] = summary_of(await for_cluster(db, cluster_id))
@@ -466,7 +497,7 @@ async def deliver(ctx: dict, title: str, cluster_id: str, incident_id: str | Non
         await _mark_mailed(db, cluster_id)
         triage_zustand = "ok" if result else ("pending" if task else "none")
         if incident_id:
-            await _vermerke_zustellung(db, incident_id, sent, to, triage_zustand)
+            await _vermerke_zustellung(db, incident_id, sent, to, triage_zustand, wahl)
         await db.commit()
     log.info("error_clusters: notify %s → %d mail(s), triage=%s", cluster_id[:8], sent, triage_zustand)
 
@@ -619,13 +650,14 @@ async def on_critical(items: list[dict], cfg) -> None:
                        name=f"error_cluster_critical_{it['cluster_id'][:8]}")
 
 
-def zustellung(alt: list | None, sent: int, to: list[str], triage: str, jetzt: datetime) -> list[dict]:
+def zustellung(alt: list | None, sent: int, to: list[str], triage: str, jetzt: datetime,
+               wahl: str = "") -> list[dict]:
     """Zustell-Vermerke am Incident fortschreiben (höchstens 20). Rein — testbar."""
     return ((alt or []) + [{"zeit": jetzt.isoformat(), "mails": sent, "empfaenger": list(to),
-                            "triage": triage}])[-20:]
+                            "triage": triage, **({"empfaenger_wahl": wahl} if wahl else {})}])[-20:]
 
 
-async def _vermerke_zustellung(db, incident_id: str, sent: int, to: list[str], triage: str) -> None:
+async def _vermerke_zustellung(db, incident_id: str, sent: int, to: list[str], triage: str, wahl: str = "") -> None:
     """Dauerhafter Nachweis am Incident, ob und an wen gemeldet wurde — vorher nur im Container-Log
     (geht beim Neustart verloren; Graylog verwirft INFO-Zeilen der Container, drop_container_noise)."""
     from app.models.workflow import Incident
@@ -637,7 +669,7 @@ async def _vermerke_zustellung(db, incident_id: str, sent: int, to: list[str], t
     if inc is None:
         return
     c = {k: v for k, v in (_cc(inc) or {}).items() if k != "type"}
-    c["zustellungen"] = zustellung(c.get("zustellungen"), sent, to, triage, datetime.now(timezone.utc))
+    c["zustellungen"] = zustellung(c.get("zustellungen"), sent, to, triage, datetime.now(timezone.utc), wahl)
     set_cluster_context(inc, c)
 
 

@@ -247,7 +247,8 @@ export class RegelwerkComponent implements OnInit {
 
   readonly kriterien = computed(() => this.def()?.kriterien ?? []);
   readonly objektNamen = computed(() => Object.keys(this.objekte()).sort());
-  readonly istAdmin = computed(() => this.auth.userRole() === 'admin');
+  /** darf übernehmen: admin und sysadmin (Nutzer 07.11.2026) — dieselbe Regel wie POST /definition */
+  readonly darfUebernehmen = computed(() => ['admin', 'sysadmin'].includes(this.auth.userRole() ?? ''));
   /** neue, entfernte, inhaltlich geänderte Regeln + 1, wenn sich die Reihenfolge der BESTEHENDEN ändert
    *  (eine eingefügte Regel verschiebt die übrigen — das ist keine Änderung an ihnen) + geänderte Objekte */
   readonly aenderungen = computed(() => {
@@ -377,7 +378,7 @@ export class RegelwerkComponent implements OnInit {
 
   /** Grund, warum Übernehmen nicht geht — leer heißt: geht (ausgegraut statt hinterher melden) */
   uebernehmenGrund(): string {
-    if (!this.istAdmin()) return 'Neue Versionen legt nur die Rolle admin an (deine Rolle: ' + (this.auth.userRole() ?? '—') + ')';
+    if (!this.darfUebernehmen()) return 'Neue Versionen legen nur admin und sysadmin an (deine Rolle: ' + (this.auth.userRole() ?? '—') + ')';
     if (this.aenderungen() === 0) return 'Keine Änderung im Entwurf';
     const p = this.pruefung();
     if (!p) return 'Erst „Prüfen & Vorschau“';

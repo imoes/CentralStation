@@ -212,7 +212,8 @@ async def pruefe_definition(body: DefinitionBody, db: Annotated[AsyncSession, De
                                        "gekappt": len(docs) >= VORSCHAU_MAX}}
 
 
-@router.post("/definition", dependencies=[RequireAdmin])
+# Nutzer 07.11.2026: auch sysadmin übernimmt Regelwerk-Versionen (jede mit Begründung, Urheber im Audit)
+@router.post("/definition", dependencies=[RequireSysAdmin])
 async def neue_definition(body: DefinitionBody, user: CurrentUser,
                           db: Annotated[AsyncSession, Depends(get_db)]):
     """Neue Version anlegen. Jede Änderung braucht eine Begründung; nichts wird überschrieben."""

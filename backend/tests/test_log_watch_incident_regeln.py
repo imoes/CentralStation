@@ -149,3 +149,13 @@ def test_abgebrochene_meldung_wird_nachgeholt():
            ("e", {}, j - timedelta(minutes=31)),                                         # alter Weg, kein Regel-Incident
            ("f", {"regel": "I-HOST"}, j - timedelta(minutes=31))]                        # in Arbeit
     assert nachzuholen(inc, {"f"}, j) == ["a"]
+
+
+def test_ohne_scope_bekommen_alle_abonnenten():
+    """Nutzer 07.11.: Incidents in niemandes Scope gingen an niemanden — jetzt an alle Abonnenten, benannt."""
+    from app.services.error_clusters.notify import IM_SCOPE, OHNE_SCOPE, waehle_empfaenger
+    ab = [("a@x.de", ["cue092.example.com"]), ("b@x.de", ["mssql06.example.com"])]
+    assert waehle_empfaenger(ab, ["cue092.example.com"]) == (["a@x.de"], IM_SCOPE)
+    assert waehle_empfaenger(ab, ["web01.example.com"]) == (["a@x.de", "b@x.de"], OHNE_SCOPE)
+    assert waehle_empfaenger([("c@x.de", [])] + ab, ["web01.example.com"]) == (["c@x.de"], IM_SCOPE)  # leer = alles
+    assert waehle_empfaenger([], ["x"]) == ([], OHNE_SCOPE)
