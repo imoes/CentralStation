@@ -65,6 +65,37 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-08 — The console uses the local VI (MCP server „vi“ + vi-mcp hook)
+
+You noticed (08.11.): your console only called `search_knowledge` and `store_knowledge` for knowledge. Those go to
+CentralStation's own index `cs-knowledge`; the console did not know the VI at all (its MCP servers were centralstation,
+vibemk, playwright). Your decision: „Lokale VI + Hook“.
+
+### What is new
+
+- **claude_cli consoles get the local VI**: MCP server `vi` (`http://vi-mcp:8765/mcp`, instance `konsole`) and the
+  vi-mcp hook for PreToolUse, PostToolUse, PostToolUseFailure and SessionEnd: before every tool call the VI's hints
+  (`vi_vorher`), afterwards the outcome (`vi_nachher`). The tools `mcp__vi__*` are allowed automatically (the allow
+  list is built from `.claude.json`). Written at session creation, console activation and IDE start
+  (`userenv_manager._konfiguriere_vi`); without configuration server and hooks are removed, not left half in place.
+- The hook is the package's own script (`backend/app/resources/vi_hook.py` = `/usr/share/vi-mcp/hook/vi_hook.py` of
+  v0.14.3, SHA-256 `44ca2e1b…658a`, checked by a test). Token file 0600 in the console's
+  `~/.config/vi-mcp/token-konsole`; address and token in `global_settings` (`vi.konsole_url`, `vi.konsole_token`
+  encrypted).
+- `vi-mcp` is in the console containers' proxy exceptions (one source: `no_proxy_entries`) — Python's urllib in the
+  hook went through the proxy and got 503 (measured in the running console; Node's fetch went direct).
+- Evidence: 917 backend tests (5 new); login as instance `konsole` → "vi-mcp 0.14.3 verbunden … (Instanz konsole)".
+
+### Still missing
+
+- Hermes and codex consoles do not get the VI yet (only claude_cli, your console agent).
+- `search_knowledge`/`store_knowledge` still write to `cs-knowledge` only, not into the VI.
+- Notes and corrections (`#gut`, `#schlecht`, UserPromptSubmit) need an own instance with the human right — not set up.
+- The skill knowledge (626 sections) lies on llm-host03, not in the local VI; the network carries only proven,
+  anonymised knowledge.
+
+---
+
 ## 2026-11-08 — A local VI inside CentralStation (vi-mcp from the Debian package)
 
 You decided (08.11.): the local VI runs **in CentralStation**, installed from the vi-mcp Debian package; this host

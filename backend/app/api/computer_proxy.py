@@ -374,10 +374,12 @@ async def configure_agent(
         # newer volume token. A fresh OAuth (body.access_token) force-overwrites to
         # allow switching accounts; the "activate" path (no token) respects the volume.
         await _sync_claude_token_from_volume(db, user.id)
+        from app.services import vi_konsole
+        _vi = await vi_konsole.lade(db)
         await asyncio.to_thread(
             configure_claude_credentials,
             str(user.id), creds["access_token"], creds.get("refresh_token") or "",
-            creds.get("expires_at") or None, None, bool(body.access_token),
+            creds.get("expires_at") or None, None, bool(body.access_token), _vi,
         )
 
     elif body.agent == "codex_cli":
@@ -1002,12 +1004,14 @@ async def create_session(
                 # Pass extra_servers so configure_claude_credentials registers all personal
                 # MCP connectors (VibeMK, AWX-NG, etc.) in .claude.json alongside centralstation.
                 # force_overwrite=False: keep the CLI-managed volume token if it is newer.
+                from app.services import vi_konsole
+                _vi = await vi_konsole.lade(db)
                 await asyncio.to_thread(
                     configure_claude_credentials, str(user.id),
                     _claude_creds.get("access_token", ""),
                     _claude_creds.get("refresh_token", ""),
                     _claude_creds.get("expires_at") or None,
-                    extra_servers,
+                    extra_servers, False, _vi,
                 )
         elif agent_type == "codex_cli":
             _codex_creds = await _load_agent_creds(db, user.id, "codex_cli")

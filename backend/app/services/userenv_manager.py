@@ -102,7 +102,8 @@ def no_proxy_entries() -> list[str]:
     backend_host = urlparse(os.getenv("CENTRALSTATION_BACKEND_URL", "http://backend:8000")).hostname or "backend"
     default = ",".join(["localhost", "127.0.0.1"] + [f".{d}" for d in internal_domains()])
     entries = [e.strip() for e in os.getenv("NO_PROXY", default).split(",") if e.strip()]
-    for host in [backend_host] + [vibemk_name(t) for t in vibemk_tiers]:
+    from app.services.vi_konsole import STANDARD_HOST as vi_host
+    for host in [backend_host, vi_host] + [vibemk_name(t) for t in vibemk_tiers]:
         if host not in entries:
             entries.insert(0, host)
     return entries
@@ -1080,9 +1081,11 @@ def read_claude_oauth(user_id: str) -> dict | None:
 
 def configure_claude_credentials(
     user_id: str, access_token: str, refresh_token: str, expires_at: str | None,
-    extra_servers: dict | None = None, force_overwrite: bool = False,
+    extra_servers: dict | None = None, force_overwrite: bool = False, vi: dict | None = None,
 ) -> None:
     """Write ~/.claude/.credentials.json into the container (on cs-ide-cfg volume → persistent).
+
+    vi: {url, token} der lokalen VI (vi_konsole.lade) → MCP-Server „vi“ + vi-mcp-Hook; None → beides entfernt.
 
     Format matches what `claude auth login --claudeai` writes. Because the file lives on the
     cs-ide-cfg named volume it survives container restarts — no re-injection needed.
@@ -1209,8 +1212,51 @@ def configure_claude_credentials(
                   _PLAYWRIGHT_MCP_CMD, *playwright_mcp_args()]
         _agent_exec(c, pw_cmd)
         log.info("userenv_manager: MCP server 'playwright' registered for %s", container_name(user_id))
+        _konfiguriere_vi(c, user_id, vi)
     except _docker.errors.NotFound:
         log.warning("configure_claude_credentials: container %s not found", container_name(user_id))
+
+
+def _konfiguriere_vi(c, user_id: str, vi: dict | None) -> None:
+    """Lokale VI für claude_cli: MCP-Server „vi“, Token-Datei (0600), Hook-Datei und Hooks in settings.json.
+
+    Ohne vi werden Server und Hooks entfernt — ein ausgeschalteter Zustand ist benannt, nichts bleibt halb stehen.
+    Ein Fehler hier hält die Konsole nicht auf (die Anmeldung ist schon geschrieben), steht aber im Log.
+    """
+    import json
+    from app.services import vi_konsole as vk
+    home = agent_home(c)
+    p = vk.pfade(home)
+    cfg_dir = f"{home}/.claude"
+    try:
+        _agent_exec(c, ["claude", "mcp", "remove", "--scope", "user", vk.SERVER_NAME])
+        if vi:
+            code, out = _agent_exec(c, ["claude", "mcp", "add", "--transport", "http", "--scope", "user", vk.SERVER_NAME,
+                                        vi["url"], "--header", f"Authorization: Bearer {vi['token']}"])
+            if code != 0:
+                log.warning("userenv_manager: MCP server 'vi' registration failed for %s: %s",
+                            container_name(user_id), out.decode(errors="replace")[:200])
+            hook = vk.HOOK_QUELLE.read_text()
+            code, out = _agent_exec(c, ["sh", "-c",
+                f'umask 077 && mkdir -p "{p["verzeichnis"]}" "{p["zustand"]}" && '
+                f'printf "%s" "$T" > "{p["token"]}" && printf "%s" "$H" > "{p["hook"]}" && '
+                f'chmod 600 "{p["token"]}" && chmod 700 "{p["hook"]}"'],
+                environment={"T": vi["token"], "H": hook})
+            if code != 0:
+                log.warning("userenv_manager: vi hook/token write failed for %s: %s",
+                            container_name(user_id), out.decode(errors="replace")[:200])
+        res = _agent_exec(c, ["sh", "-c", f'cat "{cfg_dir}/settings.json" 2>/dev/null || echo "{{}}"'])
+        try:
+            alt = json.loads(res.output.decode(errors="replace") or "{}")
+        except ValueError:
+            alt = {}
+        neu = vk.mische_einstellungen(alt, vk.hook_befehl(home, vi["url"]) if vi else None)
+        if neu != alt:
+            _agent_exec(c, ["sh", "-c", f'mkdir -p "{cfg_dir}" && printf "%s" "$S" > "{cfg_dir}/settings.json"'],
+                        environment={"S": json.dumps(neu, indent=2, ensure_ascii=False)})
+        log.info("userenv_manager: VI for console %s for %s", "on" if vi else "off", container_name(user_id))
+    except Exception as e:  # noqa: BLE001
+        log.warning("userenv_manager: VI configuration failed for %s: %s", container_name(user_id), e)
 
 
 def _codex_config_toml(mcp_servers: dict | None, cs_user_id: str = "", model: str = "") -> str:

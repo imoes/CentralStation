@@ -236,12 +236,14 @@ async def _inject_cli_credentials(db: AsyncSession, uid: str) -> None:
     claude_creds = await _load_creds("claude_cli")
     if claude_creds:
         try:
+            from app.services import vi_konsole
+            _vi = await vi_konsole.lade(db)
             await asyncio.to_thread(
                 configure_claude_credentials, uid,
                 claude_creds.get("access_token", ""),
                 claude_creds.get("refresh_token", ""),
                 claude_creds.get("expires_at") or None,
-                {},
+                {}, False, _vi,
             )
             log.info("ide ensure: injected claude_cli credentials for %s", uid)
         except Exception as exc:
