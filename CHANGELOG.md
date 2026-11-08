@@ -78,17 +78,30 @@ vibemk, playwright). Your decision: „Lokale VI + Hook“.
   (`vi_vorher`), afterwards the outcome (`vi_nachher`). The tools `mcp__vi__*` are allowed automatically (the allow
   list is built from `.claude.json`). Written at session creation, console activation and IDE start
   (`userenv_manager._konfiguriere_vi`); without configuration server and hooks are removed, not left half in place.
-- The hook is the package's own script (`backend/app/resources/vi_hook.py` = `/usr/share/vi-mcp/hook/vi_hook.py` of
-  v0.14.3, SHA-256 `44ca2e1b…658a`, checked by a test). Token file 0600 in the console's
+- The hook is the package's own script: the backend build unpacks `/usr/share/vi-mcp/hook/vi_hook.py` from
+  `vi-mcp/pakete/*.deb` (no copy in the repo, it follows every update; the build aborts without it). Token file 0600 in the console's
   `~/.config/vi-mcp/token-konsole`; address and token in `global_settings` (`vi.konsole_url`, `vi.konsole_token`
   encrypted).
 - `vi-mcp` is in the console containers' proxy exceptions (one source: `no_proxy_entries`) — Python's urllib in the
   hook went through the proxy and got 503 (measured in the running console; Node's fetch went direct).
 - Evidence: 917 backend tests (5 new); login as instance `konsole` → "vi-mcp 0.14.3 verbunden … (Instanz konsole)".
+  **Live 16:11–16:12 UTC** after deploy and console restart (your approval „du kannst die sitzung neustarten“): `claude
+  mcp list` in the console → `vi: http://vi-mcp:8765/mcp (HTTP) - ✔ Connected` (plus centralstation, vibemk,
+  playwright); a `claude --print` run executing `uptime` → vi-mcp log „Sitzung … begonnen: Instanz konsole, Client
+  claude-code-hook 1“, `vi_erfahrung` of instance konsole: „Bash 1 / 0 Fehler / 18 ms“; hook log empty (no errors).
+- **Updating the local VI: `vi-mcp/aktualisieren.sh <version>`** (way agreed with the vi-mcp session): release .deb +
+  SHA256SUMS, checksum, backup of all four volumes (`~/vi-mcp-sicherung/*-<UTC>.tgz`, services stopped for it), swap
+  the package, set Dockerfile ARGs and image tag, build, recreate vi-mcp/vi-p2p, check `/gesund` names the new version
+  and `netz status`; it says whether the console hook changed (then rebuild the backend with the restart guard). Schema
+  migrations happen at service start (vi-mcp session). Tried 16:13 UTC with 0.15.0: backup 4 files, „ok vi-mcp 0.15.0“,
+  0 violations, „Hook der Konsole unverändert“.
 
 ### Still missing
 
 - Hermes and codex consoles do not get the VI yet (only claude_cli, your console agent).
+- A release is checked only against SHA256SUMS from the same release — protects against transfer errors, not against a
+  taken-over GitHub account. A signed SHA256SUMS (Ed25519 key pinned in this repo) is proposed by the vi-mcp session;
+  the script aborts on purpose if `vi-mcp/release-schluessel.pub` appears before the check is built.
 - `search_knowledge`/`store_knowledge` still write to `cs-knowledge` only, not into the VI.
 - Notes and corrections (`#gut`, `#schlecht`, UserPromptSubmit) need an own instance with the human right — not set up.
 - The skill knowledge (626 sections) lies on llm-host03, not in the local VI; the network carries only proven,

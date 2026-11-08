@@ -27,5 +27,12 @@ COPY backend/ .
 COPY README.md .
 # Gemeinsame Regeln für Befehle auf Servern (auch im Prüf-Container und in der Konsole).
 COPY cs_policy/ ./cs_policy/
+# Hook der Konsole (vi_konsole.py) direkt aus dem vi-mcp-Paket, das auch die lokale VI baut — keine Kopie im Repo,
+# er zieht bei jedem Update (vi-mcp/aktualisieren.sh) mit. Ohne Paket bricht der Bau ab, statt still ohne Hook zu laufen.
+COPY vi-mcp/pakete/ /tmp/vi-pakete/
+RUN set -e; deb=$(ls /tmp/vi-pakete/vi-mcp_*_all.deb | sort -V | tail -1); \
+    mkdir -p app/resources; \
+    dpkg-deb --fsys-tarfile "$deb" | tar -xO ./usr/share/vi-mcp/hook/vi_hook.py > app/resources/vi_hook.py; \
+    test -s app/resources/vi_hook.py; rm -rf /tmp/vi-pakete
 
 CMD ["sh", "-c", "python -m alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

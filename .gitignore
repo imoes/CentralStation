@@ -52,3 +52,6 @@ nginx/nginx.conf
 # Local notes (not part of the project)
 ansible-webui-prompt.md
 foreman.md
+
+# Hook der Konsole: kommt beim Bau aus vi-mcp/pakete/*.deb (backend/Dockerfile)
+backend/app/resources/vi_hook.py
