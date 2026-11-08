@@ -112,9 +112,15 @@ Instances have an internal memory (their own context) and share an external one,
   "[Selbst]" (the VI's self-narration) and "Im Langzeitlager passen" (entries unused for 180 days) are dropped from
   the case prompt.
 
+- **Live after the second deploy (13:46:46 UTC):** run 13:54 UTC → 4 known errors written, 0 rejected, watermark
+  stored (`log_watch.vi_bruecke_stand` = 13:52:27, updated 13:54:00). The prompt section is in the stored
+  conversation of case `host:mu-img-docker50.example.com` (cs-gespraech-2026.11, 13:45:14 UTC): "Kollektiv-Gedächtnis
+  (vi-mcp, andere Instanzen — Kontext, kein Beleg): nichts bekannt" — correct, no other instance knows that host.
+  On vi-mcp, `vi_erfahrung analyse` for the last hour: 7 actions by centralstation, 2 without a valid finding,
+  median 311 s, hints delivered in 2 of them.
+
 ### Still missing
 
-- The first fleet analysis with a "Kollektiv-Gedächtnis" prompt section after the deploy (14:xx) — see next entry.
 - Confirming/refuting insights of other instances and answering `vi_frage` questions from the analysis are not
   wired yet.
 - The ~450 known errors learned before 08.11. 13:34 UTC are not pushed (watermark starts there); a one-off backfill
