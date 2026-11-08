@@ -55,7 +55,8 @@ KRITERIEN: tuple[Kriterium, ...] = (
     Kriterium("N0", NICHT_RELEVANT, "Kein Kriterium erfüllt",
               "Keines der Relevanz-Kriterien trifft zu.", "Standardfall"),
     Kriterium("N1", NICHT_RELEVANT, "Routine", "Bekanntes Muster im üblichen Umfang.",
-              "Graylog-Muster ohne Fehler-Cluster-Ereignis; Switch-Muster ohne Signal"),
+              "Graylog-Muster ohne Fehler-Cluster-Ereignis; Switch-Muster ohne Signal; Dateisystem-Trendalarm "
+              "im bekannten Tagesmuster (signal:tagesmuster)"),
     Kriterium("N2", NICHT_RELEVANT, "Bekannt und behandelt",
               "Quittiert, in Downtime, offenes Ticket dazu oder bereits als KI-Befund gemeldet "
               "(solange kein neues Relevanz-Kriterium hinzukommt).",
@@ -101,7 +102,7 @@ PARAMETER = {
 }
 
 #: Version der Definition, die dieser Code als Standard mitbringt, und warum es sie gibt.
-CODE_VERSION = 9
+CODE_VERSION = 10
 AENDERUNGEN = {
     1: "Festgelegt mit dem Nutzer am 06.11.2026",
     2: "R6 umfasst Firewall-Bedrohungen (Sinkhole, Stufe ab medium) — Nutzer 06.11.2026: "
@@ -126,6 +127,10 @@ AENDERUNGEN = {
     9: "Nutzer 07.11.2026: Firewall-Zone Example-external ist extern (PAKSMB: Angriffe auf die DMZ wurden dem "
        "Angreifer zugeordnet, 13 Meldungen); sshd-Sitzungszeilen ohne Benutzer (pam_env, syslogin_perform_logout) "
        "sind Rauschen — @Rauschen umfasst rauschen:*",
+    10: "Nutzer 08.11.2026: Dateisysteme, die sich täglich füllen und bereinigt werden (/home/ngrc auf cue0111/0112/"
+        "0148/0149), melden über die CheckMK-Trendvorhersage WARN/CRIT. Folgt der Alarm dem gemessenen Tagesmuster "
+        "(≥ 3 Tage Hub ≥ 15 Pp mit Rückgang auf den Grundwert), ist er Routine (N1, Regel N1-TAG vor R1); über dem "
+        "bisherigen Tageshöchststand, ohne Bereinigung oder an der Prozentgrenze bleibt er ein echter Fehler",
 }
 
 def als_daten() -> tuple[list[dict], dict]:

@@ -138,6 +138,9 @@ STANDARD_FILTER = (
     ("R6-FW", "R6", "Firewall-Bedrohung", FORWARD, "quelle:firewall signal:bedrohung", 1),
     ("N3", "N3", "Nicht-Produktion", BLOCK, "@Nicht-Produktion", 1),
     ("N5", "N5", "Selbst erzeugt", BLOCK, "@Selbst-erzeugt", 0),
+    # Nutzer 08.11.: ein Dateisystem, das sich täglich füllt und bereinigt wird (Trendalarm im Muster), ist Routine —
+    # vor R1, sonst machte „zustand:crit @Produktion“ jeden Trend-CRIT relevant (tagesmuster.py)
+    ("N1-TAG", "N1", "Bekanntes Tagesmuster (Trendalarm)", BLOCK, "signal:tagesmuster", 1),
     ("R1", "R1", "Störung in Produktion", FORWARD, "zustand:crit @Produktion", 1),
     ("R2", "R2", "Neues Muster", FORWARD, "signal:neu", 1),
     ("R3", "R3", "Ausbreitung", FORWARD, "signal:ausbreitung", 1),

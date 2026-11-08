@@ -65,6 +65,53 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-08 — A filesystem that fills and gets cleaned up every day only alarms on a real fault
+
+You asked (08.11.): "Wir haben in CheckMK einige Hosts, bei denen das Verzeichnis /home/ngrc fast voll läuft und
+dann wieder bereinigt wird … Der Agent muss solche Muster erkennen und nur bei einem echten Fehler Alarm melden."
+
+### What CheckMK shows
+
+- **The fill level follows a daily pattern.** Measured `fs_used_percent` of `Filesystem /home/ngrc` on cue0111,
+  cue0112, cue0148 and cue0149 over 7 days: on weekdays ~20 % at 05:00, 61–70 % by 14:00, cleaned up to ~25 % in
+  the evening. Saturday stays flat.
+- **The alarms come from the trend forecast, not from the fill level.** Example, cue0112 06.11. 13:06: "Used:
+  54.47 % (warn/crit at 90.40 %/95.20 %), trend per 1 day: +126 GiB, **Time left until disk full: 2 days 19
+  hours** (warn/crit below 3 days/2 days)". The morning rise is extrapolated over the whole day; a fast rise
+  gives CRIT.
+
+### What is new
+
+- **The raster recognises the daily pattern** (`tagesmuster.py`).
+  - For a filesystem WARN/CRIT raised by the trend alone ("Time left until disk full", fill level below its own
+    percentage warning level), the raster fetches the 7-day history from CheckMK (cached for 1 h).
+  - **Pattern:** at least 3 days with a rise of ≥ 15 percentage points that fell back to the baseline. Then the
+    message gets `signal:tagesmuster` instead of damage/urgent. The reason names baseline, daily peak and current
+    value.
+  - **Rule `N1-TAG`** treats it as routine (N1), placed before R1. It is in the code standard (v10).
+- **It stays a real fault**, with the reason named, if any of these holds:
+  - the fill level is above the previous daily peak by more than 5 percentage points;
+  - the cleanup did not happen (in 24 h it never went back near the baseline);
+  - a percentage level is reached (then it is no pure trend alarm);
+  - the history cannot be fetched.
+- Evidence:
+  - Live against CheckMK 08.11., with a trend alarm simulated at 54 %: all 4 hosts recognised ("an 5 von 8 Tagen
+    von ~20 % auf bis 70 % und wieder bereinigt").
+  - The counter-check at 85 % gives a real fault on all 4, e.g. "über dem bisherigen Tageshöchststand: jetzt
+    85,0 %, bisher höchstens 69,5 %".
+  - Tests: `test_tagesmuster_erkannt`, `test_echter_fehler_ueber_hoechststand_oder_ohne_bereinigung`,
+    `test_raster_und_regel_tagesmuster_ist_routine`.
+- The incident mails of 07.11. for these hosts did not come from `/home/ngrc` but from CUE application logs, Wazuh
+  and LayoutChampApp segfaults. The history has no entry at all for the filesystem warnings.
+
+### Still missing
+
+- **Rule `N1-TAG` in the live definition (DB version v12).** Until it is there, the raster already sets
+  `signal:tagesmuster` and drops damage/urgent for such messages, but R1 ("zustand:crit @Produktion") would still
+  rate a trend CRIT as relevant.
+
+---
+
 ## 2026-11-08 — Incidents outside every scope go to all subscribers; sysadmin commits rule versions
 
 You decided (07.11.):

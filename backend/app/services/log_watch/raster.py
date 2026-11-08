@@ -336,11 +336,18 @@ def bewerte_checkmk(vorher: dict[str, str] | None, probleme: list[dict],
         signale: set[str] = set()
         gruende = [f"{p['service']} {sev.upper()}" + (f" auf Host mit Kritikalität {crit}" if crit else "")
                    + (" (neu)" if key not in vorher else f" (vorher {vorher[key].upper()})")]
-        if sev == "critical" and dt in THEMEN_R5:
+        # Trendalarm eines Dateisystems (lauf._tagesmuster_anreichern): im bekannten Tagesmuster kein Schaden
+        tm = p.get("tagesmuster") or {}
+        im_muster = bool(tm.get("erkannt"))
+        if tm:
+            gruende.append(tm.get("grund", ""))
+        if im_muster:
+            signale.add("tagesmuster")
+        if sev == "critical" and dt in THEMEN_R5 and not im_muster:
             signale.add("schaden")
         if dt in THEMEN_R8:
             signale.add("frist")
-        if sev == "critical" and crit in d.p("dringende_kritikalitaeten"):
+        if sev == "critical" and crit in d.p("dringende_kritikalitaeten") and not im_muster:
             signale.add("dringend")
         if p.get("acknowledged") or p.get("in_downtime"):
             signale.add("behandelt")

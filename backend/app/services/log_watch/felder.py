@@ -96,6 +96,8 @@ SIGNALE: dict[str, str] = {
     "bedrohung": "Firewall-Bedrohung ab Stufe medium oder Sinkhole (R6)",
     "behandelt": "quittiert, in Downtime oder offenes Ticket am Incident (N2)",
     "stumm": "vom Admin stumm geschaltet (N6)",
+    "tagesmuster": "Trendalarm eines Dateisystems im bekannten Tagesmuster (füllt sich, wird bereinigt) — N1 über "
+                   "Regel N1-TAG; Hub, Grundwert und Tageshöchststand stehen in den Gründen (tagesmuster.py)",
 }
 
 

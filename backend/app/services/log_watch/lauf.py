@@ -84,6 +84,37 @@ async def _zuletzt(quelle: str) -> datetime | None:
                                  .where(RasterLauf.quelle == quelle))).scalar()
 
 
+#: Tagesmuster je Host|Service, eine Stunde gültig — das Muster ändert sich nicht in Minuten (tagesmuster.py)
+_TAGESMUSTER: dict[str, tuple[datetime, dict]] = {}
+TAGESMUSTER_GUELTIG = timedelta(hours=1)
+
+
+async def _tagesmuster_anreichern(k, probleme: list[dict], jetzt: datetime) -> None:
+    """Dateisystem-Alarme, die nur die Trendvorhersage auslöst: 7-Tage-Verlauf aus CheckMK holen und das
+    Tagesmuster daran prüfen; Ergebnis an p["tagesmuster"] (Grund immer benannt)."""
+    from app.services.log_watch import tagesmuster as tmod
+    for p in probleme:
+        if p.get("severity") not in ("warning", "critical") or not tmod.ist_dateisystem(p.get("service", "")):
+            continue
+        ta = tmod.trend_alarm(p.get("output") or "")
+        if ta is None:
+            continue
+        schl = f"{p['host']}|{p['service']}"
+        alt = _TAGESMUSTER.get(schl)
+        if alt and jetzt - alt[0] < TAGESMUSTER_GUELTIG:
+            p["tagesmuster"] = {**alt[1], "jetzt_pct": ta["used"]}
+            continue
+        try:
+            g = await k.get_graph_data(p["host"], p["service"], metric_id="fs_used_percent", hours=24 * 7)
+            reihe = [(datetime.fromisoformat(x["time"]), float(x["value"])) for x in g.get("series") or []]
+            erg = (tmod.tagesmuster(reihe, jetzt, ta["used"]) if reihe else
+                   {"erkannt": False, "grund": f"Verlauf aus CheckMK nicht abrufbar: {g.get('error') or 'leer'}"})
+        except Exception as e:  # noqa: BLE001 — ohne Verlauf bleibt der Alarm ein Alarm (benannt)
+            erg = {"erkannt": False, "grund": f"Verlauf aus CheckMK nicht abrufbar: {type(e).__name__}"}
+        _TAGESMUSTER[schl] = (jetzt, erg)
+        p["tagesmuster"] = erg
+
+
 async def _grundlagen():
     """Hostverzeichnis und aktuelle Relevanz-Definition — beides braucht jedes Urteil."""
     from app.core.database import AsyncSessionLocal
@@ -306,6 +337,7 @@ async def run_raster() -> None:
                 _checkmk_vorher = await _letzter_checkmk_zustand(jetzt)
             probleme = await adapter["checkmk"].k.get_problems(include_unknown=True,
                                                                include_handled=True)
+            await _tagesmuster_anreichern(adapter["checkmk"].k, probleme, jetzt)
             abgleich = bewerte_checkmk(_checkmk_vorher, probleme, verz, d)
             _checkmk_vorher = abgleich.zustand
             _merke(bc, abgleich.treffer)
