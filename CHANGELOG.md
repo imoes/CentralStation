@@ -100,12 +100,17 @@ learning that becomes intuition over time. The skill is `~/skills/vi-gedaechtnis
 - Tests: `test_r7_nur_zwischen_symptomtragenden_treffern`, `test_flattern_ist_ein_signal_und_testregel`,
   `test_wazuh_inventar_zaehlt_im_test_und_bleibt_r6` (908 in total).
 
-### Measured, not yet fixed
+### Measured, then corrected
 
-- **Prompt caching does not take effect on strata.** Three calls with the identical 1 214-token static prompt head
-  (`trichter.SYSTEM`) returned `timings.cache_n = 0` and `prompt_ms ≈ 2 420` each time, even with
-  `cache_prompt: true`. The static head is the "trained intuition" in the prompt; the server does not reuse it.
-  The fix is on llm-host03 (production), so it needs approval.
+- **Prompt caching on strata — my first claim was wrong.** I had reported "the server does not reuse the static
+  prompt head": three single-turn calls with the identical 1 214-token head returned `cache_n = 0`. The
+  engine's own performance log (`docker logs strata-27b`, 08.11. ~11:10 UTC) shows the opposite in real agent
+  traffic: `strata print_timing: n_cached = 23564, n_prompt = 24703` and "slot 1 gave back 23564 tokens of this
+  conversation (its turn checkpoint)". Strata caches **per conversation** (turn checkpoint), which is exactly
+  the tool loop of an analysis, where the prompt grows turn by turn. What is not reused is the static head
+  across *different* conversations, about 2.4 s once per analysis. `strata launch --help` offers no setting for
+  cross-conversation prefix reuse, so there is nothing to change on llm-host03. The earlier statement in the skill
+  and the memory note is corrected too.
 
 - **Live since definition v14** (08.11., author thomas.kluge@example.org; the user asked to retry after the first
   attempt was blocked). Check against the live rules: `regel:533` level 7 → R6 decides, N1-INV counts as a test hit;
