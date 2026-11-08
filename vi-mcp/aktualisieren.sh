@@ -3,7 +3,7 @@
 #
 #   vi-mcp/aktualisieren.sh 0.15.1        # Version ohne „v“
 #
-# 1. Release-.deb + SHA256SUMS holen und prüfen (später zusätzlich die Signatur, sobald es einen Release-Schlüssel gibt)
+# 1. Release-.deb + SHA256SUMS + SHA256SUMS.sig holen; Signatur mit dem festen Schlüssel im Repo, dann Prüfsumme
 # 2. Volumes von vi-mcp und vi-p2p sichern (Dienste dafür kurz angehalten: SQLite mit WAL, ein Schreiber)
 # 3. Paket in vi-mcp/pakete/ tauschen, Dockerfile-ARGs und Image-Tag setzen
 # 4. Image bauen, vi-mcp und vi-p2p neu erstellen
@@ -19,12 +19,19 @@ DEB="vi-mcp_${V}-1_all.deb"
 SICHERUNG="${VI_SICHERUNG:-$HOME/vi-mcp-sicherung}"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
-echo "== 1. Release v$V holen und prüfen"
-gh release download "v$V" -R "$REPO" -D "$TMP" -p "$DEB" -p SHA256SUMS
+echo "== 1. Release v$V holen und prüfen (Signatur, dann Prüfsumme)"
+# Öffentlicher Release-Schlüssel: EINMAL aus dem vi-mcp-Repo übernommen (08.11.2026), Fingerabdruck verglichen
+# (lokales Repo und GitHub, beide c88aa8ce…dd15). Immer DIESE Kopie nehmen, nie eine aus dem Download.
+SCHLUESSEL=vi-mcp/release-schluessel.pem
+FP_SOLL=c88aa8ce6f0cf15652b0137ee89fd5835b9a5d22285906b092e92b0ae576dd15
+FP=$(openssl pkey -pubin -in "$SCHLUESSEL" -outform DER | sha256sum | cut -d' ' -f1)
+[ "$FP" = "$FP_SOLL" ] || { echo "ABBRUCH: $SCHLUESSEL hat Fingerabdruck $FP, erwartet $FP_SOLL"; exit 1; }
+gh release download "v$V" -R "$REPO" -D "$TMP" -p "$DEB" -p SHA256SUMS -p SHA256SUMS.sig
+[ -s "$TMP/SHA256SUMS.sig" ] || { echo "ABBRUCH: Release v$V ist nicht signiert (SHA256SUMS.sig fehlt)"; exit 1; }
+openssl pkeyutl -verify -pubin -inkey "$SCHLUESSEL" -rawin -in "$TMP/SHA256SUMS" -sigfile "$TMP/SHA256SUMS.sig" >/dev/null \
+    || { echo "ABBRUCH: Signatur von SHA256SUMS ungültig"; exit 1; }
+echo "   Signatur gültig (Schlüssel ${FP:0:8}…)"
 (cd "$TMP" && sha256sum -c --ignore-missing SHA256SUMS) | grep -q "$DEB: OK" || { echo "ABBRUCH: Prüfsumme passt nicht"; exit 1; }
-if [ -f vi-mcp/release-schluessel.pub ]; then
-    echo "ABBRUCH: Release-Schlüssel liegt vor, die Signaturprüfung ist aber noch nicht gebaut"; exit 1
-fi
 H=$(sha256sum "$TMP/$DEB" | cut -d' ' -f1)
 ALT=$(ls vi-mcp/pakete/vi-mcp_*_all.deb 2>/dev/null | head -1 || true)
 echo "   $DEB  sha256 $H  (bisher: ${ALT:-keins})"

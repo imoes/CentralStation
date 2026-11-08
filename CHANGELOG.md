@@ -91,9 +91,24 @@ You decided (08.11.): „andere agenten auch einrichten. wissensidex deaktiviere
   arguments, which Python prefers over `NO_PROXY`. `vi-mcp` is now in the backend's build-time `NO_PROXY` too.
   Earlier tests had set both variables by hand and missed it.
 
+- **Taken over into the local VI:** all 12 entries of `cs-knowledge` (10 from consoles, 2 recipes), complete — long
+  ones split into parts („Teil i/n“), 28 objects, 0 errors (16:29 UTC). Hashtags `herkunft:cs-knowledge`,
+  `wissen:<kind>`, `host:`, `dienst:`, `thema:`; source = index id, origin, date, confidence; `ausgang: gut` for lessons
+  and runbooks. No credentials found in them beforehand.
+- **Evidence after deploy (16:26 UTC) and console restart:** in the console `claude mcp list` → `vi … ✔ Connected`;
+  write guard: `mcp__vi__vi_erinnere`/`vi_lerne` exit 0, `mcp__vibemk__vibemk_acknowledge_problem` still exit 2;
+  `vi_erinnere host:cue0110.example.com herkunft:cs-knowledge` as instance konsole returns the taken-over entries;
+  Hermes config has `vi` (streamable-http, Bearer), Codex TOML `[mcp_servers.vi]` with `http_headers`; backend MCP has no
+  `store_knowledge` any more. 1069 tests.
+- **Release signature in the update script:** `vi-mcp/release-schluessel.pem` (Ed25519, fingerprint
+  `c88aa8ce…dd15`, compared from the local vi-mcp repo AND GitHub) is pinned in this repo; the script downloads
+  `SHA256SUMS.sig`, verifies it with `openssl pkeyutl -verify` and the pinned key, then the checksum. Tried: v0.15.0
+  passes; v0.14.3 (unsigned) aborts „nicht signiert“ before anything is touched; a changed SHA256SUMS fails (exit 1).
+
 ### Still missing
 
-- The index `cs-knowledge` itself is kept (not deleted); its 12 entries are taken over into the VI (see below).
+- The index `cs-knowledge` itself is kept (not deleted); delete it only on your word.
+- Notes/corrections from the console (`#gut`, `#schlecht`) would need an own instance with the human right — not set up.
 
 ---
 
@@ -131,9 +146,8 @@ vibemk, playwright). Your decision: „Lokale VI + Hook“.
 ### Still missing
 
 - Hermes and codex consoles do not get the VI yet (only claude_cli, your console agent).
-- A release is checked only against SHA256SUMS from the same release — protects against transfer errors, not against a
-  taken-over GitHub account. A signed SHA256SUMS (Ed25519 key pinned in this repo) is proposed by the vi-mcp session;
-  the script aborts on purpose if `vi-mcp/release-schluessel.pub` appears before the check is built.
+- ~~A release is checked only against SHA256SUMS from the same release~~ — done the same day: signed SHA256SUMS with a
+  pinned Ed25519 key (see the entry „Knowledge index switched off …“).
 - `search_knowledge`/`store_knowledge` still write to `cs-knowledge` only, not into the VI.
 - Notes and corrections (`#gut`, `#schlecht`, UserPromptSubmit) need an own instance with the human right — not set up.
 - The skill knowledge (626 sections) lies on llm-host03, not in the local VI; the network carries only proven,
