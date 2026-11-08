@@ -80,7 +80,8 @@ STANDARD_OBJEKTE = {
     "Produktion": "kritikalitaet:(prod OR staging OR critical)",
     "Nicht-Produktion": "kritikalitaet:(test OR dev OR offline)",
     # PAM: Sitzung geöffnet/geschlossen; Webscanner (Wazuh ab Level 7, darum vor R6)
-    "Rauschen": "regel:(5501 OR 5502) OR regelgruppe:web_scan",
+    # rauschen:* — am Text erkannte Rauschzeilen (raster.TEXT_HASHTAGS), z. B. sshd-Sitzungszeilen (Nutzer 07.11.)
+    "Rauschen": "regel:(5501 OR 5502) OR regelgruppe:web_scan OR rauschen:*",
     # Ansible: Nutzer 07.11.2026 — Modulaufrufe auf dem Zielhost (raster.SELBST_APPS → app:ansible)
     "Selbst-erzeugt": "dienst:Check_MK* OR app:ansible",
     "Routine-Quellen": "quelle:(graylog OR switch)",
@@ -96,11 +97,11 @@ PARAMETER = {
     "firewall_dringend_aktionen": ["sinkhole"],
     "firewall_dringend_stufen": ["high", "critical"],
     #: Zonen außerhalb unseres Netzes — kommt eine Verbindung von dort, ist das Ziel betroffen
-    "firewall_externe_zonen": ["UNTRUST"],
+    "firewall_externe_zonen": ["UNTRUST", "Example-external"],
 }
 
 #: Version der Definition, die dieser Code als Standard mitbringt, und warum es sie gibt.
-CODE_VERSION = 8
+CODE_VERSION = 9
 AENDERUNGEN = {
     1: "Festgelegt mit dem Nutzer am 06.11.2026",
     2: "R6 umfasst Firewall-Bedrohungen (Sinkhole, Stufe ab medium) — Nutzer 06.11.2026: "
@@ -122,6 +123,9 @@ AENDERUNGEN = {
     8: "Ansible-Läufe sind selbst erzeugt (N5, Nutzer 07.11.2026): @Selbst-erzeugt umfasst app:ansible. "
        "Anlass: ein Filebeat-Rollout über 139 Hosts ergab Ausbruchs- und Host-Incidents aus "
        "„ansible-<modul> Invoked with“-Zeilen",
+    9: "Nutzer 07.11.2026: Firewall-Zone Example-external ist extern (PAKSMB: Angriffe auf die DMZ wurden dem "
+       "Angreifer zugeordnet, 13 Meldungen); sshd-Sitzungszeilen ohne Benutzer (pam_env, syslogin_perform_logout) "
+       "sind Rauschen — @Rauschen umfasst rauschen:*",
 }
 
 def als_daten() -> tuple[list[dict], dict]:

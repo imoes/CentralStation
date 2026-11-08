@@ -161,3 +161,11 @@ def test_ansible_ist_selbst_erzeugt_v8():
     assert bewerte(STANDARD.regeln, tags, {}).regel == "N5"
     assert bewerte(STANDARD.regeln, tags | {"signal:schaden"}, {}).regel == "R5"
     assert bewerte(STANDARD.regeln, tags - {"app:ansible"}, {}).regel != "N5"
+
+
+def test_sshd_sitzungszeilen_sind_rauschen():
+    """Nutzer 07.11.: pam_env/syslogin_perform_logout bei jedem SSH-Login → rauschen:sshd-sitzung (N4 über @Rauschen)."""
+    from app.services.log_watch.raster import tags_aus_text
+    assert tags_aus_text("ns03 sshd[<NUM>]: pam_env(sshd:session): deprecated reading of user environment enabled") == ["rauschen:sshd-sitzung"]
+    assert tags_aus_text("docker0188 sshd-session[<NUM>]: syslogin_perform_logout: logout() returned an error") == ["rauschen:sshd-sitzung"]
+    assert tags_aus_text("sshd[1]: Failed password for root from 1.2.3.4") == []

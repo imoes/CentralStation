@@ -68,6 +68,8 @@ HASHTAG_ARTEN: dict[str, tuple[str, str]] = {
     "dienst": ("CheckMK-Service", "dienst:Filesystem /"),
     "switch": ("Switch, von dem die Zeile stammt", "switch:nsa383"),
     "app": ("Anwendung/Container der Zeile", "app:cue-content-store-06"),
+    "rauschen": ("Zeile ist bekanntes Rauschen, am Text erkannt (raster.TEXT_HASHTAGS); das Objekt @Rauschen (N4) "
+                 "greift den Hashtag auf", "rauschen:sshd-sitzung"),
     "befund": ("Verknüpfung mit einem KI-Befund (Beleg, Wiederholung oder gesehen) — ein Name für die Kante", "befund:47f532e733"),
     "incident": ("Verknüpfung mit einem Incident (sein Filter trifft die Nachricht)", "incident:4ec1a4de-…"),
     "ticket": ("Bezug einer Konsolen-Sitzung zu einem Ticket", "ticket:IMIT-1234"),

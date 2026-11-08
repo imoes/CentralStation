@@ -82,6 +82,16 @@ You decided (07.11.):
   - The delivery record names the choice under `empfaenger_wahl` ("host-scope" or "kein Scope trifft — alle
     Abonnenten").
   - Test: `test_ohne_scope_bekommen_alle_abonnenten`.
+- **sshd session lines without a user count as noise (N4).** `pam_env(sshd:session): deprecated reading …` and
+  `syslogin_perform_logout: logout() returned an error` occur on every SSH login.
+  - The raster recognises them by their text and tags them `rauschen:sshd-sitzung` (`raster.TEXT_HASHTAGS`), and
+    `@Rauschen` now includes `rauschen:*`.
+  - A tag is used rather than a pattern list because Drain often puts the host name into the pattern: 46
+    patterns for these two lines, and a new pattern for every new host.
+  - Test: `test_sshd_sitzungszeilen_sind_rauschen`.
+- **Firewall zone `Example-external` is external.** On PAKSMB, attacks on the DMZ had been assigned to the attacker:
+  13 messages, and the incident at 19:19 was named after the attacker IP `91.92.40.12`. The affected host is now
+  the target in the DMZ. This is code standard v9, and definition v12 in the DB.
 - **sysadmin may commit new rule-set versions.**
   - `POST /log-watch/definition` now allows `RequireSysAdmin`.
   - In the rule editor the "Übernehmen" button is enabled for admin and sysadmin.

@@ -44,6 +44,18 @@ SELBST_APPS = ((re.compile(r"\bansible-[\w.]+:? (?:Invoked with\b|\[WARNING\])"
                            r"|\b(?:for|from) (?:invalid )?user ansible\b|\bfor ansible from\b"), "ansible"),)
 
 
+#: Zeilen, die als bekanntes Rauschen am Text erkennbar sind — über einen Hashtag statt einer Musterliste, weil Drain
+#: den Hostnamen oft ins Muster nimmt (gemessen 08.11.: 46 Muster für zwei sshd-Zeilen, je neuer Host ein neues).
+#: Nutzer 07.11.: sshd-Sitzungszeilen ohne Benutzer sind Rauschen (N4) — sie entstehen bei jedem SSH-Login.
+TEXT_HASHTAGS = ((re.compile(r"pam_env\(sshd:session\): deprecated reading of user environment"
+                             r"|syslogin_perform_logout: logout\(\) returned an error"), "rauschen:sshd-sitzung"),)
+
+
+def tags_aus_text(*texte: str) -> list[str]:
+    """Hashtags aus dem Zeilentext (TEXT_HASHTAGS). Rein."""
+    return [tag for rx, tag in TEXT_HASHTAGS if any(rx.search(t or "") for t in texte)]
+
+
 def apps_aus_text(*texte: str) -> list[str]:
     """Anwendungen aus dem Zeilentext (SELBST_APPS) — für den Hashtag app:<name>."""
     return [app for rx, app in SELBST_APPS if any(rx.search(t or "") for t in texte)]
@@ -210,6 +222,7 @@ def bewerte_graylog(templates: dict, events: list, kritisch: dict, stumm: set[st
                 sig |= {"schaden", "dringend"}
                 gr.append("Kritische Kernelmeldung auf diesem Host: " + ", ".join(sorted(set(sigs))))
             tags = (["quelle:graylog", f"muster:{key}"] + htags + [f"app:{a}" for a in apps]
+                    + tags_aus_text(tt.template, *(tt.examples[:1]))
                     + [f"thema:{t.id}" for t in th] + _sig(sig))
             out.append(_urteil("graylog", f"muster:{key}", kanon, e is not None, tags, {}, gr,
                                g["anzahl"], g.get("beispiel") or (tt.examples[0] if tt.examples else ""),
