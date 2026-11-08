@@ -85,6 +85,8 @@ async def stelle(von: str, host: str, frage: str, kontext: dict | None = None, w
         waited += TAKT_S
         r = await lies(str(fid))
         if r and r["status"] in ("beantwortet", "unbeantwortet"):
+            if r["status"] == "beantwortet":
+                await _gesehen(str(fid))          # schon im Werkzeugaufruf gelesen — nicht noch einmal zustellen
             return r
     r = await lies(str(fid)) or {}
     return {**r, "hinweis": f"Noch keine Antwort nach {int(warte_s)} s — sie erscheint unter lw_fragen(id=\"{fid}\")."}
@@ -133,6 +135,42 @@ async def posteingang(agent: str) -> list[dict]:
             r.status = "zugestellt"
         await db.commit()
         return [_zeile(r) for r in rows]
+
+
+def antwort_als_zug(f: dict) -> str:
+    """Eine eingegangene Antwort als Text für den FRAGENDEN. Rein — testbar."""
+    belege = f" Belege: {', '.join(map(str, f['belege'][:10]))}." if f.get("belege") else ""
+    return (f"Antwort auf deine Rückfrage {f['id']} zu {f['an_host']} (von {f['an_agent']}): {f['antwort']}{belege}\n"
+            "Das ist Kontext, kein Beleg — nur Nachrichten-IDs aus lw_suche zitierst du.")
+
+
+async def antworten_eingang(agent: str) -> list[dict]:
+    """Antworten auf Fragen von `agent`, die er noch nicht gesehen hat → einmal zustellen (trichter._schleife).
+    Gemessen 08.11.: Median 130 s bis zur Antwort, der Fragende wartet 30 s — ohne Zustellung las er sie nie."""
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.log_watch import KiFrage
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(KiFrage).where(KiFrage.von == agent, KiFrage.status == "beantwortet")
+                                 .order_by(KiFrage.beantwortet_at))).scalars().all()
+        neu = [r for r in rows if not (r.kontext or {}).get("antwort_gesehen")]
+        for r in neu:
+            r.kontext = {**(r.kontext or {}), "antwort_gesehen": True}
+        await db.commit()
+        return [_zeile(r) for r in neu]
+
+
+async def _gesehen(fid: str) -> None:
+    import uuid
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.log_watch import KiFrage
+    async with AsyncSessionLocal() as db:
+        r = await db.get(KiFrage, uuid.UUID(fid))
+        if r is not None:
+            r.kontext = {**(r.kontext or {}), "antwort_gesehen": True}
+            await db.commit()
 
 
 async def antworte(agent: str, fid: str, antwort: str, belege: list | None = None) -> dict:

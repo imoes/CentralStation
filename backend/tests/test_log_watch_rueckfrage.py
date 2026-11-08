@@ -36,3 +36,13 @@ def test_kollegenliste_im_fall():
     t = trichter.kollegen_text({"a-1": ["cue092.example.com"], "b-2": ["nsa1", "nsa2"]})
     assert t.startswith("Kollegen (lw_frage erreicht nur diese Hosts):") and "cue092.example.com" in t and "nsa1, nsa2" in t
     assert "Liste „Kollegen“" in trichter.SYSTEM
+
+
+def test_antwort_wird_dem_fragenden_zugestellt():
+    """Gemessen 08.11.: Median 130 s bis zur Antwort, der Fragende wartet 30 s — die Antwort kommt jetzt zu ihm."""
+    import inspect
+    z = rf.antwort_als_zug({"id": "abc", "an_host": "nsa279", "an_agent": "agent-2", "antwort": "CPU 99 % um 08:29",
+                            "belege": ["checkmk:1"]})
+    assert z.startswith("Antwort auf deine Rückfrage abc zu nsa279 (von agent-2): CPU 99 % um 08:29")
+    assert "checkmk:1" in z and "kein Beleg" in z
+    assert "antworten_eingang(agent_name)" in inspect.getsource(trichter._schleife)

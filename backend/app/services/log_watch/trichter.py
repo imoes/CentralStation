@@ -327,6 +327,11 @@ async def _schleife(fall: dict, llm_config, llm, prompt: str, verlauf: list[dict
                 zug = rueckfrage.als_zug(f)
                 nachrichten.append({"role": "user", "content": zug})
                 verlauf.append({"rolle": "worker", "text": zug})
+            # … und Antworten auf eigene Rückfragen, die nach dem Warten eintrafen
+            for f in await rueckfrage.antworten_eingang(agent_name):
+                zug = rueckfrage.antwort_als_zug(f)
+                nachrichten.append({"role": "user", "content": zug})
+                verlauf.append({"rolle": "worker", "text": zug})
         t0 = time.monotonic()
         antwort = await llm(llm_config, nachrichten, tools)
         ki_s = round(time.monotonic() - t0, 1)

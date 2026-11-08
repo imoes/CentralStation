@@ -65,6 +65,30 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-08 — Answers to peer questions reach the asker; delivery checked live
+
+### Changed
+
+- **An answer that arrives later is delivered to the asker before its next model call.** The asker waits 30 s;
+  after that it would only see the answer by calling `lw_fragen` itself, which it practically never did.
+  - Measured 07.11. 19:16 to 08.11. 10:21: 62 answered, median 130 s until the answer.
+  - The answer comes as a worker turn: "Antwort auf deine Rückfrage … (von …)", plus the note that it is context,
+    not evidence. It is delivered only once (`antwort_gesehen`).
+  - Test: `test_antwort_wird_dem_fragenden_zugestellt`.
+
+### Observed live (08.11.)
+
+- **Fallback recipients work.** Incident `38cf2148` (nsa200, 10:09) is in nobody's scope. It went to all
+  subscribers (1 mail), and the record says "kein Scope trifft — alle Abonnenten". cue0111 and cue0123 went out
+  through the host scope.
+- **The colleague list works.** Since 07.11. 19:16 there are 62 answered peer questions; before, 1 of 20 had an
+  answer. The others: 46 niemand, 35 unanswered.
+  - Of the unanswered, 28 never reached the agent because its case ended first; 7 were delivered and not answered.
+  - The content is useful. Example: on the CPU wave on the EX4300 switches nsa278/nsa279, two agents compared
+    their findings without claiming a cause from timing alone.
+
+---
+
 ## 2026-11-08 — A filesystem that fills and gets cleaned up every day only alarms on a real fault
 
 You asked (08.11.): "Wir haben in CheckMK einige Hosts, bei denen das Verzeichnis /home/ngrc fast voll läuft und
