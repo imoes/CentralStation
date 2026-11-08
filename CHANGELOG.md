@@ -110,6 +110,13 @@ learning that becomes intuition over time. The skill is `~/skills/vi-gedaechtnis
 - **Live since definition v14** (08.11., author thomas.kluge@example.org; the user asked to retry after the first
   attempt was blocked). Check against the live rules: `regel:533` level 7 → R6 decides, N1-INV counts as a test hit;
   a CRIT with `signal:flattern` → R1 decides, N1-FLAT counts. The editor shows both under "Test".
+- **Switched on in v15** (08.11., "Ja mache das"): N1-INV, N1-FLAT and the 12 AUS rules now decide. Test hits in
+  the 3 h before: AUS-6 69 012, AUS-11 30 763, AUS-7 1 699, AUS-3 254, N1-INV 135, AUS-12 17, AUS-4 7, N1-FLAT 2;
+  AUS-1/2/5/8/9/10 had no hits in that window. Checks against v15: Wazuh 533 level 7 → N1-INV (block), level 12 →
+  R6; flapping CRIT → N1-FLAT, flapping with damage → R5. The old exclusion filters still act on raw messages;
+  `AUSSCHLUSSFILTER_AKTIV` can now be switched off in a next step.
+- **R7 live after the deploy:** the cross-source step raised 1–19 messages on 1–6 hosts in every 5-min window from
+  09:35 to 10:55 (cue fleet, mon02/mon03); the windows 11:00 and 11:05 raised 0 on 0 hosts.
 
 ---
 
