@@ -133,9 +133,13 @@ class ViMcpConnector(BaseConnector):
             arg["ergebnis"] = ergebnis[:20000]
         return await self.werkzeug_json("vi_nachher", arg)
 
-    async def lerne(self, text: str, hashtags: list[str], quelle: str, wichtigkeit: int = 1) -> str:
-        return await self.werkzeug("vi_lerne", {"text": text[:1000], "hashtags": hashtags[:20], "quelle": quelle[:500],
-                                                "wichtigkeit": max(0, min(3, wichtigkeit))})
+    async def lerne(self, text: str, hashtags: list[str], quelle: str, wichtigkeit: int = 1,
+                    ausgang: str | None = None) -> str:
+        arg: dict = {"text": text[:1000], "hashtags": hashtags[:20], "quelle": quelle[:500],
+                     "wichtigkeit": max(0, min(3, wichtigkeit))}
+        if ausgang in ("gut", "schlecht"):
+            arg["ausgang"] = ausgang           # ab vi-mcp 0.10.0: der Schlaf gleicht neue Erfahrungen dagegen ab
+        return await self.werkzeug("vi_lerne", arg)
 
     async def erinnere(self, filtertext: str, limit: int = 5) -> str:
         return await self.werkzeug("vi_erinnere", {"filter": filtertext, "limit": limit})

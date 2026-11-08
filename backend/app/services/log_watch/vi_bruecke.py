@@ -76,8 +76,9 @@ def abschnitt(vorher: dict | str | None, erinnert: str, fehler: str | None) -> s
         z.append(f"  nicht erreichbar: {fehler}")
         return "\n".join(z)
     hinweise = (vorher or {}).get("hinweise") if isinstance(vorher, dict) else None
-    # vi-mcp ≥ 0.4.0 streut alle 25 Handlungen die Selbst-Erzählung der VI ein („[Selbst] …“) — kein Fallwissen
-    for h in [h for h in (hinweise or []) if not str(h).startswith("[Selbst]")][:6]:
+    # kein Fallwissen: „[Selbst] …“ (Selbst-Erzählung der VI, vi-mcp ≥ 0.4.0) und „Im Langzeitlager passen: …“
+    # (seit 0.10.0: ≥ 180 Tage unbenutzte Einträge — zu alt für die Lage)
+    for h in [h for h in (hinweise or []) if not str(h).startswith(("[Selbst]", "Im Langzeitlager passen"))][:6]:
         z.append("  " + str(h)[:300])
     if erinnert and not erinnert.startswith("nichts im Gedächtnis"):
         z += ["  " + l[:300] for l in erinnert.splitlines()[1:9]]
@@ -152,7 +153,7 @@ async def hochschreiben() -> dict:
         for e in neu_bek:
             erk = erkenntnis_aus_bekannt(e)
             if erk:
-                r = await k.lerne(*erk)
+                r = await k.lerne(*erk, ausgang="schlecht")      # ein bekannter Fehler ist eine Störung
                 geschrieben += 0 if r.startswith("abgelehnt") else 1
                 abgelehnt += 1 if r.startswith("abgelehnt") else 0
             neuer_stand = max(neuer_stand, e.get("gelernt") or neuer_stand)
