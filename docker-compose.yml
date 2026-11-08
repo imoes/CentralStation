@@ -164,7 +164,7 @@ services:
     build:
       context: .
       dockerfile: vi-mcp/Dockerfile
-    image: centralstation-vi-mcp:0.14.0
+    image: centralstation-vi-mcp:0.14.1
     restart: unless-stopped
     volumes:
       - vi-mcp-daten:/var/lib/vi-mcp
@@ -174,11 +174,15 @@ services:
   # Fremdes in Quarantäne. Eigener Nutzer, eigenes Volume, kein Zugriff auf vi-mcp-daten.
   # Läuft erst nach `vi-mcp netz einrichten …` — daher Profil „netz“: docker compose --profile netz up -d vi-p2p
   vi-p2p:
-    image: centralstation-vi-mcp:0.14.0
+    image: centralstation-vi-mcp:0.14.1
     profiles: ["netz"]
     restart: unless-stopped
     user: vi-p2p
     command: ["vi-mcp", "netz", "lauf"]
+    # Die Prüfung des Images fragt vi-mcp auf 127.0.0.1:8765 — die gibt es in diesem Container nicht. Ein Peer hat
+    # keinen eigenen Endpunkt (nur peerhost); ob er arbeitet, zeigt sein Log („Netz: Abgleich …“).
+    healthcheck:
+      disable: true
     volumes:
       - vi-p2p-daten:/var/lib/vi-p2p
       - vi-p2p-konfig:/etc/vi-p2p

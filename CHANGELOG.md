@@ -72,8 +72,8 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
 
 ### What is new
 
-- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.14.0`, built by `vi-mcp/Dockerfile` from
-  `vi-mcp/pakete/vi-mcp_0.14.0-1_all.deb` = the GitHub release v0.14.0, checked against SHA-256 `4fcfaf83…3a6e` from the
+- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.14.1`, built by `vi-mcp/Dockerfile` from
+  `vi-mcp/pakete/vi-mcp_0.14.1-1_all.deb` = the GitHub release v0.14.1, checked against SHA-256 `649c106d…8c54` from the
   release's SHA256SUMS; the build aborts on a mismatch). Listens only inside the Compose
   network (`vi-mcp:8765`), no published port; memory and configuration in the volumes `vi-mcp-daten`/`vi-mcp-konfig`.
   Instance `centralstation` created; its token lies 0600 in `~/.config/vi-mcp/token-centralstation-lokal`, never printed.
@@ -90,10 +90,16 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
 
 ### Still missing
 
-- **Networking with llm-host03 is not set up**: it needs a `vi-p2p` peerhost there, the founder's public key and the
-  invitation of this host's key — asked of the vi-mcp session, no answer yet. Until then the local memory is empty.
+- **Invitation of hal by llm-host03** is pending (vi-mcp session); until then nothing is exchanged and the local memory is empty.
 - The connector `vi_mcp` still points to llm-host03; it moves to `http://vi-mcp:8765/mcp` only once the exchange works,
   otherwise CentralStation would lose the collective.
+- **Networking set up on your approval (08.11., „Ja, vernetzen“):** llm-host03 is peerhost and founder (vi-mcp session),
+  hal joined as `peer` with v0.14.1 (release; 0.14.0 rejected addresses with a path such as `/vi-p2p`), SHA-256
+  `649c106d…8c54` checked. `vi-mcp netz einrichten --modus peer --gruender dd0d98c8… --start https://llm-host03.example.com/vi-p2p`
+  created instance `p2p` (token hash matches `/etc/vi-p2p/mcp-token`); `mcp_url` set to `http://vi-mcp:8765/mcp`, test
+  pace 30 s. Key of hal: `293e6d4e…2f57` (pseudonym vi-33f06202775c). First exchange 15:26:58 UTC → HTTP 403 until
+  invited — expected.
+- The image's health check asks vi-mcp on 127.0.0.1 — wrong inside `vi-p2p`; disabled there (a peer has no endpoint).
 - **Corrected:** the first image (15:16 UTC) came from an interim build (SHA-256 `ce70d3c3…`, changelog ending at 0.13.0),
   not from the release. Rebuilt from the release at 15:18 UTC; data and instance in the volumes stayed.
 - **Before networking, a decision is yours** (vi-mcp session, 08.11.): llm-host03 is not a peerhost yet; that needs an
