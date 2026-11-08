@@ -104,11 +104,9 @@ dann wieder bereinigt wird … Der Agent muss solche Muster erkennen und nur bei
 - The incident mails of 07.11. for these hosts did not come from `/home/ngrc` but from CUE application logs, Wazuh
   and LayoutChampApp segfaults. The history has no entry at all for the filesystem warnings.
 
-### Still missing
-
-- **Rule `N1-TAG` in the live definition (DB version v12).** Until it is there, the raster already sets
-  `signal:tagesmuster` and drops damage/urgent for such messages, but R1 ("zustand:crit @Produktion") would still
-  rate a trend CRIT as relevant.
+- **Live since definition v13** (08.11., author thomas.kluge@example.org, approved: "Du darfst das"). Check
+  against the live rules: a trend CRIT with `signal:tagesmuster` gives N1-TAG; a CRIT with damage outside the
+  pattern still gives R5.
 
 ---
 
