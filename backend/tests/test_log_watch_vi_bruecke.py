@@ -30,6 +30,12 @@ def test_bekannter_fehler_wird_erkenntnis_mit_quelle():
     assert "thema:datenbank" in tags and "host:cue0149.example.com" in tags and "herkunft:log-ueberwachung" in tags
     assert "signal:dringend" not in tags and "befund:x" not in tags          # eigene Statistik/Verknüpfungen bleiben hier
     assert quelle.startswith("CentralStation Befund ki:28612e59e8") and w == 3
+    # Hashtags mit Leerzeichen/Klammern (CentralStation) → vi-mcp-Form, sonst lehnt vi-mcp das ganze Objekt ab (08.11.: 4 von 50)
+    assert vb.vi_tag("dienst:MSSQL Blocked Sessions") == "dienst:MSSQL-Blocked-Sessions"
+    assert vb.vi_tag("dienst:CPU utilization FPC: EX4300-24P 0") == "dienst:CPU-utilization-FPC:-EX4300-24P-0"
+    assert vb.vi_tag("Host:x") == "host:x" and vb.vi_tag("dienst:") is None and vb.vi_tag("Ä:x") is None
+    _, tags2, _, _ = vb.erkenntnis_aus_bekannt({**e, "hashtags": ["dienst:OMD kas performance"]})
+    assert "dienst:OMD-kas-performance" in tags2 and all(" " not in t for t in tags2)
     assert vb.erkenntnis_aus_bekannt({**e, "status": "widerlegt"}) is None
     assert vb.erkenntnis_aus_bekannt({**e, "befund": None}) is None
 

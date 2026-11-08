@@ -23,6 +23,18 @@ JE_LAUF = 50
 #: Hashtag-Arten, die als Reize ans Kollektiv gehen (keine Verknüpfungen, keine Signale der eigenen Statistik)
 REIZ_ARTEN = ("host", "thema", "muster", "dienst", "regel", "app", "kritikalitaet", "ort")
 _WORT = re.compile(r"[^\w.:/-]+")
+_TAG_WERT = re.compile(r"[\s()]+")
+
+
+def vi_tag(tag: str) -> str | None:
+    """Hashtag in die Form von vi-mcp bringen (art:wert, Wert ohne Leerzeichen/Klammern — gedaechtnis.TAG).
+    CentralStation erlaubt `dienst:MSSQL Blocked Sessions`; vi-mcp lehnt das ganze Objekt ab. Rein."""
+    art, _, wert = tag.partition(":")
+    art = art.strip().lower()
+    wert = _TAG_WERT.sub("-", wert.strip()).strip("-")
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", art) or not wert:
+        return None
+    return f"{art}:{wert[:120]}"
 
 
 def erkenntnis_aus_bekannt(e: dict) -> tuple[str, list[str], str, int] | None:
@@ -30,9 +42,10 @@ def erkenntnis_aus_bekannt(e: dict) -> tuple[str, list[str], str, int] | None:
     titel = (e.get("titel") or "").strip()
     if not titel or e.get("status") != "aktiv" or not e.get("befund"):
         return None
-    tags = {t for t in (e.get("hashtags") or []) if t.split(":")[0] in REIZ_ARTEN}
-    tags |= {f"host:{h}" for h in (e.get("hosts") or [])[:10]}
+    tags = {vi_tag(t) for t in (e.get("hashtags") or []) if t.split(":")[0] in REIZ_ARTEN}
+    tags |= {vi_tag(f"host:{h}") for h in (e.get("hosts") or [])[:10]}
     tags.add("herkunft:log-ueberwachung")
+    tags.discard(None)
     rel = int(e.get("relevanz") or 0)
     text = (f"Bekannter Fehler (Relevanz {rel}, {int(e.get('wiederholungen') or 0)} Wiederholungen ohne KI): {titel}"
             f" — Filter: {e.get('filter') or e.get('fehler')}")
@@ -144,9 +157,9 @@ async def hochschreiben() -> dict:
                                    .order_by(FeldBedeutung.angelegt_at).limit(JE_LAUF))).scalars().all()
     if k is None:
         return {"ausgesetzt": "kein vi_mcp-Konnektor aktiviert"}
-    bek = await bekannt.liste(status="aktiv", limit=JE_LAUF)
+    bek = await bekannt.liste(status="aktiv", limit=500)           # Liste ist nach zuletzt sortiert, nicht nach gelernt
     eintraege = bek.get("eintraege") or bek.get("liste") or (bek if isinstance(bek, list) else [])
-    neu_bek = [e for e in eintraege if (e.get("gelernt") or "") > stand]
+    neu_bek = sorted((e for e in eintraege if (e.get("gelernt") or "") > stand), key=lambda e: e["gelernt"])[:JE_LAUF]
     geschrieben, abgelehnt, fehler = 0, 0, None
     neuer_stand = stand
     try:
@@ -169,5 +182,6 @@ async def hochschreiben() -> dict:
     if neuer_stand != stand and not fehler:
         async with AsyncSessionLocal() as db:
             await set_setting(db, STAND_SCHLUESSEL, neuer_stand)
+            await db.commit()
     return {"geschrieben": geschrieben, "abgelehnt": abgelehnt, "bekannte_fehler": len(neu_bek), "felder": len(felder),
             "stand": neuer_stand, "dauer_ms": int((time.monotonic() - t0) * 1000), **({"fehler": fehler} if fehler else {})}
