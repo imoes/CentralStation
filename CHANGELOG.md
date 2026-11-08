@@ -72,8 +72,8 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
 
 ### What is new
 
-- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.14.1`, built by `vi-mcp/Dockerfile` from
-  `vi-mcp/pakete/vi-mcp_0.14.1-1_all.deb` = the GitHub release v0.14.1, checked against SHA-256 `649c106d…8c54` from the
+- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.14.2`, built by `vi-mcp/Dockerfile` from
+  `vi-mcp/pakete/vi-mcp_0.14.2-1_all.deb` = the GitHub release v0.14.2, checked against SHA-256 `ca0341c0…171c` from the
   release's SHA256SUMS; the build aborts on a mismatch). Listens only inside the Compose
   network (`vi-mcp:8765`), no published port; memory and configuration in the volumes `vi-mcp-daten`/`vi-mcp-konfig`.
   Instance `centralstation` created; its token lies 0600 in `~/.config/vi-mcp/token-centralstation-lokal`, never printed.
@@ -90,7 +90,18 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
 
 ### Still missing
 
-- **Invitation of hal by llm-host03** is pending (vi-mcp session); until then nothing is exchanged and the local memory is empty.
+- **Network acceptance with the vi-mcp session, 08.11. 15:30–15:37 UTC, on v0.14.2** (release, SHA-256 `ca0341c0…171c`;
+  0.14.1 did not replace host names like `dbtest01` on export):
+  1. `vi-mcp netz status`: member · 2 members · 0 violations · 0 forks · llm-host03 reachable.
+  2. hal's network database holds no internal data except the announced address of llm-host03. llm-host03's test
+     object arrived anonymised („Auf <host> mit <ip> …“) and lay in the local quarantine, flagged as heikel (curl).
+  3. Way back: a test insight with a fake host and IP, confirmed by a second local instance, previewed by
+     `vi_netz_vorschau` as `<host>`/`<ip>` without the `host:` tag; it reached llm-host03's quarantine, and the vi-mcp
+     session found none of the fake host, the IP, „centralstation“, „hal.“ or the instance names in its network database.
+  4. `vi_netz_vergiss`: own revocation in the log book, content deleted, tombstone kept; llm-host03's revocation arrived,
+     the local quarantine is empty again.
+  Cleaned up afterwards: test insight refuted locally, test instance `pruef-zweit` deleted, test pace back to default.
+  The network token of instance `centralstation` lies 0600 in `~/.config/vi-mcp/netz-token-centralstation-lokal`.
 - The connector `vi_mcp` still points to llm-host03; it moves to `http://vi-mcp:8765/mcp` only once the exchange works,
   otherwise CentralStation would lose the collective.
 - **Networking set up on your approval (08.11., „Ja, vernetzen“):** llm-host03 is peerhost and founder (vi-mcp session),
