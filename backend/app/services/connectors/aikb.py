@@ -172,6 +172,48 @@ class AIKBConnector(BaseConnector):
             log.warning("AIKBConnector.search_opensearch failed: %s", self.last_error)
             return []
 
+    async def search_filter(
+        self,
+        filter_text: str,
+        text: str | None = None,
+        size: int = 10,
+        space_keys: list[str] | None = None,
+    ) -> dict:
+        """Filtersuche über die Hashtags der Doku-Abschnitte (POST /search/filter, it-aikb ≥ feature/hashtags) — ohne LLM.
+
+        Filtersprache wie log_watch/filter.py (art:wert, art:(a OR b), !, OR, Klammern). Ohne `text` eine reine
+        terms-Abfrage, mit `text` BM25 + kNN. Rückgabe: {"treffer": [normalisiert], "hinweise": [...], "dauer": {...},
+        "fehlt": bool} — `fehlt` = der Endpunkt existiert auf dieser AIKB nicht (404/405), also noch nicht ausgerollt.
+        Fehler stehen in last_error, wie bei search_opensearch."""
+        payload: dict[str, Any] = {"filter": filter_text, "size": max(1, min(size, 50))}
+        if text:
+            payload["text"] = text
+        if space_keys:
+            payload["space_keys"] = space_keys
+        self.last_error = None
+        try:
+            async with self._client(timeout=60.0) as client:
+                token = await self._bearer(client)
+                r = await client.post(f"{self.base_url}/search/filter", json=payload, headers=self._headers(token))
+                if r.status_code in (404, 405):
+                    self.last_error = f"/search/filter fehlt auf dieser AIKB (HTTP {r.status_code})"
+                    return {"treffer": [], "hinweise": [], "dauer": {}, "fehlt": True}
+                if r.status_code in (400, 422):
+                    self.last_error = f"Filter abgelehnt (HTTP {r.status_code}): {r.text[:300]}"
+                    return {"treffer": [], "hinweise": [], "dauer": {}, "fehlt": False}
+                r.raise_for_status()
+                data = r.json()
+                treffer = [{**self._normalise_hit({**h, "title": h.get("titel") or h.get("title"),
+                                                         "content_snippet": h.get("auszug")}),
+                            "hashtags": h.get("hashtags") or [], "abschnitt": h.get("abschnitt") or ""}
+                           for h in (data.get("treffer") or [])[:size]]
+                return {"treffer": treffer, "hinweise": data.get("hinweise") or [], "dauer": data.get("dauer") or {},
+                        "anzahl_seiten": data.get("anzahl_seiten"), "fehlt": False}
+        except Exception as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}".rstrip(": ")
+            log.warning("AIKBConnector.search_filter failed: %s", self.last_error)
+            return {"treffer": [], "hinweise": [], "dauer": {}, "fehlt": False}
+
     async def search_rag(
         self,
         query: str,

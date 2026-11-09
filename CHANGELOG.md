@@ -10,6 +10,46 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-09 — Sysadmin agent: the IT-AIKB is asked by hashtag filter, not by LLM-written queries
+
+### What has changed
+
+- **`rag_lookup` derives the AIKB filter from the alerts.** It no longer has the model formulate free-text queries
+  (`RAG_DECISION_PROMPT`).
+  - Hosts are mapped through the host directory to their canonical name. The filter is
+    `host:(a OR b) !art:vorlage`, with at most 8 hosts.
+  - Without an assigned host, topics from the fixed vocabulary are used (`thema:…`).
+  - The filter is sent to the AIKB as `POST /search/filter` (`AIKBConnector.search_filter`,
+    `services/ai_agent/aikb_filter.py`).
+  - „Nothing documented“ counts as an answer.
+  - The LLM step now runs only as the fallback and for the web search (SearXNG).
+  - Why: user decision 09.11. The AIKB session measured on 09.11.: the vector search found no cue0109 hit in the
+    top 10 for „Tablespace Füllstand auf cue0109“, BM25 found 9. Names belong in tags.
+- **Fallback, named in the log:** when no filter can be derived, the AIKB lacks the endpoint (HTTP 404/405) or the
+  search fails, the old path runs (LLM step + `/search/opensearch`). Unassigned host names appear by their alert
+  name with the reason (`unbekannt`/`mehrdeutig`/`container-id`).
+
+### Evidence
+
+- Tests: `tests/test_rag_lookup_aikb_filter.py` (9). They cover filter derivation (hosts, topics, ambiguous, none),
+  the request and answer contract, a missing endpoint, and three `rag_lookup` runs:
+  - filter hit: 0 LLM calls, 0 opensearch calls;
+  - nothing documented: 0/0;
+  - fallback on 404: 1/1.
+  Full suite: 1082 passed. One real bug found by the contract test and fixed: the AIKB returns `titel`, not `title`.
+- Live, read-only (09.11., one-off container against `aikb.test.example.com:8000`):
+  - Alerts cue0109 + gibtsnicht01 → `host:cue0109.example.com !art:vorlage`, reason „nicht zugeordnet:
+    gibtsnicht01 (unbekannt)“.
+  - The AIKB still answers `/search/filter` with **404** → fallback (0.0 s).
+
+### What is still missing
+
+- **Effective only after the AIKB rollout.** The steps: CS deploy (with `lw_hostverzeichnis`), AIKB
+  `HOST_DIRECTORY_MCP_URL`, AIKB deploy, `backfill_hashtags`. Until then, every run takes the old path.
+- `hg:` is not used, because the host groups are empty (see the entry above).
+
+---
+
 ## 2026-11-09 — The host directory as a read-only MCP tool (`lw_hostverzeichnis`)
 
 ### What is new

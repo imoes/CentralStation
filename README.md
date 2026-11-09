@@ -922,8 +922,12 @@ Node 2: enrich
   → vendor detection (Juniper/Cisco/VMware from Graylog messages)
 
 Node 3: rag_lookup
-  → LLM decides if additional context is needed (SearXNG web search)
   → CheckMK metrics for affected hosts
+  → IT-AIKB by hashtag filter, no LLM: host:<canonical name from the host directory> (else thema:<vocabulary>)
+    !art:vorlage → POST /search/filter (services/ai_agent/aikb_filter.py)
+  → fallback, named in the log: no filter derivable, endpoint missing (404) or error →
+    LLM decides queries (RAG_DECISION_PROMPT) → /search/opensearch
+  → LLM decides if web context is needed (SearXNG) — only when SearXNG is configured
 
 Node 4: analyze
   → correlate events + web/metrics context

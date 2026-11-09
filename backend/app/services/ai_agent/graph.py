@@ -352,6 +352,28 @@ async def enrich(state: dict, db: Any) -> dict:
     return {**state, "enriched_alerts": enriched}
 
 
+async def _aikb_connector(db: Any):
+    """Den aktiven AIKB-Connector laden — None, wenn keiner konfiguriert ist oder das Laden scheitert."""
+    try:
+        from sqlalchemy import select
+        from app.models.connector import ConnectorConfig
+        from app.core.security import decrypt_credentials
+        from app.services.connectors.aikb import AIKBConnector
+
+        r = await db.execute(
+            select(ConnectorConfig)
+            .where(ConnectorConfig.type == "aikb", ConnectorConfig.enabled.is_(True))
+            .limit(1)
+        )
+        c = r.scalar_one_or_none()
+        if c is None:
+            return None
+        return AIKBConnector(base_url=c.base_url, credentials=decrypt_credentials(c.encrypted_credentials))
+    except Exception as e:  # noqa: BLE001
+        log.warning("rag_lookup: AIKB-Connector nicht ladbar: %s", e)
+        return None
+
+
 # ─────────────────────────────────────────────────
 # Node 3: rag_lookup
 # ─────────────────────────────────────────────────
@@ -434,6 +456,37 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
             except Exception as e:
                 log.debug("rag_lookup: graylog logs for '%s' failed: %s", gh, e)
 
+    # ── Step 1a: AIKB-Filtersuche aus den Alarmen — ohne LLM (Nutzer 09.11.2026, aikb_filter.py) ─────────────
+    # Fällt benannt auf den alten Weg (LLM-Vorstufe + /search/opensearch) zurück, wenn kein Filter ableitbar ist,
+    # die AIKB den Endpunkt noch nicht hat (404) oder die Suche scheitert. „Nichts dokumentiert“ ist eine Antwort.
+    aikb = await _aikb_connector(db)
+    aikb_per_filter = False
+    if aikb is not None:
+        try:
+            from app.services.ai_agent.aikb_filter import aikb_filter_aus_alarmen
+            from app.services.log_watch.hosts import verzeichnis
+            aikb_filter, warum = aikb_filter_aus_alarmen(alerts, await verzeichnis(db))
+        except Exception as e:  # noqa: BLE001 — ohne Hostverzeichnis bleibt der alte Weg
+            aikb_filter, warum = None, f"Filter nicht ableitbar: {type(e).__name__}: {e}"
+        if aikb_filter:
+            res = await aikb.search_filter(aikb_filter, size=6)
+            if res["treffer"]:
+                rag_context.append({"source": "server-kb", "query": aikb_filter, "results": res["treffer"]})
+                aikb_per_filter = True
+                log.info("rag_lookup: AIKB-Filtersuche %r → %d Treffer (%s; %s)", aikb_filter, len(res["treffer"]),
+                         warum, res.get("dauer"))
+            elif aikb.last_error is None:
+                aikb_per_filter = True
+                log.info("rag_lookup: AIKB-Filtersuche %r → nichts dokumentiert (%s)", aikb_filter, warum)
+            else:
+                log.info("rag_lookup: AIKB-Filtersuche nicht nutzbar (%s) — Rückfall auf LLM-Vorstufe", aikb.last_error)
+        else:
+            log.info("rag_lookup: kein AIKB-Filter (%s) — Rückfall auf LLM-Vorstufe", warum)
+
+    # Die LLM-Vorstufe braucht es nur noch für den Rückfall und für die Websuche (SearXNG).
+    if aikb_per_filter and not searxng_config.is_configured:
+        return {**state, "rag_context": rag_context}
+
     # Build events summary for LLM decision
     events_summary = "\n".join(
         f"- [{a.get('severity','?')}] {a.get('source','?')}: {a.get('title') or a.get('message','')[:100]}"
@@ -460,25 +513,11 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
     if not decision.get("needs_rag") or not queries:
         return {**state, "rag_context": rag_context}
 
-    # ── Step 1b: IT-AIKB internal KB lookup ──────────────────────────────────
+    # ── Step 1b: IT-AIKB internal KB lookup (Rückfall — nur wenn die Filtersuche oben nicht trug) ──────────
     # Query the Confluence knowledge base for documentation, runbooks, and
     # dependency graphs relevant to the current alerts before hitting the web.
     try:
-        from sqlalchemy import select
-        from app.models.connector import ConnectorConfig
-        from app.core.security import decrypt_credentials
-        from app.services.connectors.aikb import AIKBConnector
-
-        r = await db.execute(
-            select(ConnectorConfig)
-            .where(ConnectorConfig.type == "aikb", ConnectorConfig.enabled.is_(True))
-            .limit(1)
-        )
-        aikb_conn = r.scalar_one_or_none()
-        if aikb_conn:
-            creds = decrypt_credentials(aikb_conn.encrypted_credentials)
-            aikb = AIKBConnector(base_url=aikb_conn.base_url, credentials=creds)
-
+        if aikb is not None and not aikb_per_filter:
             for query in queries[:2]:
                 if use_deepsearch:
                     # Full LLM-powered answer for complex queries
