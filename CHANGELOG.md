@@ -32,9 +32,20 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
     gehört laut Titel dazu („alle Peer vpp0262, Teil des Ausfalls dort“).
   - Der Fehler lag also nur in der Darstellung. Frontend-Image baut ohne Fehler.
 
+- **Gegenprobe** (Frontend neu gestartet 12:53 UTC, Freigabe des Nutzers): Playwright mit frisch geladener Seite
+  (`main-O3GZAAM3.js`, 9 `.st-text`): Listen lesbar, Titel mit „…“, Beschriftungen unter den Knoten —
+  `.playwright-mcp/netzplan-4-nachher-befund.png`.
+- **Nach einem Deploy sahen Browser weiter das alte Frontend:** `index.html` kam ohne `Cache-Control` (nur
+  Last-Modified/ETag), der Browser hielt sie heuristisch vor und lud das alte Bundle (gemessen: Server
+  `main-O3GZAAM3.js`, Browser `main-SK3K7FG6.js`, Navigation `deliveryType: cache`, 0 Bytes übertragen). Jetzt
+  `location = /index.html { expires -1; }` → `Cache-Control: no-cache`; `expires` statt `add_header`, damit die
+  CSP-Kopfzeile erhalten bleibt. Getestet im Wegwerf-Container: `/`, `/topology?…`, `/index.html` → no-cache + CSP;
+  `main-*.js` unverändert cachebar.
+
 ### Was fehlt noch
 
-- Frontend-Container noch nicht neu gestartet; Gegenprobe mit Playwright danach.
+- Die Cache-Regel wirkt erst nach dem nächsten Neustart des Frontend-Containers; Browser mit einer schon
+  zwischengespeicherten `index.html` brauchen danach noch einmal ein Neuladen (Strg+Umschalt+R).
 
 ---
 
