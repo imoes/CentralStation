@@ -186,7 +186,9 @@ def incident_tag(schluessel: str) -> str:
 
 
 #: Bremsen aus dem Backtest der Fehler-Cluster (Projektnotiz, „nicht zurückdrehen“) — gelten auch hier
-COOLDOWN = timedelta(hours=3)            # wieder aufflammend = derselbe Incident, keine neue Mail
+#: wieder aufflammend = derselbe Incident (Nutzer 09.11.: „Wiedereröffnen statt neu“; vorher 3 h — gemessen kam
+#: cue0111 I-HOST nach 3 h 05 min wieder und wurde ein neuer Incident mit Mail). Mail entscheidet bearbeitung.py.
+from app.services.error_clusters.bearbeitung import WIEDER_FENSTER as COOLDOWN  # noqa: E402
 GRUPPE_FENSTER = timedelta(minutes=30)   # gleichzeitig mit geteilten Hosts = ein Incident
 GRUPPE_JACCARD = 0.2
 HOST_MINDESTALTER = timedelta(minutes=15)
@@ -251,6 +253,11 @@ async def freigabe(regel: Regel, k: dict, jetzt: datetime) -> str | None:
     return None
 
 
+def schwere(regel: Regel, k: dict) -> str:
+    """Schwere eines Kandidaten — eine Quelle für Eröffnen und Eskalationsprüfung. Rein."""
+    return "high" if k["nachrichten"] >= 2 * max((regel.mindestens or {}).values() or [1]) else "medium"
+
+
 async def eroeffne(regel: Regel, k: dict, objekte: dict, jetzt: datetime) -> dict:
     """Aktiver Kandidat → Incident eröffnen oder fortschreiben (gleiche Art, gleicher Schlüssel, offen);
     nur ein NEUER Incident wird gemeldet. Rückgabe {incident, neu}."""
@@ -262,25 +269,59 @@ async def eroeffne(regel: Regel, k: dict, objekte: dict, jetzt: datetime) -> dic
     from app.services.error_clusters.incident import OPEN, cluster_context, open_cluster_incident
 
     async with AsyncSessionLocal() as db:
+        from app.services.error_clusters import bearbeitung as bb
+        from app.services.error_clusters.incident import set_cluster_context
+        neue_hosts = list(k.get("host_liste") or [])
+        neue_schwere = schwere(regel, k)
+
+        def _fortschreiben(inc, c: dict, wieder: bool) -> dict:
+            """Bekannten Incident fortschreiben: Hosts ergänzen, Wiederauftreten vermerken, Eskalation prüfen."""
+            esk = bb.eskalation(c, neue_hosts, inc.severity, neue_schwere)
+            c2 = {kk: v for kk, v in c.items() if kk != "type"}
+            if neue_hosts:
+                c2["hosts"] = sorted(set(c2.get("hosts") or []) | set(neue_hosts))
+            if wieder:
+                c2 = bb.wieder_vermerk(c2, jetzt)
+                inc.status, inc.resolved_at = "open", None
+            if esk and bb.SCHWERE.get(neue_schwere, 0) > bb.SCHWERE.get(inc.severity, 0):
+                inc.severity = neue_schwere
+            set_cluster_context(inc, c2)
+            inc.updated_at = jetzt
+            return {"incident": str(inc.id), "neu": False, "wieder": wieder, "eskalation": esk,
+                    "ctx": {**c2, "wieder_anzahl": bb.anzahl_24h(c2, jetzt), "eskalation": esk},
+                    "titel": inc.title, "causal_context": list(inc.causal_context or [])}
+
         offen = (await db.execute(select(Incident).where(Incident.kind == regel.incident_art,
                                                          Incident.status.in_(OPEN)))).scalars().all()
         for inc in offen:
             c = cluster_context(inc) or {}
             if c.get("schluessel") == k["schluessel"] or k["schluessel"] in schluessel_alt(
                     inc.kind, inc.primary_host, c):
-                inc.updated_at = jetzt
+                e = _fortschreiben(inc, c, wieder=False)
                 await db.commit()
-                return {"incident": str(inc.id), "neu": False}
-        # Cooldown: in den letzten 3 h geschlossen → derselbe Incident lebt wieder auf, ohne neue Mail
+                return e
+        # In den letzten 24 h geschlossen, gleicher Schlüssel → derselbe Incident lebt wieder auf
         zu = (await db.execute(select(Incident).where(
             Incident.kind == regel.incident_art, Incident.status == "resolved",
             Incident.resolved_at >= jetzt - COOLDOWN))).scalars().all()
         for inc in zu:
             c = cluster_context(inc) or {}
             if c.get("schluessel") == k["schluessel"]:
-                inc.status, inc.resolved_at, inc.updated_at = "open", None, jetzt
+                e = _fortschreiben(inc, c, wieder=True)
                 await db.commit()
-                return {"incident": str(inc.id), "neu": False, "wieder": True}
+                return e
+        # Gleiche Regel, gemeinsamer Host, offen oder in den letzten 24 h geschlossen → anhängen statt neu
+        # (Nutzer 09.11.: „gleicher Host + gleiche Regel“; gemessen cue0113: 6 Muster = 6 Incidents an einem Tag)
+        if neue_hosts:
+            nh = {h.lower() for h in neue_hosts}
+            for inc in list(offen) + list(zu):
+                c = cluster_context(inc) or {}
+                if c.get("regel") == regel.id and nh & {h.lower() for h in c.get("hosts") or []}:
+                    c = {**c, "weitere_schluessel": sorted(set(c.get("weitere_schluessel") or []) | {k["schluessel"]})}
+                    e = _fortschreiben(inc, c, wieder=inc.status == "resolved")
+                    e["angehaengt"] = k["schluessel"]
+                    await db.commit()
+                    return e
         # Gruppierung: gleichzeitiger Ausbruch mit geteilten Hosts = ein Incident (fleet.group_leader)
         if regel.incident_art in ("log_cluster", "fleet"):
             hosts = set(k.get("host_liste") or [])
@@ -303,7 +344,7 @@ async def eroeffne(regel: Regel, k: dict, objekte: dict, jetzt: datetime) -> dic
         hosts = ctx["hosts"] or [k["schluessel"].split(":", 1)[1]]
         inc = await open_cluster_incident(
             db, kind=regel.incident_art, title=titel(regel, k, muster),
-            severity="high" if k["nachrichten"] >= 2 * max((regel.mindestens or {}).values() or [1]) else "medium",
+            severity=schwere(regel, k),
             primary_host=hosts[0], context={**ctx, "hosts": hosts}, member_docs=[])
         await db.commit()
         return {"incident": str(inc.id), "neu": True, "ctx": {**ctx, "hosts": hosts}, "titel": inc.title}
@@ -458,7 +499,7 @@ async def lauf(jetzt: datetime | None = None) -> dict:
     kand = await auswerten(regeln, d.objekte, jetzt)
     # Umschalten: aktive Regeln eröffnen/fortschreiben und melden; Ruhige schließen
     aktiv = {r.id: r for r in regeln if r.modus == AKTIV}
-    eroeffnet, fortgeschrieben, gemeldet, fehler, zurueckgehalten = 0, 0, 0, [], []
+    eroeffnet, fortgeschrieben, gemeldet, fehler, zurueckgehalten, still = 0, 0, 0, [], [], []
     for k in kand:
         r = aktiv.get(k["regel"])
         if r is None:
@@ -469,19 +510,30 @@ async def lauf(jetzt: datetime | None = None) -> dict:
                 zurueckgehalten.append({"schluessel": k["schluessel"], "grund": grund})
                 continue
             e = await eroeffne(r, k, d.objekte, jetzt)
+            from app.core.tasks import run_background
             if e["neu"]:
                 eroeffnet += 1
-                from app.core.tasks import run_background
                 run_background(melde(e["incident"], e["ctx"], e["titel"]), name=f"incident_regel_{e['incident'][:8]}")
                 gemeldet += 1
             else:
                 fortgeschrieben += 1
+                anlass = "eskalation" if e.get("eskalation") else ("wieder" if e.get("wieder") else None)
+                if anlass:
+                    from app.services.error_clusters.bearbeitung import mail_erlaubt
+                    ok, warum = mail_erlaubt(anlass, e.get("causal_context"), e.get("ctx"), jetzt)
+                    if ok:
+                        run_background(melde(e["incident"], {**e["ctx"], "mail_anlass": anlass}, e["titel"]),
+                                       name=f"incident_regel_wieder_{e['incident'][:8]}")
+                        gemeldet += 1
+                    else:
+                        still.append({"incident": e["incident"], "anlass": anlass, "grund": warum})
         except Exception as ex:  # noqa: BLE001 — ein Kandidat darf den Lauf nicht abbrechen
             fehler.append({"schluessel": k["schluessel"], "fehler": f"{type(ex).__name__}: {str(ex)[:160]}"})
     nachgeholt = await _hole_meldungen_nach(jetzt) if aktiv else []
     geschlossen = await schliesse_ruhige(regeln, kand, jetzt) if aktiv else 0
     return {"definition_v": d.version,
             "aktiv": {"eroeffnet": eroeffnet, "fortgeschrieben": fortgeschrieben, "gemeldet": gemeldet,
+                      "still": still,
                       "nachgeholt": nachgeholt,
                       "geschlossen": geschlossen, "fehler": fehler[:10],
                       # nicht eröffnet, mit Grund (Mindestalter, Wiederkehr, stumm …) — nichts still

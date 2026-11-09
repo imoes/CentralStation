@@ -10,6 +10,59 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-09 — Incident-Mails: ein Problem = ein Incident, bearbeitet = Ruhe
+
+### Was hat sich geändert
+
+- **Wiedereröffnen statt neu (Regelwerk, `log_watch/incident_regeln.py`):**
+  - Tritt derselbe Schlüssel innerhalb von **24 h** nach dem Schließen wieder auf, lebt derselbe Incident wieder auf.
+    Vorher galten 3 h.
+  - Ein Ausbruch derselben Regel auf einem Host, der schon in einem offenen oder seit höchstens 24 h geschlossenen
+    Incident steht, wird **angehängt** (`weitere_schluessel`), statt einen neuen Incident zu eröffnen.
+  - Jedes Wiederauftreten wird am Incident vermerkt (`wieder`) und in der Incident-Ansicht gezeigt („3× wieder
+    aufgetreten“).
+- **Bearbeitet = Ruhe (`services/error_clusters/bearbeitung.py`):**
+  - Bearbeitungsstand je Incident (erschöpfend): `unbearbeitet`, `übernommen` (neuer Knopf „Übernehmen“ /
+    „Freigeben“, `POST /feed/incidents/{id}/uebernehmen` bzw. `…/freigeben`, mit Audit) oder `ticket` (Ticket aus
+    dem Incident; setzt den Status auf „investigating“).
+  - Bearbeitete Incidents mailen nicht mehr, auch keine nachgereichte KI-Einschätzung. **Ausnahme Eskalation:** ein
+    weiterer Host oder eine höhere Schwere.
+  - Ein unbearbeiteter, wieder aufgetretener Incident erinnert **höchstens 1× am Tag**, mit demselben Link und dem
+    Hinweis „Bekannter Incident. Wieder aufgetreten — n. Mal in 24 h“.
+  - Unterdrückte Mails stehen mit Grund im Laufergebnis (`still`), sie verschwinden nicht still.
+  - Der Mail-Link heißt „Incident öffnen und übernehmen“.
+  - Der Bearbeitungsstand steht auch in `list_incidents` und `get_incident` (MCP).
+- *Warum:* Nutzer 09.11. „Mail-Flut, weiß nicht, welcher neu ist und welchen ich bearbeitet habe“.
+  - Gemessen (24 h): 113 Incidents mit Mail.
+  - 54 von 86 gelösten Incidents waren nach weniger als 1 h zu.
+  - cue0113 hatte 9 Incidents, cue0111 8. Grund: 3-h-Ruhezeit, und jedes Ausbruchsmuster ergab einen eigenen
+    Incident.
+  - Die Maßnahmen „Wiedereröffnen statt neu“, „Bearbeitet = Ruhe“ und die Erinnerung 1× am Tag hat der Nutzer
+    gewählt.
+
+### Nachweis
+
+- `tests/test_incident_bearbeitung.py` (6) prüft:
+  - Zustand erschöpfend, Ticket vor Übernahme, Freigabe hebt auf;
+  - bearbeitet ist Ruhe außer bei Eskalation;
+  - Erinnerung höchstens alle 24 h, Zustellungen mit 0 Mails zählen nicht;
+  - Eskalation durch neuen Host oder höhere Schwere;
+  - Wiederauftreten wird vermerkt und gezählt;
+  - das Regelwerk nutzt das 24-h-Fenster.
+  Volle Suite: 1111 passed. Frontend-Image baut.
+- Simulation über die echten Incidents der letzten 24 h (nur lesend): 113 Mails bisher → **71** mit der neuen
+  Logik, davon 50 echt neue Incidents und 21 Erinnerungen. Zum Vergleich: Erinnerung alle 3 h → 105, alle 8 h → 96,
+  nie → 50. Jede Übernahme senkt die Zahl weiter.
+
+### Was fehlt noch
+
+- Verschiedene Regeln auf demselben Host (I-HOST, I-KRITISCH, I-AUSBRUCH) bleiben getrennte Incidents. Das war
+  nicht gewählt.
+- Der Betreff zeigt den Stand nicht („[NEU]/[WIEDER]“). Das war nicht gewählt; der Hinweis steht in der Mail.
+- Noch nicht ausgerollt (Backend- und Frontend-Deploy).
+
+---
+
 ## 2026-11-09 — Konsolen-Übergabe eines Incidents enthält wieder den Inhalt der Mail
 
 ### Was wurde behoben

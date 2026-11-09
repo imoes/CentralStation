@@ -1060,11 +1060,20 @@ async def incident_timeline(
                                  if isinstance(e, dict) and e.get("type") == "merged_into"), None),
             # Aus diesem Incident erstellte Tickets (tickets.create mit incident_id).
             "tickets": _incident_tickets(inc),
+            # Bearbeitungsstand: unbearbeitet | übernommen | ticket (bearbeitung.py) — und wie oft wieder aufgetreten
+            "bearbeitung": _bearbeitung(inc),
+            "wieder": (next((e for e in (inc.causal_context or []) if isinstance(e, dict)
+                             and e.get("type") == "error_cluster"), {}) or {}).get("wieder") or [],
             # Prüfschritte (experimentell, nur per Knopf): was geplant ist und was lief.
             **_checks_payload(inc, await _recipe_for(db, inc)),
         },
         "timeline": timeline,
     }
+
+
+def _bearbeitung(inc) -> dict:
+    from app.services.error_clusters.bearbeitung import zustand
+    return zustand(inc.causal_context)
 
 
 def _incident_tickets(inc) -> list[dict]:
@@ -1467,6 +1476,40 @@ async def _recipe_for(db, inc):
     except Exception as exc:  # noqa: BLE001 — ein fehlendes Rezept darf die Ansicht nicht kexample
         log.warning("recipe lookup for incident %s failed: %s", str(inc.id)[:8], exc)
         return None
+
+
+@router.post("/incidents/{incident_id}/uebernehmen")
+async def incident_uebernehmen(incident_id: str, user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]):
+    """Incident übernehmen: Status „investigating“, Vermerk wer/wann. Danach keine Mails mehr dazu, außer es kommt
+    etwas Neues (services/error_clusters/bearbeitung.py — Nutzer 09.11.: „Bearbeitet = Ruhe“)."""
+    return await _bearbeitung_setzen(db, incident_id, user, "übernommen")
+
+
+@router.post("/incidents/{incident_id}/freigeben")
+async def incident_freigeben(incident_id: str, user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]):
+    """Übernahme zurücknehmen: der Incident gilt wieder als unbearbeitet (Mails wie vorher)."""
+    return await _bearbeitung_setzen(db, incident_id, user, "freigegeben")
+
+
+async def _bearbeitung_setzen(db, incident_id: str, user, art: str) -> dict:
+    from app.models.audit import AuditLog
+    from app.services.error_clusters.bearbeitung import zustand
+    inc = await _incident_or_404(db, incident_id)
+    if inc.status == "resolved" and art == "übernommen":
+        raise HTTPException(409, "Incident ist gelöst — übernehmen geht nur bei offenen Incidents")
+    jetzt = datetime.now(timezone.utc)
+    wer = user.full_name or user.email
+    inc.causal_context = list(inc.causal_context or []) + [
+        {"type": "bearbeitung", "art": art, "von": wer, "zeit": jetzt.isoformat()}]
+    if inc.status != "resolved":
+        inc.status = "investigating" if art == "übernommen" else "open"
+    inc.updated_at = jetzt
+    db.add(AuditLog(action=f"incident_{'uebernommen' if art == 'übernommen' else 'freigegeben'}",
+                    resource_type="incident", resource_id=str(inc.id), user_id=user.id))
+    z = zustand(inc.causal_context)
+    status = inc.status
+    await db.commit()
+    return {"ok": True, "status": status, "bearbeitung": z}
 
 
 @router.get("/incidents/{incident_id}/claude-prompt")

@@ -312,6 +312,8 @@ async def ticket_create(
             "type": "ticket", "key": jira_key, "url": result.get("url"),
             "connector": body.connector_type, "by": user.full_name or user.email,
             "at": datetime.now(timezone.utc).isoformat()}]
+        if inc.status == "open":         # Ticket = bearbeitet (bearbeitung.py): Status und Zustand widersprechen sich nicht
+            inc.status = "investigating"
         await db.commit()
 
     return result

@@ -108,6 +108,8 @@ def ausgabe(d: dict) -> dict:
     """Zeiten als ISO-Text, causal_context gekürzt (Hosts, Regel, Gründe, Triage-Titel). Rein."""
     o = {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in d.items() if k != "causal_context"}
     o["hosts"] = hosts_von(d)
+    from app.services.error_clusters.bearbeitung import zustand
+    o["bearbeitung"] = zustand(d.get("causal_context"))
     o["kontext"] = [{"regel": c.get("regel"), "hosts": (c.get("hosts") or [])[:10], "gruende": (c.get("reasons") or [])[:3],
                      "triage": (c.get("triage") or {}).get("titel")}
                     for c in (d.get("causal_context") or []) if isinstance(c, dict)]

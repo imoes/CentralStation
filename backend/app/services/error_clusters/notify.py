@@ -81,8 +81,15 @@ def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
                 pending: bool) -> str:
     """Deutsche Mail. Inhalt vor Chrom: KI-Einschätzung, Muster, Verlauf, Betroffene."""
     rows = []
+    if ctx.get("mail_anlass") in ("wieder", "eskalation"):
+        # Derselbe Incident, kein neuer (bearbeitung.py): sagen, was der Anlass ist
+        was = (f"Etwas Neues: {_esc(ctx.get('eskalation'))}" if ctx.get("mail_anlass") == "eskalation"
+               else f"Wieder aufgetreten — {_esc(ctx.get('wieder_anzahl'))}. Mal in 24 h, noch von niemandem übernommen")
+        rows.append(f'<p style="margin:0 0 10px;padding:6px 8px;border-left:4px solid #f57c00;background:#fff4e5">'
+                    f'<b>Bekannter Incident.</b> {was}.</p>')
     if incident_url:
-        rows.append(f'<p style="margin:0 0 10px"><a href="{_esc(incident_url)}"><b>→ Incident öffnen</b></a></p>')
+        rows.append(f'<p style="margin:0 0 10px"><a href="{_esc(incident_url)}"><b>→ Incident öffnen und übernehmen</b></a>'
+                    f' <span style="color:#777">(übernommen = keine weiteren Mails dazu, außer es kommt etwas Neues)</span></p>')
     if triage:
         steps = "".join(f"<li>{_esc(s)}</li>" for s in triage.get("pruefschritte") or [])
         signals = "".join(f"<li>{_esc(s)}</li>" for s in triage.get("verwandte_signale") or [])
@@ -406,6 +413,18 @@ async def _store_triage(db, cluster_id: str, incident_id: str | None, result: di
     ))
 
 
+async def _nachtrag_erlaubt(db, incident_id: str | None) -> tuple[bool, str]:
+    """Nachgereichte KI-Einschätzung nur, solange der Incident unbearbeitet ist (bearbeitung.py: Bearbeitet = Ruhe)."""
+    if not incident_id:
+        return True, "ohne Incident"
+    from app.models.workflow import Incident
+    from app.services.error_clusters.bearbeitung import mail_erlaubt
+    inc = await db.get(Incident, uuid.UUID(incident_id))
+    if inc is None:
+        return True, "Incident nicht gefunden"
+    return mail_erlaubt("nachtrag", inc.causal_context, None, datetime.now(timezone.utc))
+
+
 async def _public_url(db) -> str:
     from app.services.settings import get_setting
     return (await get_setting(db, APP_URL_SETTING) or "https://hal.example.com").rstrip("/")
@@ -511,8 +530,12 @@ async def deliver(ctx: dict, title: str, cluster_id: str, incident_id: str | Non
             return
         async with AsyncSessionLocal() as db:
             await _store_triage(db, cluster_id, incident_id, late, ctx)
-            await _send(db, to, subject(ctx, title, followup=True),
-                        render_html(ctx, late, incident_url, pending=False))
+            ok, warum = await _nachtrag_erlaubt(db, incident_id)
+            if ok:
+                await _send(db, to, subject(ctx, title, followup=True),
+                            render_html(ctx, late, incident_url, pending=False))
+            else:
+                log.info("error_clusters: Nachtrag zu %s nicht gemailt — %s", (incident_id or "")[:8], warum)
             await db.commit()
 
 

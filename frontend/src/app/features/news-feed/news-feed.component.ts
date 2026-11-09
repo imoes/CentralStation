@@ -96,6 +96,11 @@ interface IncidentTimeline {
     resolution?: { at: string; by?: string; summary: string } | null;
     /** Aus diesem Incident erstellte Tickets (Backend tickets.create mit incident_id) */
     tickets?: { key: string; url?: string | null; by?: string; at: string; connector?: string }[];
+    /** Bearbeitungsstand (Backend services/error_clusters/bearbeitung.py) — bearbeitet = keine weiteren Mails */
+    bearbeitung?: { zustand: 'unbearbeitet' | 'übernommen' | 'ticket'; von?: string | null; zeit?: string | null;
+                    ticket?: string | null; grund: string };
+    /** Zeitpunkte, zu denen derselbe Incident wieder auftrat (statt eines neuen Incidents) */
+    wieder?: string[];
   };
   timeline: {
     at: string;
@@ -967,6 +972,19 @@ const SEVERITY_COLOR: Record<string, string> = {
               }
               {{ promptCopied() ? 'Übergeben ✓' : 'Computer, untersuche das' }}
             </button>
+            @if (incidentTimeline()!.incident.status !== 'resolved' && incidentTimeline()!.incident.bearbeitung?.zustand !== 'ticket') {
+              @if (incidentTimeline()!.incident.bearbeitung?.zustand === 'übernommen') {
+                <button mat-stroked-button class="claude-handoff-btn" (click)="incidentBearbeitung('freigeben')"
+                        matTooltip="Übernahme zurücknehmen — der Incident gilt wieder als unbearbeitet, Mails wie vorher">
+                  <mat-icon>person_remove</mat-icon> Freigeben
+                </button>
+              } @else {
+                <button mat-flat-button class="claude-handoff-btn" (click)="incidentBearbeitung('uebernehmen')"
+                        matTooltip="Ich kümmere mich — danach keine weiteren Mails zu diesem Incident, außer es kommt etwas Neues (weiterer Host, höhere Schwere)">
+                  <mat-icon>how_to_reg</mat-icon> Übernehmen
+                </button>
+              }
+            }
             <button mat-stroked-button class="claude-handoff-btn"
                     (click)="createIncidentTicket()"
                     matTooltip="Ticket im ServiceDesk oder Jira anlegen — die KI schreibt den Entwurf aus Muster, Belegen und Einschätzung; vor dem Anlegen bearbeitbar">
@@ -983,6 +1001,15 @@ const SEVERITY_COLOR: Record<string, string> = {
         @if (loadingIncident()) {
           <div class="incident-drawer-loading"><mat-spinner diameter="32"></mat-spinner></div>
         } @else if (incidentTimeline()) {
+          @if (incidentTimeline()!.incident.bearbeitung; as b) {
+            <div class="incident-bearbeitung" [class.offen]="b.zustand === 'unbearbeitet'">
+              <mat-icon>{{ b.zustand === 'unbearbeitet' ? 'notifications_active' : 'notifications_paused' }}</mat-icon>
+              <span>{{ b.zustand === 'unbearbeitet' ? 'Unbearbeitet — Mails gehen raus' : 'Bearbeitet: ' + b.grund + (b.zeit ? ' · ' + relTime(b.zeit) : '') + ' — keine weiteren Mails, außer bei Neuem' }}</span>
+              @if (incidentTimeline()!.incident.wieder?.length) {
+                <span class="dim">· {{ incidentTimeline()!.incident.wieder!.length }}× wieder aufgetreten (zuletzt {{ relTime(incidentTimeline()!.incident.wieder![incidentTimeline()!.incident.wieder!.length - 1]) }})</span>
+              }
+            </div>
+          }
           @if (incidentTimeline()!.incident.tickets?.length) {
             <div class="incident-tickets">
               <mat-icon>confirmation_number</mat-icon>
@@ -1827,6 +1854,11 @@ const SEVERITY_COLOR: Record<string, string> = {
     :host-context(html.cs-theme-lcars) .claude-handoff-btn { color: #99CCFF; border-color: rgba(153,204,255,.45); }
     .incident-drawer-loading { display: flex; justify-content: center; padding: 40px; }
 
+    .incident-bearbeitung { margin: 10px 16px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px;
+      padding: 6px 10px; border-radius: 6px; border-left: 4px solid #4caf50; background: rgba(76,175,80,.08); }
+    .incident-bearbeitung.offen { border-left-color: #f57c00; background: rgba(245,124,0,.08); }
+    .incident-bearbeitung mat-icon { font-size: 18px; width: 18px; height: 18px; }
+    .incident-bearbeitung .dim { opacity: .7; }
     .incident-tickets { margin: 10px 16px 0; display: flex; gap: 8px; align-items: center;
       flex-wrap: wrap; font-size: 13px; }
     .incident-tickets mat-icon { font-size: 16px; width: 16px; height: 16px; opacity: .7; }
@@ -3185,6 +3217,22 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
           this.snackBar.open('Kontext konnte nicht geladen werden', 'OK', { duration: 3000 });
         },
       });
+  }
+
+  /** Incident übernehmen / freigeben (Backend feed.incident_uebernehmen): bearbeitet = keine weiteren Mails. */
+  incidentBearbeitung(was: 'uebernehmen' | 'freigeben') {
+    const inc = this.incidentTimeline()?.incident;
+    if (!inc) return;
+    this.http.post<{ status: string; bearbeitung: IncidentTimeline['incident']['bearbeitung'] }>(
+      `${environment.apiUrl}/feed/incidents/${inc.id}/${was}`, {}).subscribe({
+      next: r => {
+        const t = this.incidentTimeline();
+        if (t) this.incidentTimeline.set({ ...t, incident: { ...t.incident, status: r.status, bearbeitung: r.bearbeitung } });
+        this.snackBar.open(was === 'uebernehmen' ? 'Übernommen — keine weiteren Mails dazu, außer bei Neuem'
+                                                 : 'Freigegeben — der Incident gilt wieder als unbearbeitet', 'OK', { duration: 3000 });
+      },
+      error: e => this.snackBar.open(e?.error?.detail || 'Nicht möglich', 'OK', { duration: 4000 }),
+    });
   }
 
   /** Ticket aus dem Incident: gemeinsamer Dialog, KI-Entwurf aus dem Lagebild (tickets.draft). */
