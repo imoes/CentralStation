@@ -478,8 +478,8 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
 
 ### What is new
 
-- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.21.1`, built by `vi-mcp/Dockerfile` from
-  `vi-mcp/pakete/vi-mcp_0.21.1-1_all.deb` = the GitHub release v0.21.1 (signature checked), SHA-256 `7652cb3c…f5ef` from the
+- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.21.2`, built by `vi-mcp/Dockerfile` from
+  `vi-mcp/pakete/vi-mcp_0.21.2-1_all.deb` = the GitHub release v0.21.2 (signature checked), SHA-256 `917af229…d729` from the
   release's SHA256SUMS; the build aborts on a mismatch). Listens only inside the Compose
   network (`vi-mcp:8765`), no published port; memory and configuration in the volumes `vi-mcp-daten`/`vi-mcp-konfig`.
   Instance `centralstation` created; its token lies 0600 in `~/.config/vi-mcp/token-centralstation-lokal`, never printed.
@@ -525,7 +525,9 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
   `/gesund: ok vi-mcp 0.20.8`, 0 violations, hook unchanged. Then v0.21.1 (09.11. 11:40 UTC, skipping 0.20.9–0.21.0;
   release notes without breaking points): signature valid, backups `*-20261109T114035Z.tgz`, `/gesund: ok vi-mcp 0.21.1`,
   0 violations, 1 of 1 peer reachable, hook unchanged, required fields unchanged; `erinnere` from the backend
-  returns hits. 0.17.0's open-wiki mode stays off (`offen` false); no instance is called „offen“.
+  returns hits. Then v0.21.2 (09.11. 12:59 UTC; fix from this session's report: state-dependent tools such as
+  browser_wait_for/snapshot/evaluate are no longer answered from memory): signature valid, backups
+  `*-20261109T125921Z.tgz`, `/gesund: ok vi-mcp 0.21.2`, 0 violations, hook unchanged. 0.17.0's open-wiki mode stays off (`offen` false); no instance is called „offen“.
   The network token of instance `centralstation` lies 0600 in `~/.config/vi-mcp/netz-token-centralstation-lokal`.
 - The connector `vi_mcp` still points to llm-host03; it moves to `http://vi-mcp:8765/mcp` only once the exchange works,
   otherwise CentralStation would lose the collective.
