@@ -119,13 +119,13 @@ export function tagFilter(tag: string, ausschliessen = false): string {
             @if (befundeVon(k).length) {
               <div class="st-sub">KI-Befunde</div>
               @for (b of befundeVon(k); track b.id) {
-                <button class="st-zeile" (click)="waehle(b.id)">◆ {{ b.titel || b.id }}</button>
+                <button class="st-zeile" (click)="waehle(b.id)" [title]="b.titel || b.id"><span class="st-text">◆ {{ b.titel || b.id }}</span></button>
               }
             }
             <div class="st-sub">Verknüpft (an denselben Nachrichten)</div>
             @for (v of nachbarn(k); track v.id) {
-              <button class="st-zeile" (click)="waehle(v.id)">
-                <i class="punkt" [style.background]="stufenFarbe(v.stufe)"></i>{{ v.titel ? v.titel + ' (' + v.id + ')' : v.id }} <span class="dim">{{ v.anzahl }}</span>
+              <button class="st-zeile" (click)="waehle(v.id)" [title]="v.titel ? v.titel + ' (' + v.id + ')' : v.id">
+                <i class="punkt" [style.background]="stufenFarbe(v.stufe)"></i><span class="st-text">{{ v.titel ? v.titel + ' (' + v.id + ')' : v.id }}</span> <span class="dim">{{ v.anzahl }}</span>
               </button>
             }
             @if (!nachbarn(k).length) { <div class="dim">—</div> }
@@ -178,8 +178,8 @@ export function tagFilter(tag: string, ausschliessen = false): string {
             @if (objekteDerArt('incident').length) {
               <div class="st-sub">Incidents</div>
               @for (k of objekteDerArt('incident'); track k.id) {
-                <button class="st-zeile" (click)="waehle(k.id)">
-                  <i class="punkt" [style.background]="stufenFarbe(k.stufe)"></i>▲ {{ k.titel || k.id }}
+                <button class="st-zeile" (click)="waehle(k.id)" [title]="k.titel || k.id">
+                  <i class="punkt" [style.background]="stufenFarbe(k.stufe)"></i><span class="st-text">▲ {{ k.titel || k.id }}</span>
                   <span class="dim">{{ k.incident?.status === 'resolved' ? 'gelöst' : 'offen' }} · {{ k.anzahl }}</span>
                 </button>
               }
@@ -187,16 +187,16 @@ export function tagFilter(tag: string, ausschliessen = false): string {
             @if (objekteDerArt('befund').length) {
               <div class="st-sub">KI-Befunde</div>
               @for (k of objekteDerArt('befund'); track k.id) {
-                <button class="st-zeile" (click)="waehle(k.id)">
-                  <i class="punkt" [style.background]="stufenFarbe(k.stufe)"></i>◆ {{ k.titel || k.id }}
+                <button class="st-zeile" (click)="waehle(k.id)" [title]="k.titel || k.id">
+                  <i class="punkt" [style.background]="stufenFarbe(k.stufe)"></i><span class="st-text">◆ {{ k.titel || k.id }}</span>
                   <span class="dim">{{ k.anzahl }}</span>
                 </button>
               }
             }
             <div class="st-sub">Wo sind die Probleme?</div>
             @for (k of brennpunkte(); track k.id) {
-              <button class="st-zeile" (click)="waehle(k.id)">
-                <i class="punkt" [style.background]="stufenFarbe(k.stufe)"></i>{{ k.titel ? k.titel + ' (' + k.id + ')' : k.id }}
+              <button class="st-zeile" (click)="waehle(k.id)" [title]="k.titel ? k.titel + ' (' + k.id + ')' : k.id">
+                <i class="punkt" [style.background]="stufenFarbe(k.stufe)"></i><span class="st-text">{{ k.titel ? k.titel + ' (' + k.id + ')' : k.id }}</span>
                 <span class="dim">{{ k.dringend_offen ? k.dringend_offen + ' unbearbeitet' : k.dringend + ' dringend' }}</span>
               </button>
             }
@@ -227,6 +227,10 @@ export function tagFilter(tag: string, ausschliessen = false): string {
     .leg i, .punkt { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
     .dim { opacity: .6; }
     .fn-seite { overflow: auto; display: flex; flex-direction: column; gap: 4px; min-width: 0; padding-right: 4px; }
+    /* Einträge nie zusammendrücken: Zeilen mit overflow:hidden haben keine automatische Mindesthöhe, flex-shrink
+       quetschte sie bei langer Leiste auf wenige Pixel übereinander (Playwright 09.11.: KI-Befunde/Verknüpft
+       unlesbar). Die Leiste scrollt stattdessen. */
+    .fn-seite > * { flex-shrink: 0; }
     .st-kopf { display: flex; flex-direction: column; gap: 2px; }
     .st-art { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; opacity: .6; }
     .st-name { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
@@ -242,6 +246,8 @@ export function tagFilter(tag: string, ausschliessen = false): string {
     .st-zeile { display: flex; align-items: center; gap: 6px; text-align: left; font: inherit; font-size: 12px; cursor: pointer;
       border: 0; background: transparent; color: inherit; padding: 2px 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .st-zeile:hover { text-decoration: underline; }
+    /* Text in eigenem Element: ellipsis greift nicht auf Textknoten direkt im Flex-Container (sonst hart abgeschnitten) */
+    .st-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .st-zeile .dim { margin-left: auto; padding-left: 6px; }
     .msg { display: flex; flex-direction: column; border-left: 2px solid rgba(127,127,127,.4); padding-left: 6px; margin-top: 2px; }
     .msg.r3 { border-left-color: #f57c00; }
@@ -422,8 +428,10 @@ export class FehlernetzComponent implements OnInit {
       series: [{
         type: 'graph', layout: 'force', roam: true, draggable: true,
         force: { repulsion: 420, edgeLength: [70, 200], gravity: 0.12, layoutAnimation: false },
+        // Beschriftung unter dem Knoten statt darauf; überlappende ausblenden (beim Überfahren erscheinen sie)
+        labelLayout: { hideOverlap: true },
         label: {
-          show: true, fontSize: 11, color: dunkel ? '#eee' : '#222',
+          show: true, position: 'bottom', distance: 3, fontSize: 11, color: dunkel ? '#eee' : '#222',
           formatter: (p: { data: any }) => {
             // lesbarer Name zuerst (Regel-Beschreibung, Technik, Thema, Muster-Text …), sonst der Wert
             const w = p.data.titel || p.data.wert;

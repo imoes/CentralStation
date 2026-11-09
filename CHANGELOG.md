@@ -10,6 +10,34 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-09 — Netzplan: KI-Befunde und verknüpfte Objekte in der Seitenleiste wieder lesbar
+
+### Was wurde behoben
+
+- **Seitenleiste des Fehler-Netzplans (`/topology?modus=fehler`).** Nach einem Klick auf einen Knoten lagen die
+  Listen „KI-Befunde“ und „Verknüpft (an denselben Nachrichten)“ auf wenige Pixel zusammengedrückt übereinander, die
+  Nachrichten darunter waren abgeschnitten.
+  - Ursache: Die Leiste ist eine Flex-Spalte mit `overflow: auto`. Zeilen mit `overflow: hidden` haben keine
+    automatische Mindesthöhe, und `flex-shrink: 1` quetschte sie, sobald der Inhalt höher als die Leiste war.
+  - Jetzt: Einträge schrumpfen nicht (`flex-shrink: 0`), die Leiste scrollt.
+- **Lange Titel** (Incidents, KI-Befunde, Objekte) wurden am Rand hart abgeschnitten, weil `text-overflow: ellipsis`
+  nicht auf Text direkt im Flex-Button greift. Jetzt enden sie mit „…“, der volle Titel steht im Tooltip.
+- **Beschriftungen im Graphen** standen auf den Knoten und überlagerten sich (z. B. „nsc011 (Core PEN-1): 3 In…“ über
+  „Filesystem /rpool“). Jetzt stehen sie unter dem Knoten, überlappende werden ausgeblendet (`labelLayout.hideOverlap`)
+  und erscheinen beim Überfahren.
+- *Nachweis:* mit Playwright gegen hal (09.11. ~12:10 UTC):
+  - URL `…/topology?modus=fehler&filter=incident:af1464ec-…&stunden=24`, Screenshots `.playwright-mcp/netzplan-1.png`
+    (Übersicht) und `netzplan-2-befund.png` (Befund gewählt, Listen übereinander);
+  - API-Antwort `GET /api/log-watch/netzplan` war korrekt: 10 Knoten, darunter 2 KI-Befunde; der nsc011-Befund
+    gehört laut Titel dazu („alle Peer vpp0262, Teil des Ausfalls dort“).
+  - Der Fehler lag also nur in der Darstellung. Frontend-Image baut ohne Fehler.
+
+### Was fehlt noch
+
+- Frontend-Container noch nicht neu gestartet; Gegenprobe mit Playwright danach.
+
+---
+
 ## 2026-11-09 — Keine Incident-Mails ohne Incident-Link mehr nach einem Neustart
 
 ### Was wurde behoben
