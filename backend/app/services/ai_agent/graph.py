@@ -835,6 +835,10 @@ async def act(state: dict, db: Any) -> dict:
                         for a in state.get("enriched_alerts", []):
                             if rec.action and (a.get("host", "") in rec.action or a.get("title", "") in title):
                                 await record_jira_created(a, db)
+                                from app.services.alert_feedback import erfasse as _fb
+                                await _fb(db, "ticket", a, details={
+                                    "ticket": key, "zuordnung": "heuristisch: Host im Ticket-Vorschlag oder "
+                                    "Alarmtitel im Ticket-Titel (graph.act)"})
                                 break
                     except Exception:
                         pass

@@ -102,6 +102,9 @@ async def acknowledge_alert(
 
     alert.status = "acknowledged"
     alert.acknowledged_by = current_user.id
+    from app.services.alert_feedback import erfasse as _fb
+    await _fb(db, "quittiert", {"id": str(alert.id), "source": alert.source, "title": alert.title,
+                                "created_at": alert.created_at}, nutzer=current_user.id, commit=False)
     db.add(AuditLog(action="alert_acknowledged", resource_type="alert",
                     resource_id=str(alert_id), user_id=current_user.id))
     await db.commit()

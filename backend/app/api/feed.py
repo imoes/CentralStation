@@ -469,6 +469,10 @@ async def enrich_feed_item(
     if not insight:
         raise HTTPException(500, "KI-Anreicherung fehlgeschlagen")
 
+    # Rückmeldung einzeln festhalten (alert_feedback) — unabhängig vom Score-Lernen, das bleibt wie es ist
+    from app.services.alert_feedback import erfasse as _fb
+    await _fb(db, "ki_analyse_angefordert", item, nutzer=user.id)
+
     # Adaptive learning: user manually requested LLM → this pattern was relevant
     if agent_cfg.score_learning_enabled:
         try:
@@ -546,6 +550,9 @@ async def ignore_feed_item(
     db.add(search)
     await db.commit()
     await db.refresh(search)
+    from app.services.alert_feedback import erfasse as _fb
+    await _fb(db, "ausgeblendet", item, nutzer=user.id,
+              details={"feed_search_id": str(search.id), "query_string": query_string})
 
     return {"id": str(search.id), "name": name, "query_string": query_string}
 
@@ -568,6 +575,9 @@ async def acknowledge_feed_item(
             raise HTTPException(404, "Alert not found")
         alert.status = "acknowledged"
         alert.acknowledged_by = user.id
+        from app.services.alert_feedback import erfasse as _fb
+        await _fb(db, "quittiert", {"id": str(alert.id), "source": alert.source, "title": alert.title,
+                                    "created_at": alert.created_at}, nutzer=user.id, commit=False)
         db.add(
             AuditLog(
                 action="alert_acknowledged",
@@ -583,6 +593,10 @@ async def acknowledge_feed_item(
         # Non-UUID id (email/teams) — only update OpenSearch
         source = alert_id.split("_")[0] if "_" in alert_id else "unknown"
         uid = None
+        from app.services import feed_index as _fi
+        from app.services.alert_feedback import erfasse as _fb
+        _item = await _fi.get_by_id(alert_id)
+        await _fb(db, "quittiert", _item or {"id": alert_id, "source": source}, nutzer=user.id)
 
     await update_status(alert_id, source, "acknowledged")
     return {"ok": True}

@@ -387,3 +387,24 @@ class ComputerSession(Base):
     last_activity_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
+
+
+class AlertFeedback(Base):
+    """Eine Rückmeldung zu einem Alarm, einzeln und mit Zeitpunkt — Labels für ein späteres gelerntes Scoring.
+
+    Nutzer 09.11.2026: alert_score_adjustments hält nur aggregierte Deltas je Muster; gezählt waren 45 positive,
+    0 negative Muster und keine Einzelereignisse — damit lässt sich kein Modell trainieren oder backtesten.
+    Die Tabelle sammelt nur; das Scoring bleibt unverändert. Arten: siehe app.services.alert_feedback.ARTEN.
+    """
+    __tablename__ = "alert_feedback"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    alert_id: Mapped[str] = mapped_column(String(255), index=True)       # Feed-ID (PG-UUID oder OpenSearch-ID)
+    quelle: Mapped[str] = mapped_column(String(50), default="")
+    muster: Mapped[str] = mapped_column(String(12), index=True)          # = alert_score_adjustments.pattern_hash
+    art: Mapped[str] = mapped_column(String(30), index=True)
+    nutzer: Mapped[uuid.UUID | None] = mapped_column(nullable=True)      # None = System/KI
+    alarm_zeit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    zeitpunkt: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+                                                index=True)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)

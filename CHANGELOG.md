@@ -10,6 +10,53 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-09 — Alarm-Rückmeldungen werden einzeln gespeichert (`alert_feedback`), als Grundlage für ein gelerntes Scoring
+
+### What is new
+
+- **Table `alert_feedback`** (migration 0064). One row per feedback:
+  - columns: alert ID, source, pattern (`muster`, the same hash as `alert_score_adjustments`), type, user, alert
+    time, time, details;
+  - an exhaustive list of types, also as a DB constraint: `quittiert`, `ki_analyse_angefordert`, `ausgeblendet`,
+    `ticket`;
+  - the time from alert to acknowledgement is computed from `zeitpunkt − alarm_zeit`.
+- **Recorded at:**
+  - acknowledgement in the feed and under `/alerts`;
+  - the „KI Analyse“ click;
+  - „ignorieren“ (an exclusion search is created; `details` holds the query);
+  - a ticket from the sysadmin agent. Its mapping to the alert stays heuristic, as before (host or title in the
+    ticket text), and is named in `details.zuordnung`.
+- If recording fails, the user's action still goes through, and the failure is logged.
+- **Scoring unchanged:** `alert_scorer.py` and `alert_score_learner.py` work as before. The table only collects.
+
+### Why — what the count showed (09.11. ~09:30 UTC, Postgres, read-only)
+
+- 459,931 alerts (10.10.–09.11.): 404,015 `new`, 55,913 `resolved`, **3** `acknowledged`. No acknowledgement time,
+  no ticket column.
+- `alert_score_adjustments`: 1,175 patterns, 45 with a positive delta, **0 negative**.
+  - `record_quick_ack` and `record_insight_ignored` are called nowhere.
+  - The most frequent positive signal („older than 4 h, not acknowledged“) fits 404,015 alerts. It measures
+    frequency, not relevance.
+- Tickets: 37 of 6,100 agent runs, not linked to a single alert.
+- So neither training nor a backtest was possible. Proposal from the session code-6b; approved by the user on 09.11.
+
+### Evidence
+
+- `tests/test_alert_feedback.py` (6): types equal to the DB constraint (compared via syntax tree), pattern equal to
+  the score learning, unknown type and missing ID refused, a failure does not abort the action, transaction of the
+  caller, all four places record. Full suite 1088 passed.
+
+### What is still missing
+
+- **Migration 0064 not yet applied, not deployed.** It goes out with the next backend deploy, followed by
+  `python -m alembic upgrade head`.
+- Re-count after about 4 weeks: enough events per type? Only then a time-split backtest of a learned model against
+  `score_alert` (ROC-AUC, Precision@k).
+- „KI-Analyse ohne Reaktion“ is not recorded as an event. It can be derived later from analysis time and missing
+  feedback.
+
+---
+
 ## 2026-11-09 — Sysadmin agent: the IT-AIKB is asked by hashtag filter, not by LLM-written queries
 
 ### What has changed
