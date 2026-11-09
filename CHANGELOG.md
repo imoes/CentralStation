@@ -162,8 +162,8 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
 
 ### What is new
 
-- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.18.0`, built by `vi-mcp/Dockerfile` from
-  `vi-mcp/pakete/vi-mcp_0.18.0-1_all.deb` = the GitHub release v0.18.0 (signature checked), SHA-256 `85beda30…17b7` from the
+- **Compose service `vi-mcp`** (image `centralstation-vi-mcp:0.20.6`, built by `vi-mcp/Dockerfile` from
+  `vi-mcp/pakete/vi-mcp_0.20.6-1_all.deb` = the GitHub release v0.20.6 (signature checked), SHA-256 `26583ff7…e3de` from the
   release's SHA256SUMS; the build aborts on a mismatch). Listens only inside the Compose
   network (`vi-mcp:8765`), no published port; memory and configuration in the volumes `vi-mcp-daten`/`vi-mcp-konfig`.
   Instance `centralstation` created; its token lies 0600 in `~/.config/vi-mcp/token-centralstation-lokal`, never printed.
@@ -196,7 +196,13 @@ You decided (08.11.): the local VI runs **in CentralStation**, installed from th
   Then updated to v0.14.3 (15:38 UTC), v0.15.0 (16:10 UTC) v0.16.0 (16:40 UTC) and v0.18.0 (17:36 UTC), both with
   `aktualisieren.sh`: signature valid, 4 volumes backed up, `/gesund` names the version, 0 violations. 0.18.0 changed the
   console hook (shell commands give stimuli to `vi_vorher`) → backend rebuilt; the hook reaches each console at its next
-  session start. 0.17.0's open-wiki mode stays off (`offen` false); no instance is called „offen“.
+  session start. On 09.11. (08:16 UTC) updated to v0.20.6 (skipping 0.20.4/0.20.5, fixes only on top): signature valid,
+  4 volumes backed up (`*-20261109T081638Z.tgz`), `/gesund: ok vi-mcp 0.20.6`, net status 0 violations, 1 of 1 peer reachable;
+  console hook unchanged (sha `801aa5bc…`) → no backend rebuild. Since 0.20.4 a tool call without a required field is
+  rejected and names the field; checked: all calls of `ViMcpConnector` carry the required fields of the 0.20.6 schemas
+  (`vi_vorher` tool, `vi_nachher` tool+ok, `vi_lerne` text+hashtags+quelle, `vi_erinnere` filter). Verified from the
+  backend container: `erinnere("herkunft:cs-knowledge")` returns hits, `vi_erinnere` with `text` is refused
+  („Pflichtfeld fehlt: filter“). 0.17.0's open-wiki mode stays off (`offen` false); no instance is called „offen“.
   The network token of instance `centralstation` lies 0600 in `~/.config/vi-mcp/netz-token-centralstation-lokal`.
 - The connector `vi_mcp` still points to llm-host03; it moves to `http://vi-mcp:8765/mcp` only once the exchange works,
   otherwise CentralStation would lose the collective.
