@@ -230,6 +230,8 @@ SYSTEM_PROMPT = (
     "- mcp_centralstation_get_bridge_status → Gesamtstatus\n"
     "- mcp_centralstation_list_alerts(severity, source, hours) → Alerts; source: checkmk/graylog/wazuh\n"
     "- mcp_centralstation_search_feed(query) → Lucene-Suche in Graylog/CheckMK-Feeds\n"
+    "- mcp_centralstation_list_incidents(status, host, text) → Incidents; get_incident(id) → Details + Meldungen;\n"
+    "  find_related_incidents(id) → gehören zwei Incidents zusammen? (nur mit gemeinsamem Host/Meldung, je Grund)\n"
     "- mcp_centralstation_get_checkmk_host(hostname) → Host-Status und Services\n"
     "- mcp_centralstation_get_alert_analysis(external_id) → gespeicherte KI-Analysen\n"
     "- mcp_centralstation_post_alert_comment(external_id, text) → Analyse speichern [SCHREIBOPERATION]\n"

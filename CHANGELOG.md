@@ -10,6 +10,59 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-09 — Die Konsole kann Incidents abfragen und zusammengehörige Incidents finden
+
+### What is new
+
+- **Three read-only MCP tools** (`services/incident_abfrage.py`). They use the same data as the web UI
+  (`incidents`, `incident_members`).
+  - `list_incidents(status, host, text, stunden, limit)`:
+    - `status` is `offen` (open + investigating), `alle`, `open`, `investigating` or `resolved`; anything else is
+      refused with the allowed values.
+    - The host filter checks main host and context hosts, as FQDN or short name.
+  - `get_incident(id)`:
+    - returns fields, all hosts, the full `causal_context` and the alerts from the feed, sorted by time, and counts
+      alerts that are no longer in the feed (`nicht_im_feed`);
+    - **incidents from the log watch** have no linked alerts (measured 09.11.: 184 of 4,903 in the last 7 days, all
+      with example lines). Their example lines come back as `belege_aus_kontext` with a note, instead of an empty
+      list.
+  - `find_related_incidents(id, stunden)`: do two incidents belong together? Each hit carries a named reason:
+    `gleicher_host` (a host appears in both, main host or context) or `gleiche_meldung` (the same alert).
+    - **Time proximity alone does not count.** It is the search window (± hours) and is shown as context
+      („überlappen sich“ / „Abstand N min“).
+    - The tool states that a shared host does not prove a cause.
+- Host comparison: the same FQDN, or a short name against an FQDN. The same short name under different domains
+  (`web01.example.com` / `web01.example.net`) does **not** match.
+- Console briefing (`userenv/main.py`) names the tools. This takes effect only after the next userenv rebuild; the
+  tools themselves are available after the backend deploy.
+
+### Evidence
+
+- `tests/test_incident_abfrage.py` (7) covers:
+  - host comparison, including a foreign domain and IPs;
+  - hosts from main host and context;
+  - related via context host or shared alert;
+  - an incident that is only simultaneous is **not** related;
+  - more reasons sort first;
+  - the gap is named;
+  - the status filter is exhaustive;
+  - example lines as evidence.
+  Full suite: 1101 passed.
+- Read-only live test (09.11., one-off container against the production DB):
+  - `list_incidents` 0.1 s;
+  - `find_related_incidents` checked 459–471 candidates in ±24 h in 0.02–0.04 s and found, for example, dora ↔ dora
+    „gleicher Host“, „Abstand 300 min (Kontext, kein Grund)“;
+  - cue0113 had 5 related incidents;
+  - `get_incident` for mu-img-dc01 returned 2 example lines (firewall threat lines from nfw062) as evidence.
+
+### What is still missing
+
+- Not deployed.
+- Relations through topology (NetBox neighbours) or the same alert pattern on different hosts are not a reason
+  yet. Only a shared host or a shared alert counts.
+
+---
+
 ## 2026-11-09 — The console can set Jira web links (`jira_add_weblink`)
 
 ### What is new

@@ -2184,6 +2184,54 @@ async def jira_get_transitions(issue_key: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+# ── Incidents (nur lesend) — Nutzer 09.11.2026: „die Konsole kann die Incidents nicht abfragen. Das wäre wichtig,
+#    wenn zwei Incidents zusammengehören.“ Umsetzung: services/incident_abfrage.py ──
+
+@mcp.tool()
+async def list_incidents(status: str = "offen", host: str = "", text: str = "", stunden: float = 72,
+                         limit: int = 20) -> dict:
+    """Incidents auflisten (dieselben wie in der Weboberfläche) — neueste zuerst.
+
+    Parameter:
+    - status: "offen" (open + investigating, Standard), "alle", "open", "investigating" oder "resolved"
+    - host: nur Incidents, in denen dieser Host vorkommt (Haupthost oder im Kontext; Kurzname oder FQDN)
+    - text: Teil des Titels
+    - stunden: nur Incidents, die in den letzten N Stunden aktualisiert wurden (Standard 72)
+    - limit: höchstens so viele (Standard 20, max. 100)
+    Je Incident: id, titel, primary_host, hosts, severity, status, kind (host | log_cluster | fleet | critical),
+    Zeiten, Zahl der Meldungen und Kontext (Regel, Gründe, Triage-Titel). Details mit get_incident.
+    """
+    from app.services import incident_abfrage as ia
+    async with (await _get_db_session()) as db:
+        return await ia.liste(db, status, host, text, stunden, limit)
+
+
+@mcp.tool()
+async def get_incident(incident_id: str) -> dict:
+    """Ein Incident vollständig: Felder, alle beteiligten Hosts, causal_context (Regel, Gründe, Beispiele, Triage)
+    und die Meldungen (Zeit, Quelle, Host, Titel) aus dem Feed. Meldungen, die nicht mehr im Feed liegen, werden
+    gezählt (nicht_im_feed)."""
+    from app.services import incident_abfrage as ia
+    async with (await _get_db_session()) as db:
+        return await ia.details(db, incident_id)
+
+
+@mcp.tool()
+async def find_related_incidents(incident_id: str, stunden: float = 24, limit: int = 10) -> dict:
+    """Prüft, ob andere Incidents zu diesem gehören — mit benanntem Grund je Treffer.
+
+    Verwandt ist ein Incident nur, wenn er mit diesem etwas teilt:
+    - gleicher_host: ein Host kommt in beiden vor (Haupthost oder causal_context)
+    - gleiche_meldung: beide enthalten dieselbe Meldung
+    Gesucht wird im Zeitraum des Incidents ± stunden (Standard 24). Die zeitliche Lage („überlappen sich“ /
+    „Abstand N min“) steht als Kontext dabei — sie allein ist KEIN Grund. Ein gemeinsamer Host belegt keine
+    Ursache: ob A B ausgelöst hat, ist mit Logs/Metriken zu prüfen.
+    """
+    from app.services import incident_abfrage as ia
+    async with (await _get_db_session()) as db:
+        return await ia.verwandte_suchen(db, incident_id, stunden, limit)
+
+
 # ── Log-Überwachung: dieselben Werkzeuge wie der KI-Trichter (services/log_watch/werkzeuge.py) ──
 # Nur lesend. lw_befund (Befund ablegen) bleibt dem Trichter vorbehalten — er prüft die Belege;
 # die Konsolen-KI handelt nicht und schreibt keine Befunde.
