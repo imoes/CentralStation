@@ -10,6 +10,27 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-09 — nginx liefert die volle Zertifikatskette aus
+
+### Was wurde behoben
+
+- **Maschinen-Clients scheiterten an der Zertifikatsprüfung von CentralStation:** nginx lieferte nur das Blattzertifikat
+  `star_example_com.crt` (1 Zertifikat). Browser laden das Zwischenzertifikat nach und fielen nicht auf; Python, curl
+  und Go nicht („unable to get local issuer certificate“, `openssl s_client`: „Verify return code: 21“). Aufgefallen in
+  der AIKB-Session (Python/httpx im AIKB-Container: CERTIFICATE_VERIFY_FAILED). Jetzt: `star_example_com-fullchain.crt`
+  (Blatt → YE1 → Root YE → ISRG Root X2, gleicher Schlüssel). `nginx/nginx.conf.example` weist darauf hin.
+- *Nachweis* (09.11. 09:58 UTC, Freigabe des Nutzers; Backup `nginx/nginx.conf.bak-20261109`; `nginx -t` vorher ok;
+  Container neu erstellt, ca. 4 s Unterbrechung): lokal `s_client` 4 Zertifikate, „Verify return code: 0 (ok)“,
+  `curl https://hal.example.com/api/health` mit Prüfung 200; von aikb.test `s_client` 0 (ok), Python
+  `ssl.create_default_context()` TLSv1.3 ok.
+
+### Was fehlt noch
+
+- aikb.test erreicht hal nur über 10.0.28.130 (asymmetrisches Routing über 10.0.254.10, gemessen 09.11.). Die
+  AIKB-Session plant `extra_hosts "hal.example.com:10.0.28.130"` im AIKB-Backend — deren Seite, braucht Freigabe.
+
+---
+
 ## 2026-11-09 — Alarm-Rückmeldungen werden einzeln gespeichert (`alert_feedback`), als Grundlage für ein gelerntes Scoring
 
 ### What is new

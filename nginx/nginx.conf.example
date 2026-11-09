@@ -21,7 +21,9 @@ http {
         listen 443 ssl;
         server_name _;
 
-        ssl_certificate /etc/nginx/ssl/certs/server.crt;
+        # Volle Kette (Blatt + Zwischenzertifikate)! Nur das Blatt → Python/curl/Go scheitern mit
+        # „unable to get local issuer certificate“; Browser laden die Kette nach und fallen nicht auf (09.11.2026).
+        ssl_certificate /etc/nginx/ssl/certs/server-fullchain.crt;
         ssl_certificate_key /etc/nginx/ssl/private/server.key;
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_ciphers HIGH:!aNULL:!MD5;
