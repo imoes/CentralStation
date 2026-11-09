@@ -1406,6 +1406,9 @@ async def alert_hermes_context(
     return {"prompt": "\n".join(lines), "host": host}
 
 
+from app.services.error_clusters.briefing import regel_prompt_section as _regel_prompt_section, triage_lines as _triage_lines  # noqa: E402
+
+
 def _cluster_prompt_section(c: dict, kind: str, severity: str, created_str: str) -> list[str]:
     """Konsolen-Briefing für einen Fehler-Cluster-Incident (services/error_clusters)."""
     containers = c.get("containers") or []
@@ -1445,11 +1448,7 @@ def _cluster_prompt_section(c: dict, kind: str, severity: str, created_str: str)
         out += ["", "## Weiteres Muster desselben Ausbruchs",
                 f"```\n{p.get('template', '')}\n```",
                 f"{p.get('total')} Zeilen, {len(p.get('containers') or [])} Container"]
-    t = c.get("triage") or {}
-    if t:
-        out += ["", "## KI-Einschätzung (automatisch, ungeprüft)",
-                t.get("zusammenfassung") or "", f"Vermutete Ursache: {t.get('vermutete_ursache')}"]
-        out += [f"- {s}" for s in t.get("pruefschritte") or []]
+    out += _triage_lines(c.get("triage") or {})
     if c.get("graylog_url"):
         out += ["", f"Graylog: {c['graylog_url']}"]
     out.append("")
@@ -1487,7 +1486,8 @@ async def incident_claude_prompt(
     # Primitive Werte vor weiteren awaits holen (SQLAlchemy lässt `inc` sonst verfallen).
     inc_id_str, host = str(inc.id), inc.primary_host
     kind = getattr(inc, "kind", "host") or "host"
-    is_cluster = _cluster_of(inc) is not None and kind in ("log_cluster", "fleet")
+    _c = _cluster_of(inc) or {}
+    is_cluster = bool(_c) and (kind in ("log_cluster", "fleet") or (bool(_c.get("regel")) and len(_c.get("hosts") or []) > 1))
     lines = await incident_briefing(db, inc)
     lines.append("## Auftrag")
     if is_cluster:
@@ -1546,7 +1546,13 @@ async def incident_briefing(db, inc) -> list[str]:
     if resolution and resolution.get("summary"):
         lines += ["## Bereits gelöst", f"{resolution['summary']}",
                   f"(festgehalten {str(resolution.get('at') or '')[:16].replace('T', ' ')} UTC)", ""]
-    if cluster and kind in ("log_cluster", "fleet"):
+    if cluster and cluster.get("regel"):
+        # Incident aus dem Regelwerk (jede Art): Inhalt wie seine Mail, aus dem gespeicherten Kontext
+        lines.extend(_regel_prompt_section(cluster, severity, created_str))
+        lines.extend(_check_prompt_lines(inc))
+        from app.services.recipes import prompt_lines as _recipe_lines, summary_of as _rsum
+        lines.extend(_recipe_lines(_rsum(await _recipe_for(db, inc))))
+    elif cluster and kind in ("log_cluster", "fleet"):
         # Fehler-Cluster: am MUSTER ansetzen, nicht an einem Host — ein Ausbruch über
         # viele Container/Hosts hat seine Ursache meist woanders (Abhängigkeit, Zugang).
         lines.extend(_cluster_prompt_section(cluster, kind, severity, created_str))

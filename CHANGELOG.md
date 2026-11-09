@@ -10,6 +10,40 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-09 — Konsolen-Übergabe eines Incidents enthält wieder den Inhalt der Mail
+
+### Was wurde behoben
+
+- **„An Konsole übergeben“ zeigte bei Incidents aus dem Regelwerk nur den allgemeinen Kopf.** Das betraf zum
+  Beispiel „Host mit mehreren dringenden Meldungen“: Gründe, Belegzeilen und KI-Einschätzung der Mail fehlten.
+  - Ursache: `incident_briefing()` (api/feed.py) wertete den gespeicherten Kontext nur bei den Arten `log_cluster`
+    und `fleet` aus. Regel-Incidents haben die Art `host` und keine Feed-Meldungen. Damit blieb nur „Auf dem Host … ist
+    ein Incident aufgetreten“ übrig.
+  - Jetzt: Für Incidents mit `regel` im Kontext (jede Art) baut `services/error_clusters/briefing.py`
+    (`regel_prompt_section`) das Briefing aus demselben Kontext wie die Mail:
+    - Warum gemeldet, mit Mengenzeile und Filter;
+    - Betroffene;
+    - bis zu 10 Belegzeilen;
+    - KI-Einschätzung;
+    - dazu wie bisher Prüfschritte und Rezept.
+  - Der KI-Block (`triage_lines`) ist jetzt für alle Arten derselbe wie in der Mail: Titel, Zusammenfassung,
+    Ursache mit Konfidenz, Komponente, nummerierte Prüfschritte, verwandte Signale. Vorher fehlten Titel,
+    Konfidenz, Komponente und Signale.
+  - Mehrere Hosts eines Regel-Incidents bekommen den Cluster-Auftrag („was haben sie gemeinsam“).
+  - Der Ticket-Entwurf nutzt dasselbe Briefing und ist damit ebenfalls vollständig.
+- *Nachweis:*
+  - `tests/test_regel_incident_briefing.py` (2) prüft alle Teile der Mail im Briefing und dass ohne KI-Einschätzung
+    kein leerer Block erscheint. Volle Suite: 1105 passed.
+  - Lesend gegen die Produktions-DB für Incident af1464ec (vpp0262): Das Briefing enthält Regel I-HOST, 6 Meldungen in
+    30 min, 3 Belegzeilen „Used: 100.00% …“, die KI-Einschätzung „Disk-Full auf vpp0262.example.com (100%
+    Auslastung)“ mit Ursache, Komponente und 3 Prüfschritten.
+
+### Was fehlt noch
+
+- Noch nicht ausgerollt (Backend-Deploy).
+
+---
+
 ## 2026-11-09 — Netzplan: KI-Befunde und verknüpfte Objekte in der Seitenleiste wieder lesbar
 
 ### Was wurde behoben
