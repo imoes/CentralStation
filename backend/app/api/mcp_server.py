@@ -1832,6 +1832,62 @@ async def jira_add_comment(issue_key: str, body: str, body_format: str = "markdo
         return {"ok": False, "error": str(exc)}
 
 
+#: Ticketprojekte auf FREMDEN Jira-Instanzen, die CentralStation nicht lesen kann, aber per Weblink verlinkt:
+#: Stibo DX (Hersteller von CUE) — IPPCUE (Example-Projekt beim Hersteller) und DXSD (dessen Servicedesk). Gleiche
+#: Adressform wie im Skill jira-api (jira_example_get_links / add_remote_link), Titel = Schlüssel.
+EXTERNE_JIRA_PROJEKTE = {"IPPCUE": "https://stibodx.atlassian.net", "DXSD": "https://stibodx.atlassian.net"}
+
+
+@mcp.tool()
+async def jira_add_weblink(issue_key: str, ziel: str = "", url: str = "", titel: str = "") -> dict:
+    """Setzt einen Weblink (Jira „Remote Link“) an ein Ticket — auf ein anderes Ticket, auch auf einer ANDEREN
+    Jira-Instanz (z. B. JCUE-6373 → IPPCUE-2517), oder auf eine beliebige URL.
+
+    Parameter:
+    - issue_key: das Ticket, an dem der Link erscheinen soll, z. B. 'JCUE-6373'
+    - ziel: Ticketschlüssel, auf den verlinkt wird. Eigene Instanzen (Jira, ServiceDesk) werden selbst gefunden,
+      Titel „KEY: <Zusammenfassung>“. Stibo-Tickets (IPPCUE-…, DXSD-…) liegen beim Hersteller auf
+      stibodx.atlassian.net — verlinkt wird https://stibodx.atlassian.net/browse/KEY, Titel = Schlüssel.
+    - url: stattdessen eine beliebige Adresse (genau eins von ziel/url)
+    - titel: optional eigener Linktext
+
+    Ist derselbe Link (gleiche URL) schon da, wird nichts doppelt angelegt (vorhanden: true).
+    Schreibt am Ticket — wie ein Kommentar nur nach Rückfrage beim Nutzer und mit Schreibfreigabe.
+    Ein Link in die Gegenrichtung ist ein eigener Aufruf (issue_key und ziel getauscht).
+    """
+    if bool(ziel.strip()) == bool(url.strip()):
+        return {"ok": False, "error": "Genau eins angeben: ziel (Ticketschlüssel) oder url"}
+    denied = await _require_write("Weblink am Ticket setzen")
+    if denied:
+        return denied
+    connector, err = await _jira_for_issue(issue_key)
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        z = ziel.strip().upper() if ziel.strip() else ""
+        extern = EXTERNE_JIRA_PROJEKTE.get(z.split("-", 1)[0]) if z else None
+        if extern:
+            link_url, link_titel = f"{extern}/browse/{z}", titel.strip() or z
+        elif ziel.strip():
+            ziel_conn, err = await _jira_for_issue(ziel.strip())
+            if err:
+                return {"ok": False, "error": f"Ziel: {err} — liegt es auf einer fremden Instanz, die volle "
+                                             f"Adresse als url übergeben"}
+            detail = await ziel_conn.get_issue_detail(ziel.strip())
+            link_url = ziel_conn.browse_url(ziel.strip())
+            link_titel = titel.strip() or f"{ziel.strip()}: {detail.get('summary') or ''}".rstrip(": ")
+        else:
+            link_url, link_titel = url.strip(), titel.strip() or url.strip()
+        for vorhanden in await connector.list_remote_links(issue_key):
+            if vorhanden["url"].rstrip("/") == link_url.rstrip("/"):
+                return {"ok": True, "vorhanden": True, "issue_key": issue_key, "url": link_url,
+                        "titel": vorhanden["title"], "id": vorhanden["id"]}
+        neu = await connector.add_remote_link(issue_key, link_url, link_titel)
+        return {"ok": True, "vorhanden": False, "issue_key": issue_key, "url": link_url, "titel": link_titel, **neu}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 # ── Anhänge ─────────────────────────────────────────────────────────────────
 #
 # Der Agent legt Dateien in seinem Container unter /home/yolo/workspaces ab; dieser

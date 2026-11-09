@@ -700,6 +700,29 @@ class JiraConnector(BaseConnector):
             "created": c.get("created"),
         }
 
+    # ── Weblinks (Remote Links) ─────────────────────────────────────────
+    # Jira-Weblink = Remote Link (REST /issue/{key}/remotelink): ein Verweis auf eine URL, auch auf ein Ticket
+    # einer ANDEREN Jira-Instanz — anders als ein Issue-Link, der nur innerhalb einer Instanz geht.
+
+    def browse_url(self, issue_key: str) -> str:
+        """Die kanonische Adresse eines Tickets dieser Instanz (ein Ding, ein Name: so verlinkt Jira selbst)."""
+        return f"{self.base_url.rstrip('/')}/browse/{issue_key}"
+
+    async def list_remote_links(self, issue_key: str) -> list[dict]:
+        async with self._client(timeout=15.0) as client:
+            r = await client.get(self._api(f"/issue/{issue_key}/remotelink"), headers=self._headers())
+            r.raise_for_status()
+        return [{"id": x.get("id"), "url": (x.get("object") or {}).get("url", ""),
+                 "title": (x.get("object") or {}).get("title", "")} for x in (r.json() or [])]
+
+    async def add_remote_link(self, issue_key: str, url: str, title: str) -> dict:
+        async with self._client(timeout=15.0) as client:
+            r = await client.post(self._api(f"/issue/{issue_key}/remotelink"), headers=self._headers(),
+                                  json={"object": {"url": url, "title": title}})
+            r.raise_for_status()
+        d = r.json() or {}
+        return {"id": d.get("id"), "self": d.get("self")}
+
     # ── Anhänge ──────────────────────────────────────────────────────────
 
     async def add_attachment(

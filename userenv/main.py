@@ -195,7 +195,7 @@ SYSTEM_PROMPT = (
     "→ MCP-Tools die schreiben: create_jira_ticket, acknowledge_alert, post_alert_comment,\n"
     "  store_skill, schedule_downtime, reschedule_check, acknowledge_problem, activate_changes,\n"
     "  und alle anderen Tools die etwas anlegen/ändern/löschen\n"
-    "→ Am Ticket: jira_add_comment, jira_update_issue, jira_transition_issue, jira_close_issue.\n"
+    "→ Am Ticket: jira_add_comment, jira_add_weblink, jira_update_issue, jira_transition_issue, jira_close_issue.\n"
     "  Ein Ticket-Kommentar ist KEINE Nebensache — er geht an Menschen, oft an Externe, und ist\n"
     "  nicht zurücknehmbar. Niemals ungefragt kommentieren, auch nicht 'zur Dokumentation'.\n"
     "→ Dateien anlegen oder überschreiben (außer in /home/yolo/workspaces/ nach Aufforderung)\n\n"

@@ -10,6 +10,51 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-09 — The console can set Jira web links (`jira_add_weblink`)
+
+### What is new
+
+- **New MCP tool `jira_add_weblink(issue_key, ziel | url, titel)`.** It sets a Jira web link (remote link) on a
+  ticket, including one to a ticket on another instance.
+  - Why: the console reported „Weblink JCUE-6373 → IPPCUE-2517: bitte von Hand setzen, das kann ich mit meinen
+    Werkzeugen nicht“, and the user asked for the tool to be added. Until now the console could only comment,
+    change, transition and attach.
+  - **Our own instances** (Jira, ServiceDesk): the target ticket is resolved automatically. The link goes to its
+    `…/browse/KEY` address, with the title „KEY: summary“.
+  - **Stibo tickets** (`IPPCUE-…`, `DXSD-…`) are at the vendor on `stibodx.atlassian.net`, which CentralStation
+    cannot read. The link goes to `https://stibodx.atlassian.net/browse/KEY`, with the key as title. This is the
+    same form as in the skill jira-api.
+  - Any other URL: use `url`.
+  - **Duplicates:** if a link with the same URL already exists, the tool reports `vorhanden: true` and does not
+    create a second one.
+  - **Permissions:** the tool writes on the ticket, so it is behind the write approval like comments, and the agent
+    asks first. It appears in the console briefing (`userenv/main.py`) and in the ticket task prompt.
+- `JiraConnector`: new `browse_url`, `list_remote_links` and `add_remote_link` (REST `/issue/{key}/remotelink`).
+
+### Evidence
+
+- `tests/test_jira_weblink.py` (6) covers:
+  - the connector contract (GET/POST remotelink, body `{"object": {"url", "title"}}`);
+  - another instance with title from the summary;
+  - a Stibo ticket linked at the vendor;
+  - an existing link not created twice;
+  - exactly one of `ziel`/`url` required;
+  - refusal without write approval;
+  - an unknown target named.
+  Full suite: 1094 passed.
+- Read-only live check (09.11., one-off container):
+  - JCUE-6373 is on `https://jira.example.org` („CUE Print newsgate-cf: Jeder PUT UpdatePackage schreibt
+    ERROR …“, status „Neu“) and has no web links yet;
+  - IPPCUE-2517 is on neither of our instances (404 on both), which is why the Stibo mapping exists.
+
+### What is still missing
+
+- Not deployed. The briefing text in `userenv/main.py` only takes effect after the next userenv rebuild. The tool
+  itself is available after the backend deploy.
+- Issue links (Blocks, Relates) within one instance are not a console tool yet.
+
+---
+
 ## 2026-11-09 — nginx liefert die volle Zertifikatskette aus
 
 ### Was wurde behoben

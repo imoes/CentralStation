@@ -198,7 +198,7 @@ def diff_ticket_activity(
 TICKET_TASK_PROMPT = (
     "Analysiere das Ticket und schlage konkrete nächste Schritte vor. Für Recherche "
     "im Bestand nutze die CentralStation-Werkzeuge (Feed, CheckMK, Wissensdatenbank). "
-    "Am Ticket selbst kannst du mit `jira_add_comment`, `jira_update_issue` und "
+    "Am Ticket selbst kannst du mit `jira_add_comment`, `jira_add_weblink`, `jira_update_issue` und "
     "`jira_transition_issue` arbeiten — frage vorher nach, bevor du etwas schreibst "
     "oder den Status änderst."
 )
