@@ -1678,8 +1678,10 @@ The AI only works when a check is true, and it only writes its own analysis.
   - leftovers of the model's tool-call syntax (`</parameter>` …) are rejected.
 
   The evidence documents get the same hashtag `befund:<id>` as the finding: one name, so the filter `befund:<id>` finds finding and evidence, and the graph draws the edge.
-- **MCP server:** `lw_suche`, `lw_facetten`, `lw_netzplan`, `lw_nachricht`, `lw_wissen` and
-  `lw_definition` are MCP tools, calling the same functions. `lw_befund` is not: only the funnel files
+- **MCP server:** `lw_suche`, `lw_facetten`, `lw_netzplan`, `lw_nachricht`, `lw_wissen`,
+  `lw_definition` and `lw_hostverzeichnis` (host directory from CheckMK: canonical name, ort, kritikalitaet,
+  hostgruppen, netz, netzbereich, adresse; with `name`, that name's mapping or the named reason) are MCP tools,
+  calling the same functions. `lw_befund` is not: only the funnel files
   findings, after checking the quotes. The console agents' prompt (`userenv/main.py`) lists the tools.
 - **Search** (`suche.py`): one search over `cs-logs-*`: filter + time → hits and facets per hashtag type.
   `netzplan()` builds the graph from two aggregations (`terms` over `hashtags`, then `adjacency_matrix`

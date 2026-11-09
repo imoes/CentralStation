@@ -2167,6 +2167,16 @@ async def lw_nachricht(id: str) -> dict:
 
 
 @mcp.tool()
+async def lw_hostverzeichnis(name: str = "") -> dict:
+    """Hostverzeichnis der Log-Überwachung (aus CheckMK, 1 h zwischengespeichert): je Host kanonischer Name, ort,
+    kritikalitaet, hostgruppen, netz (dmz|intern), netzbereich, adresse — die Grundlage der Hashtags host:/ort:/
+    kritikalitaet:/hg:/netz:/netzbereich:. Mit name: nur die Zuordnung dieses Namens (Kurzname, FQDN, IP, andere
+    Schreibweise) → kanonischer Host oder benannter Grund (unbekannt | mehrdeutig | container-id). Nur lesend."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_hostverzeichnis(name)
+
+
+@mcp.tool()
 async def lw_wissen(filter: str = "", bedeutung: str = "", stunden: float = 24 * 30) -> dict:
     """Frühere KI-Befunde und Konsolen-Wissen zu einem Filter oder nach Bedeutung."""
     from app.services.log_watch import werkzeuge

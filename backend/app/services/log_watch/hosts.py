@@ -53,6 +53,8 @@ class HostEintrag:
     netz: str = ""
     #: das Ordnersegment mit „dmz“ (z. B. dmz-ii, web-dmz) — der genaue Bereich
     netzbereich: str = ""
+    #: IP-Adresse aus CheckMK (Konfiguration `ipaddress`, sonst Livestatus `address`) — "" = keine bekannt
+    adresse: str = ""
 
 
 #: Warum ein Name keinem CheckMK-Host zugeordnet ist — benannt, nicht geraten.
@@ -84,7 +86,8 @@ class Hostverzeichnis:
             e = HostEintrag(name=name, ort=md.get("location") or "",
                             kritikalitaet=md.get("criticality") or "",
                             hostgruppen=list(md.get("hostgroups") or []),
-                            netz=md.get("netz") or "", netzbereich=md.get("netzbereich") or "")
+                            netz=md.get("netz") or "", netzbereich=md.get("netzbereich") or "",
+                            adresse=str(md.get("ipaddress") or "").strip())
             v.exakt[name.lower().rstrip(".")] = e
             if md.get("ipaddress"):
                 v.exakt[str(md["ipaddress"]).strip()] = e
@@ -99,6 +102,17 @@ class Hostverzeichnis:
             v.eintraege.pop(k, None)
         v.domains_ohne_punkt = tuple(sorted(domains, key=len, reverse=True))
         return v
+
+    def als_liste(self) -> list[dict]:
+        """Jeder CheckMK-Host genau einmal, nach Name sortiert — für lw_hostverzeichnis. Rein.
+
+        Aus `exakt` (Name und IP zeigen auf denselben Eintrag), nicht aus `eintraege`: dort fehlen die Hosts mit
+        mehrdeutigem Kurznamen — die gibt es aber, nur ihr Kurzname löst nicht auf."""
+        mehr = {e.name for k in self.mehrdeutig for e in self.exakt.values() if norm(e.name) == k}
+        return [{"name": e.name, "ort": e.ort, "kritikalitaet": e.kritikalitaet, "hostgruppen": list(e.hostgruppen),
+                 "netz": e.netz, "netzbereich": e.netzbereich, "adresse": e.adresse,
+                 "kurzname_mehrdeutig": e.name in mehr}
+                for e in sorted({id(e): e for e in self.exakt.values()}.values(), key=lambda e: e.name.lower())]
 
     def kanon(self, name: str) -> tuple[str, HostEintrag | None]:
         """(kanonischer Name, Eintrag) — ohne Eintrag: normierter Name, Host nicht zugeordnet."""
@@ -128,6 +142,11 @@ class Hostverzeichnis:
 
 
 _cache: tuple[float, Hostverzeichnis] | None = None
+
+
+def alter_s() -> float | None:
+    """Sekunden seit dem Laden des zwischengespeicherten Verzeichnisses (None = noch nicht geladen)."""
+    return round(time.monotonic() - _cache[0], 1) if _cache else None
 
 
 async def verzeichnis(db) -> Hostverzeichnis:

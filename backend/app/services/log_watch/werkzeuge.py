@@ -53,6 +53,31 @@ async def lw_gespraech(filter: str, tage: float = 7, sitzungen: int = 3) -> dict
         return {"filter": filter, "fehler": str(e)}
 
 
+async def lw_hostverzeichnis(name: str = "") -> dict:
+    """Das Hostverzeichnis (CheckMK, 1 h zwischengespeichert) — dieselbe Zuordnung, aus der Raster, Firewall und
+    Switches ihre Hashtags host:/ort:/kritikalitaet:/hg:/netz:/netzbereich: bilden. Mit `name`: nur die Zuordnung
+    dieses Namens (kanonischer Name oder benannter Grund unbekannt | mehrdeutig | container-id)."""
+    from app.core.database import AsyncSessionLocal
+    from app.services.log_watch import hosts as h
+    async with AsyncSessionLocal() as db:
+        v = await h.verzeichnis(db)
+    kopf = {"quelle": "CheckMK-Hostliste (Konfiguration + Livestatus-Adresse), services/log_watch/hosts.py",
+            "alter_s": h.alter_s(), "cache_s": h.CACHE_S}
+    if name.strip():
+        e, k, grund = v.zuordnen(name)
+        if e is None:
+            return {**kopf, "name": name, "schluessel": k, "zugeordnet": False, "grund": grund,
+                    "hashtags": [f"host:{k}", f"hostliste:{grund}"] if k else []}
+        return {**kopf, "name": name, "schluessel": k, "zugeordnet": True,
+                "host": next(x for x in v.als_liste() if x["name"] == e.name)}
+    liste = v.als_liste()
+    if not liste:
+        return {**kopf, "anzahl": 0, "hosts": [], "zustand": "leer: kein CheckMK-Connector aktiv oder CheckMK nicht "
+                "erreichbar — alle Hosts gelten dann als hostliste:unbekannt"}
+    return {**kopf, "anzahl": len(liste), "mehrdeutige_kurznamen": sorted(v.mehrdeutig),
+            "gruende": [h.UNBEKANNT, h.MEHRDEUTIG, h.CONTAINER_ID], "hosts": liste}
+
+
 async def lw_nachricht(id: str) -> dict:
     """Eine Nachricht der Historie vollständig (mit Originalfeldern `roh`)."""
     from app.core.opensearch import get_opensearch

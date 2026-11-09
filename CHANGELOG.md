@@ -10,6 +10,44 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-09 — The host directory as a read-only MCP tool (`lw_hostverzeichnis`)
+
+### What is new
+
+- **MCP tool `lw_hostverzeichnis(name="")`** returns the host directory of the log watch: for each CheckMK host
+  the canonical name, `ort`, `kritikalitaet`, `hostgruppen`, `netz` (dmz|intern), `netzbereich` and `adresse`. This is
+  the same mapping from which raster, firewall and switches build their hashtags `host:/ort:/kritikalitaet:/hg:/netz:`.
+  - With `name` (short name, FQDN, IP or another spelling) it returns only that name's mapping: the canonical host,
+    or a named reason (`unbekannt` | `mehrdeutig` | `container-id`) plus the hashtags `host:<key>` and `hostliste:<reason>`.
+  - The list holds each host once. `kurzname_mehrdeutig` marks hosts whose short name fits several hosts.
+  - An empty directory is a named state („leer: …“), not an empty list.
+  - Why: the IT-AIKB tags its documentation chunks with the same hashtags. It reads them from here instead of
+    building a second CheckMK mapping. User decision 09.11.: an MCP tool, not REST with a service token.
+  - Limit, named: the MCP endpoint is not authenticated on the internal network for reading (comment in
+    `api/mcp_server.py`). This holds for all read tools, now also for this host list with IP addresses.
+- `HostEintrag` now keeps the IP address (`adresse`). Before, it was used only for IP→host mapping and then dropped.
+
+### Evidence
+
+- Tests: `tests/test_log_watch_hostverzeichnis.py` (4: list once per host with address and ambiguity, mapping by
+  short name, FQDN and IP, reasons `mehrdeutig`/`unbekannt`, empty directory named). Full suite: 1073 passed.
+- Read-only live test against CheckMK (09.11. ~08:50 UTC, one-off container with the new code; the running backend
+  was not touched):
+  - 3,057 hosts in 6.5 s, answer 562 KB; 79 ambiguous short names.
+  - Fill rates: `ort`, `kritikalitaet` and `netz` 3,057/3,057; `adresse` 2,312/3,057; `hostgruppen` **0/3,057**.
+  - Values: `ort` mostly MUE-0 1,216, KAS-0 411, GIE-0 167; `kritikalitaet` prod 2,140, offline 658, test 122;
+    `netz` intern 2,890, dmz 167.
+  - Mappings: `cue0109` and `CUE0109.example.com` → `cue0109.example.com`; `gibtsnicht01` → `unbekannt`.
+
+### What is still missing
+
+- **`hg:` hashtags never come about:** `hostgruppen` is empty on all 3,057 hosts.
+  - `host_aus_config` (`connectors/checkmk.py`) reads host groups only from labels `hg:*`, and no host carries one.
+  - Hypothesis: CheckMK assigns host groups by rule, and the rule result is not in `host_config`. Not yet checked.
+- Not deployed. The tool becomes available with the next backend deploy (restart guard).
+
+---
+
 ## 2026-11-07 — Graylog: the filebeat rollout replayed weeks of rotated logs; stopped at the source, copies deleted
 
 ### Fixed
