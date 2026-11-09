@@ -458,7 +458,9 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
 
     # ── Step 1a: AIKB-Filtersuche aus den Alarmen — ohne LLM (Nutzer 09.11.2026, aikb_filter.py) ─────────────
     # Fällt benannt auf den alten Weg (LLM-Vorstufe + /search/opensearch) zurück, wenn kein Filter ableitbar ist,
-    # die AIKB den Endpunkt noch nicht hat (404) oder die Suche scheitert. „Nichts dokumentiert“ ist eine Antwort.
+    # die AIKB den Endpunkt noch nicht hat (404), die Suche scheitert — oder der Filter 0 Treffer bringt: nach dem
+    # AIKB-Rollout tragen die Chunks erst nach backfill_hashtags Hashtags, und auch danach nur 11,2 % einen Host
+    # (Trockenlauf der AIKB-Session, 09.11.). 0 Treffer heißt also oft „nicht getaggt“, nicht „nicht dokumentiert“.
     aikb = await _aikb_connector(db)
     aikb_per_filter = False
     if aikb is not None:
@@ -476,8 +478,8 @@ async def rag_lookup(state: dict, db: Any, llm_config: Any, searxng_config: Any)
                 log.info("rag_lookup: AIKB-Filtersuche %r → %d Treffer (%s; %s)", aikb_filter, len(res["treffer"]),
                          warum, res.get("dauer"))
             elif aikb.last_error is None:
-                aikb_per_filter = True
-                log.info("rag_lookup: AIKB-Filtersuche %r → nichts dokumentiert (%s)", aikb_filter, warum)
+                log.info("rag_lookup: AIKB-Filtersuche %r → 0 Treffer (%s; AIKB: %s) — Rückfall auf LLM-Vorstufe",
+                         aikb_filter, warum, "; ".join(map(str, res.get("hinweise") or [])) or "kein Hinweis")
             else:
                 log.info("rag_lookup: AIKB-Filtersuche nicht nutzbar (%s) — Rückfall auf LLM-Vorstufe", aikb.last_error)
         else:

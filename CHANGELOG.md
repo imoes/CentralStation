@@ -68,7 +68,10 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   - Without an assigned host, topics from the fixed vocabulary are used (`thema:…`).
   - The filter is sent to the AIKB as `POST /search/filter` (`AIKBConnector.search_filter`,
     `services/ai_agent/aikb_filter.py`).
-  - „Nothing documented“ counts as an answer.
+  - **0 hits also fall back** (changed the same day, before the AIKB rollout, at the AIKB session's hint). After its
+    rollout the AIKB answers 200 with `treffer=[]` until `backfill_hashtags` has run, and even after that only
+    11.2 % of the chunks carry a host (its dry run). So 0 hits often means „not tagged“, not „not documented“. The
+    reason from `hinweise` goes into the log.
   - The LLM step now runs only as the fallback and for the web search (SearXNG).
   - Why: user decision 09.11. The AIKB session measured on 09.11.: the vector search found no cue0109 hit in the
     top 10 for „Tablespace Füllstand auf cue0109“, BM25 found 9. Names belong in tags.
@@ -81,7 +84,7 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 - Tests: `tests/test_rag_lookup_aikb_filter.py` (9). They cover filter derivation (hosts, topics, ambiguous, none),
   the request and answer contract, a missing endpoint, and three `rag_lookup` runs:
   - filter hit: 0 LLM calls, 0 opensearch calls;
-  - nothing documented: 0/0;
+  - 0 hits: fallback 1/1, reason from `hinweise` logged;
   - fallback on 404: 1/1.
   Full suite: 1082 passed. One real bug found by the contract test and fixed: the AIKB returns `titel`, not `title`.
 - Live, read-only (09.11., one-off container against `aikb.test.example.com:8000`):

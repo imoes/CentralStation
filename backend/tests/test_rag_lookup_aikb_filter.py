@@ -75,7 +75,8 @@ def _lauf(monkeypatch, treffer, last_error=None, searxng=False):
         def __init__(self): self.last_error = None
         async def search_filter(self, f, size=10):
             self.last_error = last_error
-            return {"treffer": treffer, "hinweise": [], "dauer": {}, "fehlt": last_error is not None}
+            return {"treffer": treffer, "hinweise": [] if treffer else ["kein Chunk trägt diese Hashtags"], "dauer": {},
+                    "fehlt": last_error is not None}
         async def search_opensearch(self, q, size=4):
             aufrufe["opensearch"] += 1
             return [{"title": "alt", "content": "x"}]
@@ -103,9 +104,13 @@ def test_rag_lookup_filter_treffer_ohne_llm(monkeypatch):
                     "results": [{"title": "cue0109 Oracle", "content": "Tablespace"}]}]
 
 
-def test_rag_lookup_nichts_dokumentiert_ist_eine_antwort(monkeypatch):
+def test_rag_lookup_null_treffer_heisst_rueckfall(monkeypatch, caplog):
+    # nach dem AIKB-Rollout, vor backfill_hashtags: 200 mit treffer=[] — nicht „nichts dokumentiert“
+    import logging
+    caplog.set_level(logging.INFO)
     ctx, n = _lauf(monkeypatch, [])
-    assert n == {"llm": 0, "opensearch": 0} and ctx == []
+    assert n == {"llm": 1, "opensearch": 1} and ctx[-1]["query"] == "cue0109 tablespace"
+    assert "0 Treffer" in caplog.text and "Rückfall" in caplog.text and "kein Chunk trägt" in caplog.text
 
 
 def test_rag_lookup_rueckfall_wenn_endpunkt_fehlt(monkeypatch):
