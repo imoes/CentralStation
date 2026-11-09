@@ -702,6 +702,15 @@ def ctx_from_row(ec, t) -> dict:
     }
 
 
+#: ErrorCluster.source → Incident-Art des Regelwerks (dieselben Namen wie regeln_uebernehmen in runner/fleet/critical)
+INCIDENT_ART = {"log": "log_cluster", "checkmk_fleet": "fleet", "critical": "critical"}
+
+
+def nicht_nachholen(source: str, uebernommen: set[str]) -> bool:
+    """Gehört die Meldung dieser Quelle dem Regelwerk? Dann holt resend_pending sie nicht nach. Rein."""
+    return INCIDENT_ART.get(source) in uebernommen
+
+
 async def resend_pending(cfg) -> int:
     """Beschlossene, aber nicht zugestellte Mails der letzten 2 h nachholen (nach Neustart)."""
     from app.core.database import AsyncSessionLocal
@@ -724,8 +733,18 @@ async def resend_pending(cfg) -> int:
                    ErrorCluster.last_active_at >= now - timedelta(minutes=15)))).all()
         from app.services.error_clusters.runner import coverage_starts
         starts = await coverage_starts(db)
+    # Arten, die das Regelwerk meldet (log_watch/incident_regeln.py), holt der alte Weg nicht nach: dort eröffnet
+    # _handle kein Incident und on_events meldet nicht — mailed_at bleibt leer, und vor dem 09.11. ging so jede
+    # Episode nach JEDEM Neustart als Mail OHNE Incident-Link raus (gemessen: 22 Mails 07.–09.11., gebündelt
+    # 2–6 min nach den Backend-Neustarts, z. B. 11 Mails 09:50–09:53 nach dem Neustart 09:48).
+    from app.services.log_watch.incident_regeln import regeln_uebernehmen
+    uebernommen = {a for a in set(INCIDENT_ART.values()) if await regeln_uebernehmen(a)}
     sent = 0
     for ec, t in rows:
+        if nicht_nachholen(ec.source, uebernommen):
+            log.info("error_clusters: not resending %s — incident rules own %s", str(ec.id)[:8],
+                     INCIDENT_ART.get(ec.source, ec.source))
+            continue
         if from_fresh_source(ec, t, starts, now):
             log.info("error_clusters: not resending %s — pattern from a freshly read log source",
                      str(ec.id)[:8])

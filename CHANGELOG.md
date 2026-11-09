@@ -10,6 +10,36 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-09 — Keine Incident-Mails ohne Incident-Link mehr nach einem Neustart
+
+### Was wurde behoben
+
+- **Nach jedem Backend-Neustart gingen Mails „Fehlerausbruch: …“ ohne Incident-Link raus.**
+  - Seit dem 07.11. meldet das Regelwerk Log-Cluster, Flotten-Ausfälle und kritische Ereignisse
+    (`log_watch/incident_regeln.py`).
+  - Der alte Weg eröffnete für diese Arten kein Incident mehr und schickte keine Mail; `mailed_at` blieb leer.
+  - `notify.resend_pending()` holt nach einem Neustart „beschlossene, nicht zugestellte“ Mails nach. Es prüfte
+    nicht, ob das Regelwerk zuständig ist, und verschickte diese Episoden ohne Incident (`incident_url` None →
+    kein Link).
+  - Jetzt überspringt es Arten, die das Regelwerk meldet, und loggt das („incident rules own …“).
+- *Gemessen* (Postgres `error_clusters`, Backend-Log):
+  - 22 Log-Cluster-Mails ohne Incident (07.11.: 2 von 11, 08.11.: 8 von 8, 09.11.: 12 von 12); vorher 0.
+  - Sie kamen gebündelt 2–6 min nach Neustarts, z. B. 11 Mails von 09:50:26 bis 09:53:18 nach dem Neustart um
+    09:48:12 und „resending undelivered“ um 10:53:49 nach dem Neustart um 10:52:45.
+  - Diese Neustarts waren die Deploys des Tages.
+- *Nachweis:*
+  - `tests/test_resend_regelwerk.py`: übernommene Art wird übersprungen; Artnamen identisch mit denen beim
+    Eröffnen in runner/fleet/critical.
+  - Probelauf gegen die Produktions-DB: Regelwerk zuständig für critical, fleet, log_cluster; 3 wartende
+    Kandidaten, alle 3 übersprungen.
+  - Volle Suite: 1103 passed.
+
+### Was fehlt noch
+
+- Noch nicht ausgerollt. Bis dahin verschickt jeder Backend-Neustart die wartenden Episoden weiter ohne Link.
+
+---
+
 ## 2026-11-09 — Die Konsole kann Incidents abfragen und zusammengehörige Incidents finden
 
 ### What is new
