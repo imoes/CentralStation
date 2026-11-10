@@ -94,12 +94,13 @@ def filter_andere(reize: list[str]) -> str:
 ABGELEHNT = ("abgelehnt", "rejected")
 NICHTS = ("nichts im Gedächtnis", "nothing in memory")
 SELBST = ("[Selbst]", "[Self]")
-LAGER = ("Im Langzeitlager", "long-term archive", "Long-term archive", "Archive:")
+LAGER = ("Im Langzeitlager", "long-term archive")   # 0.23.0: „Matching in the long-term archive: …“ (archive.py:220)
 
 
 def abgelehnt(antwort: str) -> bool:
-    """Hat vi-mcp den Lerneintrag abgelehnt? (isError-Antworten kommen als Text, nicht als Ausnahme.) Rein."""
-    return str(antwort or "").lstrip().startswith(ABGELEHNT)
+    """Hat vi-mcp den Lerneintrag abgelehnt? Zuerst das MCP-Feld isError (ViAntwort.fehler, sprachunabhängig),
+    sonst der Textanfang (Antworten ohne isError, z. B. aus Tests). Rein."""
+    return bool(getattr(antwort, "fehler", False)) or str(antwort or "").lstrip().startswith(ABGELEHNT)
 
 
 def kein_fallwissen(hinweis: str) -> bool:

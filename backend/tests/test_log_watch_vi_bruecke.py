@@ -74,7 +74,11 @@ def test_antworten_deutsch_und_englisch():
     assert vb.abgelehnt("rejected: hashtags missing") and vb.abgelehnt("abgelehnt: Quelle fehlt")
     assert not vb.abgelehnt("learned erkenntnis:abc") and not vb.abgelehnt("")
     assert vb.kein_fallwissen("[Self] I am the VI") and vb.kein_fallwissen("[Selbst] Ich bin die VI")
-    assert vb.kein_fallwissen("Im Langzeitlager passen: 3") and vb.kein_fallwissen("Archive: 12 stubs")
+    assert vb.kein_fallwissen("Im Langzeitlager passen: 3") and vb.kein_fallwissen("Matching in the long-term archive: 2")
+    from app.services.connectors.vi_mcp import antwort_text
+    a = antwort_text({"content": [{"type": "text", "text": "Hashtags fehlen"}], "isError": True})
+    assert vb.abgelehnt(a) and a == "Hashtags fehlen"                       # isError zählt, egal welche Sprache
+    assert not vb.abgelehnt(antwort_text({"content": [{"type": "text", "text": "learned"}], "isError": False}))
     assert not vb.kein_fallwissen("Learned [erkenntnis:x] (from claude-code): ORA-12541 auf cue0149")
     t = vb.abschnitt({"hinweise": ["[Self] I am the VI", "Learned: ORA-12541 auf cue0149"]},
                      "nothing in memory for “host:x”", None)

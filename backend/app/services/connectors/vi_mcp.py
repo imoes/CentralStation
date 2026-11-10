@@ -31,10 +31,18 @@ class ViMcpFehler(RuntimeError):
     """vi-mcp nicht erreichbar oder Antwort nicht lesbar — benannt, nie still."""
 
 
-def antwort_text(result: dict) -> str:
-    """Text aus einem tools/call-Ergebnis (MCP: content[{type: text, text}])."""
+class ViAntwort(str):
+    """Antworttext mit dem MCP-Feld isError (result.isError) — Ablehnungen sind daran sprachunabhängig erkennbar
+    (vi-mcp ≥ 0.23.0 antwortet englisch; Rat der vi-mcp-Session 10.11.2026). Verhält sich sonst wie str."""
+    fehler: bool = False
+
+
+def antwort_text(result: dict) -> ViAntwort:
+    """Text aus einem tools/call-Ergebnis (MCP: content[{type: text, text}]) samt isError."""
     teile = [c.get("text", "") for c in (result or {}).get("content") or [] if c.get("type") == "text"]
-    return "\n".join(teile)
+    a = ViAntwort("\n".join(teile))
+    a.fehler = bool((result or {}).get("isError"))
+    return a
 
 
 def lies_body(body: str) -> dict:

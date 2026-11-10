@@ -26,6 +26,8 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   English wording. Evidence: strings read from the signed 0.23.0 package (`server.py` "rejected: {e}",
   `self_model.py` "[Self] ", `tools.py` "nothing in memory"); test `test_antworten_deutsch_und_englisch`;
   backend suite 1113 passed.
+- Rejections are now recognised by the MCP field `isError` first, independent of language (advice from the vi-mcp
+  maintainer session, 10.11.); the text prefix remains only as a fallback.
 
 ### What is still missing
 - Not deployed yet at the time of this entry.
