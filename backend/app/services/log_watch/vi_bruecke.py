@@ -89,6 +89,25 @@ def filter_andere(reize: list[str]) -> str:
     return "(" + " OR ".join(reize) + f") !instanz:{INSTANZ} !art:antwort !art:erfahrung"
 
 
+#: Antworttexte von vi-mcp — deutsch bis 0.22, englisch ab 0.23.0 (Peer 10.11.2026: „alle Ausgaben … sind englisch“).
+#: Beide Formen gelten, weil lokale VI und Kollektiv unterschiedliche Versionen haben können.
+ABGELEHNT = ("abgelehnt", "rejected")
+NICHTS = ("nichts im Gedächtnis", "nothing in memory")
+SELBST = ("[Selbst]", "[Self]")
+LAGER = ("Im Langzeitlager", "long-term archive", "Long-term archive", "Archive:")
+
+
+def abgelehnt(antwort: str) -> bool:
+    """Hat vi-mcp den Lerneintrag abgelehnt? (isError-Antworten kommen als Text, nicht als Ausnahme.) Rein."""
+    return str(antwort or "").lstrip().startswith(ABGELEHNT)
+
+
+def kein_fallwissen(hinweis: str) -> bool:
+    """Selbst-Erzählung der VI oder Langzeitlager-Hinweis — gehört nicht in den Fall-Prompt. Rein."""
+    h = str(hinweis)
+    return h.startswith(SELBST) or any(x in h for x in LAGER)
+
+
 def abschnitt(vorher: dict | str | None, erinnert: str, fehler: str | None) -> str:
     """Der Prompt-Abschnitt „Kollektiv-Gedächtnis“ — auch der Ausfall ist benannt. Rein."""
     z = ["Kollektiv-Gedächtnis (vi-mcp, andere Instanzen — Kontext, kein Beleg):"]
@@ -98,9 +117,9 @@ def abschnitt(vorher: dict | str | None, erinnert: str, fehler: str | None) -> s
     hinweise = (vorher or {}).get("hinweise") if isinstance(vorher, dict) else None
     # kein Fallwissen: „[Selbst] …“ (Selbst-Erzählung der VI, vi-mcp ≥ 0.4.0) und „Im Langzeitlager passen: …“
     # (seit 0.10.0: ≥ 180 Tage unbenutzte Einträge — zu alt für die Lage)
-    for h in [h for h in (hinweise or []) if not str(h).startswith(("[Selbst]", "Im Langzeitlager passen"))][:6]:
+    for h in [h for h in (hinweise or []) if not kein_fallwissen(h)][:6]:
         z.append("  " + str(h)[:300])
-    if erinnert and not erinnert.startswith("nichts im Gedächtnis"):
+    if erinnert and not erinnert.startswith(NICHTS):
         z += ["  " + l[:300] for l in erinnert.splitlines()[1:9]]
     if len(z) == 1:
         z.append("  nichts bekannt")
@@ -167,22 +186,24 @@ async def hochschreiben() -> dict:
     bek = await bekannt.liste(status="aktiv", limit=500)           # Liste ist nach zuletzt sortiert, nicht nach gelernt
     eintraege = bek.get("eintraege") or bek.get("liste") or (bek if isinstance(bek, list) else [])
     neu_bek = sorted((e for e in eintraege if (e.get("gelernt") or "") > stand), key=lambda e: e["gelernt"])[:JE_LAUF]
-    geschrieben, abgelehnt, fehler = 0, 0, None
+    geschrieben, zurueckgewiesen, fehler = 0, 0, None
     neuer_stand = stand
     try:
         for e in neu_bek:
             erk = erkenntnis_aus_bekannt(e)
             if erk:
                 r = await k.lerne(*erk, ausgang="schlecht")      # ein bekannter Fehler ist eine Störung
-                geschrieben += 0 if r.startswith("abgelehnt") else 1
-                abgelehnt += 1 if r.startswith("abgelehnt") else 0
+                abg = abgelehnt(r)
+                geschrieben += 0 if abg else 1
+                zurueckgewiesen += 1 if abg else 0
             neuer_stand = max(neuer_stand, e.get("gelernt") or neuer_stand)
         for fb in felder:
             erk = erkenntnis_aus_feld(fb)
             if erk:
                 r = await k.lerne(*erk)
-                geschrieben += 0 if r.startswith("abgelehnt") else 1
-                abgelehnt += 1 if r.startswith("abgelehnt") else 0
+                abg = abgelehnt(r)
+                geschrieben += 0 if abg else 1
+                zurueckgewiesen += 1 if abg else 0
             neuer_stand = max(neuer_stand, fb.angelegt_at.isoformat())
     except ViMcpFehler as e:
         fehler = str(e)
@@ -190,5 +211,5 @@ async def hochschreiben() -> dict:
         async with AsyncSessionLocal() as db:
             await set_setting(db, STAND_SCHLUESSEL, neuer_stand)
             await db.commit()
-    return {"geschrieben": geschrieben, "abgelehnt": abgelehnt, "bekannte_fehler": len(neu_bek), "felder": len(felder),
+    return {"geschrieben": geschrieben, "abgelehnt": zurueckgewiesen, "bekannte_fehler": len(neu_bek), "felder": len(felder),
             "stand": neuer_stand, "dauer_ms": int((time.monotonic() - t0) * 1000), **({"fehler": fehler} if fehler else {})}

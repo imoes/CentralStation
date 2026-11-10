@@ -20,6 +20,13 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   same signature); CentralStation's connector reports "vi-mcp 0.23.0 verbunden" (connector test, 10.11. ~09:10 UTC);
   test `test_bekannter_fehler_wird_erkenntnis_mit_quelle` checks key = filter; backend suite 1112 passed.
 
+### What was fixed
+- vi-mcp 0.23.0 answers in English. The bridge counted rejected entries ("rejected: …") as written and would have
+  put the VI's self-narrative ("[Self] …") into the analysis prompt. It now recognises both the German and the
+  English wording. Evidence: strings read from the signed 0.23.0 package (`server.py` "rejected: {e}",
+  `self_model.py` "[Self] ", `tools.py` "nothing in memory"); test `test_antworten_deutsch_und_englisch`;
+  backend suite 1113 passed.
+
 ### What is still missing
 - Not deployed yet at the time of this entry.
 

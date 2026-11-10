@@ -66,3 +66,16 @@ def test_reize_filter_und_abschnitt():
     assert "[Selbst]" not in a2 and "Langzeitlager" not in a2 and "echt" in a2      # vi-mcp ≥ 0.4.0 / 0.10.0
     assert "nicht erreichbar: HTTP 503" in vb.abschnitt(None, "", "HTTP 503")
     assert "nichts bekannt" in vb.abschnitt({"hinweise": []}, "nichts im Gedächtnis zu „x“", None)
+
+
+def test_antworten_deutsch_und_englisch():
+    """vi-mcp 0.23.0 antwortet englisch (Peer 10.11.2026); Ablehnungen kommen als Text („rejected: …“), nicht als
+    Ausnahme — vorher zählte die Brücke sie als geschrieben. Beide Sprachen gelten."""
+    assert vb.abgelehnt("rejected: hashtags missing") and vb.abgelehnt("abgelehnt: Quelle fehlt")
+    assert not vb.abgelehnt("learned erkenntnis:abc") and not vb.abgelehnt("")
+    assert vb.kein_fallwissen("[Self] I am the VI") and vb.kein_fallwissen("[Selbst] Ich bin die VI")
+    assert vb.kein_fallwissen("Im Langzeitlager passen: 3") and vb.kein_fallwissen("Archive: 12 stubs")
+    assert not vb.kein_fallwissen("Learned [erkenntnis:x] (from claude-code): ORA-12541 auf cue0149")
+    t = vb.abschnitt({"hinweise": ["[Self] I am the VI", "Learned: ORA-12541 auf cue0149"]},
+                     "nothing in memory for “host:x”", None)
+    assert "ORA-12541" in t and "[Self]" not in t and "nothing in memory" not in t
