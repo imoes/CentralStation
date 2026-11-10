@@ -21,6 +21,8 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
+from app.services.error_clusters.bearbeitung import NUR_GESPEICHERT  # eine Quelle für den Namen der Empfängerwahl
+
 log = logging.getLogger(__name__)
 
 TRIAGE_WAIT = 240.0         # so lange wartet die Mail höchstens auf die KI
@@ -232,18 +234,19 @@ def _hm(iso: str | None) -> str:
 
 
 #: Grund der Empfängerwahl — steht im Zustellvermerk am Incident
-IM_SCOPE, OHNE_SCOPE = "host-scope", "kein Scope trifft — alle Abonnenten"
+IM_SCOPE = "host-scope"
 
 
 def waehle_empfaenger(abonnenten: list[tuple[str, list[str]]], hosts: list[str]) -> tuple[list[str], str]:
-    """(E-Mail, Host-Scope) der Abonnenten → (Empfänger, Grund). Wer den Incident im Scope hat (leerer Scope =
-    alles), bekommt ihn; trifft niemandes Scope, bekommen ihn alle Abonnenten (Nutzer 07.11.2026 — vorher ging
-    so ein Incident an niemanden, z. B. cue-Flotte, mssql06, web01). Rein — testbar."""
+    """(E-Mail, Host-Scope) der Abonnenten → (Empfänger, Grund). Wer den Incident in seinem CheckMK-Filter hat
+    (leerer Scope = alles), bekommt die Mail. Trifft niemandes Scope, geht keine Mail raus: Incident und
+    KI-Analyse werden nur gespeichert (NUR_GESPEICHERT, Nutzer 10.11.2026 — ersetzt „alle Abonnenten“ vom 07.11.;
+    gemessen 24 h bis 10.11. ~09:00 UTC: 151 von 205 Mails kamen nur über diese Ausweichregel). Rein — testbar."""
     from app.services.error_clusters.incident import host_matches
     treffer = sorted({m for m, scope in abonnenten if not scope or any(host_matches(x, hosts) for x in scope)})
     if treffer:
         return treffer, IM_SCOPE
-    return sorted({m for m, _ in abonnenten}), OHNE_SCOPE
+    return [], NUR_GESPEICHERT
 
 
 async def empfaenger(db, hosts: list[str]) -> tuple[list[str], str]:

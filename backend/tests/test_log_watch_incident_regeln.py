@@ -151,11 +151,27 @@ def test_abgebrochene_meldung_wird_nachgeholt():
     assert nachzuholen(inc, {"f"}, j) == ["a"]
 
 
-def test_ohne_scope_bekommen_alle_abonnenten():
-    """Nutzer 07.11.: Incidents in niemandes Scope gingen an niemanden — jetzt an alle Abonnenten, benannt."""
-    from app.services.error_clusters.notify import IM_SCOPE, OHNE_SCOPE, waehle_empfaenger
+def test_ohne_scope_nur_gespeichert_keine_mail():
+    """Nutzer 10.11.: Mails nur für den eigenen CheckMK-Filter; nicht abonnierte Systeme → nur gespeichert, benannt
+    (ersetzt „alle Abonnenten“ vom 07.11.)."""
+    from app.services.error_clusters.notify import IM_SCOPE, NUR_GESPEICHERT, waehle_empfaenger
     ab = [("a@x.de", ["cue092.example.com"]), ("b@x.de", ["mssql06.example.com"])]
     assert waehle_empfaenger(ab, ["cue092.example.com"]) == (["a@x.de"], IM_SCOPE)
-    assert waehle_empfaenger(ab, ["web01.example.com"]) == (["a@x.de", "b@x.de"], OHNE_SCOPE)
+    assert waehle_empfaenger(ab, ["web01.example.com"]) == ([], NUR_GESPEICHERT)
     assert waehle_empfaenger([("c@x.de", [])] + ab, ["web01.example.com"]) == (["c@x.de"], IM_SCOPE)  # leer = alles
-    assert waehle_empfaenger([], ["x"]) == ([], OHNE_SCOPE)
+    assert waehle_empfaenger([], ["x"]) == ([], NUR_GESPEICHERT)
+
+
+def test_nur_gespeichert_zaehlt_als_meldung_fuer_die_erinnerung():
+    """Ohne Mail darf die KI-Analyse eines nicht abonnierten Incidents nicht bei jedem Wiederauftreten neu laufen:
+    die Ablage ohne Mail zählt für die 24-h-Erinnerung wie eine Mail; ein SMTP-Fehlschlag (mails 0, andere Wahl) nicht."""
+    from datetime import datetime, timedelta, timezone
+    from app.services.error_clusters.bearbeitung import NUR_GESPEICHERT, letzte_meldung, mail_erlaubt
+    jetzt = datetime(2026, 11, 10, 9, 0, tzinfo=timezone.utc)
+    vor_2h = (jetzt - timedelta(hours=2)).isoformat()
+    gespeichert = {"zustellungen": [{"zeit": vor_2h, "mails": 0, "empfaenger_wahl": NUR_GESPEICHERT}]}
+    assert letzte_meldung(gespeichert) == jetzt - timedelta(hours=2)
+    assert mail_erlaubt("wieder", [], gespeichert, jetzt)[0] is False
+    assert mail_erlaubt("wieder", [], gespeichert, jetzt + timedelta(hours=23))[0] is True
+    fehlschlag = {"zustellungen": [{"zeit": vor_2h, "mails": 0, "empfaenger_wahl": "host-scope"}]}
+    assert letzte_meldung(fehlschlag) is None

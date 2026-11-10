@@ -25,6 +25,10 @@ ERINNERUNG = timedelta(hours=24)
 #: So lange nach dem Schließen lebt derselbe Incident wieder auf, statt einen neuen zu eröffnen
 WIEDER_FENSTER = timedelta(hours=24)
 SCHWERE = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+#: Empfängerwahl, wenn der Incident in keinem CheckMK-Filter (Host-Scope) eines Abonnenten liegt. Nutzer 10.11.2026:
+#: „ich möchte nur für meinen CheckMK-Filter E-Mails bekommen; für die nicht abonnierten Systeme soll nur die Analyse
+#: gespeichert werden, falls man sie für spätere Suchen braucht.“ (ersetzt „alle Abonnenten“ vom 07.11.)
+NUR_GESPEICHERT = "kein Abo-Scope trifft — nur gespeichert, keine Mail"
 
 
 def _zeit(s) -> datetime | None:
@@ -53,9 +57,11 @@ def bearbeitet(causal_context: list | None) -> bool:
     return zustand(causal_context)["zustand"] != "unbearbeitet"
 
 
-def letzte_mail(cluster_ctx: dict | None) -> datetime | None:
-    """Zeit der letzten zugestellten Mail (Zustellvermerk mit mails > 0). Rein."""
-    zeiten = [_zeit(z.get("zeit")) for z in (cluster_ctx or {}).get("zustellungen") or [] if (z.get("mails") or 0) > 0]
+def letzte_meldung(cluster_ctx: dict | None) -> datetime | None:
+    """Zeit der letzten Meldung: zugestellte Mail (mails > 0) oder bewusst nur gespeichert (NUR_GESPEICHERT).
+    Ohne das Zweite liefe die KI-Analyse eines nicht abonnierten Incidents bei jedem Wiederauftreten neu. Rein."""
+    zeiten = [_zeit(z.get("zeit")) for z in (cluster_ctx or {}).get("zustellungen") or []
+              if (z.get("mails") or 0) > 0 or z.get("empfaenger_wahl") == NUR_GESPEICHERT]
     zeiten = [z for z in zeiten if z]
     return max(zeiten) if zeiten else None
 
@@ -71,9 +77,9 @@ def mail_erlaubt(anlass: str, causal_context: list | None, cluster_ctx: dict | N
         return False, f"bearbeitet ({z['grund']}) — Ruhe bis etwas Neues hinzukommt"
     if anlass == "nachtrag":
         return True, "nachtrag"
-    letzte = letzte_mail(cluster_ctx)
+    letzte = letzte_meldung(cluster_ctx)
     if letzte and jetzt - letzte < ERINNERUNG:
-        return False, (f"wieder aufgetreten, aber letzte Mail erst {int((jetzt - letzte).total_seconds() // 60)} min her "
+        return False, (f"wieder aufgetreten, aber letzte Meldung erst {int((jetzt - letzte).total_seconds() // 60)} min her "
                        f"(Erinnerung höchstens alle {int(ERINNERUNG.total_seconds() // 3600)} h)")
     return True, "wieder aufgetreten, noch unbearbeitet"
 

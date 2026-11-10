@@ -10,6 +10,27 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-10 — Incident mails only for your own CheckMK filter; everything else is stored, not mailed
+
+### What changed
+- Incident mails now go **only** to subscribers whose CheckMK filter (host scope) covers the incident. An empty
+  filter still means "everything".
+- An incident that falls into **nobody's** filter no longer goes to all subscribers. It is still created,
+  the AI assessment still runs and is stored at the incident, so it can be found later (feed, `list_incidents`,
+  `find_related_incidents`). The delivery record names the choice as `empfaenger_wahl`
+  = "kein Abo-Scope trifft — nur gespeichert, keine Mail".
+- This replaces the rule from 2026-11-08 ("outside every scope → all subscribers").
+- A store-only delivery counts like a mail for the once-a-day reminder, so the AI assessment of an unsubscribed
+  incident does not re-run on every recurrence.
+- Evidence: measured 24 h up to 2026-11-10 ~09:00 UTC from the delivery records: 205 mails, of which **151** went
+  out only through the "all subscribers" fallback and 54 matched the filter. Tests
+  `test_ohne_scope_nur_gespeichert_keine_mail`, `test_nur_gespeichert_zaehlt_als_meldung_fuer_die_erinnerung`;
+  full backend suite 1112 passed.
+
+### What is still missing
+- Not deployed yet at the time of this entry.
+- The feed still lists unsubscribed incidents like any other; there is no "only stored" filter chip.
+
 ## 2026-11-09 — Incident-Mails: ein Problem = ein Incident, bearbeitet = Ruhe
 
 ### Was hat sich geändert
