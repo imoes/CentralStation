@@ -459,6 +459,13 @@ Filter-Chips mit 0 Treffern bleiben immer sichtbar, werden aber ausgegraut (`opa
 
 The News Feed shows all events from the active OpenSearch indices (`cs-feed-*`) in reverse chronological order.
 
+**Prefiltered to your CheckMK filter** (since 2026-11-10): the feed list, the search, the histogram and the top values
+show only hosts selected by your CheckMK filter (Settings → OS, location, VE, criticality). A line above the list
+says so and names how many hits lie outside ("Vorgefiltert: CheckMK-Filter: 172 Hosts · N weitere außerhalb");
+**"Alle Systeme zeigen"** lifts the prefilter (API: `alle=true` on `GET /feed/`, `/feed/histogramm`, `/feed/werte`).
+A clicked host is always shown. Response headers: `X-Vorfilter`, `X-Vorfilter-Ausserhalb`. Incident mails follow
+the same filter; incidents outside every filter are stored with their AI assessment but not mailed.
+
 **Sources** (toggleable):
 - CheckMK alerts (monitoring events)
 - Graylog logs (system logs, container logs)

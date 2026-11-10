@@ -160,6 +160,33 @@ def _zeitraum(time_range_seconds: int | None, von: str | None, bis: str | None):
     return Zeitraum(von=v, bis=b)
 
 
+async def _vorfilter(db, user, host: str | None, alle: bool) -> list[str] | None:
+    """Hosts aus dem CheckMK-Filter des Nutzers als Vorfilter für Feed, Histogramm und Top-Werte.
+    Nutzer 10.11.2026: „nicht nur Mails, auch der Feed soll vorgefiltert werden“. Aus bei „Alle Systeme“
+    (alle=true — die nicht abonnierten Systeme bleiben suchbar) und bei einem ausdrücklichen Host (Klick auf einen
+    Host zeigt DIESEN Host). Ohne CheckMK-Filter: None (alles)."""
+    if alle or host:
+        return None
+    from app.services import feed_index
+    return (await feed_index.get_user_checkmk_host_scope(db, str(user.id))) or None
+
+
+async def _vorfilter_kopf(response: Response, scope: list[str] | None, index_pattern: str, q: str, user, db,
+                          zeit, gesamt: int) -> None:
+    """Kopfzeilen: X-Vorfilter (was gilt) und X-Vorfilter-Ausserhalb (Treffer derselben Suche außerhalb des
+    Filters) — nichts verschwindet still."""
+    from app.services import feed_index
+    if not scope:
+        response.headers["X-Vorfilter"] = "aus"
+        return
+    response.headers["X-Vorfilter"] = f"CheckMK-Filter: {len(scope)} Hosts"
+    try:
+        alle = await feed_index.anzahl(index_pattern, q, str(user.id), zeit, db)
+        response.headers["X-Vorfilter-Ausserhalb"] = str(max(0, alle - gesamt))
+    except Exception as e:  # noqa: BLE001 — die Zahl ist Zusatz, der Feed kommt trotzdem
+        log.warning("feed: Treffer außerhalb des Vorfilters nicht zählbar: %s", e)
+
+
 @router.get("/")
 async def get_feed(
     user: CurrentUser,
@@ -184,11 +211,13 @@ async def get_feed(
     highlight_id: str | None = Query(None, description="Fetch this item by ID and pin it at the top"),
     korpus: str = Query("historie", pattern="^(historie|roh)$",
                         description="historie = nur eingestufte Nachrichten (cs-logs-*); roh = Rohmeldungen"),
+    alle: bool = Query(False, description="true = ohne Vorfilter auf den CheckMK-Filter (alle Systeme)"),
 ):
     """Return unified news feed from OpenSearch, sorted by created_at desc."""
     from app.services import feed_index
 
     prefs = await _get_prefs(user.id, db)
+    scope = await _vorfilter(db, user, host, alle)
     if search_id or q is not None:
         index_pattern = index or "cs-feed-*"
         query_string = q or ""
@@ -208,10 +237,13 @@ async def get_feed(
                 index_pattern=index_pattern, query_string=query_string, user_id=str(user.id),
                 since_seconds=_zeitraum(time_range_seconds, von, bis), from_=offset, size=limit,
                 db=db,             # apply exclusion filters consistently
+                host_scope=scope,
             )
         except feed_index.FeedQueryFehler as e:
             raise HTTPException(400, f"Suche nicht lesbar: {e}")
         response.headers["X-Total-Count"] = str(gesamt)
+        await _vorfilter_kopf(response, scope, index_pattern, query_string, user, db,
+                              _zeitraum(time_range_seconds, von, bis), gesamt)
         return items
 
     min_age = (prefs.feed_checkmk_min_age_minutes if prefs else None) or 5
@@ -267,10 +299,12 @@ async def get_feed(
             effective_hostgroup, os, ve)
         try:
             items, gesamt = await feed_index.suche_seite(feed_index.HISTORIE_INDEX, q_hist, from_=offset,
-                                                         size=limit)
+                                                         size=limit, host_scope=scope)
         except feed_index.FeedQueryFehler as e:
             raise HTTPException(400, f"Suche nicht lesbar: {e}")
         response.headers["X-Total-Count"] = str(gesamt)
+        await _vorfilter_kopf(response, scope, feed_index.HISTORIE_INDEX, q_hist, user, None,
+                              None, gesamt)
         response.headers["X-Feed-Suche"] = q_hist[:1000]
         if nicht:
             response.headers["X-Filter-Nicht-Anwendbar"] = "; ".join(nicht)[:500]
@@ -364,13 +398,14 @@ async def feed_top_werte(
     time_range_seconds: int | None = Query(None, ge=60, le=2592000),
     von: str | None = Query(None), bis: str | None = Query(None),
     size: int = Query(10, ge=1, le=50),
+    alle: bool = Query(False, description="true = ohne Vorfilter auf den CheckMK-Filter"),
 ):
     """Graylogs „Show top values“: häufigste Werte eines Felds im Ergebnis derselben Suche wie
-    GET /feed/?q= — mit „andere“ und „fehlend“, damit nichts still fehlt."""
+    GET /feed/?q= — mit „andere“ und „fehlend“, damit nichts still fehlt. Derselbe Vorfilter wie der Feed."""
     from app.services import feed_index
     try:
         return await feed_index.top_werte(index or "cs-feed-*", q, feld, _zeitraum(time_range_seconds, von, bis),
-                                          str(user.id), db, size)
+                                          str(user.id), db, size, host_scope=await _vorfilter(db, user, None, alle))
     except feed_index.FeedQueryFehler as e:
         raise HTTPException(400, str(e))
 
@@ -383,13 +418,14 @@ async def feed_histogramm(
     index: str | None = Query(None),
     time_range_seconds: int | None = Query(None, ge=60, le=2592000),
     von: str | None = Query(None), bis: str | None = Query(None),
+    alle: bool = Query(False, description="true = ohne Vorfilter auf den CheckMK-Filter"),
 ):
     """Graylogs Nachrichtenhistogramm zur selben Suche wie GET /feed/?q=: Treffer je Intervall (Intervall nach
-    Graylogs AutoInterval), leere Intervalle als 0."""
+    Graylogs AutoInterval), leere Intervalle als 0. Derselbe Vorfilter wie der Feed."""
     from app.services import feed_index
     try:
         return await feed_index.histogramm(index or "cs-feed-*", q, _zeitraum(time_range_seconds, von, bis),
-                                           str(user.id), db)
+                                           str(user.id), db, host_scope=await _vorfilter(db, user, None, alle))
     except feed_index.FeedQueryFehler as e:
         raise HTTPException(400, str(e))
 

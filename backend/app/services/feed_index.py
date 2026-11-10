@@ -990,14 +990,14 @@ def intervall_fuer(spanne_s: float) -> tuple[float, dict]:
 
 
 async def histogramm(index_pattern: str, query_string: str, zeit: "Zeitraum | int | None" = None,
-                     user_id: str | None = None, db: Any = None) -> dict:
+                     user_id: str | None = None, db: Any = None, host_scope: list[str] | None = None) -> dict:
     """Graylogs Nachrichtenhistogramm: Treffer derselben Suche je Intervall, leere Intervalle als 0
     (nichts verschwindet still). Ohne Zeitraum bestimmen erster und letzter Treffer die Spanne."""
     from opensearchpy.exceptions import RequestError
     zr = Zeitraum.aus(zeit)
     jetzt = datetime.now(timezone.utc)
     k = korpus_von(index_pattern)
-    query = await _abfrage(query_string, user_id, None, zr, db, k)
+    query = await _abfrage(query_string, user_id, host_scope, zr, db, k)
     os_client = get_opensearch()
     von, bis = zr.grenzen(jetzt)
     try:
@@ -1025,6 +1025,21 @@ async def histogramm(index_pattern: str, query_string: str, zeit: "Zeitraum | in
             "von": von.isoformat(), "bis": bis.isoformat(), "zeitfeld": k.zeit,
             "balken": [{"zeit": datetime.fromtimestamp(x["key"] / 1000, timezone.utc).isoformat(),
                         "anzahl": x["doc_count"]} for x in resp["aggregations"]["zeit"]["buckets"]]}
+
+
+def scope_filter(host_scope: list[str] | None, korpus: "Korpus") -> dict | None:
+    """Vorfilter auf die Hosts aus dem CheckMK-Filter des Nutzers (get_user_checkmk_host_scope). Rein — testbar.
+    Rohmeldungen tragen den Host in metadata.*, die Historie im Keyword-Feld `host` (normalisiert, klein, FQDN —
+    gemessen 10.11.: 172 Scope-Hosts treffen 2043 von 9813 Historien-Nachrichten in 24 h exakt, Kurzname gleich viel)."""
+    hosts = sorted({h for h in (host_scope or []) if h})
+    if not hosts:
+        return None
+    if korpus is HISTORIE:
+        return {"terms": {"host": sorted({h.lower() for h in hosts})}}
+    return {"bool": {"should": [{"terms": {"metadata.host.keyword": hosts}},
+                                {"terms": {"metadata.agent.keyword": hosts}},
+                                {"terms": {"metadata.host_candidates.keyword": hosts}}],
+                     "minimum_should_match": 1}}
 
 
 async def _abfrage(query_string: str, user_id: str | None = None, host_scope: list[str] | None = None,
@@ -1066,19 +1081,9 @@ async def _abfrage(query_string: str, user_id: str | None = None, host_scope: li
             }
         })
 
-    if host_scope:
-        hosts = [h for h in host_scope if h]
-        if hosts:
-            filter_clauses.append({
-                "bool": {
-                    "should": [
-                        {"terms": {"metadata.host.keyword": hosts}},
-                        {"terms": {"metadata.agent.keyword": hosts}},
-                        {"terms": {"metadata.host_candidates.keyword": hosts}},
-                    ],
-                    "minimum_should_match": 1,
-                }
-            })
+    sf = scope_filter(host_scope, korpus)
+    if sf:
+        filter_clauses.append(sf)
 
     if filter_clauses or must_not:
         body_query: dict = {"bool": {"must": [query]}}
@@ -1147,12 +1152,12 @@ def _pruefe_shards(resp: dict) -> None:
 
 async def suche_seite(index_pattern: str, query_string: str, size: int = 50, from_: int = 0,
                       user_id: str | None = None, since_seconds: int | None = None,
-                      db: Any = None) -> tuple[list[dict], int]:
+                      db: Any = None, host_scope: list[str] | None = None) -> tuple[list[dict], int]:
     """Feed-Suche wie in Graylog: (Treffer, Gesamtzahl). Eine unlesbare Suche ist FeedQueryFehler
     mit Grund — sie sieht nie aus wie „0 Treffer“."""
     from opensearchpy.exceptions import RequestError
     k = korpus_von(index_pattern)
-    body = {"query": await _abfrage(query_string, user_id, None, since_seconds, db, k),
+    body = {"query": await _abfrage(query_string, user_id, host_scope, since_seconds, db, k),
             "sort": [{k.zeit: {"order": "desc"}}], "from": from_, "size": size,
             "track_total_hits": True}
     try:
@@ -1163,6 +1168,17 @@ async def suche_seite(index_pattern: str, query_string: str, size: int = 50, fro
     hits = resp["hits"]["hits"]
     eintraege = [als_feed_eintrag(h) for h in hits] if k is HISTORIE else [h["_source"] for h in hits]
     return eintraege, resp["hits"]["total"]["value"]
+
+
+async def anzahl(index_pattern: str, query_string: str, user_id: str | None = None,
+                 since_seconds: "Zeitraum | int | None" = None, db: Any = None,
+                 host_scope: list[str] | None = None) -> int:
+    """Trefferzahl derselben Suche (dieselbe _abfrage) — z. B. ohne Vorfilter, um „N außerhalb“ zu nennen."""
+    k = korpus_von(index_pattern)
+    resp = await get_opensearch().count(index=index_pattern, ignore_unavailable=True,
+                                        body={"query": await _abfrage(query_string, user_id, host_scope,
+                                                                      since_seconds, db, k)})
+    return int(resp.get("count") or 0)
 
 
 #: Feldnamen, die eine Top-Werte-Abfrage annimmt (kein Skript, keine Wildcards)
@@ -1190,7 +1206,8 @@ async def _zaehlfeld(os_client, index_pattern: str, feld: str) -> str:
 
 
 async def top_werte(index_pattern: str, query_string: str, feld: str, since_seconds: int | None = None,
-                    user_id: str | None = None, db: Any = None, size: int = 10) -> dict:
+                    user_id: str | None = None, db: Any = None, size: int = 10,
+                    host_scope: list[str] | None = None) -> dict:
     """Graylogs „Show top values“: die häufigsten Werte eines Felds im Ergebnis der Suche, dazu
     „andere“ und „fehlend“ (Treffer ohne das Feld) — jede Zahl bezieht sich auf dieselbe Suche."""
     from opensearchpy.exceptions import RequestError
@@ -1199,7 +1216,7 @@ async def top_werte(index_pattern: str, query_string: str, feld: str, since_seco
     os_client = get_opensearch()
     agg_feld = await _zaehlfeld(os_client, index_pattern, feld)
     body = {"size": 0, "track_total_hits": True,
-            "query": await _abfrage(query_string, user_id, None, since_seconds, db, korpus_von(index_pattern)),
+            "query": await _abfrage(query_string, user_id, host_scope, since_seconds, db, korpus_von(index_pattern)),
             "aggs": {"werte": {"terms": {"field": agg_feld, "size": max(1, min(size, 50))}},
                      "fehlend": {"missing": {"field": agg_feld}}}}
     try:

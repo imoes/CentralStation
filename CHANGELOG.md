@@ -10,6 +10,31 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-10 — The feed is prefiltered to your CheckMK filter
+
+### What is new
+- Feed list, search, histogram and top values show only hosts from your CheckMK filter (the same host list that
+  now decides who gets incident mails). Requested by the user: "nicht nur Mails, auch der Feed soll vorgefiltert
+  werden".
+- A line above the list names the prefilter and how many hits lie outside it; **"Alle Systeme zeigen"** lifts it,
+  "Nur mein CheckMK-Filter" puts it back. Unsubscribed systems stay searchable that way. A clicked host is always
+  shown.
+- API: `alle=true` on `GET /feed/`, `GET /feed/histogramm`, `GET /feed/werte`; headers `X-Vorfilter` and
+  `X-Vorfilter-Ausserhalb`.
+
+### What changed
+- On 2026-11-07 the saved CheckMK presets were switched off for the history feed because their location values
+  ("kassel") do not exist there and emptied the feed. The prefilter now uses the resolved host list instead,
+  matched on the history's `host` field.
+- Evidence (read-only against live OpenSearch, 10.11. ~09:45 UTC): 172 hosts in the filter; whole history 11,149 hits
+  inside, 30,073 outside; last 24 h histogram 2,047 inside (matches the 2,043 counted directly). Tests
+  `tests/test_feed_vorfilter.py`; backend suite 1116 passed; `ng build` ok.
+
+### What is still missing
+- Not deployed yet at the time of this entry.
+- Search suggestions (`/feed/vorschlaege`) still count over all systems.
+- The choice "Alle Systeme" is not remembered across page loads.
+
 ## 2026-11-10 — Known errors update their VI object instead of piling up copies
 
 ### What changed

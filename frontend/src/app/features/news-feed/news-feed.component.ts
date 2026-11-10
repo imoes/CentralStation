@@ -314,6 +314,15 @@ const SEVERITY_COLOR: Record<string, string> = {
           <span class="vordef-hinweis" matTooltip="Diese Filter kennt die eingestufte Historie nicht">
             <mat-icon style="font-size:14px;height:14px;width:14px">info</mat-icon>nicht angewendet: {{ nichtAnwendbar() }}</span>
         }
+        <!-- Vorfilter auf den CheckMK-Filter (Nutzer 10.11.): sichtbar mit Zahl außerhalb, abschaltbar — nichts still -->
+        @if (vorfilter() && vorfilter() !== 'aus') {
+          <span class="vordef-hinweis vorfilter" matTooltip="Feed, Histogramm und Top-Werte zeigen nur Hosts aus deinem CheckMK-Filter (Einstellungen). Ein angeklickter Host wird immer gezeigt.">
+            <mat-icon style="font-size:14px;height:14px;width:14px">filter_alt</mat-icon>Vorgefiltert: {{ vorfilter() }}@if (vorfilterAusserhalb() !== null) { · {{ vorfilterAusserhalb()!.toLocaleString('de-DE') }} weitere außerhalb}</span>
+          <button type="button" class="vordef-chip" (click)="alleSystemeUmschalten()">Alle Systeme zeigen</button>
+        } @else if (alleSysteme()) {
+          <span class="vordef-hinweis vorfilter"><mat-icon style="font-size:14px;height:14px;width:14px">public</mat-icon>Alle Systeme (ohne CheckMK-Vorfilter)</span>
+          <button type="button" class="vordef-chip an" (click)="alleSystemeUmschalten()">Nur mein CheckMK-Filter</button>
+        }
       </div>
 
       <!-- ── Filter panel ───────────────────────────────────────────────────── -->
@@ -1992,6 +2001,10 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
   readonly vordefiniert = VORDEFINIERT;
   /** Filter, die die Historie nicht kennt (Kopfzeile X-Filter-Nicht-Anwendbar) — benannt statt still */
   nichtAnwendbar = signal('');
+  /** Vorfilter auf den CheckMK-Filter (Kopfzeilen X-Vorfilter / X-Vorfilter-Ausserhalb); alleSysteme hebt ihn auf */
+  vorfilter = signal('');
+  vorfilterAusserhalb = signal<number | null>(null);
+  alleSysteme = signal(false);
   /** die Suche, die der Feed ohne Suchleiste über die Historie stellt (Kopfzeile X-Feed-Suche) */
   feedSuche = signal('');
   /** Nachrichtenhistogramm der aktiven Suche (GET /feed/histogramm) */
@@ -2464,10 +2477,12 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (this.routeQuery)        params['q']            = this.routeQuery;
     if (this.routeIndex)        params['index']        = this.routeIndex;
     if (this.highlightId)       params['highlight_id'] = this.highlightId;
+    Object.assign(params, this.vorfilterParam());
     this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params, observe: 'response' }).subscribe({
       next: (resp) => {
         const data = resp.body ?? [];
         this.nichtAnwendbar.set(resp.headers.get('X-Filter-Nicht-Anwendbar') ?? '');
+        this.vorfilterLesen(resp.headers);
         this.feedSuche.set(resp.headers.get('X-Feed-Suche') ?? '');
         // Discard regular-feed responses that arrived after a text search became active.
         // loadMore() fires load(false) without a guard, so this races with runFeedSearch().
@@ -2749,11 +2764,13 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     if (this.zeitVon()) { qp['von'] = this.zeitVon()!; qp['bis'] = this.zeitBis()!; }
     if (this.suchIndex) qp['index'] = this.suchIndex;
     this.router.navigate(['/feed'], { queryParams: qp });
-    const params: any = { q, ...this.zeitParams(), limit: 200, index: this.suchIndex || HISTORIE_INDEX };
+    const params: any = { q, ...this.zeitParams(), limit: 200, index: this.suchIndex || HISTORIE_INDEX,
+                          ...this.vorfilterParam() };
     this.ladeHistogramm(q);
     this.http.get<FeedItem[]>(`${environment.apiUrl}/feed/`, { params, observe: 'response' }).subscribe({
       next: r => {
         this.items.set(r.body ?? []);
+        this.vorfilterLesen(r.headers);
         const n = r.headers.get('X-Total-Count');
         this.suchGesamt.set(n != null ? Number(n) : null);
         this.searching.set(false);
@@ -2931,8 +2948,24 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     return `${b.anzahl.toLocaleString('de-DE')} Treffer · ${this.zeitText(b.zeit)} – ${this.zeitText(ende)}`;
   }
 
+  private vorfilterParam(): Record<string, string> {
+    return this.alleSysteme() ? { alle: 'true' } : {};
+  }
+
+  private vorfilterLesen(h: { get(n: string): string | null }) {
+    this.vorfilter.set(h.get('X-Vorfilter') ?? '');
+    const n = h.get('X-Vorfilter-Ausserhalb');
+    this.vorfilterAusserhalb.set(n != null ? Number(n) : null);
+  }
+
+  /** Vorfilter auf den CheckMK-Filter an/aus — Feed bzw. Suche (mit Histogramm) neu laden */
+  alleSystemeUmschalten() {
+    this.alleSysteme.set(!this.alleSysteme());
+    if (this.searchActive()) this.runFeedSearch(); else this.load(true);
+  }
+
   private ladeHistogramm(q: string) {
-    const params: any = { q, ...this.zeitParams(), index: this.suchIndex || HISTORIE_INDEX };
+    const params: any = { q, ...this.zeitParams(), index: this.suchIndex || HISTORIE_INDEX, ...this.vorfilterParam() };
     this.histo.set({ laedt: true, balken: [] });
     this.http.get<any>(`${environment.apiUrl}/feed/histogramm`, { params }).subscribe({
       next: r => this.histo.set(r),
@@ -2974,7 +3007,7 @@ export class NewsFeedComponent implements OnInit, AfterViewInit, OnDestroy {
     const q = this.searchActive() ? this.activeSearchQuery() : '';
     const bereich = this.zeitLabel();
     this.topWerte.set({ feld, q, bereich, laedt: true });
-    const params: any = { feld, q, ...this.zeitParams(), index: this.suchIndex || HISTORIE_INDEX };
+    const params: any = { feld, q, ...this.zeitParams(), index: this.suchIndex || HISTORIE_INDEX, ...this.vorfilterParam() };
     this.http.get<any>(`${environment.apiUrl}/feed/werte`, { params }).subscribe({
       next: r => this.topWerte.set({ ...r, q, bereich }),
       error: e => this.topWerte.set({ feld, q, bereich, fehler: e?.error?.detail ?? 'Top-Werte nicht verfügbar' }),
