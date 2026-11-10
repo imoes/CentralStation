@@ -10,6 +10,34 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-10 — Local VI on vi-mcp 0.30.0, console with the new hook
+
+You approved it on 10.11. ("Beides jetzt"), because the console hook changed and so the update did not fall under the
+standing approval.
+
+### What changed
+
+- **The local VI (`vi-mcp`, `vi-p2p`) runs vi-mcp 0.30.0** instead of 0.21.2. It was installed with `vi-mcp/aktualisieren.sh 0.30.0`
+  from the GitHub release v0.30.0: the signature was checked with the fixed key (c88aa8ce…), and the `.deb` has SHA-256 `dd2a91ef…27d8`.
+  Since 0.22.0 the interface is English (`vi_learn`, `source` …). The German names that our connector and the bridge send
+  are translated by the server (`vi_mcp/api_en.py`). The required fields of `vi_before`/`vi_after`/`vi_learn`/`vi_recall`
+  are met by our calls.
+- **The console's hook is the new one** (sha `a7ef81ad`, was `801aa5bc`). The backend was rebuilt with the restart guard.
+  The new hook needs a server ≥ 0.22.0, which is why the server was updated first.
+- **Verified 10.11. 15:05–15:12 UTC:**
+  - backup `~/vi-mcp-sicherung/*-20261110T150509Z.tgz`;
+  - `/gesund: ok vi-mcp 0.30.0`, network status 0 violations, 1 peer reachable;
+  - backend healthy at 15:09:24, `app/resources/vi_hook.py` in the image has sha `a7ef81ad`;
+  - from the backend, `test_connection` succeeded against the local console instance (0.30.0, 43 tools) and against
+    llm-host03 (0.30.0, instance centralstation);
+  - `vi_erinnere` answered with no `isError`.
+
+### What is still missing
+
+- Console sessions that were already running keep the old hook until they are restarted.
+
+---
+
 ## 2026-11-10 — The feed is prefiltered to your CheckMK filter
 
 ### What is new
