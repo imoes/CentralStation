@@ -37,8 +37,13 @@ def vi_tag(tag: str) -> str | None:
     return f"{art}:{wert[:120]}"
 
 
-def erkenntnis_aus_bekannt(e: dict) -> tuple[str, list[str], str, int] | None:
-    """Bekannter Fehler → (text, hashtags, quelle, wichtigkeit). Rein — testbar. None, wenn nichts Belegbares."""
+def erkenntnis_aus_bekannt(e: dict) -> tuple[str, list[str], str, int, str] | None:
+    """Bekannter Fehler → (text, hashtags, quelle, wichtigkeit, key). Rein — testbar. None, wenn nichts Belegbares.
+
+    key = genau der Filter hinter „— Filter:“ (vi-mcp ≥ 0.23.0, vi_learn(key=…)): gleicher key derselben Instanz
+    aktualisiert das vorhandene Objekt (voriger Text in data.history, data.repeats zählt) statt ein neues anzulegen.
+    Anlass (Peer router-lernen-sklearn, 10.11.2026): 159 von 911 bekannten Fehlern waren Wiederholungen derselben
+    Signatur mit höherem Zähler."""
     titel = (e.get("titel") or "").strip()
     if not titel or e.get("status") != "aktiv" or not e.get("befund"):
         return None
@@ -47,9 +52,11 @@ def erkenntnis_aus_bekannt(e: dict) -> tuple[str, list[str], str, int] | None:
     tags.add("herkunft:log-ueberwachung")
     tags.discard(None)
     rel = int(e.get("relevanz") or 0)
+    key = str(e.get('filter') or e.get('fehler'))
     text = (f"Bekannter Fehler (Relevanz {rel}, {int(e.get('wiederholungen') or 0)} Wiederholungen ohne KI): {titel}"
-            f" — Filter: {e.get('filter') or e.get('fehler')}")
-    return text[:1000], sorted(tags)[:20], f"CentralStation Befund {e['befund']} (bekannt.py, {e.get('fehler')})", max(0, min(3, rel))
+            f" — Filter: {key}")
+    return (text[:1000], sorted(tags)[:20], f"CentralStation Befund {e['befund']} (bekannt.py, {e.get('fehler')})",
+            max(0, min(3, rel)), key)
 
 
 def erkenntnis_aus_feld(fb) -> tuple[str, list[str], str, int] | None:

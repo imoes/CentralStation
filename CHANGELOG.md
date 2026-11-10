@@ -10,6 +10,19 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-10 — Known errors update their VI object instead of piling up copies
+
+### What changed
+- When the log watch writes a known error to the shared VI memory (vi-mcp), it now sends `key` = the filter
+  (exactly the part after "— Filter:"). With vi-mcp ≥ 0.23.0 the same key updates the existing object (previous
+  text kept in its history, repeat counter goes up) instead of creating a new one.
+- Evidence: request from the vi-mcp maintainer session on 2026-11-10 (159 of 911 known errors were repeats of the
+  same signature); CentralStation's connector reports "vi-mcp 0.23.0 verbunden" (connector test, 10.11. ~09:10 UTC);
+  test `test_bekannter_fehler_wird_erkenntnis_mit_quelle` checks key = filter; backend suite 1112 passed.
+
+### What is still missing
+- Not deployed yet at the time of this entry.
+
 ## 2026-11-10 — Incident mails only for your own CheckMK filter; everything else is stored, not mailed
 
 ### What changed

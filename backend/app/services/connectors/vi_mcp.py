@@ -134,9 +134,11 @@ class ViMcpConnector(BaseConnector):
         return await self.werkzeug_json("vi_nachher", arg)
 
     async def lerne(self, text: str, hashtags: list[str], quelle: str, wichtigkeit: int = 1,
-                    ausgang: str | None = None) -> str:
+                    key: str | None = None, ausgang: str | None = None) -> str:
         arg: dict = {"text": text[:1000], "hashtags": hashtags[:20], "quelle": quelle[:500],
                      "wichtigkeit": max(0, min(3, wichtigkeit))}
+        if key:
+            arg["key"] = key                   # ab vi-mcp 0.23.0: gleicher key aktualisiert statt neu anzulegen
         if ausgang in ("gut", "schlecht"):
             arg["ausgang"] = ausgang           # ab vi-mcp 0.10.0: der Schlaf gleicht neue Erfahrungen dagegen ab
         return await self.werkzeug("vi_lerne", arg)

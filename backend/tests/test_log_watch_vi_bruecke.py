@@ -25,7 +25,10 @@ def test_bekannter_fehler_wird_erkenntnis_mit_quelle():
          "wiederholungen": 12, "filter": "muster:abc host:cue0149.example.com", "fehler": "muster:abc",
          "hashtags": ["muster:abc", "thema:datenbank", "signal:dringend", "befund:x", "kritikalitaet:prod"],
          "hosts": ["cue0149.example.com", "cue0111.example.com"]}
-    text, tags, quelle, w = vb.erkenntnis_aus_bekannt(e)
+    text, tags, quelle, w, key = vb.erkenntnis_aus_bekannt(e)
+    # vi-mcp 0.23.0 (Peer 10.11.): key = genau der Teil hinter „— Filter:“ → gleiche Signatur aktualisiert statt neu
+    assert key == "muster:abc host:cue0149.example.com" and text.endswith(f" — Filter: {key}")
+    assert vb.erkenntnis_aus_bekannt({**e, "filter": None})[4] == "muster:abc"
     assert text.startswith("Bekannter Fehler (Relevanz 3, 12 Wiederholungen") and "ORA-12541" in text
     assert "thema:datenbank" in tags and "host:cue0149.example.com" in tags and "herkunft:log-ueberwachung" in tags
     assert "signal:dringend" not in tags and "befund:x" not in tags          # eigene Statistik/Verknüpfungen bleiben hier
@@ -34,7 +37,7 @@ def test_bekannter_fehler_wird_erkenntnis_mit_quelle():
     assert vb.vi_tag("dienst:MSSQL Blocked Sessions") == "dienst:MSSQL-Blocked-Sessions"
     assert vb.vi_tag("dienst:CPU utilization FPC: EX4300-24P 0") == "dienst:CPU-utilization-FPC:-EX4300-24P-0"
     assert vb.vi_tag("Host:x") == "host:x" and vb.vi_tag("dienst:") is None and vb.vi_tag("Ä:x") is None
-    _, tags2, _, _ = vb.erkenntnis_aus_bekannt({**e, "hashtags": ["dienst:OMD kas performance"]})
+    _, tags2, _, _, _ = vb.erkenntnis_aus_bekannt({**e, "hashtags": ["dienst:OMD kas performance"]})
     assert "dienst:OMD-kas-performance" in tags2 and all(" " not in t for t in tags2)
     assert vb.erkenntnis_aus_bekannt({**e, "status": "widerlegt"}) is None
     assert vb.erkenntnis_aus_bekannt({**e, "befund": None}) is None
