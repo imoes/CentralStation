@@ -154,12 +154,18 @@ class ViMcpConnector(BaseConnector):
     async def erinnere(self, filtertext: str, limit: int = 5) -> str:
         return await self.werkzeug("vi_erinnere", {"filter": filtertext, "limit": limit})
 
-    async def rueckmeldung(self, half: list[str], falsch: list[str]) -> ViAntwort:
+    async def rueckmeldung(self, half: list[str], falsch: list[str], vorher_id: str | None = None) -> ViAntwort:
         """vi_feedback (ab vi-mcp 0.49.0): welche der gezeigten Hinweise geholfen bzw. in die Irre geführt haben.
         Bucht auf die letzte Erfahrung dieser Instanz, vor der der Hinweis gezeigt wurde (≤ 60 min) — also NACH
         nachher() rufen. Bewertet die Auswahl des Hinweises, nicht das Wissen (dafür vi_confirm/vi_refute).
-        Nutzer 11.11.2026 (über die vi-mcp-Sitzung): „feedback soll gesendet werden“."""
-        return await self.werkzeug("vi_feedback", {"helped": list(half)[:20], "wrong": list(falsch)[:20]})
+        Nutzer 11.11.2026 (über die vi-mcp-Sitzung): „feedback soll gesendet werden“.
+        before_id (ab vi-mcp 0.50.1): bucht genau auf die Erfahrung dieses vi_before — sonst trifft es bei parallelen
+        Analysen derselben Instanz die jüngste passende, womöglich die eines Nachbarn. 0.50.0 ignoriert das Feld
+        (keine Schema-Prüfung: server.py tools/call → tools.call_tool prüft nur Pflichtfelder)."""
+        arg: dict = {"helped": list(half)[:20], "wrong": list(falsch)[:20]}
+        if vorher_id:
+            arg["before_id"] = vorher_id
+        return await self.werkzeug("vi_feedback", arg)
 
     async def test_connection(self) -> ConnectorTestResult:
         try:

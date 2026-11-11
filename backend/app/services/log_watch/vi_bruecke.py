@@ -215,7 +215,7 @@ async def nach_analyse(fall: dict, ergebnis: dict, dauer_ms: int, vorher_id: str
         r["gesendet"] = "nein — der Befund nennt keinen gezeigten Hinweis als benutzt oder falsch"
         return r
     try:
-        a = await k.rueckmeldung(half, falsch)
+        a = await k.rueckmeldung(half, falsch, vorher_id)
         r["antwort" if not getattr(a, "fehler", False) else "fehler"] = str(a)[:300]
     except Exception as e:  # noqa: BLE001 — Rückmeldung ausgefallen: benannt, Analyse bleibt gültig
         r["fehler"] = f"{type(e).__name__}: {str(e)[:200]}"

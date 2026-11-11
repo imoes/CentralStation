@@ -29,7 +29,8 @@ section B, 24 h on prod): 0 feedbacks on 2,878 shown hints — the VI could not 
   Nothing shown → no entry; shown but nothing used → nothing sent, named.
 
 Evidence: 5 new tests (`tests/test_log_watch_vi_bruecke.py`: prompt line only for `vi_before` ids, id intersection, selection,
-order nachher → rueckmeldung with a fake connector, `lw_befund` keeps the ids out of the finding document). Full suite in the
+order nachher → rueckmeldung with the same `vorher_id` as `before_id`, `lw_befund` keeps the ids out of the finding
+document; a 6th: the connector sends `before_id` only when known). Full suite in the
 backend image: 849 passed vs. 844 before; the same 7 failures and 3 collection errors exist without this change.
 
 ### What is missing
@@ -37,8 +38,11 @@ backend image: 849 passed vs. 844 before; the same 7 failures and 3 collection e
 - **Not deployed.** Needs a backend rebuild (restart guard) — only with your approval.
 - No live proof yet: after deploy, `vi_stats` section B „feedback on hints N for M shown“ should rise above 0 for instance
   centralstation; `vi_rueckmeldung` on the analysis results shows what was sent.
-- Several fleet agents share the instance centralstation; vi-mcp books on the latest experience before which the hint was
-  shown — with parallel analyses that can be a neighbour's experience (hypothesis, not measured).
+- Several fleet agents share the instance centralstation. vi-mcp ≤ 0.50.0 books on the latest experience before which the
+  hint was shown, which with parallel analyses can be a neighbour's. We already send `before_id` (the `vorher_id` used for
+  `vi_nachher`); vi-mcp 0.50.1 (built in the vi-mcp session, not released) books exactly that experience. 0.50.0 ignores
+  the field without error (no schema check: `server.py` tools/call → `tools.call_tool` checks only required fields; the
+  `vi_feedback` handler reads only helped/wrong/note) — so until 0.50.1 runs, the old booking applies.
 
 ## 2026-11-11 — Local VI on vi-mcp 0.50.0
 

@@ -129,8 +129,8 @@ class _FakeVi:
     async def nachher(self, *a, **k):
         self.rufe.append(("nachher", k.get("vorher_id")))
 
-    async def rueckmeldung(self, half, falsch):
-        self.rufe.append(("rueckmeldung", half, falsch))
+    async def rueckmeldung(self, half, falsch, vorher_id=None):
+        self.rufe.append(("rueckmeldung", half, falsch, vorher_id))
         if self.fehler:
             raise self.fehler
         return vi_mcp.ViAntwort("feedback recorded for 2 hint(s) — thanks")
@@ -162,7 +162,8 @@ def test_rueckmeldung_nach_nachher_nur_mit_benutzten_ids(monkeypatch):
            "vi_half": ["erkenntnis:a1a1a1a1a1"], "vi_falsch": ["regel:b2b2b2b2b2", "erkenntnis:nie0gezeigt0"]}
     r = asyncio.run(vb.nach_analyse(fall, erg, 1200, "v1", ["erkenntnis:a1a1a1a1a1", "regel:b2b2b2b2b2", "erkenntnis:c3c3c3c3c3"]))
     # Reihenfolge: erst die Erfahrung (vi_after), sonst bucht vi_feedback nichts (intuition.feedback sucht art=erfahrung)
-    assert k.rufe == [("nachher", "v1"), ("rueckmeldung", ["erkenntnis:a1a1a1a1a1"], ["regel:b2b2b2b2b2"])]
+    # dieselbe vorher_id wie vi_nachher → before_id (vi-mcp 0.50.1: genau diese Erfahrung, nicht die eines Nachbarn)
+    assert k.rufe == [("nachher", "v1"), ("rueckmeldung", ["erkenntnis:a1a1a1a1a1"], ["regel:b2b2b2b2b2"], "v1")]
     assert r["gezeigt"] == 3 and r["antwort"].startswith("feedback recorded")
     assert r["verworfen"] == {"erkenntnis:nie0gezeigt0": "nicht als Hinweis dieser Analyse gezeigt"}
     # gezeigt, aber nichts benutzt → nichts senden (nie pauschal alle als „half“), benannt
@@ -190,3 +191,18 @@ def test_lw_befund_nimmt_rueckmeldung_an_und_schreibt_sie_nicht_ins_dokument():
     src = pathlib.Path("app/services/log_watch/werkzeuge.py").read_text()
     aufruf = src[src.index("await schreibe_befund("):src.index("except BefundAbgelehnt")]
     assert "vi_half" not in aufruf and "vi_falsch" not in aufruf
+
+
+def test_konnektor_schickt_before_id_nur_wenn_bekannt(monkeypatch):
+    import asyncio
+    k = vi_mcp.ViMcpConnector("http://x/mcp", {"token": "t"})
+    gesendet = []
+
+    async def _werkzeug(name, arg, timeout=20.0):
+        gesendet.append((name, arg))
+        return vi_mcp.ViAntwort("ok")
+    monkeypatch.setattr(k, "werkzeug", _werkzeug)
+    asyncio.run(k.rueckmeldung(["erkenntnis:a"], [], "v9"))
+    asyncio.run(k.rueckmeldung([], ["regel:b"]))
+    assert gesendet == [("vi_feedback", {"helped": ["erkenntnis:a"], "wrong": [], "before_id": "v9"}),
+                        ("vi_feedback", {"helped": [], "wrong": ["regel:b"]})]
