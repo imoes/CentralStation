@@ -11,3 +11,9 @@ example.net==>example.net
 example==>example
 10.0.==>10.0.
 llm-host0==>llm-host0
+Example==>Example
+EXAMPLE==>EXAMPLE
+Example==>Example
+EXAMPLE==>EXAMPLE
+Example==>Example
+EXAMPLE==>EXAMPLE
