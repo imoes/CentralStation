@@ -40,9 +40,10 @@ backend image: 849 passed vs. 844 before; the same 7 failures and 3 collection e
   centralstation; `vi_rueckmeldung` on the analysis results shows what was sent.
 - Several fleet agents share the instance centralstation. vi-mcp ≤ 0.50.0 books on the latest experience before which the
   hint was shown, which with parallel analyses can be a neighbour's. We already send `before_id` (the `vorher_id` used for
-  `vi_nachher`); vi-mcp 0.50.1 (built in the vi-mcp session, not released) books exactly that experience. 0.50.0 ignores
+  `vi_nachher`) to the VI on llm-host03, which runs vi-mcp 0.50.1 since 11.11. 12:46:58 UTC (vi-mcp session: release
+v0.50.1, probe „not shown before the action vorher:probe-0.50.1“, no fallback) and books exactly that experience. 0.50.0 ignores
   the field without error (no schema check: `server.py` tools/call → `tools.call_tool` checks only required fields; the
-  `vi_feedback` handler reads only helped/wrong/note) — so until 0.50.1 runs, the old booking applies.
+  `vi_feedback` handler reads only helped/wrong/note).
 
 ## 2026-11-11 — Local VI on vi-mcp 0.50.0
 
@@ -58,8 +59,13 @@ still translated (`vi_mcp/api_en.py` of 0.44.2 and 0.50.0 compared). No backend 
 - **New tool `vi_feedback(helped=[ids], wrong=[ids])`** (52 tools instead of 50): the console and the hook hints point to it.
 - **PostgreSQL optional** (0.50): nothing changes here, our `db` stays the file `/var/lib/vi-mcp/vi.db`.
 
-Evidence: backup `~/vi-mcp-sicherung/*-20261111T122945Z.tgz`, `/gesund: ok vi-mcp 0.50.0`, `vi-mcp netz status` 0 violations,
-backend `test_connection` „vi-mcp 0.50.0 — 52 tools“, `vi_erinnere` isError=False.
+Evidence: backup `~/vi-mcp-sicherung/*-20261111T122945Z.tgz`, `/gesund: ok vi-mcp 0.50.0` (from inside the local container),
+`vi-mcp netz status` 0 violations.
+**Correction (11.11., ~13:00 UTC):** the backend smoke test named here before („`test_connection` vi-mcp 0.50.0 — 52 tools,
+`vi_erinnere` isError=False“) does not prove the local VI. The backend connector `vi_mcp` points to
+`https://llm-host03.example.com/vi-mcp/mcp` (checked in `connector_configs`), which ran 0.50.0 since 12:22 UTC. The local
+VI serves the console (MCP server „vi“). The same likely holds for the backend smoke tests of the 0.44.x entries below
+(connector URL not checked at that time).
 
 ### What was fixed (in vi-mcp, found here)
 
