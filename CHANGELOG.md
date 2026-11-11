@@ -21,7 +21,10 @@ only in 2 of 80 follow-up turns. The tool hook only ran before tools, and the VI
 - **The console hook also runs on `UserPromptSubmit`** (`backend/app/services/vi_konsole.py`, `EREIGNISSE`). From vi-mcp 0.44.0 on,
   the hook sends the question to the local VI (`vi_prompt_context`; secrets masked, at most 4,000 characters; the server does
   not store it). Up to 4 matching hints reach the model as context „[VI memory for this question …]“, before the first answer.
-- **Local VI on vi-mcp 0.44.1** (signed release, key c88aa8ce…, `.deb` SHA-256 `1604d315…ccb2`). The hook `cbc0becd` is the same in
+- **Local VI on vi-mcp 0.44.2** (11.11. ~09:25 UTC, standing approval: signed, hook `cbc0becd` unchanged, required fields
+  unchanged). It changes only texts: the rules now name the network question, and `vi_learn` no longer says „internal: never
+  the network“. Backup taken, `/gesund: ok vi-mcp 0.44.2`, 0 violations, `test_connection` and `vi_erinnere` from the backend ok.
+- **Before that, 0.44.1** (signed release, key c88aa8ce…, `.deb` SHA-256 `1604d315…ccb2`). The hook `cbc0becd` is the same in
   0.44.0 and 0.44.1. 0.44.1 ranks hints by shared words and drops hits that share only the host name.
 - **`vi-mcp/aktualisieren.sh`** no longer aborts when the previous package was not committed yet. On 11.11. at 09:09 UTC
   `git rm --cached` failed on the uncommitted 0.44.0 package. Under `set -e` the script stopped while vi-mcp and vi-p2p were
