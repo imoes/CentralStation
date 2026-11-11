@@ -10,6 +10,35 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-11 — Local VI on vi-mcp 0.50.0
+
+Installed 11.11. 12:29 UTC under the standing approval: release v0.50.0 signed (key c88aa8ce…, `SHA256SUMS.sig` verified,
+`.deb` SHA-256 `3de7e85b…5ef8`), console hook `cbc0becd` unchanged, required fields of `vi_before`/`vi_after`/`vi_learn`/
+`vi_recall`/`vi_prompt_context`/`vi_object` unchanged, German aliases of our connector (`vi_vorher`, `lesend`, `quelle`, …)
+still translated (`vi_mcp/api_en.py` of 0.44.2 and 0.50.0 compared). No backend rebuild.
+
+### What changed
+
+- **Fewer, sharper hints before shell commands** (vi-mcp 0.49): only hints that share a host, program or error with the command;
+  a hint without measured benefit shows at most 6× a day per instance (warnings and hints with a positive bandit lift excepted).
+- **New tool `vi_feedback(helped=[ids], wrong=[ids])`** (52 tools instead of 50): the console and the hook hints point to it.
+- **PostgreSQL optional** (0.50): nothing changes here, our `db` stays the file `/var/lib/vi-mcp/vi.db`.
+
+Evidence: backup `~/vi-mcp-sicherung/*-20261111T122945Z.tgz`, `/gesund: ok vi-mcp 0.50.0`, `vi-mcp netz status` 0 violations,
+backend `test_connection` „vi-mcp 0.50.0 — 52 tools“, `vi_erinnere` isError=False.
+
+### What was fixed (in vi-mcp, found here)
+
+- `dpkg-reconfigure vi-mcp` aborted with exit 2 („vi-mcp.config: 88: return: Illegal number: bind“) in 0.48.0: the config script
+  read current values through a pipe while debconf reads its reply from stdin. Found in throwaway containers (debian:13,
+  ubuntu:24.04) on 11.11.; fixed in vi-mcp 0.49.0. Verified with the release `.deb` 0.50.0 in a throwaway debian:13 container:
+  `VI_MCP_PORT=9400 dpkg-reconfigure` exit 0, port 9300 → 9400, no new instance, token file byte-identical; a second run
+  without variables says „nothing changed“. Our container installs the package in the image build and does not use debconf.
+
+### What is missing
+
+- Nobody sends `vi_feedback` yet: the console model may call it, but neither the hook nor the log watch does it on its own.
+
 ## 2026-11-11 — The console asks the VI on every question, follow-ups too
 
 You decided (11.11., via the vi-mcp session, then „mache das“ here): the VI searches on every user question, not only on the
