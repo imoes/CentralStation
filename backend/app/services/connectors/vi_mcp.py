@@ -154,6 +154,13 @@ class ViMcpConnector(BaseConnector):
     async def erinnere(self, filtertext: str, limit: int = 5) -> str:
         return await self.werkzeug("vi_erinnere", {"filter": filtertext, "limit": limit})
 
+    async def rueckmeldung(self, half: list[str], falsch: list[str]) -> ViAntwort:
+        """vi_feedback (ab vi-mcp 0.49.0): welche der gezeigten Hinweise geholfen bzw. in die Irre geführt haben.
+        Bucht auf die letzte Erfahrung dieser Instanz, vor der der Hinweis gezeigt wurde (≤ 60 min) — also NACH
+        nachher() rufen. Bewertet die Auswahl des Hinweises, nicht das Wissen (dafür vi_confirm/vi_refute).
+        Nutzer 11.11.2026 (über die vi-mcp-Sitzung): „feedback soll gesendet werden“."""
+        return await self.werkzeug("vi_feedback", {"helped": list(half)[:20], "wrong": list(falsch)[:20]})
+
     async def test_connection(self) -> ConnectorTestResult:
         try:
             async with self._client(timeout=15.0) as client:

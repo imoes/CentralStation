@@ -3,7 +3,8 @@
 Drei Wege, alle mit benanntem Ausfall (ohne Kollektiv läuft die Analyse wie bisher):
   vor_analyse   vi_vorher für die Handlung „analyse“ (Reize: Hosts und Themen des Falls) + vi_erinnere nach dem,
                 was ANDERE Instanzen zu diesen Hosts/Themen wissen → Abschnitt im Fall-Prompt
-  nach_analyse  vi_nachher: ok, Dauer, Befund-Kern als Ergebnis (kein Rohtext der Nachrichten)
+  nach_analyse  vi_nachher: ok, Dauer, Befund-Kern als Ergebnis (kein Rohtext der Nachrichten); danach vi_feedback
+                für die gezeigten Hinweise, die der Befund benutzt (vi_half) oder widerlegt (vi_falsch) hat
   hochschreiben Gelerntes der Intuition als Erkenntnisse: bekannte Fehler (bekannt.py) und Feldbedeutungen von KI
                 oder Mensch — mit Hashtags (host:, muster:, thema:, feld:) und Quelle (Befund-ID / Zitat)
 
@@ -95,6 +96,15 @@ ABGELEHNT = ("abgelehnt", "rejected")
 NICHTS = ("nichts im Gedächtnis", "nothing in memory")
 SELBST = ("[Selbst]", "[Self]")
 LAGER = ("Im Langzeitlager", "long-term archive")   # 0.23.0: „Matching in the long-term archive: …“ (archive.py:220)
+#: 0.49.0 hängt an Hinweise „Did one of these help or mislead you? vi_feedback(…)“ — die Analyse-KI hat vi_feedback
+#: nicht; ihre Rückmeldung geht über lw_befund(vi_half, vi_falsch), der Code ruft vi_feedback (RUECKMELDUNG_ZEILE).
+NACHFRAGE = ("Did one of these help", "Hat einer dieser Hinweise")
+#: Kennung eines gezeigten Hinweises in seiner Zeile: „Learned [erkenntnis:<hex>] …“, „Rule [regel:<hex>] …“
+_HINWEIS_ID = re.compile(r"\[([a-z]+:[0-9a-f]{8,64})\]")
+RUECKMELDUNG_ZEILE = ("  Rückmeldung an das Kollektiv: nenne in lw_befund unter vi_half nur die Hinweis-IDs (in eckigen "
+                      "Klammern), die dein Befund tatsächlich benutzt — befolgt, zitiert oder als Ursache bestätigt —, "
+                      "unter vi_falsch die, denen der Befund widerspricht oder die in die Irre geführt haben. Nicht "
+                      "benutzte weglassen, nie pauschal alle.")
 
 
 def abgelehnt(antwort: str) -> bool:
@@ -106,7 +116,33 @@ def abgelehnt(antwort: str) -> bool:
 def kein_fallwissen(hinweis: str) -> bool:
     """Selbst-Erzählung der VI oder Langzeitlager-Hinweis — gehört nicht in den Fall-Prompt. Rein."""
     h = str(hinweis)
-    return h.startswith(SELBST) or any(x in h for x in LAGER)
+    return h.startswith(SELBST) or h.startswith(NACHFRAGE) or any(x in h for x in LAGER)
+
+
+def gezeigte_ids(vorher: dict | str | None, text: str) -> list[str]:
+    """IDs der Hinweise, die vi_before als gezeigt bucht (zugriff.gezeigt) UND die im Prompt-Abschnitt stehen —
+    nur auf diese kann vi_feedback buchen. Rein — testbar."""
+    if not isinstance(vorher, dict):
+        return []
+    im_text = set(_HINWEIS_ID.findall(text or ""))
+    return [i for i in dict.fromkeys(str(x) for x in ((vorher.get("zugriff") or {}).get("gezeigt") or [])) if i in im_text]
+
+
+def auswahl(gezeigt: list[str], half, falsch) -> tuple[list[str], list[str], dict[str, str]]:
+    """(half, falsch, verworfen{id: grund}) — nur gezeigte IDs, keine ID in beiden Listen. Rein — testbar.
+    Die KI kann eine ID aus vi_erinnere oder eine erfundene nennen; vi-mcp würde sie ohnehin nicht buchen,
+    hier wird sie benannt verworfen statt geschickt."""
+    erlaubt = set(gezeigt)
+    def _ids(x):
+        return list(dict.fromkeys(str(i).strip().strip("[]") for i in (x if isinstance(x, list) else []) if str(i).strip()))
+    h, f = _ids(half), _ids(falsch)
+    verworfen: dict[str, str] = {}
+    for i in set(h) & set(f):
+        verworfen[i] = "in vi_half und vi_falsch zugleich"
+    for i in h + f:
+        if i not in erlaubt and i not in verworfen:
+            verworfen[i] = "nicht als Hinweis dieser Analyse gezeigt"
+    return [i for i in h if i not in verworfen], [i for i in f if i not in verworfen], verworfen
 
 
 def abschnitt(vorher: dict | str | None, erinnert: str, fehler: str | None) -> str:
@@ -118,44 +154,51 @@ def abschnitt(vorher: dict | str | None, erinnert: str, fehler: str | None) -> s
     hinweise = (vorher or {}).get("hinweise") if isinstance(vorher, dict) else None
     # kein Fallwissen: „[Selbst] …“ (Selbst-Erzählung der VI, vi-mcp ≥ 0.4.0) und „Im Langzeitlager passen: …“
     # (seit 0.10.0: ≥ 180 Tage unbenutzte Einträge — zu alt für die Lage)
-    for h in [h for h in (hinweise or []) if not kein_fallwissen(h)][:6]:
+    gezeigt = [h for h in (hinweise or []) if not kein_fallwissen(h)][:6]
+    for h in gezeigt:
         z.append("  " + str(h)[:300])
     if erinnert and not erinnert.startswith(NICHTS):
         z += ["  " + l[:300] for l in erinnert.splitlines()[1:9]]
     if len(z) == 1:
         z.append("  nichts bekannt")
+    elif any(_HINWEIS_ID.search(str(h)[:300]) for h in gezeigt):   # nur vi_before bucht „gezeigt“, vi_erinnere nicht
+        z.append(RUECKMELDUNG_ZEILE)
     return "\n".join(z)
 
 
-async def vor_analyse(fall: dict, lage: dict | None = None) -> tuple[str, str | None]:
-    """(Prompt-Abschnitt, vorher_id). Ohne Konnektor: ('', None) — die Analyse merkt nichts."""
+async def vor_analyse(fall: dict, lage: dict | None = None) -> tuple[str, str | None, list[str]]:
+    """(Prompt-Abschnitt, vorher_id, gezeigte Hinweis-IDs). Ohne Konnektor: ('', None, []) — die Analyse merkt nichts."""
     from app.core.database import AsyncSessionLocal
     from app.services.connectors.vi_mcp import ViMcpFehler, load_vi_mcp_connector
     async with AsyncSessionLocal() as db:
         k = await load_vi_mcp_connector(db)
     if k is None:
-        return "", None
+        return "", None, []
     reize = reize_aus_fall(fall, lage)
     try:
         v = await k.vorher("analyse", {"start": fall.get("start"), "hosts": (fall.get("hosts") or [])[:8]},
                            lesend=False, kontext_hashtags=reize)
         er = await k.erinnere(filter_andere(reize), limit=6) if reize else ""
-        return abschnitt(v, er, None), (v.get("vorher_id") if isinstance(v, dict) else None)
+        text = abschnitt(v, er, None)
+        return text, (v.get("vorher_id") if isinstance(v, dict) else None), gezeigte_ids(v, text)
     except ViMcpFehler as e:
         log.warning("vi-mcp vor Analyse: %s", e)
-        return abschnitt(None, "", str(e)), None
+        return abschnitt(None, "", str(e)), None, []
     except Exception as e:  # noqa: BLE001
         log.warning("vi-mcp vor Analyse: %s", e)
-        return abschnitt(None, "", f"{type(e).__name__}: {e}"), None
+        return abschnitt(None, "", f"{type(e).__name__}: {e}"), None, []
 
 
-async def nach_analyse(fall: dict, ergebnis: dict, dauer_ms: int, vorher_id: str | None) -> None:
+async def nach_analyse(fall: dict, ergebnis: dict, dauer_ms: int, vorher_id: str | None,
+                       gezeigt: list[str] | None = None) -> dict | None:
+    """vi_nachher, danach vi_feedback. Rückgabe {gezeigt, half, falsch, verworfen, antwort|fehler} oder None, wenn
+    nichts gezeigt war — hängt als vi_rueckmeldung am Ergebnis (sichtbar, nicht still)."""
     from app.core.database import AsyncSessionLocal
     from app.services.connectors.vi_mcp import load_vi_mcp_connector
     async with AsyncSessionLocal() as db:
         k = await load_vi_mcp_connector(db)
     if k is None:
-        return
+        return None
     ok = "befund" in ergebnis
     kern = f"{ergebnis.get('titel', '')} (Relevanz {ergebnis.get('relevanz')}, Befund {ergebnis.get('befund')})" if ok else None
     try:
@@ -164,6 +207,20 @@ async def nach_analyse(fall: dict, ergebnis: dict, dauer_ms: int, vorher_id: str
                         ergebnis=kern)
     except Exception as e:  # noqa: BLE001 — die Meldung darf die Analyse nicht stören
         log.warning("vi-mcp nach Analyse: %s", e)
+    if not gezeigt:
+        return None
+    half, falsch, verworfen = auswahl(gezeigt, ergebnis.get("vi_half"), ergebnis.get("vi_falsch"))
+    r: dict = {"gezeigt": len(gezeigt), "half": half, "falsch": falsch, **({"verworfen": verworfen} if verworfen else {})}
+    if not half and not falsch:
+        r["gesendet"] = "nein — der Befund nennt keinen gezeigten Hinweis als benutzt oder falsch"
+        return r
+    try:
+        a = await k.rueckmeldung(half, falsch)
+        r["antwort" if not getattr(a, "fehler", False) else "fehler"] = str(a)[:300]
+    except Exception as e:  # noqa: BLE001 — Rückmeldung ausgefallen: benannt, Analyse bleibt gültig
+        r["fehler"] = f"{type(e).__name__}: {str(e)[:200]}"
+        log.warning("vi-mcp Rückmeldung: %s", e)
+    return r
 
 
 async def hochschreiben() -> dict:

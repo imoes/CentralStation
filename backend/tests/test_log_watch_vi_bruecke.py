@@ -83,3 +83,110 @@ def test_antworten_deutsch_und_englisch():
     t = vb.abschnitt({"hinweise": ["[Self] I am the VI", "Learned: ORA-12541 auf cue0149"]},
                      "nothing in memory for “host:x”", None)
     assert "ORA-12541" in t and "[Self]" not in t and "nothing in memory" not in t
+
+
+# ── vi_feedback (vi-mcp ≥ 0.49.0; Nutzer 11.11.2026: „feedback soll gesendet werden“) ──
+_H1 = "Learned [erkenntnis:e490e73f326cffcc81c52775] (from claude-code; skill:docker): Docker auf hal …"
+_H2 = "Rule [regel:ce8055307c5b69751c8449f1] (from vi; kollektiv:nein): Bash scheiterte 3× …"
+_NACHFRAGE = "Did one of these help or mislead you? vi_feedback(helped=[ids], wrong=[ids]) — one call, no reason needed"
+
+
+def test_abschnitt_bittet_um_rueckmeldung_nur_bei_gezeigten_ids():
+    a = vb.abschnitt({"hinweise": [_H1, _H2, _NACHFRAGE]}, "", None)
+    assert "erkenntnis:e490e73f326cffcc81c52775" in a and "regel:ce8055307c5b69751c8449f1" in a
+    assert "vi_feedback(" not in a                       # die Analyse-KI hat das Werkzeug nicht
+    assert vb.RUECKMELDUNG_ZEILE in a and "nie pauschal alle" in a
+    # nur Treffer aus vi_erinnere (bucht vi-mcp nicht als gezeigt) → keine Bitte
+    b = vb.abschnitt({"hinweise": ["Gelernt ohne ID"]}, "1 object:\n  [erkenntnis:aaaaaaaaaaaa] x", None)
+    assert vb.RUECKMELDUNG_ZEILE not in b
+    assert vb.RUECKMELDUNG_ZEILE not in vb.abschnitt({"hinweise": []}, "", None)
+
+
+def test_gezeigte_ids_nur_aus_zugriff_und_im_prompt():
+    v = {"hinweise": [_H1], "zugriff": {"gezeigt": ["erkenntnis:e490e73f326cffcc81c52775",
+                                                    "erkenntnis:ffffffffffffffffffffffff"]}}
+    text = vb.abschnitt(v, "", None)
+    # die zweite ID bucht vi-mcp als gezeigt, sie steht aber nicht im Prompt (Zeile gekürzt/gefiltert)
+    assert vb.gezeigte_ids(v, text) == ["erkenntnis:e490e73f326cffcc81c52775"]
+    assert vb.gezeigte_ids("text", text) == [] and vb.gezeigte_ids({"hinweise": []}, text) == []
+
+
+def test_auswahl_verwirft_ungezeigte_und_widerspruechliche_ids():
+    g = ["erkenntnis:a1a1a1a1a1", "regel:b2b2b2b2b2", "erkenntnis:c3c3c3c3c3"]
+    half, falsch, verw = vb.auswahl(g, ["[erkenntnis:a1a1a1a1a1]", "erkenntnis:a1a1a1a1a1", "erkenntnis:999999999"],
+                                    ["regel:b2b2b2b2b2", "erkenntnis:c3c3c3c3c3", "erkenntnis:c3c3c3c3c3"])
+    assert half == ["erkenntnis:a1a1a1a1a1"] and falsch == ["regel:b2b2b2b2b2", "erkenntnis:c3c3c3c3c3"]
+    assert verw == {"erkenntnis:999999999": "nicht als Hinweis dieser Analyse gezeigt"}
+    h2, f2, v2 = vb.auswahl(g, ["regel:b2b2b2b2b2"], ["regel:b2b2b2b2b2"])
+    assert h2 == f2 == [] and v2 == {"regel:b2b2b2b2b2": "in vi_half und vi_falsch zugleich"}
+    assert vb.auswahl(g, None, "kein Array") == ([], [], {})
+
+
+class _FakeVi:
+    def __init__(self, fehler=None):
+        self.rufe, self.fehler = [], fehler
+
+    async def nachher(self, *a, **k):
+        self.rufe.append(("nachher", k.get("vorher_id")))
+
+    async def rueckmeldung(self, half, falsch):
+        self.rufe.append(("rueckmeldung", half, falsch))
+        if self.fehler:
+            raise self.fehler
+        return vi_mcp.ViAntwort("feedback recorded for 2 hint(s) — thanks")
+
+
+def _mit_fake(monkeypatch, k):
+    import contextlib
+    import sys
+
+    import app.services.connectors.vi_mcp as vm
+    dbm = sys.modules["app.core.database"]          # Stub aus conftest.py
+
+    @contextlib.asynccontextmanager
+    async def _sitzung():
+        yield None
+
+    async def _lade(_db):
+        return k
+    monkeypatch.setattr(dbm, "AsyncSessionLocal", _sitzung, raising=False)
+    monkeypatch.setattr(vm, "load_vi_mcp_connector", _lade)
+
+
+def test_rueckmeldung_nach_nachher_nur_mit_benutzten_ids(monkeypatch):
+    import asyncio
+    k = _FakeVi()
+    _mit_fake(monkeypatch, k)
+    fall = {"start": "host:x", "hosts": ["x"]}
+    erg = {"befund": "ki:1", "titel": "t", "relevanz": 2,
+           "vi_half": ["erkenntnis:a1a1a1a1a1"], "vi_falsch": ["regel:b2b2b2b2b2", "erkenntnis:nie0gezeigt0"]}
+    r = asyncio.run(vb.nach_analyse(fall, erg, 1200, "v1", ["erkenntnis:a1a1a1a1a1", "regel:b2b2b2b2b2", "erkenntnis:c3c3c3c3c3"]))
+    # Reihenfolge: erst die Erfahrung (vi_after), sonst bucht vi_feedback nichts (intuition.feedback sucht art=erfahrung)
+    assert k.rufe == [("nachher", "v1"), ("rueckmeldung", ["erkenntnis:a1a1a1a1a1"], ["regel:b2b2b2b2b2"])]
+    assert r["gezeigt"] == 3 and r["antwort"].startswith("feedback recorded")
+    assert r["verworfen"] == {"erkenntnis:nie0gezeigt0": "nicht als Hinweis dieser Analyse gezeigt"}
+    # gezeigt, aber nichts benutzt → nichts senden (nie pauschal alle als „half“), benannt
+    k2 = _FakeVi()
+    _mit_fake(monkeypatch, k2)
+    r2 = asyncio.run(vb.nach_analyse(fall, {"befund": "ki:2"}, 1, "v2", ["erkenntnis:a1a1a1a1a1"]))
+    assert k2.rufe == [("nachher", "v2")] and r2["gesendet"].startswith("nein")
+    # nichts gezeigt → kein Eintrag; Ausfall der Rückmeldung → benannt, kein Abbruch
+    assert asyncio.run(vb.nach_analyse(fall, {"befund": "ki:3"}, 1, "v3", [])) is None
+    k3 = _FakeVi(fehler=vi_mcp.ViMcpFehler("HTTP 503"))
+    _mit_fake(monkeypatch, k3)
+    r3 = asyncio.run(vb.nach_analyse(fall, {**erg}, 1, "v4", ["erkenntnis:a1a1a1a1a1"]))
+    assert r3["fehler"].startswith("ViMcpFehler: HTTP 503")
+
+
+def test_lw_befund_nimmt_rueckmeldung_an_und_schreibt_sie_nicht_ins_dokument():
+    import inspect
+
+    from app.services.log_watch import werkzeuge as wz
+    sig = inspect.signature(wz.lw_befund)
+    assert "vi_half" in sig.parameters and "vi_falsch" in sig.parameters
+    schema = wz.REGISTRY["lw_befund"][2]
+    assert "vi_half" in schema["properties"] and "vi_half" not in schema["required"]
+    import pathlib
+    src = pathlib.Path("app/services/log_watch/werkzeuge.py").read_text()
+    aufruf = src[src.index("await schreibe_befund("):src.index("except BefundAbgelehnt")]
+    assert "vi_half" not in aufruf and "vi_falsch" not in aufruf

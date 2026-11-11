@@ -10,6 +10,36 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-11 — The log watch tells the VI which hints helped
+
+You decided (11.11., via the vi-mcp session): „feedback soll gesendet werden“. Measured before (vi-mcp session, `vi_stats`
+section B, 24 h on prod): 0 feedbacks on 2,878 shown hints — the VI could not learn which hint to show.
+
+### What changed
+
+- **The analysis names the hints it used.** The prompt section „Kollektiv-Gedächtnis“ now asks: in `lw_befund`, list under
+  `vi_half` only the hint ids the finding actually used (followed, quoted, confirmed as cause), under `vi_falsch` those it
+  contradicts or that misled; leave unused ones out, never all at once. vi-mcp's own line „Did one of these help …
+  vi_feedback(…)“ is dropped from the prompt — the analysis model does not have that tool.
+- **The code sends it, after `vi_nachher`.** `vi_bruecke.nach_analyse` checks the ids against what `vi_before` booked as shown
+  (`zugriff.gezeigt`) and what stood in the prompt, drops ids not shown or named in both lists (named in `verworfen`), then
+  calls `vi_feedback(helped, wrong)` through the connector (`ViMcpConnector.rueckmeldung`). Order matters: vi-mcp books
+  feedback on the experience that `vi_after` creates, within 60 min.
+- **Visible on the result:** `vi_rueckmeldung` {gezeigt, half, falsch, verworfen, antwort | fehler | gesendet: nein …}.
+  Nothing shown → no entry; shown but nothing used → nothing sent, named.
+
+Evidence: 5 new tests (`tests/test_log_watch_vi_bruecke.py`: prompt line only for `vi_before` ids, id intersection, selection,
+order nachher → rueckmeldung with a fake connector, `lw_befund` keeps the ids out of the finding document). Full suite in the
+backend image: 849 passed vs. 844 before; the same 7 failures and 3 collection errors exist without this change.
+
+### What is missing
+
+- **Not deployed.** Needs a backend rebuild (restart guard) — only with your approval.
+- No live proof yet: after deploy, `vi_stats` section B „feedback on hints N for M shown“ should rise above 0 for instance
+  centralstation; `vi_rueckmeldung` on the analysis results shows what was sent.
+- Several fleet agents share the instance centralstation; vi-mcp books on the latest experience before which the hint was
+  shown — with parallel analyses that can be a neighbour's experience (hypothesis, not measured).
+
 ## 2026-11-11 — Local VI on vi-mcp 0.50.0
 
 Installed 11.11. 12:29 UTC under the standing approval: release v0.50.0 signed (key c88aa8ce…, `SHA256SUMS.sig` verified,
@@ -37,7 +67,8 @@ backend `test_connection` „vi-mcp 0.50.0 — 52 tools“, `vi_erinnere` isErro
 
 ### What is missing
 
-- Nobody sends `vi_feedback` yet: the console model may call it, but neither the hook nor the log watch does it on its own.
+- The console hook does not send `vi_feedback` on its own; the console model may call it (vi-mcp's hint lines ask for it).
+  The log watch sends it since the entry below.
 
 ## 2026-11-11 — The console asks the VI on every question, follow-ups too
 

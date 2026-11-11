@@ -157,8 +157,10 @@ async def lw_definition() -> dict:
 
 async def lw_befund(titel: str, kern: str, relevanz: int, belege: list, fakten: list | None = None,
                     folge_von: list | None = None, hypothesen: list | None = None,
-                    hashtags: list | None = None, _modell: str = "", _schritte: list | None = None,
-                    _start: str = "") -> dict:
+                    hashtags: list | None = None, vi_half: list | None = None, vi_falsch: list | None = None,
+                    _modell: str = "", _schritte: list | None = None, _start: str = "") -> dict:
+    # vi_half/vi_falsch: Rückmeldung zu den Kollektiv-Hinweisen — liest der Trichter aus den Argumenten und schickt sie
+    # nach vi_nachher als vi_feedback (vi_bruecke.nach_analyse); nicht Teil des Befund-Dokuments
     from app.services.log_watch.befund import BefundAbgelehnt, schreibe_befund
     try:
         return await schreibe_befund({"titel": titel, "kern": kern, "fakten": fakten or [],
@@ -327,7 +329,10 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                   "offen|gestuetzt|widerlegt}]. Relevanz 0–3 (3 = dringend). Ursachen nur als Hypothese, nie "
                   "aus zeitlicher Nähe allein. hashtags: die der Belege, dazu eigene Tag-Felder (art:wert, z. B. "
                   "ursache:ansible-rollout) — deren Art muss vorher mit lw_feld_anlegen(art='hashtag') registriert "
-                  "sein; sie werden an die Belege gehängt, nicht registrierte kommen mit Grund zurück.",
+                  "sein; sie werden an die Belege gehängt, nicht registrierte kommen mit Grund zurück. "
+                  "vi_half/vi_falsch (optional): IDs aus dem Abschnitt Kollektiv-Gedächtnis — vi_half nur für Hinweise, die "
+                  "der Befund benutzt (befolgt, zitiert, als Ursache bestätigt), vi_falsch für widerlegte oder irreführende; "
+                  "nicht benutzte weglassen.",
                   _p(titel={"type": "string", "_pflicht": True}, kern={"type": "string", "_pflicht": True},
                      fakten={"type": "array", "items": {"type": "string"}},
                      folge_von={"type": "array", "items": {"type": "string"}},
@@ -337,7 +342,9 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                      hypothesen={"type": "array", "items": {"type": "object", "properties": {
                          "text": {"type": "string"}, "status": {"type": "string",
                                                                 "enum": ["offen", "gestuetzt", "widerlegt"]}}}},
-                     hashtags={"type": "array", "items": {"type": "string"}}),
+                     hashtags={"type": "array", "items": {"type": "string"}},
+                     vi_half={"type": "array", "items": {"type": "string"}},
+                     vi_falsch={"type": "array", "items": {"type": "string"}}),
                   True),
     "get_checkmk_host": (get_checkmk_host,
                          "Live-Zustand eines Hosts aus CheckMK: Services, die nicht OK sind (mit Statuszeile), "

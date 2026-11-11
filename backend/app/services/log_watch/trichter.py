@@ -282,7 +282,7 @@ async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=
               + ("\n\n" + kollegen_text(await kollegen(fall["_agent"])) if fall.get("_agent") else ""))
     # Kollektiv-Gedächtnis (vi-mcp, Konnektor vi_mcp): was andere Instanzen zu Hosts/Themen des Falls wissen;
     # die Analyse ist dort eine Handlung (vi_vorher/vi_nachher). Ohne Konnektor: leer, nichts ändert sich.
-    kollektiv, vorher_id = (await vi_bruecke.vor_analyse(fall, lage)) if fall.get("_agent") else ("", None)
+    kollektiv, vorher_id, vi_gezeigt = (await vi_bruecke.vor_analyse(fall, lage)) if fall.get("_agent") else ("", None, [])
     if kollektiv:
         prompt += "\n\n" + kollektiv
     verlauf: list[dict] = [{"rolle": "worker", "text": prompt}]
@@ -302,7 +302,10 @@ async def analysiere(fall: dict, llm_config, llm=None, *, bauer=None, schreiber=
         except Exception as e:  # noqa: BLE001 — Protokoll-Ausfall benannt, Analyse bleibt gültig
             ergebnis["protokoll_fehler"] = f"{type(e).__name__}: {str(e)[:200]}"
     if fall.get("_agent"):          # nur die Flotte meldet ans Kollektiv (wie kollegen)
-        await vi_bruecke.nach_analyse(fall, ergebnis, int((time.monotonic() - t_analyse) * 1000), vorher_id)
+        rm = await vi_bruecke.nach_analyse(fall, ergebnis, int((time.monotonic() - t_analyse) * 1000), vorher_id,
+                                           vi_gezeigt)
+        if rm:
+            ergebnis["vi_rueckmeldung"] = rm
     if ergebnis.get("befund"):
         # gesehen hat die Analyse die Lage des Falls und, was sie zitiert hat
         try:
@@ -377,7 +380,8 @@ async def _schleife(fall: dict, llm_config, llm, prompt: str, verlauf: list[dict
                 return {"start": fall["start"], "hosts": fall["hosts"], "befund": erg["id"], "belege": erg["belege"],
                         "verworfen": erg["verworfen"], "schritte": schritte,
                         "titel": str(arg.get("titel") or ""), "relevanz": arg.get("relevanz"),
-                        "beleg_ids": [str(b.get("id")) for b in arg.get("belege") or [] if isinstance(b, dict)]}
+                        "beleg_ids": [str(b.get("id")) for b in arg.get("belege") or [] if isinstance(b, dict)],
+                        "vi_half": arg.get("vi_half") or [], "vi_falsch": arg.get("vi_falsch") or []}
             verlauf.append({"rolle": "werkzeug", "werkzeug": a["name"], "argumente": a["argumente"],
                             "text": _kurz(a["name"], erg)})
             nachrichten.append({"role": "tool", "tool_call_id": a["id"], "content": _kurz(a["name"], erg)})
