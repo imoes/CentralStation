@@ -51,7 +51,8 @@ done
 ls -l "$SICHERUNG"/*-"$STEMPEL".tgz | awk '{print "   " $5, $NF}'
 
 echo "== 3. Paket tauschen"
-[ -n "$ALT" ] && git rm -q --cached "$ALT" 2>/dev/null; rm -f vi-mcp/pakete/vi-mcp_*_all.deb
+[ -n "$ALT" ] && { git rm -q --cached "$ALT" 2>/dev/null || true; }   # noch nicht committetes Paket (zwei Updates ohne Commit dazwischen) bricht sonst unter set -e ab, während vi-mcp angehalten ist (11.11.)
+rm -f vi-mcp/pakete/vi-mcp_*_all.deb
 mkdir -p vi-mcp/pakete; cp "$TMP/$DEB" vi-mcp/pakete/
 sed -i -e "s/^ARG VI_MCP_DEB=.*/ARG VI_MCP_DEB=$DEB/" -e "s/^ARG VI_MCP_SHA256=.*/ARG VI_MCP_SHA256=$H/" \
        -e "s|releases/tag/v[0-9.]*|releases/tag/v$V|" vi-mcp/Dockerfile

@@ -10,6 +10,42 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-11 — The console asks the VI on every question, follow-ups too
+
+You decided (11.11., via the vi-mcp session, then „mache das“ here): the VI searches on every user question, not only on the
+first one. Measured before: in the 12 newest console conversations the model searched the VI in 4 of 10 first turns but
+only in 2 of 80 follow-up turns. The tool hook only ran before tools, and the VI's rule said „once before starting a task“.
+
+### What changed
+
+- **The console hook also runs on `UserPromptSubmit`** (`backend/app/services/vi_konsole.py`, `EREIGNISSE`). From vi-mcp 0.44.0 on,
+  the hook sends the question to the local VI (`vi_prompt_context`; secrets masked, at most 4,000 characters; the server does
+  not store it). Up to 4 matching hints reach the model as context „[VI memory for this question …]“, before the first answer.
+- **Local VI on vi-mcp 0.44.1** (signed release, key c88aa8ce…, `.deb` SHA-256 `1604d315…ccb2`). The hook `cbc0becd` is the same in
+  0.44.0 and 0.44.1. 0.44.1 ranks hints by shared words and drops hits that share only the host name.
+- **`vi-mcp/aktualisieren.sh`** no longer aborts when the previous package was not committed yet. On 11.11. at 09:09 UTC
+  `git rm --cached` failed on the uncommitted 0.44.0 package. Under `set -e` the script stopped while vi-mcp and vi-p2p were
+  halted, so the local VI was down for about 2 minutes until the rerun.
+
+### Evidence
+
+- 0.44.0: backup `*-20261111T090352Z.tgz`; backend rebuilt and healthy at 09:08:32 UTC (`KONSOLE_OK=1`: no agent process ran
+  in the console, the last conversation was written at 08:23).
+- 0.44.1: backup `*-20261111T090903Z.tgz`; `/gesund: ok vi-mcp 0.44.1`; 0 violations.
+- Console `settings.json` hooks: PostToolUse, PostToolUseFailure, PreToolUse, SessionEnd, UserPromptSubmit; hook file sha `cbc0becd`.
+- Test conversation `5fdeb122…` (11.11. 09:10–09:12 UTC, `claude --print` / `--resume` in the console container, only VI tools
+  allowed), 4 questions on cue0111/NGRC, the CUE Print slowdown, the CUE environments and Zipline:
+  - every turn got the context once, with 4 hits each;
+  - after the context the model read entries with `vi_object`/`vi_recall` in turns 2, 3 and 4;
+  - all 4 answers came from the VI (before: 2 of 80 follow-up turns searched).
+
+### What is still missing
+
+- Console sessions that are already open get the new hook only at their next session create.
+- Hermes would need the hook as the `pre_llm_call` shell hook. It is not set up, because all console sessions run as claude_cli.
+
+---
+
 ## 2026-11-10 — Local VI on vi-mcp 0.30.0, console with the new hook
 
 You approved it on 10.11. ("Beides jetzt"), because the console hook changed and so the update did not fall under the
