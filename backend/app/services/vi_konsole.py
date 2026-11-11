@@ -22,8 +22,11 @@ SERVER_NAME = "vi"
 #: Name des Compose-Dienstes — gehört in die Proxy-Ausnahmen der Konsolen-Container (sonst Squid → 503)
 STANDARD_HOST = "vi-mcp"
 HOOK_QUELLE = Path(__file__).resolve().parent.parent / "resources" / "vi_hook.py"
-#: Ereignisse laut docs/HOOK.md des Pakets (UserPromptSubmit bräuchte eine eigene Instanz mit Mensch-Recht — nicht hier)
-EREIGNISSE = ("PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd")
+#: Ereignisse laut docs/HOOK.md des Pakets. UserPromptSubmit ab vi-mcp 0.44.0: vi_prompt_context liefert zu JEDER Frage
+#: (auch Folgefragen) passende Hinweise, der Server speichert den Prompt nicht. Nutzer 11.11.2026 (über die vi-mcp-Sitzung):
+#: „die VI sucht bei jeder Nutzerfrage“ — gemessen vorher: VI-Suche in 4/10 ersten Turns, aber nur 2/80 Folgeturns. Das
+#: Korrektur-/Noten-Signal desselben Ereignisses braucht Mensch-Recht; fehlt es, verliert der Hook nur das Signal, nicht den Kontext.
+EREIGNISSE = ("UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd")
 KENNUNG = "vi_hook.py"
 
 

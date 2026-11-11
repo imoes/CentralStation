@@ -70,3 +70,10 @@ def test_wissens_werkzeuge_sind_vom_mcp_server_entfernt():
     quelle = pathlib.Path("app/api/mcp_server.py").read_text()
     for name in ("store_knowledge", "search_knowledge", "update_knowledge", "forget_knowledge"):
         assert f"async def {name}(" not in quelle, name
+
+
+def test_jede_frage_fragt_die_vi():
+    """Nutzer 11.11.2026: die VI sucht bei jeder Nutzerfrage, auch bei Folgefragen (vi-mcp ≥ 0.44.0, vi_prompt_context)."""
+    neu = vk.mische_einstellungen({}, "python3 -I /h/vi_hook.py")
+    e = neu["hooks"]["UserPromptSubmit"]
+    assert len(e) == 1 and e[0]["matcher"] == "*" and e[0]["hooks"][0]["timeout"] == 5
