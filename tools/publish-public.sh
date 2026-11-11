@@ -23,8 +23,11 @@ python3 "$FR" \
   --path ansible-webui-prompt.md --path foreman.md --invert-paths \
   --force
 
-# Gate: refuse to publish if anything internal survived the filter.
-if git grep -qI "example" -- . 2>/dev/null || [ "$(git log --all --oneline -S'example' | wc -l)" -ne 0 ]; then
+# Gate: refuse to publish if anything internal survived the filter. INTERN lists every marker the
+# replacements cover (11.11.2026: example/example hosts, 10.0.x addresses and llamacpp hosts had passed,
+# because the gate only looked for "example" — 101 lines would have gone public).
+INTERN='example|example|example|example|10\.32\.|llm-host0'
+if git grep -qIiE "$INTERN" -- . 2>/dev/null || [ "$(git log --all --oneline --pickaxe-regex -S"$INTERN" | wc -l)" -ne 0 ]; then
   echo "ABORT: internal references still present after filtering" >&2
   exit 1
 fi

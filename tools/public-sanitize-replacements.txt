@@ -3,3 +3,11 @@ example_com==>example_com
 REDACTED-CREDENTIAL==>REDACTED-CREDENTIAL
 deployment-specific==>deployment-specific
 example==>example
+example.org==>example.org
+example==>example
+example.net==>example.net
+example==>example
+example.net==>example.net
+example==>example
+10.0.==>10.0.
+llm-host0==>llm-host0
