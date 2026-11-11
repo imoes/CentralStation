@@ -175,3 +175,28 @@ def test_nur_gespeichert_zaehlt_als_meldung_fuer_die_erinnerung():
     assert mail_erlaubt("wieder", [], gespeichert, jetzt + timedelta(hours=23))[0] is True
     fehlschlag = {"zustellungen": [{"zeit": vor_2h, "mails": 0, "empfaenger_wahl": "host-scope"}]}
     assert letzte_meldung(fehlschlag) is None
+
+
+def test_alt_duplikate_mailen_nicht_je_lauf_eines():
+    """11.11.2026: transfer07 hatte 5 offene Alt-Incidents (Kontext ohne Regel). Je Lauf traf die Schleife ein anderes
+    Duplikat mit leerem Kontext → „Etwas Neues: neuer Host: transfer07“ mit 0 Zeilen (13:07 und 13:10 UTC)."""
+    from app.services.error_clusters import bearbeitung as bb
+    h, schl = "transfer07.example.com", "host:transfer07.example.com"
+    alt = [("host", h, {}) for _ in range(5)]
+    # Lauf 1: kein Regel-Incident → das erste Alt-Duplikat
+    assert ir.waehle_offen(alt, schl) == 0
+    # der eigene Host eines Alt-Incidents ist nie „neu“ → keine Eskalation, also keine Mail
+    assert bb.eskalation(ir.bekannt_fuer_eskalation({}, h), [h], "high", "high") is None
+    # … ein wirklich weiterer Host bleibt eine Eskalation
+    assert bb.eskalation(ir.bekannt_fuer_eskalation({}, h), [h, "transfer08.example.com"], "high", "high") \
+        == "neuer Host: transfer08.example.com"
+    # Übernahme: voller Kontext wie neu, Zustellungen des Alten bleiben
+    neu = {"regel": "I-HOST", "schluessel": schl, "hosts": [h], "nachrichten": 7, "examples": ["x"]}
+    c = ir.uebernahme({"hosts": [h], "zustellungen": [{"zeit": "t", "mails": 1}]}, neu)
+    assert c["regel"] == "I-HOST" and c["schluessel"] == schl and c["nachrichten"] == 7
+    assert c["zustellungen"] == [{"zeit": "t", "mails": 1}] and c["hosts"] == [h] and "uebernommen" in c
+    assert ir.uebernahme({"regel": "I-HOST", "schluessel": schl}, neu) == {"regel": "I-HOST", "schluessel": schl}
+    # Lauf 2: das übernommene steht an Index 3 — der genaue Schlüssel gewinnt vor den übrigen Alt-Duplikaten
+    alt2 = alt[:3] + [("host", h, c)] + alt[4:]
+    assert ir.waehle_offen(alt2, schl) == 3
+    assert ir.waehle_offen(alt2, "host:anderer") is None

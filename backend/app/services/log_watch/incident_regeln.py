@@ -95,6 +95,47 @@ def schluessel_alt(kind: str, primary_host: str, ctx: dict | None, kanon=lambda 
     return []
 
 
+def waehle_offen(offen: list[tuple[str, str, dict]], schluessel: str) -> int | None:
+    """Welcher offene Incident [(kind, primary_host, ctx)] setzt den Kandidaten fort? Index oder None. Rein — testbar.
+    Zuerst der Regel-Incident mit genau diesem Schlüssel, erst dann ein Alt-Incident über schluessel_alt.
+    Gemessen 11.11.2026: 340 offene Alt-Incidents (vor den Regeln, Kontext nur hosts/type), je Host bis zu 25
+    Duplikate (transfer07: 5). Die Schleife nahm den ersten Treffer über schluessel_alt — nach dem Fortschreiben eines
+    Duplikats traf der nächste Lauf ein anderes, jedes mit leerem Kontext → je Duplikat eine Mail „Etwas Neues: neuer
+    Host“ mit 0 Zeilen (Nutzer 11.11.: „ich bekomme auf einmal solche emails“; transfer07 13:07 und 13:10 UTC)."""
+    for i, (_kind, _host, c) in enumerate(offen):
+        if (c or {}).get("schluessel") == schluessel:
+            return i
+    for i, (kind, host, c) in enumerate(offen):
+        if schluessel in schluessel_alt(kind, host, c):
+            return i
+    return None
+
+
+#: Was ein Alt-Incident bei der Übernahme behält — sonst gilt der Kontext des Kandidaten wie bei einem neuen Incident
+UEBERNAHME_BEHALTEN = ("zustellungen", "wieder", "weitere_schluessel", "triage")
+
+
+def uebernahme(alt: dict | None, neu: dict) -> dict:
+    """Kontext eines Alt-Incidents (ohne regel) bei der Übernahme durch eine Regel: der volle Kandidaten-Kontext
+    (regel, schluessel, nachrichten, beispiele …) wie bei einem neuen Incident, dazu Zustellungen und Wiederauftreten
+    des Alten; Hosts vereinigt. Ein Regel-Incident bleibt unverändert. Rein — testbar."""
+    alt = alt or {}
+    if alt.get("regel"):
+        return alt
+    c = {**neu, **{k: alt[k] for k in UEBERNAHME_BEHALTEN if k in alt}}
+    c["hosts"] = sorted(set(neu.get("hosts") or []) | set(alt.get("hosts") or []))
+    c["uebernommen"] = "Alt-Incident ohne Regel-Kontext von der Regel übernommen"
+    return c
+
+
+def bekannt_fuer_eskalation(c: dict | None, primary_host: str | None) -> dict:
+    """Der Host, um den es im Incident geht, ist nie „neu“ — auch wenn der Kontext ihn (Alt-Incident) nicht nennt. Rein."""
+    c = dict(c or {})
+    if primary_host:
+        c["hosts"] = sorted(set(c.get("hosts") or []) | {primary_host})
+    return c
+
+
 def vergleiche(kandidaten: list[dict], alt: dict[str, set[str]]) -> dict:
     """Je Art: beide, nur neu (Regel hätte eröffnet, alte Schwellen nicht), nur alt. Rein — testbar."""
     neu: dict[str, set[str]] = {}
@@ -274,9 +315,19 @@ async def eroeffne(regel: Regel, k: dict, objekte: dict, jetzt: datetime) -> dic
         neue_hosts = list(k.get("host_liste") or [])
         neue_schwere = schwere(regel, k)
 
+        async def _neuer_kontext() -> tuple[dict, str]:
+            """(Kontext, Titel-Muster), die ein neuer Incident zu diesem Kandidaten bekommt — eine Definition für
+            Neu-Eröffnen und Übernahme eines Alt-Incidents."""
+            m = ""
+            if regel.gruppe == "muster":
+                t = await db.get(LogTemplate, k["schluessel"].split(":", 1)[1])
+                m = t.template if t else ""
+            ctx = kontext(k, regel, await _beispiele(k["schluessel"], regel, objekte, jetzt), m)
+            return {**ctx, "hosts": ctx["hosts"] or [k["schluessel"].split(":", 1)[1]]}, m
+
         def _fortschreiben(inc, c: dict, wieder: bool) -> dict:
             """Bekannten Incident fortschreiben: Hosts ergänzen, Wiederauftreten vermerken, Eskalation prüfen."""
-            esk = bb.eskalation(c, neue_hosts, inc.severity, neue_schwere)
+            esk = bb.eskalation(bekannt_fuer_eskalation(c, inc.primary_host), neue_hosts, inc.severity, neue_schwere)
             c2 = {kk: v for kk, v in c.items() if kk != "type"}
             if neue_hosts:
                 c2["hosts"] = sorted(set(c2.get("hosts") or []) | set(neue_hosts))
@@ -293,13 +344,15 @@ async def eroeffne(regel: Regel, k: dict, objekte: dict, jetzt: datetime) -> dic
 
         offen = (await db.execute(select(Incident).where(Incident.kind == regel.incident_art,
                                                          Incident.status.in_(OPEN)))).scalars().all()
-        for inc in offen:
+        i = waehle_offen([(inc.kind, inc.primary_host, cluster_context(inc) or {}) for inc in offen], k["schluessel"])
+        if i is not None:
+            inc = offen[i]
             c = cluster_context(inc) or {}
-            if c.get("schluessel") == k["schluessel"] or k["schluessel"] in schluessel_alt(
-                    inc.kind, inc.primary_host, c):
-                e = _fortschreiben(inc, c, wieder=False)
-                await db.commit()
-                return e
+            if not c.get("regel"):          # Alt-Incident: Regel übernimmt ihn mit vollem Kontext (wie ein neuer)
+                c = uebernahme(c, (await _neuer_kontext())[0])
+            e = _fortschreiben(inc, c, wieder=False)
+            await db.commit()
+            return e
         # In den letzten 24 h geschlossen, gleicher Schlüssel → derselbe Incident lebt wieder auf
         zu = (await db.execute(select(Incident).where(
             Incident.kind == regel.incident_art, Incident.status == "resolved",
@@ -336,18 +389,13 @@ async def eroeffne(regel: Regel, k: dict, objekte: dict, jetzt: datetime) -> dic
                     inc.updated_at = jetzt
                     await db.commit()
                     return {"incident": str(inc.id), "neu": False, "gruppiert": True}
-        muster = ""
-        if regel.gruppe == "muster":
-            t = await db.get(LogTemplate, k["schluessel"].split(":", 1)[1])
-            muster = t.template if t else ""
-        ctx = kontext(k, regel, await _beispiele(k["schluessel"], regel, objekte, jetzt), muster)
-        hosts = ctx["hosts"] or [k["schluessel"].split(":", 1)[1]]
+        ctx, muster = await _neuer_kontext()
         inc = await open_cluster_incident(
             db, kind=regel.incident_art, title=titel(regel, k, muster),
             severity=schwere(regel, k),
-            primary_host=hosts[0], context={**ctx, "hosts": hosts}, member_docs=[])
+            primary_host=ctx["hosts"][0], context=ctx, member_docs=[])
         await db.commit()
-        return {"incident": str(inc.id), "neu": True, "ctx": {**ctx, "hosts": hosts}, "titel": inc.title}
+        return {"incident": str(inc.id), "neu": True, "ctx": ctx, "titel": inc.title}
 
 
 #: Meldungen, die dieser Prozess gerade zustellt — nach einem Neustart leer; dann holt `nachzuholen` sie nach.

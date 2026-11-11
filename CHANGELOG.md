@@ -10,6 +10,31 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-11 — No more „Etwas Neues: neuer Host“ mails for old duplicate incidents
+
+You reported (11.11.): „ich bekomme auf einmal solche emails“ — „Bekannter Incident. Etwas Neues: neuer Host:
+transfer07.example.com“, with 0 lines, 0 containers and an empty „Seit“.
+
+### What was fixed
+
+- **Cause (measured in the DB):** 340 incidents from before the incident rules (05.–07.11.) were still open. Their context
+  only holds `hosts`/`type`, without `regel` or `schluessel`; some hosts have up to 25 duplicates (transfer07: 5). When the
+  I-HOST rule fired for transfer07, `incident_regeln.eroeffne` continued the first old duplicate it found via
+  `schluessel_alt`. Its empty context made `eskalation()` call the host itself „new“, and the mail was built from that
+  empty context. The next run picked another duplicate. Mails: incident 1834db56 at 13:07 UTC, 225b9e04 at 13:10 UTC.
+- **Fix (`backend/app/services/log_watch/incident_regeln.py`):**
+  - `waehle_offen` prefers the rule incident with exactly this key, so only one old duplicate is ever taken over.
+  - `uebernahme` gives the old incident the full rule context, the same one a new incident gets (one definition,
+    `_neuer_kontext`). Earlier deliveries and recurrences stay.
+  - `bekannt_fuer_eskalation`: an incident's own host (`primary_host`) is never „new“. A really new host still escalates.
+- Evidence: regression test `test_alt_duplikate_mailen_nicht_je_lauf_eines`, which replays transfer07 with 5 duplicates.
+  Full suite in the backend image: 851 passed; the same 7 failures and 3 collection errors as before today's changes.
+
+### What is missing
+
+- **Not deployed yet** — a console container was running (restart guard); deploy only with your go.
+- The 340 old incidents stay open. Closing or merging the duplicates is your decision.
+
 ## 2026-11-11 — The log watch tells the VI which hints helped
 
 You decided (11.11., via the vi-mcp session): „feedback soll gesendet werden“. Measured before (vi-mcp session, `vi_stats`
