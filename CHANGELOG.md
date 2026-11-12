@@ -10,6 +10,47 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — Feed: an ongoing Graylog error is continued in its entry, not copied every hour
+
+An external analysis (handed over by you, 12.11. ~10:55 UTC, F1) reported duplicate feed entries — e.g.
+`glog:08d0f41a204bc661` 30× with a dockerd line from 19.10. — and suspected Filebeat re-delivering old lines.
+
+### What was wrong (checked in code and data, 12.11. ~11:20 UTC)
+
+- **The count is bigger than reported:** that `external_id` has **534** entries since 19.10. 10:18, one every 65 min
+  (median; 60–72 min). In the last 24 h, **17 842 of 18 853** Graylog feed entries were continuation copies (95 %).
+- **Cause:** `alert_aggregator._count_graylog_occurrences` creates a **new** alert for every error that is still
+  counted after its window ran out (`continuation_of`), and copies title and text of the predecessor.
+  - So the text stays frozen at the very first occurrence (19.10.).
+  - Every copy went again through incident correlation (`process_alerts`), which keeps host incidents open.
+- **The external hypothesis is wrong for this case:** Graylog does not re-deliver the old line. The count query is
+  limited to the host and has no timestamp, and the error still occurs on docker0218 (385 lines 10:42–11:20 UTC). The
+  „event time 19.10./16.10.“ the analysis saw is the frozen text.
+
+### What changed
+
+- An ongoing error is **continued in its own entry**: `occurrences` gets the current window, the sum over all windows
+  (`gesamt`), the number of windows, and `erstmals`/`zuletzt`. The OpenSearch metadata are updated.
+- A **new** entry is created only if the predecessor was closed (`resolved`) and the error is back, with that reason.
+- Continuations are no longer new alerts, so no extra incident correlation and no extra AI enrichment.
+- Selecting continued entries: by creation time **or** by `occurrences.until` in the expired window; otherwise the
+  continuation would stop after the first window.
+
+### Evidence
+
+- Tests: `test_graylog_occurrences.py` +3 (continue only open entries; sums, windows, first/last seen; expired by
+  creation or by `until`). The new SQL path was run read-only against the production DB (1 415 candidates).
+- Full suite: see commit. Not deployed yet.
+- **Acceptance after deploy:** the same `external_id` is created at most once in 24 h unless its entry was closed;
+  the share of continuations among new Graylog entries goes from 95 % to about 0.
+- The existing 17 842 copies stay in the database; whether to delete them is your decision.
+
+### What is missing
+
+- The feed sorts by creation time, so a continued error does not move up when it occurs again; it carries `zuletzt`.
+- Incidents that were kept open by the copies (d8de4bc8, 9466979a, 9fc90e4c according to the analysis) are not
+  re-assessed yet.
+
 ## 2026-11-12 — KI weight layer: an LLM proposes weight corrections, measurement decides
 
 You: „1 ja, 2 ja“ — the KI side of weight-space programming, after the vi-mcp session's plan (vi-mcp 0.58.0,

@@ -121,3 +121,31 @@ def test_containers_from_pivot_skips_graylogs_empty_value_bucket():
     rows = [{"key": ["(Empty Value)"], "values": [{"key": ["count()"], "value": 52}],
              "source": "leaf"}]
     assert containers_from_pivot(rows) == []
+
+
+# ── Dauerfehler im selben Eintrag fortschreiben (12.11.2026: 17 842 von 18 853 Einträgen waren Kopien) ─────────
+
+def test_fortschreiben_nur_offene_eintraege():
+    from app.services.graylog_occurrences import fortschreibbar
+    assert fortschreibbar("new") and fortschreibbar("acknowledged") and fortschreibbar(None)
+    assert not fortschreibbar("resolved")                      # geschlossen → der Fehler kommt wieder: neuer Eintrag
+
+
+def test_fortgeschrieben_summe_fenster_zuerst_zuletzt():
+    from app.services.graylog_occurrences import fortgeschrieben
+    o = {"query": "q", "since": "2026-11-12T09:38:00Z", "until": "2026-11-12T10:42:00Z", "count": 660}
+    n = fortgeschrieben(o, {"count": 385, "containers": []}, "2026-11-12T11:20:00Z")
+    assert (n["since"], n["until"], n["count"], n["gesamt"], n["fenster"]) == (
+        "2026-11-12T10:42:00Z", "2026-11-12T11:20:00Z", 385, 1045, 2)
+    assert n["erstmals"] == "2026-11-12T09:38:00Z" and n["zuletzt"] == "2026-11-12T11:20:00Z" and n["query"] == "q"
+    n2 = fortgeschrieben(n, {"count": 10}, "2026-11-12T12:20:00Z")
+    assert (n2["gesamt"], n2["fenster"], n2["erstmals"]) == (1055, 3, "2026-11-12T09:38:00Z")
+
+
+def test_abgelaufen_neu_angelegt_oder_fortgeschrieben():
+    from app.services.graylog_occurrences import abgelaufen
+    von, bis = "2026-11-12T09:20:00Z", "2026-11-12T10:20:00Z"
+    assert abgelaufen({}, "2026-11-12T09:30:00Z", von, bis)                                  # im Fenster angelegt
+    assert abgelaufen({"until": "2026-11-12T10:00:00Z"}, "2026-10-19T10:18:00Z", von, bis)  # alt, aber fortgeschrieben
+    assert not abgelaufen({"until": "2026-11-12T08:00:00Z"}, "2026-10-19T10:18:00Z", von, bis)  # Fortschreibung endete
+    assert not abgelaufen({}, "2026-11-12T10:30:00Z", von, bis)                              # Fenster noch offen

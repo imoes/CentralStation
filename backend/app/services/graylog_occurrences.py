@@ -164,3 +164,33 @@ def template_phrase(template: str) -> str | None:
     """Suchphrase für ein Drain-Muster: Platzhalter (<*>, <NUM>, <IP> …) gelten als
     veränderliche Teile, wie Zahlen in count_phrase."""
     return count_phrase(_PLACEHOLDER.sub("0", template or ""))
+
+
+#: Ein Dauerfehler wird im bestehenden Feed-Eintrag fortgeschrieben, solange dieser offen ist — gemessen 12.11.2026:
+#: 17 842 von 18 853 Graylog-Einträgen in 24 h waren stündliche Fortsetzungs-KOPIEN (neue Zeile, Titel und Text des
+#: allerersten Auftretens eingefroren, z. B. glog:08d0f41a204bc661 534× seit 19.10.), und jede ging erneut in die
+#: Incident-Zuordnung. Neu angelegt wird nur, wenn der Vorgänger geschlossen ist (der Fehler kommt wieder).
+FORTSCHREIBEN_STATUS = ("new", "acknowledged", "investigating")
+
+
+def fortschreibbar(status: str | None) -> bool:
+    """Wird ein weiter auftretender Fehler im Vorgänger fortgeschrieben (True) oder als neuer Eintrag angelegt? Rein."""
+    return (status or "new") in FORTSCHREIBEN_STATUS
+
+
+def fortgeschrieben(occ: dict, zaehlung: dict, until: str) -> dict:
+    """Die occurrences eines Eintrags nach einem weiteren Fenster: aktuelles Fenster [bisheriges until, until] mit
+    seiner Zählung, dazu Summe über alle Fenster, Zahl der Fenster und zuerst/zuletzt gesehen. Rein."""
+    o = dict(occ or {})
+    gesamt = int(o.get("gesamt", o.get("count", 0)) or 0) + int(zaehlung.get("count", 0) or 0)
+    return {**o, **zaehlung, "since": o.get("until") or o.get("since"), "until": until,
+            "gesamt": gesamt, "fenster": int(o.get("fenster", 1) or 1) + 1,
+            "erstmals": o.get("erstmals") or o.get("since"), "zuletzt": until}
+
+
+def abgelaufen(occ: dict, created_at_iso: str, grenze_von: str, grenze_bis: str) -> bool:
+    """Ist das Zählfenster eines Eintrags gerade abgelaufen? Ein neuer Eintrag: angelegt im Fenster davor; ein
+    fortgeschriebener: sein `until` liegt dort (sonst endete die Fortschreibung nach dem ersten Fenster). ISO-Zeiten
+    (Z-Form) lassen sich als Text vergleichen. Rein."""
+    u = (occ or {}).get("until") or ""
+    return (grenze_von <= created_at_iso < grenze_bis) or (bool(u) and grenze_von <= u < grenze_bis)

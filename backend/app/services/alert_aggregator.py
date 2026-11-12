@@ -587,8 +587,10 @@ async def _count_graylog_occurrences(
       Laufs fehlte. Ohne das tauchte ein Dauerfehler nur auf, wenn er zufällig unter den
       neuesten Meldungen war (zweimal in 48 h bei 85 000 Zeilen in 6 h).
     """
+    from sqlalchemy import or_
+
     from app.services.connectors.graylog import GraylogConnector
-    from app.services.graylog_occurrences import iso
+    from app.services.graylog_occurrences import abgelaufen, fortgeschrieben, fortschreibbar, iso
 
     await db.flush()   # neue Einträge dieses Laufs bekommen id + created_at
     until = iso(now)
@@ -603,13 +605,17 @@ async def _count_graylog_occurrences(
     open_ext = {a.external_id for a in open_rows}
     open_queries = {_occ(a).get("query") for a in open_rows} - {None}
 
-    expired_rows = (await db.execute(
+    # abgelaufen: im Fenster davor angelegt ODER (fortgeschrieben) mit `until` dort — siehe graylog_occurrences
+    von, bis = iso(cutoff - timedelta(minutes=window_minutes)), iso(cutoff)
+    kandidaten = (await db.execute(
         select(Alert).where(
             Alert.source == "graylog",
-            Alert.created_at >= cutoff - timedelta(minutes=window_minutes),
             Alert.created_at < cutoff,
+            or_(Alert.created_at >= cutoff - timedelta(minutes=window_minutes),
+                Alert.metadata_["occurrences"]["until"].as_string() >= von),
         ).order_by(Alert.created_at.desc())
     )).scalars().all()
+    expired_rows = [a for a in kandidaten if abgelaufen(_occ(a), iso(a.created_at), von, bis)]
     # Ein Vorgänger je Zählabfrage, nicht je dedup_key: mehrere abgelaufene Einträge
     # mit derselben Abfrage sind derselbe Fehler und bekommen EINEN Nachfolger.
     predecessors: dict[str, Alert] = {}
@@ -657,6 +663,12 @@ async def _count_graylog_occurrences(
         if not c or c["count"] <= 0:
             continue
         o = _occ(a)
+        if fortschreibbar(a.status):
+            # Dauerfehler: im selben Eintrag fortschreiben (zählt als nachgezählt, nicht als neu — keine Kopie im Feed,
+            # kein erneuter Lauf durch Incident-Zuordnung und KI-Anreicherung)
+            a.metadata_ = {**(a.metadata_ or {}), "occurrences": fortgeschrieben(o, c, until)}
+            recounted.append(a)
+            continue
         nxt = Alert(
             source=a.source,
             severity=a.severity,
@@ -667,7 +679,7 @@ async def _count_graylog_occurrences(
             metadata_={**(a.metadata_ or {}), "occurrences": {
                 "query": o["query"], "connector_id": o.get("connector_id"),
                 "since": o["until"], "until": until, **c,
-                "continuation_of": str(a.id),
+                "continuation_of": str(a.id), "grund": f"Vorgänger {a.status} — der Fehler tritt wieder auf",
             }},
         )
         db.add(nxt)
