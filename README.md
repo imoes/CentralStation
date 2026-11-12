@@ -1854,6 +1854,12 @@ The AI only works when a check is true, and it only writes its own analysis.
   (hosts, IPs, internal domains, mails, UUIDs, secrets, user paths) are removed before a query leaves; pages only
   from public addresses; Stack Exchange through its API with the newest answer; long pages keep their end (in a
   forum the last post is usually the solution). Results are context, never evidence.
+  - **Search engines:** SearXNG is asked for `bing,mojeek` (setting `log_watch.websuche_engines`; an empty
+    value means SearXNG's default).
+    - Measured 12.11.2026: the default engines are blocked (brave rate-limited, duckduckgo/startpage CAPTCHA,
+      google/qwant access denied) and returned 0 results.
+    - Failed engines are named in the result (`ausgefallen`). With no results because engines failed, the AI gets
+      a `fehler` with the reason instead of an empty list.
 - **Every message is an object** (`nachricht.py`): fixed fields (`zeit`, `quelle`, `host`, `text`, `roh` …)
   never change; changeable fields only through methods (`verknuepfe`, `markiere`, `urteile`,
   `neu_bewerten`), each appending `{zeit, wer, was, grund}` to `aenderungen`; precedence human > AI > rule.

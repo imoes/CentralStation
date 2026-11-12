@@ -46,3 +46,24 @@ def test_lange_seite_behaelt_das_ende():
     t = "FRAGE " + "x" * 20000 + " LOESUNG: restart the listener"
     k = ws.kuerze_mit_ende(t, 6000)
     assert k.startswith("FRAGE") and k.endswith("LOESUNG: restart the listener") and len(k) <= 6000
+
+
+def test_auswerten_nennt_ausgefallene_suchmaschinen():
+    """12.11.: alle Standard-Suchmaschinen gesperrt → 0 Treffer; die KI muss den Grund sehen, keine stille leere Liste."""
+    j = {"results": [], "unresponsive_engines": [["brave", "too many requests"], ["duckduckgo", "CAPTCHA"]]}
+    e = ws.auswerten(j, "filebeat connection refused", [], "")
+    assert e["treffer"] == [] and e["ausgefallen"] == {"brave": "too many requests", "duckduckgo": "CAPTCHA"}
+    assert "brave (too many requests)" in e["fehler"] and e["suchmaschinen"] == "SearXNG-Standard"
+
+
+def test_auswerten_mit_treffern_ohne_fehler():
+    j = {"results": [{"title": "T", "url": "https://x.org/a", "content": "c" * 500, "engine": "bing"}] * 7,
+         "unresponsive_engines": [["qwant", "access denied"]]}
+    e = ws.auswerten(j, "q x", ["Hostname"], "bing,mojeek")
+    assert len(e["treffer"]) == ws.TREFFER_MAX and e["gesamt"] == 7 and "fehler" not in e
+    assert e["treffer"][0]["auszug"] == "c" * 400 and e["ausgefallen"] == {"qwant": "access denied"}
+    assert e["suchmaschinen"] == "bing,mojeek" and e["entfernt"] == ["Hostname"]
+
+
+def test_standard_suchmaschinen_sind_die_gemessenen():
+    assert ws.ENGINES_STANDARD == "bing,mojeek"

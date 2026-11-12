@@ -10,6 +10,37 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — The AI analysis gets web results from SearXNG again
+
+You: „Ich möchte das für die ki analyse searxng genutzt wird“ (SearXNG on llm-host03:8080).
+
+### What was fixed
+
+- **The AI analysis already used SearXNG** (`web_suche` in the funnel's tool list, `websuche.py`), but got no
+  results.
+  - Measured 12.11.: all of SearXNG's default engines are blocked: brave „too many requests“, duckduckgo and
+    startpage „CAPTCHA“, google and qwant „access denied“.
+  - The AI received `treffer: []` without a reason.
+- **Now:** SearXNG is asked for `bing,mojeek`, the two engines that answered. The setting
+  `log_watch.websuche_engines` changes the list.
+  - Failed engines are named in the result.
+  - Empty because engines failed is a named error, not an empty list.
+
+### Evidence
+
+- New code against the real SearXNG, 12.11. All three queries got 20 results each, with relevant hits:
+  - „filebeat connection refused elasticsearch output“ → stackoverflow.com/questions/68283915;
+  - „ORA-12541 TNS no listener“ → howtosop.com;
+  - „nifi queue back pressure full“ → stackoverflow.com/questions/71397281.
+- `test_log_watch_websuche.py`: 10 passed (3 new).
+
+### What is still missing
+
+- `feed_enricher.py` and `project_planner.py` query SearXNG without an engine list and get no results either.
+- If bing and mojeek get blocked too, the result names it, but nothing raises an alert.
+
+---
+
 ## 2026-11-12 — Mails now come from centralstation@example.com
 
 ### What was fixed

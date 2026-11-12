@@ -20,6 +20,12 @@ from urllib.parse import urlparse
 #: Standard-Adresse; überschreibbar über die Einstellung `log_watch.websuche_url`
 SEARXNG_URL = "http://llm-host03.example.com:8080"
 EINSTELLUNG = "log_watch.websuche_url"
+#: Suchmaschinen, die SearXNG fragen soll; überschreibbar über `log_watch.websuche_engines` (Komma-Liste, leer =
+#: SearXNG-Standard). Gemessen 12.11.2026 an llm-host03:8080 (SearXNG 2026.9.25): die Standard-Maschinen sind
+#: gesperrt — brave „too many requests“, duckduckgo/startpage „CAPTCHA“, google „access denied“, qwant „access
+#: denied“ — und lieferten 0 Treffer; bing und mojeek je 10.
+EINSTELLUNG_ENGINES = "log_watch.websuche_engines"
+ENGINES_STANDARD = "bing,mojeek"
 TREFFER_MAX = 5
 SEITE_MAX = 6000
 INTERNE_DOMAINS = ("example.com", "example.org", "example.net", "zo-intern.de", "local", "intern", "lan")
@@ -91,6 +97,35 @@ async def _basis() -> str:
         return SEARXNG_URL
 
 
+async def _engines() -> str:
+    from app.core.database import AsyncSessionLocal
+    from app.services.settings import get_setting
+    try:
+        async with AsyncSessionLocal() as db:
+            v = await get_setting(db, EINSTELLUNG_ENGINES)
+    except Exception:  # noqa: BLE001
+        v = None
+    return ENGINES_STANDARD if v is None else str(v).strip()
+
+
+def auswerten(j: dict, q: str, entfernt: list[str], engines: str) -> dict:
+    """SearXNG-Antwort → Ergebnis für die KI. Ausgefallene Suchmaschinen werden genannt; ohne Treffer, weil alle
+    ausfielen, ist das ein benannter Fehler statt einer stillen leeren Liste. Rein."""
+    treffer = [{"titel": x.get("title", ""), "url": x.get("url", ""), "auszug": (x.get("content") or "")[:400],
+                "suchmaschine": x.get("engine", "")} for x in (j.get("results") or [])[:TREFFER_MAX]]
+    ausgefallen = {str(e[0]): str(e[1]) for e in (j.get("unresponsive_engines") or [])
+                   if isinstance(e, (list, tuple)) and len(e) >= 2}
+    out = {"anfrage": q, "entfernt": entfernt, "treffer": treffer, "gesamt": len(j.get("results") or []),
+           "suchmaschinen": engines or "SearXNG-Standard",
+           "hinweis": "Kontext, kein Beleg — im Befund mit URL nennen; Seite lesen mit web_seite(url)"}
+    if ausgefallen:
+        out["ausgefallen"] = ausgefallen
+    if not treffer and ausgefallen:
+        out["fehler"] = ("Websuche ohne Treffer, weil Suchmaschinen ausgefallen sind: "
+                         + ", ".join(f"{k} ({v})" for k, v in ausgefallen.items()))
+    return out
+
+
 async def suche(anfrage: str, warum: str) -> dict:
     """Websuche über SearXNG — nur mit Begründung, nur bereinigt."""
     import httpx
@@ -100,17 +135,16 @@ async def suche(anfrage: str, warum: str) -> dict:
     if len(q.split()) < 2:
         return {"fehler": "nach dem Entfernen interner Namen bleibt keine sinnvolle Anfrage — suche nach der "
                           "Fehlermeldung oder dem Code, nicht nach Host oder Adresse", "entfernt": entfernt}
+    engines = await _engines()
+    params = {"q": q, "format": "json"} | ({"engines": engines} if engines else {})
     try:
         async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.get(f"{await _basis()}/search", params={"q": q, "format": "json"})
+            r = await c.get(f"{await _basis()}/search", params=params)
         r.raise_for_status()
         j = r.json()
     except Exception as e:  # noqa: BLE001 — Ausfall benannt
         return {"fehler": f"Websuche nicht erreichbar: {type(e).__name__}: {str(e)[:160]}", "anfrage": q}
-    treffer = [{"titel": x.get("title", ""), "url": x.get("url", ""), "auszug": (x.get("content") or "")[:400],
-                "suchmaschine": x.get("engine", "")} for x in (j.get("results") or [])[:TREFFER_MAX]]
-    return {"anfrage": q, "entfernt": entfernt, "treffer": treffer, "gesamt": len(j.get("results") or []),
-            "hinweis": "Kontext, kein Beleg — im Befund mit URL nennen; Seite lesen mit web_seite(url)"}
+    return auswerten(j, q, entfernt, engines)
 
 
 #: Stack-Exchange-Seiten lassen keine Skripte auf die Webseite (gemessen 07.11.: 403 auch mit Browser-Kennung) —
