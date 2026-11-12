@@ -69,6 +69,17 @@ You (12.11.):
     interrupted the AI fleet; this is not shown to come from the models.
 - **Local VI on vi-mcp 0.54.1** (update by the vi-mcp session, approved by you; package sha256 263b4f2f… checked
   against the Dockerfile).
+- **The local VI now reviews network imports itself** (you, 12.11.: „ja“, model „qwen27b“). Before, every import
+  waited for a human.
+  - `/etc/vi-mcp/config.json` in volume `vi-mcp-konfig` got two keys:
+    - `llm` = `https://llm-host03.example.com/qwen27b/v1/chat/completions` (no token);
+    - `reviewer_prompt` = `/etc/vi-mcp/pruefer-prompt.md`, the production reviewer prompt, sha256 78194ab9…, not in
+      the repo because it is host-specific.
+  - The old config is kept as `config.json.bak-20261112-vor-pruefer`.
+  - Check 09:46 UTC: `/gesund` 200 (0.54.1). A sample object sent to qwen27b with this prompt came back as valid JSON
+    in the schema (`kanarie: ROT`, verdict „zulassen“, 17.7 s).
+  - The route `/qwen27b` currently serves `qwen3.8-flash-next-unsloth-ud-iq4_xs`.
+  - A real network import has not passed through the reviewer yet.
 
 ### What is missing (production test)
 
