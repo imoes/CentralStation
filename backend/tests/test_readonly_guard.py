@@ -73,6 +73,23 @@ ALLOWED = [
     "pip uninstall -y pandas",
     "pip download numpy",
     "pip list",
+    # Quoted patterns are not redirects/commands (12.11.: secret masking with sed/grep
+    # over ssh was refused because `>` inside the pattern looked like a redirect, and
+    # `install/`, `/etc/crontab`, `/etc/cron.d/aim-reboot` looked like commands)
+    "ssh h 'sudo -n cat /usr/lib/check_mk_agent/local/check_nifi' | "
+    "sed -E 's/(pass(word)?|token)([^=:]*[=:] *)[^ ,;)]+/\\1\\3<…>/Ig'",
+    "ssh h 'grep -in ldap x.xml | sed -E \"s/(pass[a-z_]*[\\\"=> ]+)[^<\\\" ]+/\\1***/Ig\"; "
+    "ls -la install/ install.old/ 2>&1 | head'",
+    "ssh h 'grep -oE \"^<user:[^>]*>\" f | sort | uniq -c'",
+    "ssh h 'sed -n \"/install/p\" /var/log/dpkg.log'",
+    "ssh h 'sed -n -e \"1,3p\" -e \"\\$p\" f'",
+    "ssh h 'grep -c \"Killed process\" /var/log/syslog'",
+    "ssh h 'echo \"==> Abschnitt\"; df -h'",
+    "ssh h 'awk -F: \"\\$2 >= 10 && \\$2 <= 20\" f'",
+    "ssh h 'jq \".[] | select(.n > 3)\" f'",
+    "ssh h 'cat /etc/crontab; cat /etc/cron.d/aim-reboot'",
+    "ssh h 'ls /var/lib/rm.log'",
+    "cd /home/yolo/workspaces && sed -E 's/(echo +)(\"?)[^\"]{4,}/\\1\\2<…>/' askpass.sh",
 ]
 
 #: Commands that must be refused until the user opens a write window.
@@ -128,6 +145,33 @@ BLOCKED = [
     # A permitted pip install must not launder the rest of a compound command
     "pip install pandas && rm -rf /etc/foo",
     "pip install pandas; systemctl restart nginx",
+    # Masking quoted patterns must not hide real writes (12.11.)
+    "ssh h 'grep x f > /etc/y'",
+    "grep x f > \"/etc/passwd\"",
+    "ssh h 'grep \"$(rm -rf /x)\" f'",
+    "ssh h 'echo `rm x`'",
+    "ssh h 'sudo sh -c \"rm /x\"'",
+    "ssh h 'bash -c \"echo a > /etc/x\"'",
+    "ssh h 'find . -name x -exec rm {} +'",
+    "ssh h 'ls | xargs /bin/rm'",
+    "ssh h '{rm,-rf,/x}'",
+    "ssh h '/usr/sbin/reboot'",
+    "ssh -p 22 h ./reboot",
+    "ssh h 'crontab -r'",
+    "ssh h 'echo a; kill -9 1'",
+    # sed/awk scripts that write or execute — the old regex let these through
+    "ssh h 'sed -Ei \"s/a/b/\" f'",
+    "ssh h 'sed --in-place \"s/a/b/\" f'",
+    "ssh h 'sed -n \"w /tmp/x\" f'",
+    "ssh h 'sed \"s/a/b/w /etc/x\" f'",
+    "ssh h 'sed \"1e rm -rf /\" f'",
+    "ssh h 'sed -n -e p -e \"w /x\" f'",
+    "ssh h 'sed -new\\ /x f'",
+    "ssh h 'sed -f /tmp/s f'",
+    "ssh h 'awk \"{system(\\\"rm x\\\")}\" f'",
+    "ssh h 'awk \"{print | \\\"sh\\\"}\" f'",
+    "ssh h 'awk \"{print > \\\"/etc/x\\\"}\" f'",
+    "ssh h 'awk -i inplace \"{print}\" f'",
 ]
 
 

@@ -1985,6 +1985,28 @@ starts while the hook is missing. What the guard looks at beyond plain commands:
   container; the hook, not the sandbox, enforces read-only.
 - **Agents cannot reconfigure themselves:** shell writes to `~/.codex`, `~/.claude`,
   `~/.hermes`, `~/.ssh` and the shell profiles need the write window.
+- **Quoted patterns are not commands (since 2026-11-12).** A small shell lexer runs before
+  the rules. It replaces the quoted arguments of programs that cannot write with a
+  placeholder, so a `>` inside a pattern is not read as a redirect. The programs are
+  `grep`/`egrep`/`fgrep`/`zgrep`/`rg`, `echo`, `printf` and `jq`, plus `sed`/`awk` when
+  their script verifiably neither writes nor executes. The lexer descends into the ssh
+  remote command and into `sh -c "…"`. Example: `sed -E 's/(pass=)[^ ]+/\1<…>/'`.
+  - **Write and system commands count only as a whole word.** `rm`, `/bin/rm`, `"rm"`,
+    `xargs rm`, `find -exec rm` and `./reboot` in command position count. `ls install/`,
+    `cat /etc/crontab` and `cat /etc/cron.d/aim-reboot` do not.
+  - **Stays strict:**
+    - redirect targets;
+    - quotes containing `$(…)` or backticks;
+    - brace expansion (`{rm,-rf,x}`);
+    - heredocs and anything the lexer cannot parse (the old substring rules apply).
+  - **Blocked now, let through before:**
+    - `sed -Ei` and `sed --in-place`;
+    - the sed commands `w`/`W`/`e` and the `s///w`/`s///e` flags;
+    - `sed -f`;
+    - awk with `system()`, a pipe or `print >`.
+  - **Evidence:** cases in `backend/tests/test_readonly_guard.py`. Replaying all 57 parseable
+    commands from the console's audit log: 22 refusals become allowed, all of them read-only
+    diagnoses; no previously allowed command becomes refused.
 
 Guarded MCP tools: `jira_add_comment`, `jira_update_issue`, `jira_transition_issue`,
 `jira_close_issue`, `create_jira_ticket`, `acknowledge_alert`, `run_remediation`,

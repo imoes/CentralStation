@@ -10,6 +10,47 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — Console: read-only diagnoses with sed/grep no longer refused
+
+You: „Der Hook hat den sed-Ausdruck wieder als schreibend gewertet“.
+
+### What was fixed
+
+- **Read-only guard of the console** (`userenv/cs-readonly-guard.py`). Its rules matched the whole command text and
+  did not tell quoting apart from commands. Two kinds of false refusals followed:
+  - A `>` inside a sed/grep pattern was taken for a redirect, which together with `ssh` meant „writes on
+    production“. Example: secret masking `s/…/<…>/`; audit log, 12.11. at 11:35:32 and 11:36:36.
+  - Command names inside paths were taken for commands: `ls install/`, `/etc/crontab`, `/etc/cron.d/aim-reboot`,
+    `grep "Killed process"`.
+- **Now:** quoted arguments of grep/echo/printf/jq, and of sed/awk when their script verifiably does not write, are
+  hidden from the rules. Write and system commands count only as a whole word or in command position.
+  Details: README „Quoted patterns are not commands“.
+
+### What has changed
+
+- **Stricter than before:** the guard now blocks:
+  - `sed -Ei`, `sed --in-place` and `sed -f`;
+  - the sed commands `w`/`W`/`e`;
+  - awk with `system()`, a pipe or `print >`.
+
+  The old rules let these through.
+
+### Evidence
+
+- `backend/tests/test_readonly_guard.py`: 175 passed (previously 138; 37 new allowed and blocked cases).
+- All 57 parseable commands from the audit log `/tmp/cs-readonly-guard.log` (container
+  `cs-userenv-71dcb97d…`) were replayed with the old and the new guard:
+  - 22 refusals become allowed, all of them read-only diagnoses (sample reviewed);
+  - 0 allowed become refused.
+
+### What is still missing
+
+- The rule for `$(…)`/`<` around `ssh` stays strict and still refuses some read-only loops
+  (`for f in $(ls …); do n=$(grep -c …)`).
+- `last -x reboot` is still refused: `reboot` there is a single word.
+
+---
+
 ## 2026-11-12 — The AI asks back by mail and in the console; duplicate copies deleted
 
 External analysis F6: „Kein Lernen aus Behebungen: 100 % Incidents ‚unbearbeitet‘, 9/11.812 Episoden mit

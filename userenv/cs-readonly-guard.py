@@ -40,21 +40,24 @@ import time
 _SYSTEM_OP = re.compile(
     r"""(?ix)
     \b(systemctl|service)\s+\S*\s*(restart|stop|start|reload|enable|disable|mask|unmask|kill)\b
-    | \b(reboot|shutdown|halt|poweroff|init)\b
     | \b(apt|apt-get|aptitude|yum|dnf|zypper|snap)\s+(install|remove|purge|upgrade|autoremove|dist-upgrade)\b
     | \b(npm|yarn|pnpm|gem|cargo)\s+(install|uninstall|add|remove)\b
     | \bdocker\s+(run|rm|stop|start|restart|kill|rmi|pull|push|compose)\b
     | \bkubectl\s+(apply|delete|edit|scale|patch|create|replace|rollout|cordon|drain)\b
     | \bgit\s+(push|reset\s+--hard|clean)\b
-    | \b(useradd|userdel|usermod|groupadd|passwd|chpasswd)\b
-    | \b(iptables|nft|ufw|firewall-cmd)\b
-    | \b(mount|umount|swapoff|swapon|mkfs\w*|mkswap|fdisk|parted|dd)\b
     | \bsysctl\s+-w\b
-    | \b(kill|pkill|killall)\b
-    | \bcrontab\b
     """,
     re.VERBOSE,
 )
+#: Systembefehle, die schon als einzelnes WORT gefährlich sind. Geprüft wortgenau über
+#: _has_word (12.11.: `/etc/crontab`, `/etc/cron.d/aim-reboot` in Lese-Diagnosen auf
+#: aim012 sperrten, weil der Teilstring-Ausdruck den Pfad als Befehl las).
+_SYSTEM_WORD_RE = re.compile(
+    r"(?i)\b(reboot|shutdown|halt|poweroff|init|useradd|userdel|usermod|groupadd|passwd|"
+    r"chpasswd|iptables|nft|ufw|firewall-cmd|mount|umount|swapoff|swapon|mkfs\w*|mkswap|"
+    r"fdisk|parted|dd|kill|pkill|killall|crontab)\b")
+_SYSTEM_OP_STRICT = re.compile(_SYSTEM_OP.pattern + r" | " + _SYSTEM_WORD_RE.pattern[4:],
+                               re.VERBOSE | re.IGNORECASE)
 
 # File-modifying operations — dangerous only against remote hosts or system paths.
 _FILE_WRITE = re.compile(
@@ -62,6 +65,20 @@ _FILE_WRITE = re.compile(
     \b(rm|rmdir|shred|unlink|truncate|mv|cp|chmod|chown|chgrp|ln|tee|touch|mkdir|install|patch)\b
     | \bsed\s+-i | \bperl\s+-i | \bawk\s+-i\b
     | \b(nano|vim?|vi|emacs)\b
+    | >>?\s*(?!(&\s*\d|/dev/null|/dev/stderr|/dev/stdout))\S
+    """,
+    re.VERBOSE,
+)
+
+# Dieselben Regeln getrennt: Schreib-WÖRTER (Befehlsnamen) und Schreib-OPERATIONEN.
+# Die Wörter prüft _write_word wortgenau (`ls install/` ist kein install), die
+# Operationen bleiben ein Ausdruck über den Text ohne träge Argumente.
+_WRITE_WORD_RE = re.compile(
+    r"(?i)\b(rm|rmdir|shred|unlink|truncate|mv|cp|chmod|chown|chgrp|ln|tee|touch|mkdir|"
+    r"install|patch|nano|vim?|emacs)\b")
+_FILE_WRITE_OPS = re.compile(
+    r"""(?ix)
+    \bsed\s+-i | \bperl\s+-i | \bawk\s+-i\b
     | >>?\s*(?!(&\s*\d|/dev/null|/dev/stderr|/dev/stdout))\S
     """,
     re.VERBOSE,
@@ -331,6 +348,404 @@ _AGENT_CONFIG_PATH = re.compile(
     r"\.(?:codex|claude|hermes|ssh|profile|bashrc|bash_profile|config/claude|npmrc|pip)(?:/|\b)")
 
 
+# ── Träge Argumente ausblenden (Anlass 11./12.11.2026) ────────────────────────────────
+# Die Regeln oben sind reguläre Ausdrücke über den ganzen Befehlstext. Sie sehen deshalb
+# auch das `>` in einem sed-Muster (`sed -E 's/(pass=)[^ ]+/\1<…>/'`) oder in einem
+# grep-Muster (`grep -oE "^<user:[^>]*>"`) als Umleitung — und mit `ssh` davor als
+# Schreiben auf Produktion. Gesperrt wurden so reine Lese-Diagnosen mit Maskierung der
+# Geheimnisse (Audit-Log /tmp/cs-readonly-guard.log, 12.11. 11:35:32 und 11:36:36).
+# Abhilfe: ein kleiner Shell-Lexer ersetzt die GEQUOTETEN Argumente von Programmen, die
+# nicht schreiben können, durch einen Platzhalter, bevor die Regeln laufen. Nur diese:
+_INERT_PROGS = {"grep", "egrep", "fgrep", "zgrep", "zegrep", "rg", "echo", "printf", "jq"}
+#: sed und awk sind Programme mit eigener Sprache — ausgeblendet nur, wenn das Skript
+#: nachweislich nicht schreibt/ausführt (_sed_script_writes, _awk_program_writes).
+_SCRIPT_PROGS = {"sed", "gsed", "awk", "gawk", "mawk", "nawk"}
+_WRAPPERS = {"sudo", "env", "nohup", "nice", "stdbuf", "command", "exec", "time", "timeout",
+             "xargs"}
+_SEPARATORS = {"|", "||", "&&", ";", "&", "(", ")", "\n"}
+
+
+class _LexError(ValueError):
+    pass
+
+
+def _lex(cmd: str) -> list[tuple[str, int, int, str]]:
+    """Shell-Wörter als (art, start, ende, wert): art word | op | redir; wert ohne Quotes.
+
+    Wie bash für einfache Befehle: '…' wörtlich, "…" mit \\-Escapes, $'…', \\ außerhalb.
+    Unbalancierte Quotes → _LexError (der Aufrufer bleibt dann beim strengen Text).
+    """
+    out, i, n = [], 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if c in " \t":
+            i += 1
+            continue
+        if c == "\n":
+            out.append(("op", i, i + 1, "\n"))
+            i += 1
+            continue
+        two = cmd[i:i + 2]
+        if two in ("||", "&&"):
+            out.append(("op", i, i + 2, two))
+            i += 2
+            continue
+        if c in "|;&()":
+            out.append(("op", i, i + 1, c))
+            i += 1
+            continue
+        if c in "<>":
+            j = i + 1
+            while j < n and cmd[j] in "<>&|":
+                j += 1
+            out.append(("redir", i, j, cmd[i:j]))
+            i = j
+            continue
+        start, val = i, []
+        while i < n and cmd[i] not in " \t\n|;&()<>":
+            c = cmd[i]
+            if c == "\\":
+                if i + 1 < n:
+                    val.append(cmd[i + 1])
+                i += 2
+            elif c == "'" or (c == "$" and cmd[i + 1:i + 2] == "'"):
+                i += 2 if c == "$" else 1
+                j = cmd.find("'", i)
+                while c == "$" and j > 0 and cmd[j - 1] == "\\":
+                    j = cmd.find("'", j + 1)
+                if j < 0:
+                    raise _LexError("offenes '")
+                val.append(cmd[i:j])
+                i = j + 1
+            elif c == '"':
+                i += 1
+                while i < n and cmd[i] != '"':
+                    if cmd[i] == "\\" and i + 1 < n and cmd[i + 1] in '"\\$`\n':
+                        val.append(cmd[i + 1])
+                        i += 2
+                    else:
+                        val.append(cmd[i])
+                        i += 1
+                if i >= n:
+                    raise _LexError('offenes "')
+                i += 1
+            else:
+                val.append(c)
+                i += 1
+        # Ziffer direkt vor > / < gehört zur Umleitung (2>, 1>>)
+        if i < n and cmd[i] in "<>" and cmd[start:i].isdigit():
+            continue_from = i
+            j = continue_from + 1
+            while j < n and cmd[j] in "<>&|":
+                j += 1
+            out.append(("redir", start, j, cmd[start:j]))
+            i = j
+            continue
+        out.append(("word", start, i, "".join(val)))
+    return out
+
+
+def _sed_script_writes(script: str) -> bool:
+    """Schreibt/ausführt ein sed-Skript? w/W-Befehl, e-Befehl, s///w oder s///e. Was der
+    kleine Parser nicht versteht, gilt als schreibend."""
+    i, n = 0, len(script)
+
+    def skip_delim(i: int, d: str) -> int:
+        while i < n and script[i] != d:
+            i += 2 if script[i] == "\\" else 1
+        if i >= n:
+            raise _LexError("sed: offenes Trennzeichen")
+        return i + 1
+
+    try:
+        while i < n:
+            c = script[i]
+            if c in " \t\n;{}!,0123456789$~+":
+                i += 1
+                continue
+            if c == "/":
+                i = skip_delim(i + 1, "/")
+                while i < n and script[i] in "IM":
+                    i += 1
+                continue
+            if c == "\\" and i + 1 < n:             # \cREGEXc
+                i = skip_delim(i + 2, script[i + 1])
+                continue
+            if c in "wWe":
+                return True
+            if c in "sy":
+                if i + 1 >= n:
+                    return True
+                d = script[i + 1]
+                i = skip_delim(i + 2, d)
+                i = skip_delim(i, d)
+                j = i
+                while j < n and script[j] not in ";\n}":
+                    j += 1
+                if c == "s" and re.search(r"[we]", script[i:j]):
+                    return True
+                i = j
+                continue
+            if c in "aicrRbtTv:#lLqQ":
+                if c == "#":                       # Kommentar bis Zeilenende
+                    j = script.find("\n", i)
+                    i = n if j < 0 else j
+                    continue
+                j = i + 1
+                stop = "\n" if c in "aic" else ";\n}"      # a/i/c: Text bis Zeilenende
+                while j < n and script[j] not in stop:
+                    j += 1
+                i = j
+                continue
+            if c in "pdDnNPhHgGxzF=":
+                i += 1
+                continue
+            return True
+    except _LexError:
+        return True
+    return False
+
+
+_AWK_WRITE = re.compile(r"\bsystem\s*\(|(?<!\|)\|(?!\|)|\b(?:print|printf)\b[^;}\n]*>|\bclose\s*\(")
+
+
+def _awk_program_writes(prog: str) -> bool:
+    """Schreibt/ausführt ein awk-Programm? system(), Pipes (`| "cmd"`, `"cmd" | getline`),
+    print/printf mit Umleitung. `>=`-Vergleiche in Bedingungen bleiben lesend."""
+    return bool(_AWK_WRITE.search(prog))
+
+
+def _mask_simple(words: list[tuple[str, int, int, str]], depth: int,
+                 repl: list[tuple[int, int, str]], cmd: str, flags: list[str]) -> None:
+    """Ein einfacher Befehl: träge Argumente in `repl` als (start, ende, ersatz) vormerken.
+    Ein sed/awk-Skript, das schreibt oder ausführt, landet als Grund in `flags`."""
+    k = 0
+    # Zuweisungen und Wrapper (mit Optionen) vorne überspringen
+    while k < len(words):
+        kind, s, e, v = words[k]
+        if kind == "word" and _ASSIGN.match(v):
+            k += 1
+            continue
+        if kind == "word" and v.rsplit("/", 1)[-1] in _WRAPPERS:
+            k += 1
+            while k < len(words) and words[k][0] == "word" and (
+                    words[k][3].startswith("-") or words[k][3].isdigit()):
+                k += 1
+            continue
+        break
+    if k >= len(words) or words[k][0] != "word":
+        return
+    prog = words[k][3].rsplit("/", 1)[-1]
+    args = words[k + 1:]
+
+    def quoted(w) -> bool:
+        raw = cmd[w[1]:w[2]]
+        return ("'" in raw or '"' in raw) and "$(" not in raw and "`" not in raw
+
+    def plain_args():
+        """Argumente ohne Umleitungsziele (das Wort nach > bleibt sichtbar)."""
+        skip = False
+        for w in args:
+            if w[0] == "redir":
+                skip = True
+                continue
+            if w[0] != "word":
+                continue
+            if skip:
+                skip = False
+                continue
+            yield w
+
+    if prog in ("ssh", "sshpass"):
+        rest = list(plain_args())
+        j = 0
+        if prog == "sshpass":                     # sshpass -p x ssh …
+            while j < len(rest) and rest[j][3] != "ssh":
+                j += 1
+            j += 1
+        while j < len(rest) and rest[j][3].startswith("-"):
+            f = rest[j][3]
+            j += 2 if (len(f) == 2 and f[1] in _SSH_OPTS_WITH_ARG) else 1
+        for w in rest[j + 1:]:                    # nach dem Host: der entfernte Befehl
+            if quoted(w):
+                inner = _mask_inert(w[3], depth + 1, flags)
+                if inner != w[3]:
+                    repl.append((w[1], w[2], "'" + inner.replace("'", "'\\''") + "'"))
+        return
+    if prog in _SHELLS:
+        rest = list(plain_args())
+        for i, w in enumerate(rest[:-1]):
+            if w[3].startswith("-") and "c" in w[3][1:] and quoted(rest[i + 1]):
+                inner = _mask_inert(rest[i + 1][3], depth + 1, flags)
+                if inner != rest[i + 1][3]:
+                    t = rest[i + 1]
+                    repl.append((t[1], t[2], "'" + inner.replace("'", "'\\''") + "'"))
+                break
+        return
+    if prog in _INERT_PROGS:
+        for w in plain_args():
+            if quoted(w):
+                repl.append((w[1], w[2], "'Q'"))
+        return
+    if prog in _SCRIPT_PROGS:
+        rest = list(plain_args())
+        opts = [w[3] for w in rest if w[3].startswith("-")]
+        is_sed = prog.endswith("sed")
+        if is_sed:
+            if any(o == "--in-place" or o.startswith("--in-place=") or
+                   (not o.startswith("--") and "i" in o[1:]) for o in opts):
+                flags.append("sed -i")            # schreibt in die Datei
+                return
+            if any(o in ("-f", "--file") or o.startswith("--file=") or
+                   (not o.startswith("--") and "f" in o[1:]) for o in opts):
+                flags.append("sed -f")            # Skript aus Datei: nicht prüfbar
+                return
+            check = _sed_script_writes
+        else:
+            if any(o in ("-i", "--include", "-f", "--file", "-E", "--exec", "-l", "--load")
+                   or o.startswith(("--include=", "--file=", "--exec=", "--load="))
+                   for o in opts):
+                flags.append(f"{prog} {' '.join(opts)}")   # inplace/-f/Erweiterung
+                return
+            check = _awk_program_writes
+        # Die Skript-Wörter bestimmen (auch ungequotet: sed -n -e p -e 'w /x' f):
+        # sed: jedes Argument von -e/--expression, sonst das erste Nicht-Options-Wort;
+        # awk: das erste Wort, das nicht Argument von -F/-v ist.
+        scripts, explicit, j = [], False, 0
+        while j < len(rest):
+            v = rest[j][3]
+            if v == "--":
+                j += 1
+                break
+            if not v.startswith("-") or v == "-":
+                break
+            if is_sed and v == "--expression":
+                explicit = True
+                if j + 1 < len(rest):
+                    scripts.append(rest[j + 1][3])
+                j += 2
+                continue
+            if is_sed and not v.startswith("--") and "e" in v[1:]:
+                # GNU: `-ne SKRIPT` oder `-neSKRIPT` — nach dem e beginnt das Skript
+                explicit = True
+                tail = v[v.index("e", 1) + 1:]
+                if tail:
+                    scripts.append(tail)
+                    j += 1
+                else:
+                    if j + 1 < len(rest):
+                        scripts.append(rest[j + 1][3])
+                    j += 2
+                continue
+            if is_sed and v.startswith("--expression="):
+                explicit = True
+                scripts.append(v.split("=", 1)[1])
+            elif is_sed and v in ("-l", "--line-length"):
+                j += 1
+            elif not is_sed and v in ("-F", "-v"):
+                j += 1
+            j += 1
+        if not explicit and j < len(rest):
+            scripts.append(rest[j][3])
+        if any(check(sc) for sc in scripts):
+            flags.append(f"{prog}-Skript schreibt/führt aus")
+            return
+        for w in rest:
+            if quoted(w) and not w[3].startswith("-"):
+                repl.append((w[1], w[2], "'Q'"))
+
+
+def _mask_inert(cmd: str, depth: int = 0, flags: list[str] | None = None) -> str:
+    """`cmd` mit Platzhaltern statt der gequoteten Argumente träger Programme.
+
+    Bei Lexfehlern, zu tiefer Verschachtelung oder Heredocs bleibt der Text unverändert
+    (die Regeln bleiben dann so streng wie bisher)."""
+    if flags is None:
+        flags = []
+    if depth > 3 or "<<" in cmd:
+        return cmd
+    try:
+        toks = _lex(cmd)
+    except _LexError:
+        return cmd
+    repl: list[tuple[int, int, str]] = []
+    cur: list = []
+    for t in toks + [("op", len(cmd), len(cmd), ";")]:
+        if t[0] == "op" and t[3] in _SEPARATORS:
+            if cur:
+                _mask_simple(cur, depth, repl, cmd, flags)
+            cur = []
+        else:
+            cur.append(t)
+    for s, e, r in sorted(repl, reverse=True):
+        cmd = cmd[:s] + r + cmd[e:]
+    return cmd
+
+
+_META = re.compile(r"[\s;|&()<>$`{}]")
+
+
+def _write_word(cmd: str, depth: int = 0) -> bool:
+    return _has_word(cmd, _WRITE_WORD_RE, depth)
+
+
+def _system_word(cmd: str, depth: int = 0) -> bool:
+    return _has_word(cmd, _SYSTEM_WORD_RE, depth)
+
+
+def _has_word(cmd: str, word_re: re.Pattern, depth: int = 0) -> bool:
+    """Steht ein Schreib-Befehl (rm, cp, tee, install, vim …) als WORT im Befehl?
+
+    Wortgenau statt Teilstring: `rm`, `/bin/rm`, `\\rm`, `"rm"` zählen, `install/`,
+    `install.old/x.xml`, `rm.log` nicht (Anlass 12.11.: `ls -la install/` in einer
+    Diagnose auf cue0174 sperrte). Gequotete Befehlstexte (ssh-Fernbefehl, `sh -c`,
+    `$(…)`) werden rekursiv geprüft. Was der Lexer nicht versteht (Backticks, Heredoc,
+    offene Quotes, Klammer-Expansion), prüft der alte Teilstring-Ausdruck — streng.
+    """
+    if depth > 3 or "<<" in cmd or "`" in cmd:
+        return bool(word_re.search(cmd))
+    try:
+        toks = _lex(cmd)
+    except _LexError:
+        return bool(word_re.search(cmd))
+    at_cmd = True                                  # nächstes Wort steht an Befehlsposition
+    ssh_skip = -1                                  # >=0: Wörter bis zum ssh-Host
+    for kind, _s, _e, v in toks:
+        if kind == "op":
+            at_cmd, ssh_skip = v in _SEPARATORS, -1
+            continue
+        if kind != "word":
+            continue
+        here, at_cmd = at_cmd, (at_cmd and (_ASSIGN.match(v) is not None
+                                            or v.rsplit("/", 1)[-1] in _WRAPPERS))
+        if here and v.rsplit("/", 1)[-1] in ("ssh", "sshpass"):
+            ssh_skip = 0
+        elif ssh_skip >= 0:                        # ssh-Optionen, dann der Host
+            if ssh_skip > 0:
+                ssh_skip -= 1
+            elif v.startswith("-"):
+                ssh_skip = 1 if (len(v) == 2 and v[1] in _SSH_OPTS_WITH_ARG) else 0
+            else:                                  # Host: danach der entfernte Befehl
+                ssh_skip, at_cmd = -1, True
+                continue
+        if not word_re.search(v):
+            continue
+        if _META.search(v):
+            if v == cmd or "{" in v or "}" in v:   # Klammer-Expansion {rm,-rf,x}: streng
+                return True
+            if _has_word(v, word_re, depth + 1):
+                return True
+            continue
+        if word_re.fullmatch(v):                   # rm, "rm", \rm — überall (xargs rm, -exec rm)
+            return True
+        # Pfad: /bin/rm, /usr/sbin/reboot oder ein Pfad an Befehlsposition (./rm);
+        # /etc/crontab oder /etc/cron.d/aim-reboot als ARGUMENT ist nur ein Dateiname.
+        d, _, base = v.rpartition("/")
+        if base and word_re.fullmatch(base) and (here or re.search(r"(^|/)s?bin$", d)):
+            return True
+    return False
+
+
 def _is_write(cmd: str, cwd: str = "", _depth: int = 0) -> bool:
     sub_write, cmd = _ssh_substitution_write(cmd, cwd, _depth)
     if sub_write:
@@ -340,9 +755,13 @@ def _is_write(cmd: str, cwd: str = "", _depth: int = 0) -> bool:
         return True
     if _depth == 0 and _script_is_write(cmd, cwd):
         return True
-    if _SYSTEM_OP.search(cmd):
+    # Systembefehle und Schreib-Muster nur außerhalb träger, gequoteter Argumente suchen
+    # (grep-/sed-Muster, echo-Text); Fern-, Pfad- und Konfig-Prüfung bleiben am vollen Text.
+    script_writes: list[str] = []
+    inert = _mask_inert(cmd, flags=script_writes)
+    if _SYSTEM_OP.search(inert) or _system_word(inert):
         return True
-    if _FILE_WRITE.search(cmd):
+    if _write_word(inert) or _FILE_WRITE_OPS.search(inert) or script_writes:
         # Remote target (production), a local system path or the agents' own config → block.
         if _REMOTE.search(cmd) or _SYSTEM_PATH.search(cmd) or _AGENT_CONFIG_PATH.search(cmd):
             return True
@@ -577,7 +996,7 @@ def main() -> None:
         # ist, sieht der Hook nicht.
         if (tool_input.get("action") in ("write", "submit")):
             data = tool_input.get("data", "") or ""
-            if _SYSTEM_OP.search(data) or _FILE_WRITE.search(data) or _is_write(data):
+            if _SYSTEM_OP_STRICT.search(data) or _FILE_WRITE.search(data) or _is_write(data):
                 _allow_if_approved()
                 _deny("READ-ONLY-MODUS: Diese Eingabe in einen laufenden Prozess würde ein "
                       "System verändern und wurde BLOCKIERT. Bitte den Nutzer, in der "
