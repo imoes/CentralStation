@@ -1,4 +1,4 @@
-# Lokale VI für CentralStation: vi-mcp aus dem Debian-Paket (Release github.com/imoes/vi-mcp/releases/tag/v0.54.1).
+# Lokale VI für CentralStation: vi-mcp aus dem Debian-Paket (Release github.com/imoes/vi-mcp/releases/tag/v0.57.0).
 # Ein Image, zwei Dienste im Compose: vi-mcp (Gedächtnis, Nutzer vi-mcp) und vi-p2p (Netzdienst, Nutzer vi-p2p,
 # Profil „netz“) — wie die beiden systemd-Dienste des Pakets, getrennt: der Netzdienst liest fremde Daten und
 # erreicht das Gedächtnis nur über das MCP-Werkzeugpaar vi_netz_ausgang/vi_netz_eingang.
@@ -7,8 +7,8 @@ FROM ubuntu:24.04
 ARG HTTP_PROXY=""
 ARG HTTPS_PROXY=""
 ARG NO_PROXY=""
-ARG VI_MCP_DEB=vi-mcp_0.54.1-1_all.deb
-ARG VI_MCP_SHA256=263b4f2fa965709ff028da59c38072ed30c428086bd4a21a48c1cbe95621ab47
+ARG VI_MCP_DEB=vi-mcp_0.57.0-1_all.deb
+ARG VI_MCP_SHA256=1e8f2f2e843089f0459c0e5ad6fd25b91c984874880bb4a9c0b3d75f6fd2e905
 ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY} no_proxy=${NO_PROXY} \
     HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} NO_PROXY=${NO_PROXY}
 
