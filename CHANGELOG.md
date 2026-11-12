@@ -69,20 +69,45 @@ System“. The written proposal it is built from: `docs/vorschlag-relevanz-model
   - VMware GuestInfo interval 130;
   - three `ansible-* Invoked with` patterns 130/128/122. These are from 07.11., before ansible became N5.
   - Wazuh rule 31115 on CheckMK dashboard URLs 72.
-- **Tests:** `tests/test_log_watch_relevanz_modell.py`, 20 tests (the first commit ecdb325 said 20; it had 18): labels,
+- **Revised with the vi-mcp session (dry run 12.11. 07:51 UTC, 22 211 labels).** It advised four changes before
+  „bereit“; all four are built.
+  1. **Grouped holdout as the yardstick.** Only keys never seen in training count: 722 messages, 116 keys.
+     - AUC 0.783. Per key (each counted once) 0.912. Time-only holdout 0.932.
+     - Without the largest noise key (`muster:8c6cb1b2…`, digicol DCX_Hotfolder) 0.920. Without the dominant
+       feature 0.937.
+     - Recall of the relevant ones 0.990 at threshold 0.61; noise caught 21.8 %.
+  2. **Weight 1/n per (origin, key, label).** 157 noise keys are the real sample of the minority class, not 2 818
+     messages. Pattern weights shrank; hosts now lead.
+     - The audit flags 5 host weights: cue0148 −2.46, aim012 +1.89, cue0112 −1.55, cue0111 −1.23, cue0174 +1.01.
+     - It also flags `stunde:03` +1.31, `dominant kriterium:R2` (71 of 125 noise verdicts) and `widerspricht
+       ort:DHW-0`.
+  3. **Episode breadth `breite:`.** `stunde:13` falls from +1.57 to +0.77. The breadth weights stay modest: 16+
+     +0.44, 4-15 +0.24, 2-3 −0.46, 1 −0.52.
+     - `stunde:03` (+1.31) is now the strongest hour. **Hypothesis:** nightly jobs, not the clock.
+  4. **Review queues for gold labels** (last 7 days, 55 232 messages, one case per key): `widerspruch` 247,
+     `unsicher` 1 782.
+     - Activation additionally needs gold AUC better than the current rules on the same gold cases.
+  - Model ↔ rules after the revision: 1 266 messages the rules forward, the model calls noise (R2 1 026, R6 121,
+    R3 109, R4 10).
+    - Largest: three `ansible-* Invoked with` patterns 115/113/107 (07.11., before ansible became N5);
+    - Wazuh 31115 on CheckMK dashboard URLs 67;
+    - digicol DCX_Hotfolder 67;
+    - `syslogin_perform_logout` 64;
+    - sudo `pam_unix` session for ansible 59.
+- **Tests:** `tests/test_log_watch_relevanz_modell.py`, 26 tests (the first commit ecdb325 said 20; it had 18): labels,
   allowlist and leaks, rare pooling, AUC, mode, audit, and the effect in
   the raster with the rule in test mode, active-but-not-ready and ready, never against R5. Full suite in the backend
-  image: 869 passed; the same 7 failures and 3 collection errors as before.
+  image: 877 passed; the same 7 failures and 3 collection errors as before.
 
 ### What is missing
 
 - **Gold labels:** 0 human verdicts so far. Without ≥ 50 per class the model cannot become `bereit`, by design.
   The way to give one exists (`POST /log-watch/nachrichten/{id}/urteil`); a daily review list and a one-click
-  „relevant / Rauschen“ button in the feed are not built.
+  „relevant / Rauschen“ button in the feed are not built; the review queues exist as API only.
 - **Sample of blocked messages:** what the rules drop is not stored, so the model sees almost no noise the rules
   already caught (222 stored `nicht_relevant`).
-- **Threshold:** chosen in training, it yields 0.944 instead of 0.99 recall on the newer holdout. It needs a
-  separate calibration slice before the model may decide anything.
+- **Threshold:** chosen in training. Recall on the grouped holdout is 0.990 now; in the first dry run it was 0.944.
+  It still needs a separate calibration slice before the model may decide anything.
 - Not deployed yet.
 
 ## 2026-11-11 — No more „Etwas Neues: neuer Host“ mails for old duplicate incidents

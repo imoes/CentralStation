@@ -132,6 +132,16 @@ async def get_modell(_user: CurrentUser, gewichte: bool = Query(False)):
     return m if (gewichte and m) else relevanz_modell.zusammenfassung(m)
 
 
+@router.get("/modell/pruefliste")
+async def get_modell_pruefliste(_user: CurrentUser, art: str = Query("widerspruch", pattern="^(widerspruch|unsicher)$"),
+                                tage: float = Query(7, ge=1, le=30), limit: int = Query(20, ge=1, le=200)):
+    """Gold-Labels gezielt holen: Fälle, in denen Modell und Regel verschieden urteilen (widerspruch), oder bei denen
+    das Modell am unsichersten ist (unsicher, P nahe 0,5) — je Schlüssel ein Fall, ohne schon von Menschen beurteilte.
+    Urteilen über POST /log-watch/nachrichten/{id}/urteil (Herkunft mensch)."""
+    from app.services.log_watch import relevanz_modell
+    return await relevanz_modell.lade_pruefliste(art, tage, limit)
+
+
 @router.post("/modell/trainieren", dependencies=[RequireSysAdmin])
 async def post_modell_trainieren(user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)],
                                  tage: float = Query(30, ge=1, le=90)):

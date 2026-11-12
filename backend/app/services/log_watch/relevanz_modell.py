@@ -70,8 +70,17 @@ def art(merkmal: str) -> str:
     return merkmal.split(":", 1)[0]
 
 
+def breite_stufe(n: int | None) -> str | None:
+    """Wie viele Hosts dasselbe Muster im selben Fenster zeigen — logarithmisch gestuft. Trägt die Episode (eine Welle
+    auf 51 Hosts), die sonst als Uhrzeit-Gewicht erschiene (stunde:13 +1,57 am 12.11. — Rat der vi-mcp-Sitzung). Rein."""
+    if not n or n < 1:
+        return None
+    return "1" if n == 1 else "2-3" if n <= 3 else "4-15" if n <= 15 else "16+"
+
+
 def merkmale(quelle: str, tags, level=None, kriterien=None, stunde: int | None = None, *,
-             mit_regel: bool = True, nachtraeglich: set[str] | frozenset = frozenset()) -> list[str]:
+             mit_regel: bool = True, nachtraeglich: set[str] | frozenset = frozenset(),
+             breite: int | None = None) -> list[str]:
     """Merkmale einer Nachrichtengruppe — dieselbe Funktion im Training und im Raster. Nur Arten der Positivliste;
     `nachtraeglich` = Tags, die laut Geschichte später jemand hinzugefügt hat (nie Merkmal). Rein."""
     erlaubt = ARTEN_EINGANG + (ARTEN_REGEL if mit_regel else ())
@@ -88,6 +97,8 @@ def merkmale(quelle: str, tags, level=None, kriterien=None, stunde: int | None =
         m |= {f"kriterium:{k}" for k in kriterien or [] if k != "R7"}
     if stunde is not None:
         m.add(f"stunde:{int(stunde):02d}")
+    if (b := breite_stufe(breite)) is not None:
+        m.add(f"breite:{b}")
     return sorted(m)
 
 
@@ -136,9 +147,13 @@ class Beobachtung:
     merkmale_ohne_regel: list[str] | None = None
     #: Tag-Arten der Nachricht, die nicht auf der Positivliste stehen (gezählt, nie Merkmal)
     verworfen_arten: list[str] | None = None
+    #: Urteil der GELTENDEN Regeln über dieselben Eingangs-Tags (1 = BLOCK) — Vergleich auf Gold-Fällen, deren
+    #: gespeichertes Urteil der Mensch überschrieben hat
+    regel_rauschen: int | None = None
 
 
-def beobachtung(id_: str, doc: dict) -> Beobachtung | None:
+def beobachtung(id_: str, doc: dict, breite: int | None = None, regel_rauschen: int | None = None
+                ) -> Beobachtung | None:
     """Ein gespeichertes Dokument aus cs-logs-* als Trainingsbeispiel — oder None (KI-Befund, ohne Label). Rein."""
     if doc.get("quelle") == "ki":
         return None
@@ -151,10 +166,12 @@ def beobachtung(id_: str, doc: dict) -> Beobachtung | None:
     spaeter = nachtraeglich(doc.get("aenderungen"))
     args = (doc.get("quelle") or "", doc.get("hashtags") or [], doc.get("level"),
             [] if herkunft == "gold" else krit, _stunde(doc.get("zeit")))
-    return Beobachtung(id_, str(doc.get("zeit") or ""), y, herkunft, merkmale(*args, nachtraeglich=spaeter),
+    return Beobachtung(id_, str(doc.get("zeit") or ""), y, herkunft,
+                       merkmale(*args, nachtraeglich=spaeter, breite=breite),
                        str(doc.get("schluessel") or ""), str(doc.get("urteil") or ""), krit[0] if krit else "",
                        str(doc.get("text") or "")[:200],
-                       merkmale_ohne_regel=merkmale(*args, mit_regel=False, nachtraeglich=spaeter),
+                       merkmale_ohne_regel=merkmale(*args, mit_regel=False, nachtraeglich=spaeter, breite=breite),
+                       regel_rauschen=regel_rauschen,
                        verworfen_arten=sorted({art(t) for t in doc.get("hashtags") or [] if ":" in t}
                               - set(ARTEN_EINGANG) - set(ARTEN_REGEL)))
 
@@ -235,17 +252,30 @@ def _fit(zeilen: list[list[int]], y: list[int], gew: list[float], nf: int, schri
     return [float(x) for x in w], float(b)
 
 
-def teile_zeitlich(beob: list[Beobachtung]) -> tuple[list[Beobachtung], list[Beobachtung]]:
-    """Training = älterer Teil, Holdout = jüngster Teil; wächst bis HOLDOUT_MAX, bis je Klasse genug drin ist. Rein."""
+def teile(beob: list[Beobachtung]) -> tuple[list[Beobachtung], list[Beobachtung], list[Beobachtung]]:
+    """(Training, Holdout zeitlich, Holdout gruppiert). Training = älterer Teil; Holdout = jüngster Teil; GRUPPIERT =
+    davon nur Schlüssel, die im Training nie vorkamen — misst Verallgemeinerung statt Wiedererkennen eines
+    KI-Urteils, das an Wiederholungen kopiert ist (Rat der vi-mcp-Sitzung 12.11.). Der Holdout wächst bis
+    HOLDOUT_MAX, bis der gruppierte je Klasse genug Fälle hat. Rein."""
     s = sorted(beob, key=lambda b: b.zeit)
     anteil = HOLDOUT_ANTEIL
     while True:
         k = int(len(s) * (1 - anteil))
-        ho = s[k:]
-        n1 = sum(b.y for b in ho)
-        if (n1 >= MIN_HOLDOUT_JE_KLASSE and len(ho) - n1 >= MIN_HOLDOUT_JE_KLASSE) or anteil >= HOLDOUT_MAX:
-            return s[:k], ho
+        train, ho = s[:k], s[k:]
+        bekannt = {b.schluessel for b in train}
+        gr = [b for b in ho if b.schluessel not in bekannt]
+        n1 = sum(b.y for b in gr)
+        if (n1 >= MIN_HOLDOUT_JE_KLASSE and len(gr) - n1 >= MIN_HOLDOUT_JE_KLASSE) or anteil >= HOLDOUT_MAX:
+            return train, ho, gr
         anteil = min(HOLDOUT_MAX, anteil + 0.05)
+
+
+def auc_gruppen(p: list[float], beob: list[Beobachtung]) -> float | None:
+    """AUC je Schlüssel (mittleres P je Schlüssel und Label) — jede unabhängige Entscheidung zählt einmal. Rein."""
+    gr: dict[tuple, list[float]] = {}
+    for q, b in zip(p, beob):
+        gr.setdefault((b.schluessel or b.id, b.y), []).append(q)
+    return auc([sum(v) / len(v) for v in gr.values()], [k[1] for k in gr])
 
 
 def audit(gewichte: dict[str, float], train: list[Beobachtung], ho_positiv: list[list[str]]) -> list[dict]:
@@ -301,7 +331,10 @@ def modus(labels: dict, kennzahlen: dict, befunde: list[dict]) -> tuple[str, str
                         f"{gold.get('rauschen', 0)}, relevant {gold.get('relevant', 0)} — nötig je {MIN_GOLD_JE_KLASSE}")
     a = kennzahlen.get("auc_gold")
     if a is None or a < AUC_MIN:
-        return "test", f"Holdout-AUC gegen Gold {a if a is None else round(a, 3)} < {AUC_MIN}"
+        return "test", f"Holdout-AUC (ungesehene Schlüssel) gegen Gold {a if a is None else round(a, 3)} < {AUC_MIN}"
+    ar = kennzahlen.get("auc_regel_gold")
+    if ar is not None and a <= ar:
+        return "test", f"auf denselben Gold-Fällen nicht besser als die Regeln: AUC {a:.3f} gegen {ar:.3f}"
     r = kennzahlen.get("recall_relevant_gold")
     if r is None or r < RECALL_RELEVANT_MIN:
         return "test", f"Recall relevant (Gold, Holdout) {r if r is None else round(r, 3)} < {RECALL_RELEVANT_MIN}"
@@ -335,41 +368,58 @@ def trainiere(beob: list[Beobachtung], jetzt: datetime | None = None) -> dict:
     if min(labels["gesamt"]["rauschen"], labels["gesamt"]["relevant"]) < MIN_JE_KLASSE:
         leer["modus"], leer["grund"] = modus(labels, {}, [])
         return leer
-    train, ho = teile_zeitlich(beob)
+    train, ho, gr = teile(beob)
     modell, vok, zaehl = _lerne(train, lambda b: b.merkmale)
     p_train = [wahrscheinlichkeit(modell, b.merkmale) for b in train]
     schwelle = schwelle_fuer([p for p, b in zip(p_train, train) if b.y == 0])
     p_ho = [wahrscheinlichkeit(modell, b.merkmale) for b in ho]
-    train_schl = {b.schluessel for b in train}
+    p_von = {b.id: q for b, q in zip(ho, p_ho)}
 
-    def kennz(auswahl):
-        sel = [(p, b) for p, b in zip(p_ho, ho) if auswahl(b)]
-        if not sel:
+    def kennz(menge: list[Beobachtung]):
+        if not menge:
             return None, None, None, 0
-        ps, ys = [p for p, _ in sel], [b.y for _, b in sel]
+        ps, ys = [p_von[b.id] for b in menge], [b.y for b in menge]
         rel = [p for p, y in zip(ps, ys) if y == 0]
         rau = [p for p, y in zip(ps, ys) if y == 1]
         return (auc(ps, ys), (sum(1 for p in rel if p < schwelle) / len(rel)) if rel else None,
-                (sum(1 for p in rau if p >= schwelle) / len(rau)) if rau else None, len(sel))
+                (sum(1 for p in rau if p >= schwelle) / len(rau)) if rau else None, len(menge))
 
-    a, rr, re_, n = kennz(lambda b: True)
+    # Maßstab: der GRUPPIERTE Holdout (Schlüssel nie im Training); der zeitliche steht daneben
+    a, rr, re_, n = kennz(gr)
+    a_z, rr_z, re_z, n_z = kennz(ho)
+    # die Metrik ohne den größten Rauschen-Schlüssel — trägt einer allein die Hälfte, ist sie zur Hälfte ein Fall
+    groesster = Counter(b.schluessel for b in ho if b.y).most_common(1)
+    g_schl = groesster[0][0] if groesster else None
+    a_z_ohne = kennz([b for b in ho if b.schluessel != g_schl])[0]
     # Gegenlauf ohne Regel-Merkmale: liegt die AUC kaum darunter, lernt das Modell nicht bloß die Regeln nach
     ohne, _, _ = _lerne(train, lambda b: b.merkmale_ohne_regel or [])
-    a_ohne = auc([wahrscheinlichkeit(ohne, b.merkmale_ohne_regel or []) for b in ho], [b.y for b in ho])
-    a_neu, rr_neu, re_neu, n_neu = kennz(lambda b: b.schluessel not in train_schl)
-    a_g, rr_g, re_g, n_g = kennz(lambda b: b.herkunft == "gold")
-    kz = {"auc": a, "recall_relevant": rr, "rauschen_erkannt": re_, "holdout_n": n,
+    a_ohne = auc([wahrscheinlichkeit(ohne, b.merkmale_ohne_regel or []) for b in gr], [b.y for b in gr])
+    a_ohne_z = auc([wahrscheinlichkeit(ohne, b.merkmale_ohne_regel or []) for b in ho], [b.y for b in ho])
+    gold = [b for b in gr if b.herkunft == "gold"]
+    a_g, rr_g, re_g, n_g = kennz(gold)
+    regel_gold = [b for b in gold if b.regel_rauschen is not None]
+    a_rg = auc([float(b.regel_rauschen) for b in regel_gold], [b.y for b in regel_gold]) if regel_gold else None
+    kz = {"auc": a, "auc_gruppen": auc_gruppen([p_von[b.id] for b in gr], gr),
+          "recall_relevant": rr, "rauschen_erkannt": re_, "holdout_n": n,
+          "holdout_schluessel": len({b.schluessel for b in gr}),
+          "auc_zeitlich": a_z, "recall_relevant_zeitlich": rr_z, "rauschen_erkannt_zeitlich": re_z,
+          "holdout_zeitlich_n": n_z, "groesster_rauschen_schluessel": g_schl,
+          "auc_zeitlich_ohne_groessten": a_z_ohne,
           "holdout_von": ho[0].zeit if ho else None, "holdout_bis": ho[-1].zeit if ho else None,
           "train_n": len(train), "merkmale": len(vok), "merkmale_selten": len(zaehl) - len(vok),
-          "auc_ohne_regel_merkmale": a_ohne,
-          # Schlüssel, die im Training nie vorkamen: misst Verallgemeinerung statt Wiedererkennen
-          "auc_unbekannte_schluessel": a_neu, "recall_relevant_unbekannt": rr_neu,
-          "rauschen_erkannt_unbekannt": re_neu, "holdout_unbekannt_n": n_neu,
+          "auc_ohne_regel_merkmale": a_ohne, "auc_zeitlich_ohne_regel_merkmale": a_ohne_z,
           "auc_gold": a_g, "recall_relevant_gold": rr_g, "rauschen_erkannt_gold": re_g, "holdout_gold_n": n_g,
+          "auc_regel_gold": a_rg,
           "basisrate_rauschen": round(sum(b.y for b in train) / len(train), 4)}
     kz = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in kz.items()}
     befunde = audit(modell["gewichte"], train,
                     [abbilde(b.merkmale, modell["gewichte"]) for p, b in zip(p_ho, ho) if p >= schwelle])
+    # ohne den dominanten Schlüssel (Audit „dominant“ auf ein muster:/regel:-Merkmal): wie gut ohne diesen einen Fall?
+    dom = next((x["merkmal"] for x in befunde if x["klasse"] == "dominant"), None)
+    if dom:
+        kz["auc_ohne_dominantes"] = kennz([b for b in gr if dom not in b.merkmale])[0]
+        kz["auc_zeitlich_ohne_dominantes"] = kennz([b for b in ho if dom not in b.merkmale])[0]
+    kz = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in kz.items()}
     m, grund = modus(labels, kz, befunde)
     alle_p = p_train + p_ho
     arten = Counter(art(x) for b in train for x in b.merkmale)
@@ -390,7 +440,10 @@ def _lerne(train: list[Beobachtung], mk) -> tuple[dict, list[str], Counter]:
     vok = sorted(haeufig | {f"{a}:{SELTEN}" for a in selten_arten})
     idx = {f: i for i, f in enumerate(vok)}
     zeilen = [[idx[x] for x in abbilde(mk(b), idx)] for b in train]
-    gew = [1.0 if b.herkunft == "gold" else SILBER_GEWICHT for b in train]
+    # jede unabhängige Entscheidung zählt einmal: ein KI-Urteil, an 500 Wiederholungen kopiert, hat nicht 500 Stimmen
+    je = Counter((b.herkunft, b.schluessel or b.id, b.y) for b in train)
+    gew = [(1.0 if b.herkunft == "gold" else SILBER_GEWICHT) / je[(b.herkunft, b.schluessel or b.id, b.y)]
+           for b in train]
     w, bias = _fit(zeilen, [b.y for b in train], gew, len(vok))
     return ({"gewichte": {f: round(w[i], 4) for f, i in idx.items() if abs(w[i]) >= 1e-3}, "bias": round(bias, 4)},
             vok, zaehl)
@@ -437,13 +490,13 @@ class Signal:
 
 
 def pruefe(quelle: str, tags, felder: dict | None, kriterien, jetzt: datetime | None = None,
-           modell: dict | None = None) -> Signal | None:
+           modell: dict | None = None, breite: int | None = None) -> Signal | None:
     """Signal, wenn das Modell die Gruppe für Rauschen hält (P ≥ Schwelle) — sonst None. Rein bis auf den Cache."""
     m = modell if modell is not None else _MODELL
     if not m or m.get("modus") not in ("test", "bereit") or not m.get("gewichte"):
         return None
     st = (jetzt or datetime.now(timezone.utc)).hour
-    mk = merkmale(quelle, tags, (felder or {}).get("level"), kriterien, st)
+    mk = merkmale(quelle, tags, (felder or {}).get("level"), kriterien, st, breite=breite)
     p = wahrscheinlichkeit(m, mk)
     if p < m.get("schwelle", 1.0):
         return None
@@ -455,7 +508,39 @@ def pruefe(quelle: str, tags, felder: dict | None, kriterien, jetzt: datetime | 
 # ── Laden, Speichern, Daten ───────────────────────────────────────────────────────────────────────────────
 MAPPING = {"mappings": {"dynamic": False, "properties": {"zeit": {"type": "date"}, "modus": {"type": "keyword"}}}}
 QUELLFELDER = ["zeit", "quelle", "hashtags", "kriterien", "level", "ai_relevanz", "herkunft", "relevanz", "urteil",
-               "schluessel", "text", "aenderungen"]
+               "schluessel", "text", "aenderungen", "host"]
+#: Fenster der Breite: wie das Raster (lauf.FENSTER = 5 min)
+BREITE_FENSTER_S = 300
+
+
+def _fenster(zeit) -> int | None:
+    try:
+        return int(datetime.fromisoformat(str(zeit).replace("Z", "+00:00")).timestamp()) // BREITE_FENSTER_S
+    except (TypeError, ValueError):
+        return None
+
+
+def breiten(docs: list[dict]) -> dict[tuple, int]:
+    """(quelle, schluessel, 5-min-Fenster) → Zahl verschiedener Hosts unter den RELEVANTEN gespeicherten Nachrichten —
+    dieselbe Zählung wie raster.mit_modell (dort über die relevanten Treffer eines Fensters). Rein."""
+    hosts: dict[tuple, set] = {}
+    for d in docs:
+        if d.get("urteil") == "relevant" and d.get("schluessel"):
+            hosts.setdefault((d.get("quelle"), d["schluessel"], _fenster(d.get("zeit"))), set()).add(d.get("host"))
+    return {k: len(v) for k, v in hosts.items()}
+
+
+def regel_urteil(regeln, doc: dict) -> int | None:
+    """1, wenn die geltenden Regeln über die Eingangs-Tags der Nachricht BLOCK sagen, 0 bei FORWARD. Rein."""
+    from app.services.log_watch.regelwerk import FORWARD, bewerte
+    if not regeln:
+        return None
+    spaeter = nachtraeglich(doc.get("aenderungen"))
+    tags = {t for t in doc.get("hashtags") or [] if t not in spaeter and not t.startswith(("signal:modell", "befund:",
+                                                                                           "incident:"))}
+    lv = doc.get("level")
+    e = bewerte(regeln, tags, {"level": lv} if lv is not None else {})
+    return 0 if e.aktion == FORWARD else 1
 
 
 async def lade() -> dict | None:
@@ -471,18 +556,16 @@ async def lade() -> dict | None:
     return hits[0]["_source"] if hits else None
 
 
-async def beobachtungen(tage: float = 30, seite: int = 5000) -> list[Beobachtung]:
-    """Alle Nachrichten mit unabhängigem Urteil (Mensch oder KI) aus cs-logs-* der letzten `tage`."""
+async def _alle(tage: float, seite: int = 5000, nur_ohne_mensch: bool = False) -> list[tuple[str, dict]]:
+    """Alle gespeicherten Nachrichten (ohne KI-Befunde) der letzten `tage` — für Breite, Labels und Prüflisten."""
     from datetime import timedelta
 
     from app.core.opensearch import get_opensearch
     from app.services.log_watch.historie import PRAEFIX
     seit = (datetime.now(timezone.utc) - timedelta(days=tage)).isoformat()
-    q = {"bool": {"filter": [{"range": {"zeit": {"gte": seit}}}],
-                  "must_not": [{"term": {"quelle": "ki"}}],
-                  "should": [{"exists": {"field": "ai_relevanz"}}, {"term": {"herkunft": "mensch"}}],
-                  "minimum_should_match": 1}}
-    out: list[Beobachtung] = []
+    ohne = [{"term": {"quelle": "ki"}}] + ([{"term": {"herkunft": "mensch"}}] if nur_ohne_mensch else [])
+    q = {"bool": {"filter": [{"range": {"zeit": {"gte": seit}}}], "must_not": ohne}}
+    out: list[tuple[str, dict]] = []
     nach = None
     os_ = get_opensearch()
     while True:
@@ -491,13 +574,78 @@ async def beobachtungen(tage: float = 30, seite: int = 5000) -> list[Beobachtung
             body["search_after"] = nach
         r = await os_.search(index=f"{PRAEFIX}*", ignore_unavailable=True, body=body)
         hits = r["hits"]["hits"]
-        for h in hits:
-            b = beobachtung(h["_id"], h["_source"])
-            if b:
-                out.append(b)
+        out += [(h["_id"], h["_source"]) for h in hits]
         if len(hits) < seite:
             return out
         nach = hits[-1]["sort"]
+
+
+async def _regeln():
+    from app.core.database import AsyncSessionLocal
+    from app.services.log_watch.definition import aktuelle
+    async with AsyncSessionLocal() as db:
+        return (await aktuelle(db)).regeln
+
+
+async def beobachtungen(tage: float = 30) -> list[Beobachtung]:
+    """Alle Nachrichten mit unabhängigem Urteil (Mensch oder KI) aus cs-logs-* der letzten `tage`, mit Breite der
+    Episode und dem Urteil der geltenden Regeln."""
+    docs = await _alle(tage)
+    br = breiten([d for _, d in docs])
+    regeln = await _regeln()
+    out: list[Beobachtung] = []
+    for i, d in docs:
+        if label(d) is None:
+            continue
+        b = beobachtung(i, d, br.get((d.get("quelle"), d.get("schluessel"), _fenster(d.get("zeit")))),
+                        regel_urteil(regeln, d) if d.get("herkunft") == "mensch" else None)
+        if b:
+            out.append(b)
+    return out
+
+
+def pruefliste(modell: dict, docs: list[tuple[str, dict]], br: dict[tuple, int], art_: str, limit: int = 20) -> dict:
+    """Gold-Labels gezielt holen (Rat der vi-mcp-Sitzung): `widerspruch` = Regel und Modell urteilen verschieden,
+    stärkster Widerspruch zuerst; `unsicher` = P nahe 0,5. Ein Fall je Schlüssel — jeder Klick soll eine unabhängige
+    Entscheidung sein. Ohne Fälle mit Menschen-Urteil. Rein."""
+    if art_ not in ("widerspruch", "unsicher"):
+        raise ValueError("art: widerspruch | unsicher")
+    s = modell.get("schwelle", 1.0)
+    besten: dict[str, dict] = {}
+    for i, d in docs:
+        if d.get("herkunft") == "mensch":
+            continue
+        mk = merkmale(d.get("quelle") or "", d.get("hashtags") or [], d.get("level"), d.get("kriterien") or [],
+                      _stunde(d.get("zeit")), nachtraeglich=nachtraeglich(d.get("aenderungen")),
+                      breite=br.get((d.get("quelle"), d.get("schluessel"), _fenster(d.get("zeit")))))
+        p = wahrscheinlichkeit(modell, mk)
+        regel_rel = d.get("urteil") == "relevant"
+        if art_ == "widerspruch":
+            if regel_rel == (p < s):
+                continue
+            rang = abs(p - s)
+        else:
+            rang = -abs(p - 0.5)
+        k = d.get("schluessel") or i
+        if k not in besten or rang > besten[k]["_rang"]:
+            besten[k] = {"_rang": rang, "id": i, "zeit": d.get("zeit"), "quelle": d.get("quelle"),
+                         "host": d.get("host"), "schluessel": d.get("schluessel"), "text": str(d.get("text") or "")[:300],
+                         "regel": d.get("urteil"), "kriterien": d.get("kriterien"), "ki_relevanz": d.get("ai_relevanz"),
+                         "p_rauschen": round(p, 4), "tragend": tragend(modell, mk)}
+    faelle = sorted(besten.values(), key=lambda f: -f["_rang"])
+    for f in faelle:
+        f.pop("_rang")
+    return {"art": art_, "schwelle": s, "faelle_gesamt": len(faelle), "faelle": faelle[:limit],
+            "urteilen": "POST /log-watch/nachrichten/{id}/urteil — relevant (R…) oder nicht_relevant (N4/N1), "
+                        "Herkunft mensch"}
+
+
+async def lade_pruefliste(art_: str, tage: float = 7, limit: int = 20) -> dict:
+    m = await lade()
+    if not m or not m.get("gewichte"):
+        return {"art": art_, "faelle_gesamt": 0, "faelle": [], "grund": zusammenfassung(m).get("grund")}
+    docs = await _alle(tage, nur_ohne_mensch=True)
+    return pruefliste(m, docs, breiten([d for _, d in docs]), art_, limit)
 
 
 async def trainiere_und_speichere(tage: float = 30) -> dict:

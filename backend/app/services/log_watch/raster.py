@@ -121,7 +121,6 @@ def _urteil(quelle, schluessel, host, bekannt, tags, felder, gruende, anzahl, be
     """Das Regelwerk entscheidet; Stufe: FORWARD 2 (dringend 3), BLOCK laut Regel 0/1."""
     tags, gruende = _behandelt(_ohne_doppel(tags), felder, list(gruende))
     e = bewerte(d.regeln, set(tags), felder)
-    tags, gruende, e = _modell(quelle, tags, felder, gruende, e, d)
     if e.aktion == FORWARD:
         urteil, st = RELEVANT, 3 if "signal:dringend" in tags else 2
     else:
@@ -132,23 +131,43 @@ def _urteil(quelle, schluessel, host, bekannt, tags, felder, gruende, anzahl, be
                    felder=dict(felder or {}))
 
 
-def _modell(quelle, tags, felder, gruende, e, d: Definition):
-    """Relevanz-Modell (relevanz_modell.py): hält es die Gruppe für Rauschen, kommt `signal:modell-rauschen` mit den
-    tragenden Gewichten als Grund dazu, und das Regelwerk urteilt erneut. Eine AKTIVE Regel auf dieses Signal wirkt
-    nur bei Modus „bereit“ — sonst bleibt das Urteil ohne Signal, die Regel zählt als Testtreffer, der Grund steht da."""
+def mit_modell(treffer: list[Treffer], d: Definition, b: datetime | None = None) -> list[Treffer]:
+    """Relevanz-Modell (relevanz_modell.py) als Nachlauf über ALLE Treffer eines Fensters einer Quelle — erst hier ist
+    die Breite der Episode bekannt (verschiedene Hosts je Schlüssel unter den relevanten Treffern). Hält das Modell
+    eine Gruppe für Rauschen, kommt `signal:modell-rauschen` mit den tragenden Gewichten als Grund dazu, und das
+    Regelwerk urteilt erneut. Eine AKTIVE Regel auf dieses Signal wirkt nur bei Modus „bereit“ — sonst bleibt das
+    Urteil, die Regel zählt als Testtreffer, der Grund steht da. Ändert die Treffer in place."""
     from app.services.log_watch import relevanz_modell
-    try:
-        sig = relevanz_modell.pruefe(quelle, tags, felder, e.kriterien)
-    except Exception:  # noqa: BLE001 — ein kaputtes Modell darf das Raster nicht anhalten
-        return tags, gruende, e
-    if sig is None:
-        return tags, gruende, e
-    tags2, gruende2 = tags + [relevanz_modell.SIGNAL], gruende + [sig.grund]
-    e2 = bewerte(d.regeln, set(tags2), felder)
-    if (e2.aktion, e2.regel) != (e.aktion, e.regel) and not sig.freigegeben:
-        e.test_treffer = list(e.test_treffer) + [e2.regel]
-        return tags2, gruende2 + [f"Regel {e2.regel} übergangen: Modell nicht freigegeben (Modus {sig.modus})"], e
-    return tags2, gruende2, e2
+    if relevanz_modell.aktuelles() is None:
+        return treffer
+    hosts: dict[tuple, set] = {}
+    for t in treffer:
+        if t.urteil == RELEVANT:
+            hosts.setdefault((t.quelle, t.schluessel), set()).add(t.host)
+    for t in treffer:
+        try:
+            sig = relevanz_modell.pruefe(t.quelle, t.hashtags, t.felder, t.kriterien, b,
+                                         breite=len(hosts.get((t.quelle, t.schluessel), ())) or None)
+        except Exception:  # noqa: BLE001 — ein kaputtes Modell darf das Raster nicht anhalten
+            continue
+        if sig is None:
+            continue
+        t.hashtags = t.hashtags + [relevanz_modell.SIGNAL]
+        t.gruende = t.gruende + [sig.grund]
+        e2 = bewerte(d.regeln, set(t.hashtags), t.felder)
+        if e2.regel == t.regel:                  # Urteil unverändert (z. B. N1-MOD im Testmodus zählt nur)
+            t.test_treffer = list(e2.test_treffer)
+            continue
+        if not sig.freigegeben:
+            t.test_treffer = list(t.test_treffer) + [e2.regel]
+            t.gruende.append(f"Regel {e2.regel} übergangen: Modell nicht freigegeben (Modus {sig.modus})")
+            continue
+        if e2.aktion == FORWARD:
+            t.urteil, t.relevanz = RELEVANT, 3 if "signal:dringend" in t.hashtags else 2
+        else:
+            t.urteil, t.relevanz = NICHT_RELEVANT, e2.stufe_block
+        t.kriterien, t.regel, t.verdraengt, t.test_treffer = e2.kriterien, e2.regel, e2.verdraengt, e2.test_treffer
+    return treffer
 
 
 def _host_tags(name: str, verz: Hostverzeichnis) -> tuple[str, HostEintrag | None, list[str]]:

@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.services.log_watch.definition import RELEVANT
 from app.services.log_watch.raster import (
-    KONTINGENT, Kontingent, Treffer, bewerte_checkmk, bewerte_graylog, bewerte_wazuh,
+    KONTINGENT, Kontingent, Treffer, bewerte_checkmk, bewerte_graylog, bewerte_wazuh, mit_modell,
     quellenuebergreifend, wazuh_zeilen, zaehle,
 )
 
@@ -296,7 +296,7 @@ async def graylog_fenster(templates: dict, events: list, kritisch: dict, stumm: 
     try:
         verz, d = await _grundlagen()
         treffer = bewerte_graylog(templates, events, kritisch, stumm, verz, d)
-        _merke(b, treffer)
+        _merke(b, mit_modell(treffer, d, b))
         werte = zaehle(treffer, _kontingent, _stunde(b))
         gl = await _graylog_connector()
         if gl is not None:
@@ -347,7 +347,7 @@ async def run_raster() -> None:
     if "wazuh" in adapter:
         try:
             treffer = bewerte_wazuh(await _wazuh(adapter["wazuh"].w, b), verz, d)
-            _merke(b, treffer)
+            _merke(b, mit_modell(treffer, d, b))
             werte = zaehle(treffer, _kontingent, _stunde(b))
             werte["historie"] = await _bewahre("wazuh", treffer, _wazuh_holer(adapter["wazuh"].w, b))
             await _speichere("wazuh", b, werte)
@@ -367,7 +367,7 @@ async def run_raster() -> None:
             await _tagesmuster_anreichern(adapter["checkmk"].k, probleme, jetzt)
             abgleich = bewerte_checkmk(_checkmk_vorher, probleme, verz, d, wechsel=await _wechsel_24h())
             _checkmk_vorher = abgleich.zustand
-            _merke(bc, abgleich.treffer)
+            _merke(bc, mit_modell(abgleich.treffer, d, bc))
             werte = zaehle(abgleich.treffer, _kontingent, _stunde(bc))
             werte.update(probleme=len(probleme), behoben=len(abgleich.behoben),
                          erster_abgleich=abgleich.erster,
@@ -389,7 +389,7 @@ async def run_raster() -> None:
             msgs, zaehlung, vollstaendig = await firewall.lies_fenster(adapter["graylog"].gl, b, b + FENSTER)
             treffer = firewall.bewerte_firewall(
                 firewall.gruppen(msgs, set(d.p("firewall_externe_zonen"))), verz, d)
-            _merke(b, treffer)
+            _merke(b, mit_modell(treffer, d, b))
             werte = zaehle(treffer, _kontingent, _stunde(b))
             werte.update(bedrohungen=len(msgs), vollstaendig=vollstaendig,
                          verkehr_gesamt=zaehlung.get("gesamt", 0),
@@ -407,7 +407,7 @@ async def run_raster() -> None:
         from app.services.log_watch import switch
         try:
             treffer, extra = await switch.fenster(adapter["graylog"].gl, b, b + FENSTER, verz, d)
-            _merke(b, treffer)
+            _merke(b, mit_modell(treffer, d, b))
             werte = zaehle(treffer, _kontingent, _stunde(b))
             werte.update(extra)
             werte["historie"] = await _bewahre("switch", treffer, _graylog_holer(adapter["graylog"].gl, b))

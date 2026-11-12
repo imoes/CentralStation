@@ -104,8 +104,10 @@ def test_nur_silber_bleibt_test_mit_grund_und_lernt_das_muster():
     m = rm.trainiere(_daten(3000))
     assert m["modus"] == "test" and "Gold" in m["grund"]
     assert m["gewichte"]["muster:laerm"] > 0 > m["gewichte"]["muster:ernst"]
-    assert m["kennzahlen"]["auc"] > 0.9
-    assert m["kennzahlen"]["auc_ohne_regel_merkmale"] > 0.9       # hier trägt das Muster, nicht die Regel
+    # nur zwei Schlüssel, beide im Training: der gruppierte Holdout ist leer — benannt (None), nicht geschönt
+    assert m["kennzahlen"]["auc"] is None and m["kennzahlen"]["holdout_n"] == 0
+    assert m["kennzahlen"]["auc_zeitlich"] > 0.9
+    assert m["kennzahlen"]["auc_zeitlich_ohne_regel_merkmale"] > 0.9   # hier trägt das Muster, nicht die Regel
     w = m["widersprueche"]
     assert w["regel_relevant_modell_rauschen"] > 0 and w["je_kriterium"].get("R2")
     assert w["schluessel"][0]["schluessel"] == "muster:laerm"
@@ -142,7 +144,8 @@ TAGS = ["quelle:graylog", "host:h", "signal:neu", "muster:laerm"]
 
 
 def _urteil(d, tags=TAGS):
-    return raster._urteil("graylog", "muster:laerm", "h", True, list(tags), {}, ["neu"], 3, "x", d)
+    t = raster._urteil("graylog", "muster:laerm", "h", True, list(tags), {}, ["neu"], 3, "x", d)
+    return raster.mit_modell([t], d, datetime(2026, 11, 12, 9, tzinfo=timezone.utc))[0]
 
 
 def _mit_aktiver_n1mod():
@@ -197,6 +200,72 @@ def test_zaehle_weist_modell_rauschen_je_urteil_aus():
 def test_kaputtes_modell_haelt_raster_nicht_an():
     rm.setze({"modus": "test", "gewichte": {"muster:laerm": "kaputt"}, "bias": 0, "schwelle": 0.5})
     assert _urteil(STANDARD).regel == "R2"
+
+
+def test_breite_der_episode_aus_den_relevanten_treffern_eines_fensters():
+    assert [rm.breite_stufe(n) for n in (None, 0, 1, 2, 3, 4, 15, 16, 51)] == [None, None, "1", "2-3", "2-3", "4-15",
+                                                                             "4-15", "16+", "16+"]
+    rm.setze({**MODELL, "gewichte": {"breite:4-15": 5.0}})
+    tr = [raster._urteil("graylog", "muster:x", f"h{i}", True, list(TAGS), {}, [], 1, "x", STANDARD) for i in range(5)]
+    raster.mit_modell(tr, STANDARD)
+    assert all(rm.SIGNAL in t.hashtags for t in tr)              # 5 Hosts → breite:4-15
+    einzeln = raster._urteil("graylog", "muster:y", "h", True, list(TAGS), {}, [], 1, "x", STANDARD)
+    assert rm.SIGNAL not in raster.mit_modell([einzeln], STANDARD)[0].hashtags
+
+
+def test_gruppierter_holdout_nur_ungesehene_schluessel_und_kopien_zaehlen_einmal():
+    daten = _daten(3000)
+    # 400 Kopien desselben KI-Urteils an einem Schlüssel im Training
+    for i in range(400):
+        daten.append(rm.Beobachtung(f"k{i}", (T0 + timedelta(minutes=i)).isoformat(), 1, "silber",
+                                    rm.merkmale("graylog", ["muster:kopie"]), "muster:kopie", "relevant", "R2", "x"))
+    # spät: neue Schlüssel, je einmal — nur die gehören in den gruppierten Holdout
+    for i in range(80):
+        y = i % 2
+        daten.append(rm.Beobachtung(f"n{i}", (T0 + timedelta(days=5, minutes=i)).isoformat(), y, "silber",
+                                    rm.merkmale("graylog", [f"muster:neu{i}", "app:a1" if y else "app:a2"]),
+                                    f"muster:neu{i}", "relevant", "R2", "x"))
+    train, ho, gr = rm.teile(daten)
+    assert gr and not ({b.schluessel for b in gr} & {b.schluessel for b in train})
+    m = rm.trainiere(daten)
+    assert m["kennzahlen"]["holdout_schluessel"] == len({b.schluessel for b in gr})
+    assert "auc_zeitlich" in m["kennzahlen"] and "auc_gruppen" in m["kennzahlen"]
+
+
+def test_auc_gruppen_zaehlt_je_schluessel_einmal():
+    b = [rm.Beobachtung(str(i), "", y, "silber", [], k) for i, (k, y) in enumerate([("a", 1)] * 50 + [("b", 0), ("c", 1)])]
+    p = [0.1] * 50 + [0.5, 0.9]
+    assert rm.auc(p, [x.y for x in b]) < 0.1 and rm.auc_gruppen(p, b) == 0.5
+
+
+def test_bereit_nur_wenn_besser_als_die_regeln_auf_gold():
+    labels = {"gesamt": {"rauschen": 900, "relevant": 2000}, "gold": {"rauschen": 60, "relevant": 70}}
+    m, grund = rm.modus(labels, {"auc_gold": 0.8, "recall_relevant_gold": 0.995, "auc_regel_gold": 0.85}, [])
+    assert m == "test" and "nicht besser als die Regeln" in grund
+
+
+def test_regel_urteil_ueber_eingangs_tags():
+    assert rm.regel_urteil(STANDARD.regeln, {"hashtags": ["quelle:graylog", "signal:neu"]}) == 0
+    assert rm.regel_urteil(STANDARD.regeln, {"hashtags": ["quelle:graylog"]}) == 1             # Default N0
+    # nachträglich (KI) gesetztes signal:neu zählt nicht
+    assert rm.regel_urteil(STANDARD.regeln, {"hashtags": ["quelle:graylog", "signal:neu"],
+                                              "aenderungen": [{"was": "+signal:neu"}]}) == 1
+
+
+def test_pruefliste_widerspruch_und_unsicher_je_schluessel_einmal():
+    m = {"gewichte": {"muster:laerm": 3.0}, "bias": -1.0, "schwelle": 0.6}
+    docs = [(f"a{i}", {"quelle": "graylog", "schluessel": "muster:laerm", "hashtags": ["muster:laerm"],
+                       "urteil": "relevant", "zeit": "2026-11-12T08:00:00Z"}) for i in range(3)]
+    docs += [("b", {"quelle": "graylog", "schluessel": "muster:ernst", "hashtags": ["muster:ernst"],
+                    "urteil": "relevant", "zeit": "2026-11-12T08:00:00Z"}),
+             ("c", {"quelle": "graylog", "schluessel": "muster:m", "hashtags": ["muster:laerm"], "herkunft": "mensch",
+                    "urteil": "relevant", "zeit": "2026-11-12T08:00:00Z"})]
+    w = rm.pruefliste(m, docs, {}, "widerspruch")
+    assert w["faelle_gesamt"] == 1 and w["faelle"][0]["schluessel"] == "muster:laerm"      # Mensch-Fall nicht
+    u = rm.pruefliste(m, docs, {}, "unsicher")
+    assert u["faelle_gesamt"] == 2 and u["faelle"][0]["schluessel"] == "muster:ernst"       # P 0,27 näher an 0,5 als 0,88
+    with pytest.raises(ValueError):
+        rm.pruefliste(m, docs, {}, "egal")
 
 
 def test_kriterien_der_definition_unveraendert():

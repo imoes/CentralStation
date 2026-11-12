@@ -1324,11 +1324,31 @@ are really noise (`services/log_watch/relevanz_modell.py`, proposal: `docs/vorsc
   features, and neither is any tag the message's history records as added later („+art:wert“); rejected kinds are
   counted (`arten_verworfen`). A feature counts from 10 occurrences; rarer values pool into `art:_selten`. A second
   fit without the rules' features (`auc_ohne_regel_merkmale`) shows whether the model merely copies the rules.
-- **Evaluation:** time-ordered holdout (newest 20 %, more if a class has < 20 cases); AUC, recall of the relevant ones
-  at the threshold (chosen so that at most 1 % of the relevant ones in training are above it), AUC on patterns
-  never seen in training, and the same against gold.
+- **Each independent decision counts once:** a training message weighs 1/n, where n is the number of messages with
+  the same origin, key and label. An AI verdict copied to 500 repetitions does not get 500 votes.
+- **Episode breadth instead of clock time:** `breite:1|2-3|4-15|16+` = how many hosts show the same key in the same
+  5-min window. Counted over the relevant hits of a window in the raster (`raster.mit_modell`), and over the
+  relevant stored messages in training.
+- **Evaluation — the yardstick is the grouped holdout:** the newest 20 % in time (more if a class has < 20 cases),
+  restricted to keys that never occur in training. This measures generalisation, not recognising a copied verdict.
+  - Alongside: the time-only holdout, an AUC per key (`auc_gruppen`), the AUC without the largest noise key and
+    without the audit's dominant feature, and the same against gold.
+  - Recall of the relevant ones is reported at the threshold, chosen so that at most 1 % of the relevant ones in
+    training are above it.
 - **Mode, always with a reason:** `zu_wenig_daten` (< 50 labels per class) · `test` (judges, has no effect) ·
-  `bereit` (≥ 50 gold labels per class, gold AUC ≥ 0.7, gold recall ≥ 0.99, weight audit clean).
+  `bereit`. `bereit` needs all of:
+  - ≥ 50 gold labels per class;
+  - gold AUC on unseen keys ≥ 0.7 *and* better than the rules on the same gold cases (the current rules re-applied
+    to the message's ingest tags);
+  - gold recall ≥ 0.99;
+  - a clean weight audit.
+
+  Silver trains; only gold activates. A language model's verdicts may sharpen, never decide alone.
+- **Review queues for gold labels:** `GET /log-watch/modell/pruefliste?art=widerspruch|unsicher`, last 7 days, one
+  case per key, without cases a human has already judged.
+  - `widerspruch` = model and rules disagree, strongest first;
+  - `unsicher` = P close to 0.5.
+  - You judge a case with `POST /log-watch/nachrichten/{id}/urteil`.
 - **Weight audit, fixed rules, no LLM:** `host` (a single host among the 10 strongest weights), `stunde` (hour among
   them — time as cause would be post hoc), `dominant` (one feature carries ≥ 50 % of the noise verdicts in the
   holdout), `widerspricht` (a strong weight whose sign contradicts the measured noise share).
