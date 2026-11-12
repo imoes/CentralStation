@@ -112,7 +112,10 @@ def waehle_offen(offen: list[tuple[str, str, dict]], schluessel: str) -> int | N
 
 
 #: Was ein Alt-Incident bei der Übernahme behält — sonst gilt der Kontext des Kandidaten wie bei einem neuen Incident
-UEBERNAHME_BEHALTEN = ("zustellungen", "wieder", "weitere_schluessel", "triage")
+#: Ohne „triage“: die alte Triage eines Alt-Incidents entstand ohne Regel-Kontext (nur hosts/type) — gemessen 12.11.:
+#: 4 von 5 übernommenen I-HOST-Incidents trugen „Fehlende Daten …“ aus den Mails vom 10.11. (externe Analyse F5).
+#: Sie bleibt als triage_alt benannt; nach der Übernahme läuft eine neue Triage (triage_nach_uebernahme).
+UEBERNAHME_BEHALTEN = ("zustellungen", "wieder", "weitere_schluessel")
 
 
 def uebernahme(alt: dict | None, neu: dict) -> dict:
@@ -125,7 +128,44 @@ def uebernahme(alt: dict | None, neu: dict) -> dict:
     c = {**neu, **{k: alt[k] for k in UEBERNAHME_BEHALTEN if k in alt}}
     c["hosts"] = sorted(set(neu.get("hosts") or []) | set(alt.get("hosts") or []))
     c["uebernommen"] = "Alt-Incident ohne Regel-Kontext von der Regel übernommen"
+    if isinstance(alt.get("triage"), dict):
+        c["triage_alt"] = {"titel": alt["triage"].get("titel"),
+                           "grund": "vor der Übernahme ohne Regel-Kontext erstellt — durch eine neue Triage ersetzt"}
     return c
+
+
+def meldungs_beispiele(meldungen: list[dict], n: int = 10) -> list[str]:
+    """Beispielzeilen für die Triage aus der Meldungsliste eines Incidents (incident_abfrage.details): Quelle, Host,
+    Titel — die neuesten zuerst, jede Zeile einmal. Rein."""
+    out: list[str] = []
+    for m in sorted((m for m in meldungen or [] if isinstance(m, dict) and m.get("titel")),
+                    key=lambda m: str(m.get("zeit") or ""), reverse=True):
+        z = f"[{m.get('quelle') or '?'}] {m.get('host') or ''}: {m['titel']}".strip()
+        if z not in out:
+            out.append(z)
+        if len(out) >= n:
+            break
+    return out
+
+
+async def triage_nach_uebernahme(incident_id: str, ctx: dict) -> dict | None:
+    """Nach der Übernahme eines Alt-Incidents EINE neue Triage — mit den Meldungen des Alt-Incidents, nicht nur den
+    Regel-Beispielen; gespeichert wie jede Triage, ohne Mail (die Übernahme ist kein neuer Incident)."""
+    from app.core.database import AsyncSessionLocal
+    from app.services import incident_abfrage
+    from app.services.error_clusters import notify
+    from app.services.error_clusters.triage import triage
+    async with AsyncSessionLocal() as db:
+        d = await incident_abfrage.details(db, incident_id)
+        bsp = meldungs_beispiele(d.get("meldungen_liste") or [])
+        c = {**ctx, "examples": list(dict.fromkeys(list(ctx.get("examples") or []) + bsp))[:12],
+             "meldungen_im_incident": len(d.get("meldungen_liste") or [])}
+        result = await triage(db, c, [], [])
+        if result:
+            await notify._store_triage(db, incident_id, incident_id, result, c)
+            await db.commit()
+        log.info("Triage nach Übernahme %s: %s", incident_id, (result or {}).get("titel"))
+        return result
 
 
 def bekannt_fuer_eskalation(c: dict | None, primary_host: str | None) -> dict:
@@ -348,10 +388,14 @@ async def eroeffne(regel: Regel, k: dict, objekte: dict, jetzt: datetime) -> dic
         if i is not None:
             inc = offen[i]
             c = cluster_context(inc) or {}
-            if not c.get("regel"):          # Alt-Incident: Regel übernimmt ihn mit vollem Kontext (wie ein neuer)
+            uebernommen = not c.get("regel")
+            if uebernommen:                 # Alt-Incident: Regel übernimmt ihn mit vollem Kontext (wie ein neuer)
                 c = uebernahme(c, (await _neuer_kontext())[0])
             e = _fortschreiben(inc, c, wieder=False)
             await db.commit()
+            if uebernommen:
+                from app.core.tasks import run_background
+                run_background(triage_nach_uebernahme(e["incident"], e["ctx"]), name="triage_nach_uebernahme")
             return e
         # In den letzten 24 h geschlossen, gleicher Schlüssel → derselbe Incident lebt wieder auf
         zu = (await db.execute(select(Incident).where(

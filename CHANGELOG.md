@@ -10,6 +10,32 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — Adopted old incidents get a fresh triage, not the empty one from 10.11.
+
+External analysis F5: „Triage ‚Fehlende Daten‘ bei übernommenen Alt-Incidents“, e.g. 9466979a (mu-img-docker50).
+
+### What was wrong (checked 12.11. ~11:35 UTC)
+
+- **Measured over 7 days:** 4 of 5 adopted I-HOST incidents carry an empty triage, against 9 of 401 newly opened ones
+  (2 %).
+- **The empty triages were not made after the adoption.** They are from the mails of **10.11.** (16:21–19:45 UTC,
+  the empty „Etwas Neues“ mails), when those incidents had only `hosts`/`type`.
+- **Why they stayed:** the adoption of 11.11. kept the key `triage` (`UEBERNAHME_BEHALTEN`), and an adoption does not
+  mail, so no new triage was made.
+
+### What changed
+
+- On adoption, the old triage is no longer carried over; it is kept as `triage_alt` with the reason.
+- After the adoption, **one** new triage runs, without a mail. Its input is the rule examples plus up to 10 lines
+  from the old incident's message list (`incident_abfrage.details` → `meldungen_liste`), newest first, each line
+  once.
+
+### Evidence
+
+- Tests: `test_log_watch_incident_regeln.py` +2 (old triage named, not kept; message examples). Full suite: 938
+  passed.
+- Not deployed yet. The 5 already adopted incidents would get their new triage by a one-off run after the deploy.
+
 ## 2026-11-12 — Feed: an ongoing Graylog error is continued in its entry, not copied every hour
 
 An external analysis (handed over by you, 12.11. ~10:55 UTC, F1) reported duplicate feed entries — e.g.

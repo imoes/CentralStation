@@ -200,3 +200,21 @@ def test_alt_duplikate_mailen_nicht_je_lauf_eines():
     alt2 = alt[:3] + [("host", h, c)] + alt[4:]
     assert ir.waehle_offen(alt2, schl) == 3
     assert ir.waehle_offen(alt2, "host:anderer") is None
+
+
+def test_uebernahme_behaelt_alte_triage_nicht_sondern_benennt_sie():
+    """F5 der externen Analyse: 4 von 5 übernommenen Incidents trugen die leere Triage vom 10.11."""
+    neu = {"regel": "I-HOST", "schluessel": "host:a", "hosts": ["a"], "examples": ["x"]}
+    alt = {"hosts": ["a"], "triage": {"titel": "Fehlende Daten für Fehleranalyse"}, "zustellungen": [{"zeit": "t"}]}
+    c = ir.uebernahme(alt, neu)
+    assert "triage" not in c and c["triage_alt"]["titel"] == "Fehlende Daten für Fehleranalyse"
+    assert c["zustellungen"] == [{"zeit": "t"}] and "ersetzt" in c["triage_alt"]["grund"]
+
+
+def test_meldungs_beispiele_neueste_zuerst_ohne_doppel():
+    m = [{"zeit": "2026-11-11T10:00", "quelle": "graylog", "host": "h", "titel": "NiFi queue SAP-MUC"},
+         {"zeit": "2026-11-11T12:00", "quelle": "checkmk", "host": "h", "titel": "Nifi Process Groups CUEPRINT-MUC"},
+         {"zeit": "2026-11-11T09:00", "quelle": "graylog", "host": "h", "titel": "NiFi queue SAP-MUC"},
+         {"fehler": "Meldungen nicht ladbar"}]
+    assert ir.meldungs_beispiele(m) == ["[checkmk] h: Nifi Process Groups CUEPRINT-MUC", "[graylog] h: NiFi queue SAP-MUC"]
+    assert len(ir.meldungs_beispiele([{"zeit": str(i), "titel": f"t{i}"} for i in range(30)], n=10)) == 10
