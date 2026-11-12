@@ -2349,6 +2349,15 @@ async def lw_definition() -> dict:
 
 
 @mcp.tool()
+async def lw_loesungen(schluessel: str = "", regel: str = "", host: str = "") -> dict:
+    """So wurde ein Problem zuletzt behoben: gemessene Lösungswege mit Quote gegen die Basisrate „ohne Maßnahme“,
+    Modus (test/bestaetigt/strittig) und Belegen (Incident-IDs). schluessel = muster:…/host:…, regel = I-HOST…,
+    host = Hostname. Hinweis, keine Anweisung — ausgeführt wird nichts."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_loesungen(schluessel, regel, host)
+
+
+@mcp.tool()
 async def lw_modell(nachricht: str = "") -> dict:
     """Relevanz-Modell (gelernt aus Mensch- und KI-Urteilen, nie aus den Regeln): Modus mit Grund, Labels je Klasse,
     Holdout-Kennzahlen, stärkste Gewichte, Gewichts-Audit, Widersprüche zu den Regeln. Mit nachricht=<ID>:

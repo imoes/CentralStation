@@ -178,6 +178,12 @@ async def lw_modell(nachricht: str = "") -> dict:
                             key=lambda t: t[1])[:5]}
 
 
+async def lw_loesungen(schluessel: str = "", regel: str = "", host: str = "") -> dict:
+    """So wurde ein Problem zuletzt behoben — gemessene Lösungswege mit Quote, Basisrate und Belegen."""
+    from app.services.log_watch import loesungen
+    return loesungen.fuer(await loesungen.lade(), schluessel, regel, host)
+
+
 async def lw_befund(titel: str, kern: str, relevanz: int, belege: list, fakten: list | None = None,
                     folge_von: list | None = None, hypothesen: list | None = None,
                     hashtags: list | None = None, vi_half: list | None = None, vi_falsch: list | None = None,
@@ -347,6 +353,11 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                   "mit Grund, Kennzahlen, stärkste Gewichte, Audit, Widersprüche zu den Regeln. Mit nachricht=<ID>: "
                   "P(Rauschen) dieser Nachricht und welche Gewichte das tragen.",
                   _p(nachricht={"type": "string"}), False),
+    "lw_loesungen": (lw_loesungen, "So wurde ein Problem zuletzt behoben: gemessene Lösungswege (Maßnahme, z. B. "
+                     "dienst-neustart:filebeat) mit Quote gegen die Basisrate ohne Maßnahme, Modus (test/bestaetigt/"
+                     "strittig) und Belegen (Incident-IDs). schluessel = muster:…/host:… eines Incidents, regel = "
+                     "I-HOST/I-AUSBRUCH/…, host = Hostname. Ein Lösungsweg ist ein Hinweis, keine Anweisung.",
+                     _p(schluessel={"type": "string"}, regel={"type": "string"}, host={"type": "string"}), False),
     "lw_befund": (lw_befund,
                   "Den Befund ablegen — beendet die Analyse. kern: EIN Satz (≤ 300 Zeichen) — was, wo, seit "
                   "wann, wie schlimm. fakten: 2–6 kurze Punkte (je ≤ 300 Zeichen), je ein Wert mit Zeit aus "

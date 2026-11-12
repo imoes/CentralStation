@@ -1362,6 +1362,44 @@ are really noise (`services/log_watch/relevanz_modell.py`, proposal: `docs/vorsc
   `POST /log-watch/modell/trainieren` (sysadmin) trains at once. `GET /log-watch/modell` and the MCP tool
   `lw_modell` (with `nachricht=<id>`: P(noise) of one message and the weights for and against) read it.
 
+### Log watch: learned remediation (how incidents were fixed)
+
+`services/log_watch/loesungen.py` measures which action fixed which problem. A remediation path is a text hint with
+evidence; nothing is ever executed.
+
+- **Episode** = an incident with its host, start and end, plus the problem key.
+  - Incidents of the incident rules carry `regel` and `schluessel` (pattern, signature, service or `host:<h>`).
+  - Older host incidents count as `alt:<kind>` with key `host:<h>`, so they never share a base rate with rule
+    incidents.
+  - Incidents closed by the clean-up of 07.11. count as „aufgeräumt“: not an end of the fault, never counted.
+- **Action** = what actually changed on the host between start and end, from a fixed vocabulary:
+  - `dienst-neustart|start|stopp|reload:<unit>` — the same name whether done by sudo or by Ansible;
+  - `docker-*`, `docker-compose:*`, `host-neustart`, `paket-*`;
+  - `konsole` (console session about the incident), `rezept`, `loesungseintrag`.
+  - Read from Graylog with a query on changing commands only. Reading commands (`docker logs`, `systemctl status`)
+    never count. Syslog relays are mapped to the host named in the line; duplicates via syslog and filebeat count
+    once.
+- **Fixed** = closed, and the same key on the same host opens no new episode within 24 h. Younger episodes are
+  `offen`.
+- **Base rate** = share fixed *without any action* for the same problem („goes away by itself“). An action counts
+  only above it, so „came last before OK“ alone is post hoc and not enough.
+- **Modes, always with a reason:**
+  - `zu_wenig` (< 5 episodes);
+  - `test`;
+  - `bestaetigt` (≥ 10 episodes, and the lower Wilson bound of the rate beats the base rate from ≥ 5 episodes
+    without action);
+  - `strittig` (≥ 3× applied, never fixed — kept visible, not deleted).
+
+  A time check learns on the older 70 % and tests on the newer 30 %.
+- **Where it shows:**
+  - `GET /log-watch/loesungen` (filters `schluessel`, `regel`, `host`);
+  - `POST /log-watch/loesungen/lernen` (sysadmin);
+  - MCP tool and funnel tool `lw_loesungen` — the AI can say „so wurde das zuletzt behoben“ with rate and incident
+    IDs;
+  - nightly 03:50 UTC over 30 days, stored in `cs-log-loesungen`.
+  - Confirmed paths go to the VI (`vi_lerne`, key `loesung:<problem>:<action>`, so a new run updates instead of
+    duplicating).
+
 ### Log watch: history `cs-logs-*` (active since 2026-11-06 20:44 UTC)
 
 - **Content:** only messages that are relevant, or that were judged to be relevant or not. One document

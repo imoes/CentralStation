@@ -204,10 +204,11 @@ def _kurz(name: str, erg: dict) -> str:
 #: (gemessen 06.11.: alle 6 Sitzungen nach dem Deploy begannen trotzdem mit lw_wissen).
 #: Für die Konsole bleibt lw_wissen über MCP; zum Nachlesen bleibt lw_gespraech.
 #: Dazu drei lesende Quellen außerhalb der Historie (Nutzer, 07.11.) — dieselben wie auf dem MCP-Server.
+#: lw_loesungen (Nutzer 12.11.): „so wurde das zuletzt behoben“ — gemessene Lösungswege mit Quote und Belegen.
 TRICHTER_WERKZEUGE = ["lw_suche", "lw_facetten", "lw_netzplan", "lw_nachricht", "lw_gespraech",
                       "lw_frage", "lw_fragen", "lw_antwort",
                       "lw_definition", "get_checkmk_host", "search_tickets", "search_knowledge_base",
-                      "lw_feld", "lw_feld_anlegen", "web_suche", "web_seite", "lw_befund"]
+                      "lw_feld", "lw_feld_anlegen", "web_suche", "web_seite", "lw_loesungen", "lw_befund"]
 
 #: so viele Hosts eines Falls bekommen ein Host-Objekt im Prompt (der Rest wird genannt)
 HOSTS_IM_PROMPT = 3

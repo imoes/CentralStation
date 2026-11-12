@@ -154,6 +154,33 @@ async def post_modell_trainieren(user: CurrentUser, db: Annotated[AsyncSession, 
     return r
 
 
+# ── Lösungswege (loesungen.py) ────────────────────────────────────────────────
+
+@router.get("/loesungen")
+async def get_loesungen(_user: CurrentUser, schluessel: str = Query(""), regel: str = Query(""),
+                        host: str = Query("")):
+    """Gemessene Lösungswege: wie Episoden (Incidents) behoben wurden, je Maßnahme Quote gegen die Basisrate „ohne
+    Maßnahme“, Modus mit Grund, Belege. Ohne Filter: der ganze letzte Lauf; mit schluessel/regel/host: nur passende."""
+    from app.services.log_watch import loesungen
+    stand = await loesungen.lade()
+    if schluessel or regel or host:
+        return loesungen.fuer(stand, schluessel, regel, host)
+    return stand or loesungen.fuer(None)
+
+
+@router.post("/loesungen/lernen", dependencies=[RequireSysAdmin])
+async def post_loesungen_lernen(user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)],
+                                tage: float = Query(30, ge=1, le=90)):
+    """Sofort lernen (sonst nachts 03:50 UTC): Incidents + Graylog (nur lesend), Ergebnis nach cs-log-loesungen;
+    bestätigte Wege gehen in die VI."""
+    from app.services.log_watch import loesungen
+    z = await loesungen.lerne(tage)
+    db.add(AuditLog(action="loesungswege_gelernt", resource_type="log_watch", resource_id=z["zeit"][:200],
+                    user_id=user.id, details={"episoden": z["episoden"], "modi": z["modi"], "vi": z.get("vi")}))
+    await db.commit()
+    return {k: v for k, v in z.items() if k != "wege"} | {"wege": z["wege"][:50]}
+
+
 # ── Relevanz-Definition ───────────────────────────────────────────────────────
 
 @router.get("/definition")

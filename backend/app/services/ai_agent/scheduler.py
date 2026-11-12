@@ -368,6 +368,15 @@ async def run_relevanz_modell() -> None:
         logger.warning("Relevanz-Modell: Training fehlgeschlagen: %s", e)
 
 
+async def run_loesungswege() -> None:
+    """Lösungswege nachts lernen (loesungen.py) — Incidents und Graylog nur lesend."""
+    from app.services.log_watch import loesungen
+    try:
+        await loesungen.lerne()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Lösungswege: Lernen fehlgeschlagen: %s", e)
+
+
 async def run_log_ki_pruefung() -> None:
     """Warteschlange der KI-Flotte messen: alle 10 min genau ein Messpunkt (offen, Fälle,
     verfallen) — getrennt von den Agenten, damit „verfallen“ nicht je Agent mehrfach zählt."""
@@ -551,6 +560,8 @@ async def start_scheduler() -> None:
                        id="log_watch_raster", replace_existing=True, max_instances=1,
                        coalesce=True)
     _scheduler.add_job(run_relevanz_modell, "cron", hour=3, minute=35, id="log_watch_relevanz_modell",
+                       replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=3600)
+    _scheduler.add_job(run_loesungswege, "cron", hour=3, minute=50, id="log_watch_loesungswege",
                        replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=3600)
     _scheduler.add_job(run_log_ki_pruefung, "cron", minute="*/10",
                        id="log_watch_ki_pruefung", replace_existing=True, max_instances=1, coalesce=True)

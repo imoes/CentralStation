@@ -10,6 +10,52 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — CentralStation learns how incidents were fixed (test mode)
+
+You asked (12.11., via the vi-mcp session): „In Centralstation soll auch trainiert werden wie man Fehler behoben hat.
+Bspw. Bei einem incident“.
+
+### What is new
+
+- **Remediation learning** (`backend/app/services/log_watch/loesungen.py`). It finds the actions that really
+  changed something on the host during an incident, measures the fix rate against the base rate without any action,
+  and keeps a mode with a reason. Details: README, „Log watch: learned remediation“.
+- `GET /log-watch/loesungen`, `POST /log-watch/loesungen/lernen` (sysadmin, audited), MCP and funnel tool
+  `lw_loesungen`, nightly run 03:50 UTC.
+- Confirmed paths are written to the VI with the observed command line; none are confirmed yet.
+
+### Evidence (dry run against live data, read only, nothing stored — 12.11.2026 07:56 UTC, 30 days)
+
+- **Sources:**
+  - incidents in PostgreSQL: 11 811 episodes, 699 hosts. Rule incidents since 07.11.: I-HOST 326, I-AUSBRUCH 82,
+    I-KRITISCH 9, I-FLOTTE 2. Older ones: alt:host 9 265, alt:log_cluster 770, alt:fleet 24, alt:critical 5.
+  - Graylog: 12 832 lines from the query on changing commands; 144 classified actions on 14 hosts.
+    - 12 658 lines are not an action. Sampled per source: Windows process logs (NB06422, WEC01), Ansible check
+      scripts (docker0226, ansible03), UniFi gRPC info lines.
+    - 30 duplicates via syslog + filebeat.
+  - Console sessions about an incident: 3.
+- **Episodes:** 1 328 still open (24 h follow-up not over, or not closed), 902 of them cleaned up on 07.11. Without
+  any action, 3 100 of 10 474 were gone after 24 h (30 %). With an action: 9, all fixed. Only 9 hosts have both an
+  incident and an observed action.
+- **First remediation paths:**
+  - `mu-img-cueapp01.stage`: `dienst-start:filebeat` and `dienst-neustart:filebeat` (Ansible) fixed 6 of 6
+    episodes, against 8 % without action (143 episodes). Incidents 236fce4c, 5afe02f2, 8883a768, … Mode `test`
+    (`bestaetigt` needs 10).
+  - `HER-0-SDWAN`: `dienst-start:unifi-mongodb` 2 of 2. Mode `zu_wenig`.
+- **Time check:** 7 338 older / 3 145 newer episodes; no (problem, action) pair has ≥ 3 episodes in both halves, so
+  nothing could be checked yet.
+- **Tests:** `tests/test_log_watch_loesungen.py`, 23 tests: vocabulary incl. reading commands that must not count,
+  syslog host, fixed/open, base rate, every mode. Full suite: 900 passed, the same 7 failures and 3 collection
+  errors as before.
+
+### What is missing
+
+- **Very few actions are visible.** Most fixes are not done via sudo or Ansible on the host itself, or are not
+  logged; CheckMK acknowledgements and AWX job history are not read. Recipes (1) and resolution entries (1) are
+  almost unused.
+- A one-click „das hat es behoben“ on an incident would give the strongest label; not built.
+- Not deployed yet.
+
 ## 2026-11-12 — A learned relevance model judges alongside the rules (test mode)
 
 You asked (12.11., via the vi-mcp session): „Ich möchte, dass in CentralStation KI auf die Fehlermeldungen trainiert
