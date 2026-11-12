@@ -10,6 +10,39 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — The AI asks back by mail and in the console; duplicate copies deleted
+
+External analysis F6: „Kein Lernen aus Behebungen: 100 % Incidents ‚unbearbeitet‘, 9/11.812 Episoden mit
+Maßnahme“. You: „das soll automatisch funktionieren oder die ki soll nachfragen“ — „in der mail und in der konsole“.
+
+### What is new
+
+- **`ki_fragen.py`:** when a closed rule incident has no known action, the AI asks „Was hat geholfen?“.
+  - Known actions: ticket, resolution entry, an earlier answer, an action observed in Graylog on the host during the
+    incident.
+  - At most 3 a day, largest incidents first.
+  - **By mail** with signed one-click links (no login) and **in the console** (`ki_fragen_offen`,
+    `ki_frage_beantworten`; the console instructions say to ask at the start of a session and to enter only the
+    user's answer).
+  - An answer becomes an action of the episode and/or a **human verdict** on the incident's messages, the first gold
+    labels for the relevance model. Details: README „The AI asks back“.
+- **Automatic:** a ticket on an incident now counts as an action in remediation learning.
+
+### Deleted (your decision: „löschen“, „ohne sicherung“)
+
+- All **395 991** continuation copies of Graylog feed entries since 13.10. were deleted: in PostgreSQL 395 991 (12.11.
+  11:34:57–11:35:21 UTC), in OpenSearch `cs-feed-graylog` the 272 641 that were still indexed.
+- None was touched by a human: status `new`, no acknowledgement, no feedback/kanban/work-session reference. Comments
+  and claims are keyed by `external_id`, which the first, real entry keeps.
+- 26 544 Graylog feed entries remain. The last copy was made at 11:30:43 UTC by the old code; none since the deploy.
+
+### Evidence
+
+- Tests: `test_ki_fragen.py`, 7 tests: candidates (≤ 3/day, largest first, without action, unasked, < 24 h),
+  signature only for this question and answer, exhaustive effects, one mail link per answer, console tools and
+  instruction, remediation learning knows ticket and answers. Full suite: 947 passed.
+- Not deployed yet.
+
 ## 2026-11-12 — Relevance model: the running model must lose before it is replaced; identity features damped
 
 External analysis F2/F3/F4 (12.11. ~10:55 UTC), checked against code and data:

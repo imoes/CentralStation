@@ -792,6 +792,13 @@ mit Schlüssel, Instanz (Jira/ServiceDesk) und Link.
 Nur Hosts aus dem CheckMK-Inventar. Fehler sind benannt (`host_unknown`, `no_manpage`,
 `ssh_failed`) — ein Fehler heißt nicht, dass es den Befehl nicht gibt.
 
+## OFFENE FRAGEN DER KI (MCP-Werkzeuge)
+Die Log-Überwachung fragt höchstens dreimal am Tag nach, wenn ein Incident geschlossen wurde und sie keine Maßnahme
+erkennen konnte („Was hat geholfen?“). Rufe zu Beginn einer Sitzung einmal `ki_fragen_offen()` auf. Gibt es offene
+Fragen, stelle sie dem Nutzer kurz (Incident, Host, Antwortmöglichkeiten) — eine nach der anderen, nur wenn es seine
+Arbeit nicht unterbricht. Trage NUR seine Antwort mit `ki_frage_beantworten(frage_id, wahl, text)` ein; wähle nie
+selbst. Antwortet er nicht oder will nicht, lass die Frage offen.
+
 ## SSH-ZUGRIFF
 Befehl: `ssh <hostname> '<befehl>'` — SSH-User `{ssh_user}` und Key sind per
 ~/.ssh/config für **jeden** Host voreingestellt; kein -i, -u oder -o IdentityFile nötig.

@@ -1401,6 +1401,29 @@ are really noise (`services/log_watch/relevanz_modell.py`, proposal: `docs/vorsc
   `POST /log-watch/modell/trainieren` (sysadmin) trains at once. `GET /log-watch/modell` and the MCP tool
   `lw_modell` (with `nachricht=<id>`: P(noise) of one message and the weights for and against) read it.
 
+### The AI asks back (mail and console)
+
+When a rule incident is closed and no action is known for it, the AI asks: „Was hat geholfen?“
+(`services/ki_fragen.py`; you, 12.11.: „das soll automatisch funktionieren oder die ki soll nachfragen“ — „in der
+mail und in der konsole“).
+
+- **Known actions**, which suppress a question: ticket, resolution entry, an earlier answer, and an action observed in
+  Graylog on that host during the incident.
+- **Limit:** at most **3 questions a day**, largest incidents first. Hourly at minute 55.
+- **Mail:** one-click answers, signed per question and answer, no login (`GET /api/ki-fragen/{id}/antwort`).
+  Recipients follow the host scope, as for the immediate mail.
+- **Console:** the agent calls `ki_fragen_offen()` at the start of a session, asks you, and enters only your answer
+  with `ki_frage_beantworten` (write approval as for every writing tool).
+- **What an answer does:**
+  - `neustart`, `konfiguration`, `ticket`: an action of the episode (remediation learning) plus a human verdict
+    „relevant“ on the incident's messages — a gold label for the relevance model;
+  - `rauschen`: human verdict „not relevant (N4)“;
+  - `von_selbst`: counts towards the base rate;
+  - `weiss_nicht`: closes the question.
+
+  The first answer wins; any later one is refused with a reason.
+- **Automatic without asking:** a ticket on an incident now counts as an action in remediation learning.
+
 ### Log watch: learned anomalies (IsolationForest, scikit-learn)
 
 `services/log_watch/auffaellig.py` learns the *normal* behaviour of each Drain pattern and scores every Graylog

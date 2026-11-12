@@ -71,7 +71,7 @@ MUSTER: tuple[tuple[re.Pattern, object], ...] = (
 #: Präfixe des Vokabulars — erschöpfend (Test prüft, dass jede Regel einen davon bildet)
 ARTEN = ("dienst-neustart", "dienst-start", "dienst-stopp", "dienst-reload", "docker-neustart", "docker-start",
          "docker-stopp", "docker-compose", "host-neustart", "paket-install", "paket-upgrade", "paket-dist-upgrade",
-         "konsole", "rezept", "loesungseintrag")
+         "konsole", "rezept", "loesungseintrag", "ticket", "neustart", "konfiguration")
 _HOST_IM_TEXT = re.compile(r"(?:^|\s)([A-Za-z][\w-]*(?:\.[\w-]+)*)\s+(?:sudo|python3)\b")
 
 
@@ -227,7 +227,7 @@ async def episoden(db, tage: float) -> list[Episode]:
     rows = (await db.execute(text(
         "select i.id::text, i.primary_host, i.title, i.created_at, i.resolved_at, i.status, e->>'regel', "
         "e->>'schluessel', (select jsonb_agg(x) from jsonb_array_elements(i.causal_context::jsonb) x "
-        " where x->>'type' in ('resolution','ticket','check_run')) "
+        " where x->>'type' in ('resolution','ticket','check_run','massnahme')) "
         "from incidents i, jsonb_array_elements(i.causal_context::jsonb) e "
         "where e->>'type' = 'error_cluster' and e->>'regel' is not null and i.created_at >= :seit"),
         {"seit": seit})).all()
@@ -242,6 +242,11 @@ async def episoden(db, tage: float) -> list[Episode]:
         for x in doku or []:
             if x.get("type") == "resolution":
                 e.massnahmen.setdefault("loesungseintrag", []).append(str(x.get("text") or x.get("grund") or "")[:300])
+            elif x.get("type") == "ticket":            # automatisch: ein Ticket am Incident ist eine Maßnahme
+                e.massnahmen.setdefault("ticket", []).append(f"Ticket {x.get('key') or ''}".strip())
+            elif x.get("type") == "massnahme" and x.get("art"):   # Antwort auf eine KI-Frage (ki_fragen.py)
+                e.massnahmen.setdefault(str(x["art"]), []).append(
+                    f"{x.get('quelle') or 'Antwort'}: {x.get('text') or ''}".strip(": ")[:300])
         eps.append(e)
     # Incidents vor den Incident-Regeln (ohne error_cluster-Kontext): Host-Episoden alter Art — Schlüssel host:<Host>,
     # Regel „alt:<kind>“, damit sie nie mit den Regel-Episoden in eine Basisrate fallen

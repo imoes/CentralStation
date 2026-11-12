@@ -2359,6 +2359,30 @@ async def lw_definition() -> dict:
 
 
 @mcp.tool()
+async def ki_fragen_offen(host: str = "") -> dict:
+    """Offene Fragen der KI an den Menschen: zu geschlossenen Incidents, bei denen keine Maßnahme erkennbar war
+    („Was hat geholfen?“). Stelle sie dem Nutzer kurz, mit den Antwortmöglichkeiten, und trage seine Antwort mit
+    ki_frage_beantworten ein. Optional nur für einen Host."""
+    from app.services import ki_fragen
+    return {"offen": await ki_fragen.offene(host, 10), "antworten": {w: v[0] for w, v in ki_fragen.WAHL.items()}}
+
+
+@mcp.tool()
+async def ki_frage_beantworten(frage_id: str, wahl: str, text: str = "") -> dict:
+    """Die Antwort des NUTZERS auf eine KI-Frage eintragen — nur, was er gesagt hat, nie selbst gewählt.
+    wahl: neustart | konfiguration | ticket | von_selbst | rauschen | weiss_nicht; text: seine Worte (optional).
+    Wirkung: Maßnahme der Episode und/oder Urteil an den Nachrichten des Incidents."""
+    denied = await _require_write("KI-Frage beantworten (Antwort des Nutzers eintragen)")
+    if denied:
+        return denied
+    from app.services import ki_fragen
+    try:
+        return await ki_fragen.beantworte(frage_id, wahl, "konsole", text)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
 async def lw_lernstand(stunden: float = 24) -> dict:
     """Lernt das System dazu? Kennzahlen je Trainingslauf (Relevanz-Modell, Auffälligkeiten, Lösungswege) mit Trend,
     Wirkung in Produktion (letzte N h gegen die N davor) und Trefferquote in Produktion laut KI-Urteil."""

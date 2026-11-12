@@ -377,6 +377,15 @@ async def run_auffaelligkeiten() -> None:
         logger.warning("Auffälligkeiten: Lernen fehlgeschlagen: %s", e)
 
 
+async def run_ki_fragen() -> None:
+    """KI fragt nach (ki_fragen.py): höchstens 3 Fragen am Tag zu geschlossenen Incidents ohne erkennbare Maßnahme."""
+    from app.services import ki_fragen
+    try:
+        await ki_fragen.stellen()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("KI-Fragen: Stellen fehlgeschlagen: %s", e)
+
+
 async def run_loesungswege() -> None:
     """Lösungswege nachts lernen (loesungen.py) — Incidents und Graylog nur lesend."""
     from app.services.log_watch import loesungen
@@ -574,6 +583,8 @@ async def start_scheduler() -> None:
     _scheduler.add_job(run_auffaelligkeiten, "cron", minute=20, id="log_watch_auffaelligkeiten",
                        replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=3600,
                        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90))
+    _scheduler.add_job(run_ki_fragen, "cron", minute=55, id="ki_fragen", replace_existing=True, max_instances=1,
+                       coalesce=True, misfire_grace_time=3600)
     _scheduler.add_job(run_loesungswege, "cron", minute=50, id="log_watch_loesungswege",
                        replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=3600)
     _scheduler.add_job(run_log_ki_pruefung, "cron", minute="*/10",

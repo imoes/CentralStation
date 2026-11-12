@@ -155,6 +155,8 @@ app.include_router(skills_router.router, prefix="/api")
 app.include_router(ws.router, prefix="/api")
 app.include_router(error_clusters_router.router, prefix="/api")
 app.include_router(log_watch_router.router, prefix="/api")
+from app.api import ki_fragen as ki_fragen_router  # noqa: E402 — KI fragt nach (Mail-Links, Konsole)
+app.include_router(ki_fragen_router.router, prefix="/api")
 
 # fastmcp sse_app() has no HEAD handler — Hermes probes with HEAD before
 # connecting, which causes a TypeError. Intercept it here first.
