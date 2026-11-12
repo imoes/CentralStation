@@ -26,7 +26,11 @@ HOOK_QUELLE = Path(__file__).resolve().parent.parent / "resources" / "vi_hook.py
 #: (auch Folgefragen) passende Hinweise, der Server speichert den Prompt nicht. Nutzer 11.11.2026 (über die vi-mcp-Sitzung):
 #: „die VI sucht bei jeder Nutzerfrage“ — gemessen vorher: VI-Suche in 4/10 ersten Turns, aber nur 2/80 Folgeturns. Das
 #: Korrektur-/Noten-Signal desselben Ereignisses braucht Mensch-Recht; fehlt es, verliert der Hook nur das Signal, nicht den Kontext.
-EREIGNISSE = ("UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd")
+#: Stop ab vi-mcp 0.59.0: einmal je Sitzung die Bitte um vi_feedback, wenn Hinweise gezeigt, aber nicht bewertet wurden
+#: (gemessen von der vi-mcp-Sitzung: 52 Rückmeldungen auf 12 332 gezeigte Hinweise am 12.11.2026). Aus: VI_MCP_FEEDBACK_NUDGE=0.
+EREIGNISSE = ("UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SessionEnd")
+#: Ereignisse ohne Werkzeug — dort gibt es keinen matcher
+OHNE_MATCHER = ("Stop", "SessionEnd")
 KENNUNG = "vi_hook.py"
 
 
@@ -56,7 +60,7 @@ def mische_einstellungen(alt: dict, befehl: str | None) -> dict:
         for ereignis in EREIGNISSE:
             eintrag: dict = {"hooks": [{"type": "command", "command": befehl,
                                         **({} if ereignis == "SessionEnd" else {"timeout": 5})}]}
-            if ereignis != "SessionEnd":
+            if ereignis not in OHNE_MATCHER:
                 eintrag = {"matcher": "*", **eintrag}
             hooks.setdefault(ereignis, []).append(eintrag)
     if hooks:

@@ -10,6 +10,30 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — Local VI on vi-mcp 0.59.0: the console asks once per session for feedback
+
+### What has changed
+
+- **Local VI on vi-mcp 0.59.0** (12.11. 11:55 UTC). Signed (key c88aa8ce…), deb sha256 0657e112aa06…; backup
+  `~/vi-mcp-sicherung/*-20261112T115523Z.tgz`.
+  - `/gesund` reports ok 0.59.0; network has 0 violations.
+  - New in the package: implicit feedback (a hint whose path, option or file name a successful action reuses counts
+    as „used“), and the champion gate needs 2 SE.
+- **Console hook gains `Stop`** (`backend/app/services/vi_konsole.py`, `EREIGNISSE`).
+  - Once per session the hook asks for `vi_feedback` when hints were shown but not rated. The vi-mcp session
+    measured 52 ratings for 12 332 shown hints on 12.11.
+  - The entry has no matcher (Stop has no tool) and a 5 s timeout.
+  - Turn it off with `VI_MCP_FEEDBACK_NUDGE=0`.
+
+### Evidence
+
+- The hook in the backend image matches the package: sha256 e7f20f029023… for both.
+- Backend `healthy`, `/api/health` 200; `test_vi_konsole.py` 11 passed.
+- **Not yet observed:** `settings.json` in the console is rewritten when the next Claude session starts; until then it
+  lists the five old events.
+
+---
+
 ## 2026-11-12 — Console: read-only diagnoses with sed/grep no longer refused
 
 You: „Der Hook hat den sed-Ausdruck wieder als schreibend gewertet“.
@@ -37,6 +61,9 @@ You: „Der Hook hat den sed-Ausdruck wieder als schreibend gewertet“.
 
 ### Evidence
 
+- Live, 12.11. after recreating the console container from the new image (guard md5 0b8ac8e3… in repo, image and
+  container): the three commands refused at 11:35:21, 11:35:32 and 11:36:36 were fed to the hook and pass (exit 0);
+  `ssh h 'sed -n "w /etc/x" f'` is still refused (exit 2).
 - `backend/tests/test_readonly_guard.py`: 175 passed (previously 138; 37 new allowed and blocked cases).
 - All 57 parseable commands from the audit log `/tmp/cs-readonly-guard.log` (container
   `cs-userenv-71dcb97d…`) were replayed with the old and the new guard:

@@ -77,3 +77,9 @@ def test_jede_frage_fragt_die_vi():
     neu = vk.mische_einstellungen({}, "python3 -I /h/vi_hook.py")
     e = neu["hooks"]["UserPromptSubmit"]
     assert len(e) == 1 and e[0]["matcher"] == "*" and e[0]["hooks"][0]["timeout"] == 5
+
+
+def test_stop_bittet_einmal_um_rueckmeldung():
+    """vi-mcp 0.59.0: Stop-Ereignis ohne matcher (Stop hat kein Werkzeug), mit Timeout — es hält den Turn kurz."""
+    e = vk.mische_einstellungen({}, "env X=1 python3 -I /h/vi_hook.py")["hooks"]["Stop"]
+    assert len(e) == 1 and "matcher" not in e[0] and e[0]["hooks"][0]["timeout"] == 5
