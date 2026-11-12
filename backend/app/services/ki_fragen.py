@@ -146,9 +146,11 @@ async def stellen(jetzt: datetime | None = None) -> dict:
     gl = await _graylog_connector()
     # Mail-Empfänger je offenem Incident vorab (CheckMK-Filter der Abonnenten) — sie bestimmen die Reihenfolge
     empf: dict[str, tuple[list[str], str]] = {}
-    async with AsyncSessionLocal() as db:
+    if heute < MAX_JE_TAG:                           # Kontingent erschöpft → nichts zu wählen
+        async with AsyncSessionLocal() as db:
+            abos = await notify.abonnenten(db)       # einmal je Lauf, nicht je Incident
         for i in offen(incs, gefragt, jetzt):
-            empf[i["id"]] = await notify.empfaenger(db, [i["host"]])
+            empf[i["id"]] = notify.waehle_empfaenger(abos, [i["host"]])
     vor = kandidaten(incs, gefragt, heute, jetzt, {k for k, (to, _) in empf.items() if to})
     gestellt, uebersprungen = [], []
     for i in vor:

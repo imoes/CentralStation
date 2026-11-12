@@ -25,6 +25,9 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   - 83 rule incidents were closed in the last 24 h, none with a known action.
   - 33 of them have a mail recipient, e.g. aim012 with 14 messages and mu-img-docker50.
 - `test_ki_fragen.py`: 8 passed (new: recipients first, and unchanged order without recipients).
+- **Speed:** subscribers' CheckMK filters are read once per run (`notify.abonnenten`), not once per incident.
+  - Before: 15.0 s for 83 incidents. After: 0.36 s for 82 incidents. Same recipients (33).
+  - When today's 3 questions are already used, no recipients are looked up at all.
 
 ### What is still missing
 

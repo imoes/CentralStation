@@ -251,6 +251,12 @@ def waehle_empfaenger(abonnenten: list[tuple[str, list[str]]], hosts: list[str])
 
 async def empfaenger(db, hosts: list[str]) -> tuple[list[str], str]:
     """Abonnenten der Sofort-Mail mit ihrem Host-Scope → waehle_empfaenger."""
+    return waehle_empfaenger(await abonnenten(db), hosts)
+
+
+async def abonnenten(db) -> list[tuple[str, list[str]]]:
+    """(Mail, CheckMK-Host-Scope) je aktivem Abonnenten der Sofort-Mail. Für viele Hosts einmal lesen, dann
+    waehle_empfaenger je Host (ki_fragen: 83 Incidents × Scope-Abfrage = 15 s je Lauf, gemessen 12.11.)."""
     from app.models.user import User
     from app.models.workflow import UserPreference
     from app.services.feed_index import get_user_checkmk_host_scope
@@ -262,7 +268,7 @@ async def empfaenger(db, hosts: list[str]) -> tuple[list[str], str]:
         ns = prefs.notification_settings or {}
         if ns.get("error_cluster_immediate") and getattr(user, "is_active", True) and user.email:
             abonnenten.append((user.email, await get_user_checkmk_host_scope(db, str(user.id))))
-    return waehle_empfaenger(abonnenten, hosts)
+    return abonnenten
 
 
 async def recipients(db, hosts: list[str]) -> list[str]:
