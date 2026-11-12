@@ -149,7 +149,7 @@ async def post_modell_trainieren(user: CurrentUser, db: Annotated[AsyncSession, 
     from app.services.log_watch import relevanz_modell
     r = await relevanz_modell.trainiere_und_speichere(tage)
     db.add(AuditLog(action="relevanz_modell_trainiert", resource_type="log_watch", resource_id=r.get("zeit", "")[:200],
-                    user_id=user.id, details={"modus": r.get("modus"), "grund": r.get("grund")}))
+                    user_id=user.id, new_value={"modus": r.get("modus"), "grund": r.get("grund")}))
     await db.commit()
     return r
 
@@ -170,7 +170,7 @@ async def post_auffaellig_lernen(user: CurrentUser, db: Annotated[AsyncSession, 
     from app.services.log_watch import auffaellig
     z = await auffaellig.lerne()
     db.add(AuditLog(action="auffaelligkeiten_gelernt", resource_type="log_watch", resource_id=z["zeit"][:200],
-                    user_id=user.id, details={"vergleich": z.get("vergleich")}))
+                    user_id=user.id, new_value={"vergleich": z.get("vergleich")}))
     await db.commit()
     return z
 
@@ -205,7 +205,7 @@ async def post_loesungen_lernen(user: CurrentUser, db: Annotated[AsyncSession, D
     from app.services.log_watch import loesungen
     z = await loesungen.lerne(tage)
     db.add(AuditLog(action="loesungswege_gelernt", resource_type="log_watch", resource_id=z["zeit"][:200],
-                    user_id=user.id, details={"episoden": z["episoden"], "modi": z["modi"], "vi": z.get("vi")}))
+                    user_id=user.id, new_value={"episoden": z["episoden"], "modi": z["modi"], "vi": z.get("vi")}))
     await db.commit()
     return {k: v for k, v in z.items() if k != "wege"} | {"wege": z["wege"][:50]}
 
