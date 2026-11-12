@@ -46,7 +46,35 @@ You (12.11.):
 - **Measured limit:** a 500× volume spike of a well-known pattern on 30 hosts scores 0.613 against the threshold
   0.637 (synthetic training data, 5 000 rows). IsolationForest saturates outside the training range. Such spikes stay
   with the statistical rules (spike/spread).
-- Live evidence follows after the deploy.
+- **Deployed** 12.11. 09:18 UTC, with fixes at 09:20 and 09:23 UTC.
+  - Definition **v17** (09:19:47 UTC, your v15 plus N1-MOD after R1 and R4-AUF before N1, both active), checked
+    with the rule editor's validation.
+  - **Fix:** the three new training endpoints passed `details=` to `AuditLog`, which has no such column, and would
+    have crashed on first call. A new test checks every `AuditLog(...)` call against the model's columns and flags all
+    three in the old code.
+- **Relevance model, live 09:18 UTC:**
+  - grouped AUC 0.778, recall 0.991;
+  - follow-up check: CheckMK CRIT after „noise“ 0.0 % (n = 49) vs. after „relevant“ 10.1 % (n = 655);
+  - mode `test` only because of the weight audit (host cue0148, aim012, cue0112; stunde:03).
+  - First windows after the deploy (09:15): N1-MOD decided 169 hit groups (graylog 49, wazuh 15, switch 105). All
+    had already been blocked by the rules; **no relevant message was downgraded** (`modell-entschied` 0).
+- **Anomalies, live** (in the backend at 09:21:51 and 09:24:49 UTC):
+  - 655 and 921 outliers among 68 371 pattern windows in 24 h. The two runs differ because the 120 000-row training
+    sample is random.
+  - On 80 windows the AI had already judged, the AUC against its verdict is **0.31 — below chance**: what the forest
+    finds anomalous, the AI tends to call noise.
+  - The first window (09:15) forwarded **3 650 messages** via R4-AUF: 305 stored, 50 sent to the AI as a sample.
+    Relevant messages rose from 2 498/h to 3 985/h (+60 %).
+  - The AI-analysis rate fell from 44/h to 13.5/h in the same two hours. **Hypothesis:** the three backend restarts
+    interrupted the AI fleet; this is not shown to come from the models.
+- **Local VI on vi-mcp 0.54.1** (update by the vi-mcp session, approved by you; package sha256 263b4f2f… checked
+  against the Dockerfile).
+
+### What is missing (production test)
+
+- **R4-AUF forwards a lot, and against the AI verdict (AUC 0.31).** The first AI verdicts on the 50 sampled anomaly
+  forwards will show it in `GET /log-watch/lernstand`. Switching R4-AUF to test mode is one click in the rule editor.
+- Exploration cases of the relevance model: none yet, because the model has not yet blocked a relevant message.
 
 ## 2026-11-12 — CentralStation learns how incidents were fixed (test mode)
 
