@@ -72,8 +72,15 @@ You (12.11.):
 
 ### What is missing (production test)
 
-- **R4-AUF forwards a lot, and against the AI verdict (AUC 0.31).** The first AI verdicts on the 50 sampled anomaly
-  forwards will show it in `GET /log-watch/lernstand`. Switching R4-AUF to test mode is one click in the rule editor.
+- **R4-AUF is back in test mode** (your decision, definition **v18**, 12.11. 09:35:53 UTC). It counts, but no longer
+  forwards; N1-MOD stays active and the anomaly model keeps training and being measured.
+  - Reason: it forwarded against the AI verdict (AUC 0.31) and added +60 % relevant messages per hour.
+  - The sign is checked: anomaly = −`score_samples` (`auffaellig.py:81`, threshold line 89, AUC line 107 against
+    `ai_relevanz ≥ 2`). The 0.31 is real: the more anomalous a window, the more often the AI calls it noise.
+    **Hypothesis:** wide waves (many hosts, new) are known noise here, e.g. pam_env, postfix relayhost,
+    coroot-node-agent.
+  - Open: whether the anomaly score works better as a *noise feature* in the relevance model. Check it against that
+    model's breadth weight (16+ hosts +0.44).
 - Exploration cases of the relevance model: none yet, because the model has not yet blocked a relevant message.
 
 ## 2026-11-12 — CentralStation learns how incidents were fixed (test mode)
