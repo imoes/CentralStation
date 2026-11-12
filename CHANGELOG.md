@@ -27,9 +27,33 @@ You: „1 ja, 2 ja“ — the KI side of weight-space programming, after the vi-
   - **Effect:** only `aktiv` changes verdicts. A rejected layer or one stuck in test for 24 h gets a new proposal.
 - `lernstand` and the model doc show the layer: mode, reason, deltas, offline and prospective measurement.
 
+### Checked against the vi-mcp session's lessons (12.11., afternoon)
+
+The session shared nine lessons from building the same thing (`weight_writer.py`, commit 1def4bd). Checked one by
+one:
+
+- **Data leak (decisive):** present here too. The card carried the grouped-holdout AUC and recall, and the audit class
+  `dominant` is computed from holdout predictions. Both are removed from the card and from the allowed features. With
+  the leak, the vi-mcp session's gate said „better“ (−0.00099 ± 0.00026); without it, no difference
+  (−0.00014 ± 0.00014). The prospective gate was never affected: it only uses messages after the proposal.
+- **Prompt:** now says what a weight means (P that the AI check calls it noise) and that severity is no reason.
+- **`loeschen`:** sets a weight to 0, also beyond |Δ| ≤ 1, only for training-side audit features with a fitted weight.
+- **Δ = 0** is counted as „keine Änderung“, not as a range error.
+- **Second metric in the gate:** offline, an AUC drop > 0.005 rejects; activation needs log loss > 2 SE better *and*
+  AUC not worse.
+- **Persistence:** if a step fails, the last stored layer is kept, with the reason, instead of silently missing for
+  that hour.
+- Already met: tiny-n feature rates (the only rate, in „widerspricht“, needs n ≥ 30); no foreign texts (only feature
+  names from our own sources).
+- **Randomize per window — not built.** Before activation the comparison is paired: both predictions on the same
+  messages, so time of day and waves affect both sides equally. After activation, the labels depend on the decision
+  (blocked messages get no AI verdict). From then on only the 5 % exploration cases are randomized; a per-window coin
+  flip for the layer itself is open.
+
 ### Evidence
 
-- Tests: `test_log_watch_gewichts_schicht.py`, 7 tests.
+- Tests: `test_log_watch_gewichts_schicht.py`, 7 tests, plus 3 for the points above (leak-free card, `loeschen`/Δ = 0,
+  order reversal rejected). Full suite: 929 passed.
   - Rules: audit only, size, duplicates, number, reason.
   - Effect only when active.
   - Paired log loss.

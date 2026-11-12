@@ -1349,14 +1349,20 @@ are really noise (`services/log_watch/relevanz_modell.py`, proposal: `docs/vorsc
   /log-watch/lernstand` shows per run the chosen variant and every variant's AUC and log loss.
 - **KI weight layer — weight-space programming, hybrid** (`gewichts_schicht.py`; you: „1 ja, 2 ja“, after the vi-mcp
   session's plan, `weight_writer.py`):
-  - **Proposal:** the LLM configured in CentralStation reads a model card (feature names, effective weights, metrics,
-    audit findings — no message texts, so no log line can steer it) and proposes deltas.
-  - **Fixed rules check the answer:** ≤ 20 features, |Δ| ≤ 1, only audit findings, known features, a reason for each.
+  - **Proposal:** the LLM configured in CentralStation reads a model card and proposes deltas, or `loeschen` (weight to
+    0, also beyond |Δ| ≤ 1).
+    - The card holds feature names, effective weights and training-side audit findings, nothing from the holdout the
+      offline gate tests on (no AUC/recall, no „dominant“) — otherwise the gate passes on leaked numbers.
+    - No message texts, so no log line can steer the LLM.
+  - **Fixed rules check the answer:** ≤ 20 features, |Δ| ≤ 1 or `loeschen`, only training-side audit findings, known
+    features, a reason for each. Δ = 0 is counted as „no change“.
   - **Placement:** the deltas form a layer beside the fitted weights; hourly training does not overwrite it.
   - **Measured every hour against the new model:**
-    - offline on the grouped holdout, with vs. without the layer (paired log loss, mean ± SE);
+    - offline on the grouped holdout, with vs. without the layer (paired log loss, mean ± SE, and AUC must not fall by
+      more than 0.005);
     - prospectively, only on messages that arrived after the proposal.
-  - **Modes:** `aktiv` from ≥ 300 prospective messages and more than 2 SE better; `verworfen` if more than 2 SE worse,
+  - **Modes:** `aktiv` from ≥ 300 prospective messages, log loss more than 2 SE better and AUC not worse; `verworfen`
+    if more than 2 SE worse,
     and then a new proposal; otherwise `test`. A layer still in test after 24 h is replaced by a new proposal.
   - **Effect:** only an active layer changes verdicts (weight + delta).
   - **Visibility:** stored in `cs-log-schicht`; the model doc and `lernstand` show the mode, reason, deltas and both

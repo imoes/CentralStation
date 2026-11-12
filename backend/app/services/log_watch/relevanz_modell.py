@@ -919,12 +919,14 @@ async def trainiere_und_speichere(tage: float = 30) -> dict:
     beob, kontext = await beobachtungen_mit_kontext(tage)
     m = trainiere(beob)
     # Gewichts-Schicht (KI-Seite des Weight-Space Programming): laden oder vorschlagen lassen, gegen DIESES Modell messen
+    from app.services.log_watch import gewichts_schicht
     try:
-        from app.services.log_watch import gewichts_schicht
         sch = await gewichts_schicht.schritt(m, beob) if m.get("gewichte") else None
-    except Exception as e:  # noqa: BLE001 — ohne Schicht wie bisher
-        log.warning("Gewichts-Schicht: %s", e)
-        sch = None
+    except Exception as e:  # noqa: BLE001 — Schicht geht nicht still verloren: die zuletzt gespeicherte bleibt
+        log.warning("Gewichts-Schicht: Schritt fehlgeschlagen (%s) — letzte gespeicherte bleibt", e)
+        sch = await gewichts_schicht.lade()
+        if sch:
+            sch = {**sch, "grund": f"{sch.get('grund')} (unverändert übernommen: Schritt fehlgeschlagen — {e})"[:500]}
     if sch:
         m["schicht"] = {k: sch.get(k) for k in ("erstellt", "modus", "grund", "deltas", "gruende", "messung", "llm")}
     m["daten"] = {"tage": tage, "beobachtungen": len(beob), "index": "cs-logs-*",
