@@ -13,12 +13,13 @@ Die Regel-Entscheidung (Kriterien) ist ein MERKMAL — an den Gewichten ist sich
 widerspricht. Klasse 1 = Rauschen (Relevanz ≤ 1), 0 = relevant.
 
 Wirkung: das Raster setzt `signal:modell-rauschen` (mit den tragenden Gewichten als Grund), wenn P(Rauschen) die
-Schwelle erreicht. Entscheiden tut weiter allein das Regelwerk: erst eine Regel auf dieses Signal (N1-MOD,
-Standard im Testmodus) wirkt — und eine aktive solche Regel greift nur bei Modus „bereit“ (raster._urteil).
+Schwelle erreicht; entscheiden tut das Regelwerk über die Regel N1-MOD (raster.mit_modell). Nutzer 12.11.2026:
+„kein schattenbetrieb wir testen das in produktion. Du musst nur die ergebnisse vergleichen können“ — das Modell
+wirkt, sobald es trainiert ist; gemessen wird über lernstand.py (Verlauf je Training, Wirkung, Erkundung).
 
-Modus, erschöpfend, immer mit Grund: zu_wenig_daten · test (urteilt mit, wirkt nicht) · bereit (eine aktive Regel
-darf es benutzen). „bereit“ verlangt Gold-Labels, Holdout-Kennzahlen und ein Gewichts-Audit ohne Befund — feste
-Regeln, kein LLM (ein LLM, das Gewichte prüft, liest auch Logtexte und kann von ihnen gesteuert werden).
+Modus, erschöpfend, immer mit Grund — eine GÜTEANGABE, keine Sperre: zu_wenig_daten (kein Modell, kein Signal) ·
+test (Prüfungen nicht bestanden, Grund steht da) · bereit (bestanden). Prüfungen mit festen Regeln, kein LLM (ein LLM,
+das Gewichte prüft, liest auch Logtexte und kann von ihnen gesteuert werden).
 Verfahren wie vi-mcp learning.py / weight_audit.py (Mindestmengen, zeitlicher Holdout, Gewichte als JSON).
 """
 from __future__ import annotations
@@ -45,6 +46,11 @@ HOLDOUT_ANTEIL = 0.2
 HOLDOUT_MAX = 0.5
 MIN_HOLDOUT_JE_KLASSE = 20
 AUC_MIN = 0.7
+#: automatische Freigabe (ohne Gold) — strenger, weil die Labels von einem LLM stammen
+AUC_AUTO_MIN = 0.75
+#: Folge-Prüfung: CheckMK-CRIT am selben Host binnen dieser Zeit nach der Nachricht
+FOLGE_FENSTER_S = 3600
+MIN_FOLGE_N = 30
 #: Von dem, was relevant ist, darf das Modell höchstens 1 % als Rauschen einstufen (Schwelle danach gewählt)
 RECALL_RELEVANT_MIN = 0.99
 L2 = 1e-3
@@ -150,6 +156,8 @@ class Beobachtung:
     #: Urteil der GELTENDEN Regeln über dieselben Eingangs-Tags (1 = BLOCK) — Vergleich auf Gold-Fällen, deren
     #: gespeichertes Urteil der Mensch überschrieben hat
     regel_rauschen: int | None = None
+    #: folgte binnen FOLGE_FENSTER ein CheckMK-CRIT am selben Host? (None = nicht prüfbar, z. B. CheckMK selbst)
+    folge: int | None = None
 
 
 def beobachtung(id_: str, doc: dict, breite: int | None = None, regel_rauschen: int | None = None
@@ -320,28 +328,52 @@ def audit(gewichte: dict[str, float], train: list[Beobachtung], ho_positiv: list
 
 
 def modus(labels: dict, kennzahlen: dict, befunde: list[dict]) -> tuple[str, str]:
-    """(modus, grund) — erschöpfend; der erste fehlende Punkt ist der Grund. Rein."""
+    """(modus, grund) — erschöpfend; der erste fehlende Punkt ist der Grund. Rein.
+
+    Nutzer 12.11.2026: „es soll gleich trainieren ich muss da nichts mehr machen“ — die Freigabe darf nicht an
+    Menschen-Urteilen hängen. Gibt es ≥ MIN_GOLD_JE_KLASSE Gold-Urteile je Klasse, wird gegen Gold geprüft (und gegen
+    die Regeln auf denselben Fällen). Sonst AUTOMATISCH, unabhängig vom LLM, das die Silber-Labels liefert:
+    gruppierter Holdout (Schlüssel nie im Training) AUC ≥ AUC_AUTO_MIN, Recall relevant ≥ RECALL_RELEVANT_MIN, und
+    die FOLGE-Prüfung: auf Nachrichten, die das Modell Rauschen nennt, folgt nicht öfter ein CheckMK-CRIT am selben
+    Host binnen FOLGE_FENSTER als auf die, die es relevant nennt (CheckMK ist ein vom LLM unabhängiges System).
+    Immer: Gewichts-Audit ohne Befund."""
     gesamt = labels.get("gesamt") or {}
     if min(gesamt.get("rauschen", 0), gesamt.get("relevant", 0)) < MIN_JE_KLASSE:
         return "zu_wenig_daten", (f"Labels je Klasse: rauschen {gesamt.get('rauschen', 0)}, relevant "
                                   f"{gesamt.get('relevant', 0)} — nötig je {MIN_JE_KLASSE}")
     gold = labels.get("gold") or {}
-    if min(gold.get("rauschen", 0), gold.get("relevant", 0)) < MIN_GOLD_JE_KLASSE:
-        return "test", (f"nur KI-Urteile (Silber) reichen nicht: Mensch-Urteile (Gold) je Klasse rauschen "
-                        f"{gold.get('rauschen', 0)}, relevant {gold.get('relevant', 0)} — nötig je {MIN_GOLD_JE_KLASSE}")
-    a = kennzahlen.get("auc_gold")
-    if a is None or a < AUC_MIN:
-        return "test", f"Holdout-AUC (ungesehene Schlüssel) gegen Gold {a if a is None else round(a, 3)} < {AUC_MIN}"
-    ar = kennzahlen.get("auc_regel_gold")
-    if ar is not None and a <= ar:
-        return "test", f"auf denselben Gold-Fällen nicht besser als die Regeln: AUC {a:.3f} gegen {ar:.3f}"
-    r = kennzahlen.get("recall_relevant_gold")
-    if r is None or r < RECALL_RELEVANT_MIN:
-        return "test", f"Recall relevant (Gold, Holdout) {r if r is None else round(r, 3)} < {RECALL_RELEVANT_MIN}"
+    if min(gold.get("rauschen", 0), gold.get("relevant", 0)) >= MIN_GOLD_JE_KLASSE:
+        a = kennzahlen.get("auc_gold")
+        if a is None or a < AUC_MIN:
+            return "test", f"Holdout-AUC (ungesehene Schlüssel) gegen Gold {a if a is None else round(a, 3)} < {AUC_MIN}"
+        ar = kennzahlen.get("auc_regel_gold")
+        if ar is not None and a <= ar:
+            return "test", f"auf denselben Gold-Fällen nicht besser als die Regeln: AUC {a:.3f} gegen {ar:.3f}"
+        r = kennzahlen.get("recall_relevant_gold")
+        if r is None or r < RECALL_RELEVANT_MIN:
+            return "test", f"Recall relevant (Gold, Holdout) {r if r is None else round(r, 3)} < {RECALL_RELEVANT_MIN}"
+        basis = f"gegen Gold: AUC {a:.3f}, Recall relevant {r:.3f}"
+    else:
+        a = kennzahlen.get("auc")
+        if a is None or a < AUC_AUTO_MIN:
+            return "test", (f"automatische Prüfung: AUC auf ungesehenen Schlüsseln "
+                            f"{a if a is None else round(a, 3)} < {AUC_AUTO_MIN}")
+        r = kennzahlen.get("recall_relevant")
+        if r is None or r < RECALL_RELEVANT_MIN:
+            return "test", (f"automatische Prüfung: Recall relevant {r if r is None else round(r, 3)} < "
+                            f"{RECALL_RELEVANT_MIN}")
+        fr, fv, n = kennzahlen.get("folge_rauschen"), kennzahlen.get("folge_relevant"), kennzahlen.get("folge_rauschen_n") or 0
+        if fr is None or fv is None or n < MIN_FOLGE_N:
+            return "test", (f"automatische Prüfung: zu wenige Rauschen-Urteile mit CheckMK-Folgeprüfung ({n}, nötig "
+                            f"{MIN_FOLGE_N})")
+        if fr > fv:
+            return "test", (f"automatische Prüfung: auf „Rauschen“ folgte öfter ein CheckMK-CRIT am Host "
+                            f"({fr:.1%}) als auf „relevant“ ({fv:.1%})")
+        basis = (f"automatisch: AUC {a:.3f}, Recall relevant {r:.3f}, CheckMK-CRIT danach bei Rauschen {fr:.1%} "
+                 f"≤ relevant {fv:.1%}")
     if befunde:
         return "test", "Gewichts-Audit: " + "; ".join(f"{b['klasse']} {b['merkmal']}" for b in befunde[:4])
-    return "bereit", (f"AUC {a:.3f}, Recall relevant {r:.3f} gegen Gold; Audit ohne Befund — eine aktive Regel auf "
-                      f"{SIGNAL} darf wirken")
+    return "bereit", f"{basis}; Audit ohne Befund"
 
 
 def _zaehle_labels(beob: list[Beobachtung]) -> dict:
@@ -399,7 +431,12 @@ def trainiere(beob: list[Beobachtung], jetzt: datetime | None = None) -> dict:
     a_g, rr_g, re_g, n_g = kennz(gold)
     regel_gold = [b for b in gold if b.regel_rauschen is not None]
     a_rg = auc([float(b.regel_rauschen) for b in regel_gold], [b.y for b in regel_gold]) if regel_gold else None
+    mit_folge = [b for b in gr if b.folge is not None]
+    f_r = [b.folge for b in mit_folge if p_von[b.id] >= schwelle]
+    f_v = [b.folge for b in mit_folge if p_von[b.id] < schwelle]
     kz = {"auc": a, "auc_gruppen": auc_gruppen([p_von[b.id] for b in gr], gr),
+          "folge_rauschen": (sum(f_r) / len(f_r)) if f_r else None, "folge_rauschen_n": len(f_r),
+          "folge_relevant": (sum(f_v) / len(f_v)) if f_v else None, "folge_relevant_n": len(f_v),
           "recall_relevant": rr, "rauschen_erkannt": re_, "holdout_n": n,
           "holdout_schluessel": len({b.schluessel for b in gr}),
           "auc_zeitlich": a_z, "recall_relevant_zeitlich": rr_z, "rauschen_erkannt_zeitlich": re_z,
@@ -485,7 +522,6 @@ def aktuelles() -> dict | None:
 class Signal:
     p: float
     grund: str
-    freigegeben: bool
     modus: str
 
 
@@ -502,7 +538,7 @@ def pruefe(quelle: str, tags, felder: dict | None, kriterien, jetzt: datetime | 
         return None
     tr = ", ".join(f"{f} ({w:+.2f})" for f, w in tragend(m, mk))
     return Signal(p, f"Modell ({m['modus']}): Rauschen P = {p:.2f} ≥ {m['schwelle']:.2f} — {tr or 'nur Grundrate'}",
-                  m["modus"] == "bereit", m["modus"])
+                  m["modus"])
 
 
 # ── Laden, Speichern, Daten ───────────────────────────────────────────────────────────────────────────────
@@ -592,6 +628,7 @@ async def beobachtungen(tage: float = 30) -> list[Beobachtung]:
     Episode und dem Urteil der geltenden Regeln."""
     docs = await _alle(tage)
     br = breiten([d for _, d in docs])
+    crit = crit_zeiten([d for _, d in docs])
     regeln = await _regeln()
     out: list[Beobachtung] = []
     for i, d in docs:
@@ -600,8 +637,43 @@ async def beobachtungen(tage: float = 30) -> list[Beobachtung]:
         b = beobachtung(i, d, br.get((d.get("quelle"), d.get("schluessel"), _fenster(d.get("zeit")))),
                         regel_urteil(regeln, d) if d.get("herkunft") == "mensch" else None)
         if b:
+            b.folge = folge(crit, d)
             out.append(b)
     return out
+
+
+def _ts(zeit) -> float | None:
+    try:
+        return datetime.fromisoformat(str(zeit).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def crit_zeiten(docs: list[dict]) -> dict[str, list[float]]:
+    """Host → sortierte Zeiten gespeicherter CheckMK-Nachrichten mit zustand:crit. Rein."""
+    out: dict[str, list[float]] = {}
+    for d in docs:
+        if d.get("quelle") == "checkmk" and "zustand:crit" in (d.get("hashtags") or []) and d.get("host"):
+            t = _ts(d.get("zeit"))
+            if t is not None:
+                out.setdefault(d["host"], []).append(t)
+    for v in out.values():
+        v.sort()
+    return out
+
+
+def folge(crit: dict[str, list[float]], doc: dict) -> int | None:
+    """1, wenn binnen FOLGE_FENSTER nach der Nachricht ein CheckMK-CRIT am selben Host gespeichert wurde, sonst 0;
+    None für CheckMK-Nachrichten selbst (sie wären ihre eigene Folge) und ohne Host/Zeit. Rein."""
+    import bisect
+    if doc.get("quelle") == "checkmk" or not doc.get("host"):
+        return None
+    t = _ts(doc.get("zeit"))
+    if t is None:
+        return None
+    z = crit.get(doc["host"], [])
+    i = bisect.bisect_right(z, t)
+    return int(i < len(z) and z[i] <= t + FOLGE_FENSTER_S)
 
 
 def pruefliste(modell: dict, docs: list[tuple[str, dict]], br: dict[tuple, int], art_: str, limit: int = 20) -> dict:
@@ -666,6 +738,6 @@ async def trainiere_und_speichere(tage: float = 30) -> dict:
 def zusammenfassung(m: dict | None) -> dict:
     """Modell ohne die vollständige Gewichtsliste — für API und MCP. Rein."""
     if not m:
-        return {"modus": "zu_wenig_daten", "grund": "noch kein Modell trainiert (Nachtlauf 03:35 UTC oder "
+        return {"modus": "zu_wenig_daten", "grund": "noch kein Modell trainiert (stündlich zur Minute 35 oder "
                                                     "POST /log-watch/modell/trainieren)"}
     return {k: v for k, v in m.items() if k != "gewichte"} | {"gewichte_n": len(m.get("gewichte") or {})}

@@ -100,9 +100,9 @@ def test_zu_wenig_daten_mit_grund():
     assert m["modus"] == "zu_wenig_daten" and "nötig je 50" in m["grund"]
 
 
-def test_nur_silber_bleibt_test_mit_grund_und_lernt_das_muster():
+def test_nur_silber_ohne_folgedaten_bleibt_test_mit_grund_und_lernt_das_muster():
     m = rm.trainiere(_daten(3000))
-    assert m["modus"] == "test" and "Gold" in m["grund"]
+    assert m["modus"] == "test" and "automatische Prüfung" in m["grund"]
     assert m["gewichte"]["muster:laerm"] > 0 > m["gewichte"]["muster:ernst"]
     # nur zwei Schlüssel, beide im Training: der gruppierte Holdout ist leer — benannt (None), nicht geschönt
     assert m["kennzahlen"]["auc"] is None and m["kennzahlen"]["holdout_n"] == 0
@@ -113,7 +113,7 @@ def test_nur_silber_bleibt_test_mit_grund_und_lernt_das_muster():
     assert w["schluessel"][0]["schluessel"] == "muster:laerm"
 
 
-def test_bereit_nur_mit_gold_kennzahlen_und_ohne_audit():
+def test_bereit_mit_gold_gegen_gold_geprueft():
     labels = {"gesamt": {"rauschen": 900, "relevant": 2000}, "gold": {"rauschen": 60, "relevant": 70}}
     gut = {"auc_gold": 0.95, "recall_relevant_gold": 0.995}
     assert rm.modus(labels, gut, [])[0] == "bereit"
@@ -121,7 +121,31 @@ def test_bereit_nur_mit_gold_kennzahlen_und_ohne_audit():
     assert rm.modus(labels, {**gut, "recall_relevant_gold": 0.9}, [])[0] == "test"
     m, grund = rm.modus(labels, gut, [{"klasse": "stunde", "merkmal": "stunde:13"}])
     assert m == "test" and "stunde:13" in grund
-    assert rm.modus({**labels, "gold": {"rauschen": 10, "relevant": 70}}, gut, [])[0] == "test"
+
+
+def test_ohne_gold_automatisch_freigegeben_nur_mit_folge_pruefung():
+    """Nutzer 12.11.: „ich muss da nichts mehr machen“ — keine Menschen-Urteile nötig."""
+    labels = {"gesamt": {"rauschen": 900, "relevant": 2000}, "gold": {"rauschen": 0, "relevant": 0}}
+    gut = {"auc": 0.8, "recall_relevant": 0.995, "folge_rauschen": 0.01, "folge_relevant": 0.05,
+           "folge_rauschen_n": 200}
+    m, grund = rm.modus(labels, gut, [])
+    assert m == "bereit" and grund.startswith("automatisch")
+    assert "AUC" in rm.modus(labels, {**gut, "auc": 0.7}, [])[1]                      # strenger als mit Gold
+    m, grund = rm.modus(labels, {**gut, "folge_rauschen": 0.08}, [])
+    assert m == "test" and "CheckMK-CRIT" in grund
+    assert rm.modus(labels, {**gut, "folge_rauschen_n": 5}, [])[0] == "test"
+    assert rm.modus(labels, gut, [{"klasse": "host", "merkmal": "host:a"}])[0] == "test"
+
+
+def test_folge_crit_am_selben_host_binnen_einer_stunde():
+    docs = [{"quelle": "checkmk", "host": "a", "zeit": "2026-11-12T10:30:00Z", "hashtags": ["zustand:crit"]},
+            {"quelle": "checkmk", "host": "b", "zeit": "2026-11-12T13:00:00Z", "hashtags": ["zustand:warn"]}]
+    crit = rm.crit_zeiten(docs)
+    assert rm.folge(crit, {"quelle": "graylog", "host": "a", "zeit": "2026-11-12T10:00:00Z"}) == 1
+    assert rm.folge(crit, {"quelle": "graylog", "host": "a", "zeit": "2026-11-12T09:00:00Z"}) == 0     # 90 min
+    assert rm.folge(crit, {"quelle": "graylog", "host": "a", "zeit": "2026-11-12T10:31:00Z"}) == 0     # danach
+    assert rm.folge(crit, {"quelle": "graylog", "host": "b", "zeit": "2026-11-12T12:30:00Z"}) == 0     # nur WARN
+    assert rm.folge(crit, {"quelle": "checkmk", "host": "a", "zeit": "2026-11-12T10:00:00Z"}) is None
 
 
 def test_audit_host_stunde_dominant():
@@ -166,12 +190,36 @@ def test_modell_setzt_signal_mit_tragenden_gewichten_testregel_zaehlt_nur():
     assert any("muster:laerm (+5.00)" in g for g in t.gruende)
 
 
-def test_aktive_regel_wirkt_nicht_solange_modell_nicht_bereit():
+def test_aktive_regel_wirkt_in_produktion_auch_im_modus_test_und_bleibt_auffindbar():
+    """Nutzer 12.11.: „kein schattenbetrieb wir testen das in produktion“."""
+    from app.services.log_watch import historie
     rm.setze(MODELL)
     t = _urteil(_mit_aktiver_n1mod())
-    assert t.regel == "R2" and t.urteil == "relevant"
-    assert any("N1-MOD übergangen: Modell nicht freigegeben" in g for g in t.gruende)
-    assert "N1-MOD" in t.test_treffer
+    assert t.regel == "N1-MOD" and t.urteil == "nicht_relevant"
+    assert raster.SIG_ENTSCHIED in t.hashtags and t.modell_entschied
+    assert raster.Kontingent().nimm(t, datetime(2026, 11, 12, tzinfo=timezone.utc)) == 3     # bleibt in der Historie
+    doc_id, doc = historie.dokument(t, "q1", datetime(2026, 11, 12, tzinfo=timezone.utc), "x", {})
+    assert doc["urteil"] == "nicht_relevant" and raster.SIG_ENTSCHIED in doc["hashtags"]
+
+
+def test_erkundung_haelt_etwa_fuenf_prozent_zur_messung_relevant():
+    rm.setze(MODELL)
+    d = _mit_aktiver_n1mod()
+    b = datetime(2026, 11, 12, 9, tzinfo=timezone.utc)
+    tr = [raster._urteil("graylog", "muster:laerm", f"h{i}", True, list(TAGS), {}, [], 1, "x", d) for i in range(2000)]
+    raster.mit_modell(tr, d, b)
+    erk = [t for t in tr if raster.SIG_ERKUNDUNG in t.hashtags]
+    assert 0.03 < len(erk) / len(tr) < 0.07
+    assert all(t.urteil == "relevant" and "N1-MOD" in t.test_treffer and not t.modell_entschied for t in erk)
+    assert all(t.urteil == "nicht_relevant" for t in tr if t not in erk)
+    # deterministisch: derselbe Fall fällt immer gleich
+    assert raster.erkundung(tr[0], b) == raster.erkundung(tr[0], b)
+
+
+def test_geblockte_gehen_nie_zur_ki():
+    from app.services.log_watch import filter as flt, trichter
+    q = str(flt.opensearch(trichter.AUSLOESER))
+    assert "signal:modell-entschied" in q and "must_not" in q and "signal:auffaellig-entschied" in q
 
 
 def test_aktive_regel_wirkt_bei_bereit_aber_nie_gegen_schaden():
@@ -194,7 +242,9 @@ def test_zaehle_weist_modell_rauschen_je_urteil_aus():
     rm.setze(MODELL)
     t = _urteil(STANDARD)
     z = raster.zaehle([t], raster.Kontingent(), datetime(2026, 11, 12, tzinfo=timezone.utc))
-    assert z["modell_rauschen"] == {"nachrichten": 3, "je_urteil": {"relevant": 3}, "je_kriterium": {"R2": 3}}
+    assert z["modell_rauschen"] == {"nachrichten": 3, "je_urteil": {"relevant": 3}, "je_kriterium": {"R2": 3},
+                                    "entschied": 0, "erkundung": 0}
+    assert z["auffaellig"] == {"nachrichten": 0, "je_urteil": {}, "entschied": 0}
 
 
 def test_kaputtes_modell_haelt_raster_nicht_an():
@@ -238,7 +288,7 @@ def test_auc_gruppen_zaehlt_je_schluessel_einmal():
     assert rm.auc(p, [x.y for x in b]) < 0.1 and rm.auc_gruppen(p, b) == 0.5
 
 
-def test_bereit_nur_wenn_besser_als_die_regeln_auf_gold():
+def test_mit_gold_bereit_nur_wenn_besser_als_die_regeln():
     labels = {"gesamt": {"rauschen": 900, "relevant": 2000}, "gold": {"rauschen": 60, "relevant": 70}}
     m, grund = rm.modus(labels, {"auc_gold": 0.8, "recall_relevant_gold": 0.995, "auc_regel_gold": 0.85}, [])
     assert m == "test" and "nicht besser als die Regeln" in grund

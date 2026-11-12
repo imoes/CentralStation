@@ -1335,15 +1335,18 @@ are really noise (`services/log_watch/relevanz_modell.py`, proposal: `docs/vorsc
     without the audit's dominant feature, and the same against gold.
   - Recall of the relevant ones is reported at the threshold, chosen so that at most 1 % of the relevant ones in
     training are above it.
-- **Mode, always with a reason:** `zu_wenig_daten` (< 50 labels per class) · `test` (judges, has no effect) ·
-  `bereit`. `bereit` needs all of:
-  - ≥ 50 gold labels per class;
-  - gold AUC on unseen keys ≥ 0.7 *and* better than the rules on the same gold cases (the current rules re-applied
-    to the message's ingest tags);
-  - gold recall ≥ 0.99;
-  - a clean weight audit.
-
-  Silver trains; only gold activates. A language model's verdicts may sharpen, never decide alone.
+- **Mode, always with a reason — a quality statement:** `zu_wenig_daten` (< 50 labels per class, no signal) ·
+  `test` (checks not passed, reason given) · `bereit`. No human verdicts are needed (you, 12.11.: „ich muss da nichts
+  mehr machen“):
+  - **Automatic checks (no gold):**
+    - grouped-holdout AUC ≥ 0.75;
+    - recall of the relevant ones ≥ 0.99;
+    - the *follow-up check* — messages called noise must not be followed by a CheckMK CRIT on the same host within
+      60 min more often than messages called relevant. CheckMK is independent of the LLM that supplies the silver
+      labels.
+  - **With ≥ 50 gold labels per class:** gold AUC ≥ 0.7 and better than the current rules on the same cases; gold
+    recall ≥ 0.99.
+  - Always: a clean weight audit.
 - **Review queues for gold labels:** `GET /log-watch/modell/pruefliste?art=widerspruch|unsicher`, last 7 days, one
   case per key, without cases a human has already judged.
   - `widerspruch` = model and rules disagree, strongest first;
@@ -1352,15 +1355,65 @@ are really noise (`services/log_watch/relevanz_modell.py`, proposal: `docs/vorsc
 - **Weight audit, fixed rules, no LLM:** `host` (a single host among the 10 strongest weights), `stunde` (hour among
   them — time as cause would be post hoc), `dominant` (one feature carries ≥ 50 % of the noise verdicts in the
   holdout), `widerspricht` (a strong weight whose sign contradicts the measured noise share).
-- **Effect:** the raster adds `signal:modell-rauschen` with the carrying weights as a reason („Modell (test):
-  Rauschen P = 0.93 ≥ 0.54 — muster:… (+1.92), …“). Only a rule decides: `N1-MOD` „Modell: Rauschen“ (BLOCK, test
-  mode), placed after R5, R6, R6-FW and R1 — damage, security and production outages are never downgraded — and
-  before R2–R4. An *active* N1-MOD takes effect only when the model is `bereit`; otherwise the verdict stays and the
-  reason says „N1-MOD übergangen: Modell nicht freigegeben“. `raster_lauf` counts `modell_rauschen` per verdict and
-  criterion each window.
-- **Training:** nightly 03:35 UTC on the last 30 days of `cs-logs-*` (read only), stored in `cs-log-modell`;
+- **Effect — in production, no shadow mode** (you, 12.11.: „kein schattenbetrieb wir testen das in produktion“):
+  - The raster post-pass (`raster.mit_modell`, over all hits of a window) adds `signal:modell-rauschen` with the
+    carrying weights as a reason, e.g. „Modell (test): Rauschen P = 0.93 ≥ 0.54 — muster:… (+1.92), …“.
+  - Rule `N1-MOD` „Modell: Rauschen“ (BLOCK) decides. It sits after R5, R6, R6-FW and R1, so damage, security and
+    production outages are never downgraded, and before R2–R4. The model's mode is a quality statement, not a lock.
+  - A blocked hit stays in the history with `signal:modell-entschied`, so it can be found and measured; it never
+    goes to the AI (`trichter.AUSLOESER`).
+  - **Exploration:** 5 % of the cases the model would block stay relevant (`signal:modell-erkundung`, deterministic
+    per source/key/host/window). The AI judges them, which measures the model's hit rate in production.
+  - `raster_lauf` counts `modell_rauschen` (signal, blocked, exploration) per verdict and criterion each window.
+- **Training:** hourly at minute 35 (you, 12.11.: „es soll gleich trainieren“) on the last 30 days of `cs-logs-*` (read only), stored in `cs-log-modell`;
   `POST /log-watch/modell/trainieren` (sysadmin) trains at once. `GET /log-watch/modell` and the MCP tool
   `lw_modell` (with `nachricht=<id>`: P(noise) of one message and the weights for and against) read it.
+
+### Log watch: learned anomalies (IsolationForest, scikit-learn)
+
+`services/log_watch/auffaellig.py` learns the *normal* behaviour of each Drain pattern and scores every Graylog
+window. It uses scikit-learn rather than PyTorch, on the vi-mcp session's advice: small data, readable, no GPU.
+
+- **Observation:** (pattern, 5-min bucket) from `log_template_buckets`.
+- **Features**, no clock time:
+  - amount, log(1+n);
+  - excess over the pattern's own mean;
+  - hosts;
+  - age of the pattern (novelty);
+  - presence share (rare vs. constant noise).
+- **Training:** hourly at minute 20, and once right after start because the model lives in the backend's memory.
+  14 days, sample of 120 000 rows.
+- **Outlier:** score above the 99.5 % quantile of the training scores (≈ 0.5 % of pattern windows). The reason
+  names the features furthest from normal in σ.
+- **Effect in production:** the raster post-pass adds `signal:auffaellig` with that reason.
+  - Rule `R4-AUF` „Auffällig (gelernt)“ (FORWARD, criterion R4) forwards such windows even if routine (N1) or no
+    criterion (N0) would have dropped them. It sits after N3/N5/N1-MOD, so non-production, self-generated and
+    model-noise stay out.
+  - A forward that only happened because of the anomaly carries `signal:auffaellig-entschied` and goes to the AI,
+    which measures the hit rate.
+- **Known limit, measured 12.11.:** a pure volume spike of a well-known pattern (500× on 30 hosts) stays below the
+  threshold — IsolationForest saturates outside the training range. Those spikes are what the statistical rules
+  (spike/spread) catch; the forest adds unusual *combinations* (new + rare + wide).
+- **API:** `GET /log-watch/auffaellig` returns the last run: threshold, training, comparison with rules and AI, the
+  most anomalous windows, including those the rules did not forward. `POST /log-watch/auffaellig/lernen` trains at
+  once (sysadmin).
+
+### Log watch: learning progress (comparing results)
+
+You (12.11.): „Du musst nur die ergebnisse vergleichen können um die effizients fest zu stellen und ob das training
+das ergebnis verbessert“. `GET /log-watch/lernstand?stunden=24` (MCP: `lw_lernstand`, `services/log_watch/lernstand.py`)
+shows three views:
+
+1. **Per training run, with trend** (first, last, slope per run):
+   - relevance model: AUC on unseen keys, per key, time-only; recall; noise caught; follow-up rates; labels;
+   - anomalies: outliers, AUC against the AI verdict, windows the rules did not forward;
+   - remediation: episodes, with action, time check.
+2. **Effect in production** from `raster_lauf`: last N hours against the N before — messages, relevant, model
+   signal / blocked / exploration, anomaly signal / forwarded, AI analyses, also per hour.
+3. **Hit rate in production** from the AI's verdict in `cs-logs-*`:
+   - exploration cases the AI also calls noise (the model was right);
+   - anomaly forwards the AI calls relevant;
+   - how many blocked messages are stored.
 
 ### Log watch: learned remediation (how incidents were fixed)
 
@@ -1396,7 +1449,7 @@ evidence; nothing is ever executed.
   - `POST /log-watch/loesungen/lernen` (sysadmin);
   - MCP tool and funnel tool `lw_loesungen` — the AI can say „so wurde das zuletzt behoben“ with rate and incident
     IDs;
-  - nightly 03:50 UTC over 30 days, stored in `cs-log-loesungen`.
+  - hourly at minute 50 over 30 days, stored in `cs-log-loesungen`.
   - Confirmed paths go to the VI as a skill via `vi_solved`. The name `loesung-<problem>-<action>` is the identity,
     so a new run evolves the skill instead of duplicating it. Triggers: `host:<h>` or `fehler:<key>`; steps: the
     action; instructions: the observed command line, the rate and the incident IDs. A skill then appears before

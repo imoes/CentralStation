@@ -145,13 +145,42 @@ async def get_modell_pruefliste(_user: CurrentUser, art: str = Query("widerspruc
 @router.post("/modell/trainieren", dependencies=[RequireSysAdmin])
 async def post_modell_trainieren(user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)],
                                  tage: float = Query(30, ge=1, le=90)):
-    """Sofort trainieren (sonst nachts 03:35 UTC) — nur lesend auf cs-logs-*, schreibt das Modell nach cs-log-modell."""
+    """Sofort trainieren (sonst stündlich zur Minute 35) — nur lesend auf cs-logs-*, schreibt das Modell nach cs-log-modell."""
     from app.services.log_watch import relevanz_modell
     r = await relevanz_modell.trainiere_und_speichere(tage)
     db.add(AuditLog(action="relevanz_modell_trainiert", resource_type="log_watch", resource_id=r.get("zeit", "")[:200],
                     user_id=user.id, details={"modus": r.get("modus"), "grund": r.get("grund")}))
     await db.commit()
     return r
+
+
+# ── Auffälligkeiten (auffaellig.py) und Lernstand (lernstand.py) ─────────────
+
+@router.get("/auffaellig")
+async def get_auffaellig(_user: CurrentUser):
+    """Letzter Lauf der Auffälligkeiten (IsolationForest): Schwelle, Training, Vergleich mit Regeln und KI, die
+    auffälligsten Muster-Fenster der letzten 24 h mit Grund — auch die, die die Regeln nicht weitergeleitet haben."""
+    from app.services.log_watch import auffaellig
+    return await auffaellig.lade() or {"modus": "zu_wenig_daten", "grund": "noch nicht gelernt (stündlich zur Minute 20)"}
+
+
+@router.post("/auffaellig/lernen", dependencies=[RequireSysAdmin])
+async def post_auffaellig_lernen(user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]):
+    """Sofort trainieren und bewerten (sonst stündlich zur Minute 20)."""
+    from app.services.log_watch import auffaellig
+    z = await auffaellig.lerne()
+    db.add(AuditLog(action="auffaelligkeiten_gelernt", resource_type="log_watch", resource_id=z["zeit"][:200],
+                    user_id=user.id, details={"vergleich": z.get("vergleich")}))
+    await db.commit()
+    return z
+
+
+@router.get("/lernstand")
+async def get_lernstand(_user: CurrentUser, stunden: float = Query(24, ge=1, le=168), laeufe: int = Query(48, ge=2, le=500)):
+    """Vergleich: Kennzahlen je Trainingslauf mit Trend (verbessert das Training?), Wirkung in Produktion (letzte N h
+    gegen die N davor) und Trefferquote in Produktion (Erkundung, Auffälligkeiten — Urteil der KI)."""
+    from app.services.log_watch import lernstand
+    return await lernstand.vergleich(stunden, laeufe)
 
 
 # ── Lösungswege (loesungen.py) ────────────────────────────────────────────────
@@ -171,7 +200,7 @@ async def get_loesungen(_user: CurrentUser, schluessel: str = Query(""), regel: 
 @router.post("/loesungen/lernen", dependencies=[RequireSysAdmin])
 async def post_loesungen_lernen(user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)],
                                 tage: float = Query(30, ge=1, le=90)):
-    """Sofort lernen (sonst nachts 03:50 UTC): Incidents + Graylog (nur lesend), Ergebnis nach cs-log-loesungen;
+    """Sofort lernen (sonst stündlich zur Minute 50): Incidents + Graylog (nur lesend), Ergebnis nach cs-log-loesungen;
     bestätigte Wege gehen in die VI."""
     from app.services.log_watch import loesungen
     z = await loesungen.lerne(tage)

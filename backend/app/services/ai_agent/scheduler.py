@@ -368,6 +368,15 @@ async def run_relevanz_modell() -> None:
         logger.warning("Relevanz-Modell: Training fehlgeschlagen: %s", e)
 
 
+async def run_auffaelligkeiten() -> None:
+    """Auffälligkeiten stündlich neu trainieren (auffaellig.py) — das Modell lebt im Speicher, darum auch nach dem Start."""
+    from app.services.log_watch import auffaellig
+    try:
+        await auffaellig.lerne()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Auffälligkeiten: Lernen fehlgeschlagen: %s", e)
+
+
 async def run_loesungswege() -> None:
     """Lösungswege nachts lernen (loesungen.py) — Incidents und Graylog nur lesend."""
     from app.services.log_watch import loesungen
@@ -559,9 +568,13 @@ async def start_scheduler() -> None:
     _scheduler.add_job(run_log_raster, "cron", minute="1-59/5",
                        id="log_watch_raster", replace_existing=True, max_instances=1,
                        coalesce=True)
-    _scheduler.add_job(run_relevanz_modell, "cron", hour=3, minute=35, id="log_watch_relevanz_modell",
+    # Nutzer 12.11.: „es soll gleich trainieren ich muss da nichts mehr machen“ — stündlich statt nachts
+    _scheduler.add_job(run_relevanz_modell, "cron", minute=35, id="log_watch_relevanz_modell",
                        replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=3600)
-    _scheduler.add_job(run_loesungswege, "cron", hour=3, minute=50, id="log_watch_loesungswege",
+    _scheduler.add_job(run_auffaelligkeiten, "cron", minute=20, id="log_watch_auffaelligkeiten",
+                       replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=3600,
+                       next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90))
+    _scheduler.add_job(run_loesungswege, "cron", minute=50, id="log_watch_loesungswege",
                        replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=3600)
     _scheduler.add_job(run_log_ki_pruefung, "cron", minute="*/10",
                        id="log_watch_ki_pruefung", replace_existing=True, max_instances=1, coalesce=True)

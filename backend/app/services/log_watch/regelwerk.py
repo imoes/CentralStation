@@ -36,7 +36,8 @@ AKTIV, TEST = "aktiv", "test"
 
 #: Signale, die die Quellen setzen (Hashtag `signal:<name>`) — erschöpfend benannt
 SIGNALE = ("stumm", "behandelt", "schaden", "frist", "neu", "ausbreitung", "anstieg", "dringend",
-           "bedrohung", "tagesmuster", "flattern", "modell-rauschen")
+           "bedrohung", "tagesmuster", "flattern", "modell-rauschen", "modell-entschied", "modell-erkundung",
+           "auffaellig", "auffaellig-entschied")
 
 
 @dataclass(frozen=True)
@@ -155,6 +156,10 @@ STANDARD_FILTER = (
     ("R3", "R3", "Ausbreitung", FORWARD, "signal:ausbreitung", 1),
     ("R4", "R4", "Anstieg", FORWARD, "signal:anstieg", 1),
     ("R8", "R8", "Ablaufende Frist", FORWARD, "signal:frist", 1),
+    # Auffälligkeiten (auffaellig.py, IsolationForest, Nutzer 12.11.2026): ein Muster-Fenster weit weg vom eigenen
+    # Normal geht weiter, auch wenn sonst Routine (N1) oder kein Kriterium (N0) gegriffen hätte. Nach N3/N5/N1-MOD:
+    # Nicht-Produktion, Selbsterzeugtes und vom Modell als Rauschen Erkanntes bleiben draußen
+    ("R4-AUF", "R4", "Auffällig (gelernt)", FORWARD, "signal:auffaellig", 1, TEST),
     ("N1", "N1", "Routine", BLOCK, "@Routine-Quellen", 1),
 )
 

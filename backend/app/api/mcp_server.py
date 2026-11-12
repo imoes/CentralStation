@@ -2349,6 +2349,14 @@ async def lw_definition() -> dict:
 
 
 @mcp.tool()
+async def lw_lernstand(stunden: float = 24) -> dict:
+    """Lernt das System dazu? Kennzahlen je Trainingslauf (Relevanz-Modell, Auffälligkeiten, Lösungswege) mit Trend,
+    Wirkung in Produktion (letzte N h gegen die N davor) und Trefferquote in Produktion laut KI-Urteil."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_lernstand(stunden)
+
+
+@mcp.tool()
 async def lw_loesungen(schluessel: str = "", regel: str = "", host: str = "") -> dict:
     """So wurde ein Problem zuletzt behoben: gemessene Lösungswege mit Quote gegen die Basisrate „ohne Maßnahme“,
     Modus (test/bestaetigt/strittig) und Belegen (Incident-IDs). schluessel = muster:…/host:…, regel = I-HOST…,

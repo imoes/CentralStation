@@ -90,6 +90,8 @@ class Treffer:
     #: so viele Nachrichten dieses Treffers darf die Historie aufnehmen (Flutbremse) — EINE
     #: Entscheidung für Zählung und Speicherung, gesetzt in zaehle()
     kontingent_n: int = 0
+    #: das Relevanz-Modell hat geblockt — bleibt trotzdem in der Historie (auffindbar, messbar; nie zur KI)
+    modell_entschied: bool = False
     #: Nachrichten-IDs der Quelle, die die Historie speichern darf (Graylog: erste je Fenster)
     belege: list = field(default_factory=list)
 
@@ -131,42 +133,82 @@ def _urteil(quelle, schluessel, host, bekannt, tags, felder, gruende, anzahl, be
                    felder=dict(felder or {}))
 
 
+#: Anteil der Modell-Entscheidungen „Rauschen“, die zur Messung trotzdem relevant bleiben (Erkundung, markiert) —
+#: so urteilt die KI auch über Fälle, die das Modell weggefiltert hätte, und seine Trefferquote in Produktion ist
+#: messbar (Rat der vi-mcp-Sitzung: ohne Erkundung kein ehrlicher Vergleich)
+ERKUNDUNG = 0.05
+SIG_ENTSCHIED = "signal:modell-entschied"
+SIG_ERKUNDUNG = "signal:modell-erkundung"
+SIG_AUFF_ENTSCHIED = "signal:auffaellig-entschied"
+
+
+def erkundung(t: Treffer, b: datetime | None) -> bool:
+    """Deterministisch je (Quelle, Schlüssel, Host, Fenster) — derselbe Fall fällt immer gleich. Rein."""
+    import hashlib
+    h = hashlib.sha256(f"{t.quelle}|{t.schluessel}|{t.host}|{b.isoformat() if b else ''}".encode()).digest()
+    return int.from_bytes(h[:4], "big") / 2 ** 32 < ERKUNDUNG
+
+
 def mit_modell(treffer: list[Treffer], d: Definition, b: datetime | None = None) -> list[Treffer]:
-    """Relevanz-Modell (relevanz_modell.py) als Nachlauf über ALLE Treffer eines Fensters einer Quelle — erst hier ist
-    die Breite der Episode bekannt (verschiedene Hosts je Schlüssel unter den relevanten Treffern). Hält das Modell
-    eine Gruppe für Rauschen, kommt `signal:modell-rauschen` mit den tragenden Gewichten als Grund dazu, und das
-    Regelwerk urteilt erneut. Eine AKTIVE Regel auf dieses Signal wirkt nur bei Modus „bereit“ — sonst bleibt das
-    Urteil, die Regel zählt als Testtreffer, der Grund steht da. Ändert die Treffer in place."""
-    from app.services.log_watch import relevanz_modell
-    if relevanz_modell.aktuelles() is None:
+    """Gelernte Modelle als Nachlauf über ALLE Treffer eines Fensters einer Quelle — erst hier sind Breite (Hosts je
+    Schlüssel) und die Fenstersumme je Muster bekannt. Nutzer 12.11.2026: „kein schattenbetrieb wir testen das in
+    produktion“ — die Modelle wirken; entscheiden tut weiter das Regelwerk über ihre Signale:
+    - Relevanz-Modell → `signal:modell-rauschen` (Regel N1-MOD blockt, nach R5/R6/R1 — nie gegen Schaden, Sicherheit,
+      Produktionsausfall). Blockt das Modell, bleibt der Treffer mit `signal:modell-entschied` in der Historie
+      (auffindbar, nie zur KI); ERKUNDUNG der Fälle bleiben relevant (`signal:modell-erkundung`) zur Messung.
+    - Auffälligkeiten (IsolationForest, auffaellig.py) → `signal:auffaellig` (Regel R4-AUF leitet weiter, was sonst
+      verworfen würde; dann `signal:auffaellig-entschied`).
+    Jede Änderung mit Grund. Ändert die Treffer in place."""
+    from app.services.log_watch import auffaellig, relevanz_modell
+    if relevanz_modell.aktuelles() is None and auffaellig.aktuelles() is None:
         return treffer
     hosts: dict[tuple, set] = {}
     for t in treffer:
         if t.urteil == RELEVANT:
             hosts.setdefault((t.quelle, t.schluessel), set()).add(t.host)
+    try:
+        auff = auffaellig.pruefe_fenster(treffer, b) if auffaellig.aktuelles() else {}
+    except Exception:  # noqa: BLE001 — ein kaputtes Modell darf das Raster nicht anhalten
+        auff = {}
     for t in treffer:
+        neu_tags, neu_gr = [], []
+        if (t.quelle, t.schluessel) in auff:
+            wert, gr = auff[(t.quelle, t.schluessel)]
+            neu_tags.append(auffaellig.SIGNAL)
+            neu_gr.append(f"Auffällig (IsolationForest {wert:.2f}): {'; '.join(gr) or 'ungewöhnliche Kombination'}")
         try:
             sig = relevanz_modell.pruefe(t.quelle, t.hashtags, t.felder, t.kriterien, b,
                                          breite=len(hosts.get((t.quelle, t.schluessel), ())) or None)
-        except Exception:  # noqa: BLE001 — ein kaputtes Modell darf das Raster nicht anhalten
+        except Exception:  # noqa: BLE001
+            sig = None
+        if sig is not None:
+            neu_tags.append(relevanz_modell.SIGNAL)
+            neu_gr.append(sig.grund)
+        if not neu_tags:
             continue
-        if sig is None:
-            continue
-        t.hashtags = t.hashtags + [relevanz_modell.SIGNAL]
-        t.gruende = t.gruende + [sig.grund]
+        t.hashtags = t.hashtags + neu_tags
+        t.gruende = t.gruende + neu_gr
         e2 = bewerte(d.regeln, set(t.hashtags), t.felder)
-        if e2.regel == t.regel:                  # Urteil unverändert (z. B. N1-MOD im Testmodus zählt nur)
+        if e2.regel == t.regel:                  # Urteil unverändert (z. B. Regel im Testmodus zählt nur)
             t.test_treffer = list(e2.test_treffer)
             continue
-        if not sig.freigegeben:
+        modell_blockt = t.urteil == RELEVANT and e2.aktion != FORWARD and relevanz_modell.SIGNAL in t.hashtags
+        if modell_blockt and erkundung(t, b):
+            t.hashtags.append(SIG_ERKUNDUNG)
+            t.gruende.append(f"Erkundung ({ERKUNDUNG:.0%}): Regel {e2.regel} hätte geblockt — bleibt zur Messung relevant")
             t.test_treffer = list(t.test_treffer) + [e2.regel]
-            t.gruende.append(f"Regel {e2.regel} übergangen: Modell nicht freigegeben (Modus {sig.modus})")
             continue
+        auff_leitet = t.urteil != RELEVANT and e2.aktion == FORWARD and auffaellig.SIGNAL in t.hashtags
         if e2.aktion == FORWARD:
             t.urteil, t.relevanz = RELEVANT, 3 if "signal:dringend" in t.hashtags else 2
         else:
             t.urteil, t.relevanz = NICHT_RELEVANT, e2.stufe_block
         t.kriterien, t.regel, t.verdraengt, t.test_treffer = e2.kriterien, e2.regel, e2.verdraengt, e2.test_treffer
+        if modell_blockt:
+            t.hashtags.append(SIG_ENTSCHIED)
+            t.modell_entschied = True
+        if auff_leitet:
+            t.hashtags.append(SIG_AUFF_ENTSCHIED)
     return treffer
 
 
@@ -463,7 +505,7 @@ class Kontingent:
         self._genutzt: dict[tuple, int] = {}
 
     def nimm(self, t: Treffer, stunde: datetime) -> int:
-        if t.urteil != RELEVANT:
+        if t.urteil != RELEVANT and not t.modell_entschied:
             return 0
         key = (t.quelle, t.schluessel, t.host, stunde)
         frei = self.je_gruppe - self._genutzt.get(key, 0)
@@ -486,6 +528,8 @@ def zaehle(treffer: list[Treffer], kontingent: Kontingent, stunde: datetime) -> 
     test = Counter()              # Regeln im Testmodus: hätten gepasst
     #: Relevanz-Modell hielt die Gruppe für Rauschen — je Urteil und Kriterium der Regeln (Widerspruch sichtbar)
     mod_urteil, mod_krit = Counter(), Counter()
+    mod_entschied = mod_erkundung = auff_n = auff_entschied = 0
+    auff_urteil = Counter()
     gespeichert = 0
     tags = Counter()
     #: nicht zugeordnete Hosts je Grund (unbekannt | mehrdeutig | container-id)
@@ -505,6 +549,12 @@ def zaehle(treffer: list[Treffer], kontingent: Kontingent, stunde: datetime) -> 
         if "signal:modell-rauschen" in t.hashtags:
             mod_urteil[t.urteil] += t.anzahl
             mod_krit[(t.kriterien or ["?"])[0]] += t.anzahl
+            mod_entschied += t.anzahl if SIG_ENTSCHIED in t.hashtags else 0
+            mod_erkundung += t.anzahl if SIG_ERKUNDUNG in t.hashtags else 0
+        if "signal:auffaellig" in t.hashtags:
+            auff_n += t.anzahl
+            auff_urteil[t.urteil] += t.anzahl
+            auff_entschied += t.anzahl if SIG_AUFF_ENTSCHIED in t.hashtags else 0
         n = kontingent.nimm(t, stunde)
         t.kontingent_n = n
         gespeichert += n
@@ -526,7 +576,9 @@ def zaehle(treffer: list[Treffer], kontingent: Kontingent, stunde: datetime) -> 
         "regel_verdraengt": dict(sorted(verdraengt.items())),
         "regel_test": dict(sorted(test.items())),
         "modell_rauschen": {"nachrichten": sum(mod_urteil.values()), "je_urteil": dict(mod_urteil),
-                            "je_kriterium": dict(sorted(mod_krit.items()))},
+                            "je_kriterium": dict(sorted(mod_krit.items())), "entschied": mod_entschied,
+                            "erkundung": mod_erkundung},
+        "auffaellig": {"nachrichten": auff_n, "je_urteil": dict(auff_urteil), "entschied": auff_entschied},
         "gespeichert_waere": gespeichert,
         "bytes_waere": byte,
         "unbekannte_hosts": sorted(unbekannt.get("unbekannt", set()))[:50],

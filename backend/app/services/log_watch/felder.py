@@ -96,6 +96,14 @@ SIGNALE: dict[str, str] = {
     "bedrohung": "Firewall-Bedrohung ab Stufe medium oder Sinkhole (R6)",
     "behandelt": "quittiert, in Downtime oder offenes Ticket am Incident (N2)",
     "stumm": "vom Admin stumm geschaltet (N6)",
+    "modell-entschied": "Das Relevanz-Modell hat geblockt (Regel N1-MOD) — die Nachricht steht zur Messung in der Historie, "
+                        "geht aber nie zur KI (trichter.AUSLOESER)",
+    "modell-erkundung": "Das Modell hätte geblockt, die Nachricht bleibt zur Messung relevant (5 % Zufall, raster.ERKUNDUNG) "
+                        "— so misst die KI die Trefferquote des Modells in Produktion",
+    "auffaellig": "IsolationForest (auffaellig.py): das Fenster dieses Musters weicht stark vom eigenen Normal ab "
+                  "(Menge, Hosts, Neuheit, Seltenheit) — Grund mit σ-Abweichungen; Regel R4-AUF leitet weiter",
+    "auffaellig-entschied": "Erst die Auffälligkeit (Regel R4-AUF) hat die Nachricht weitergeleitet — sonst wäre sie "
+                            "verworfen worden",
     "flattern": "CheckMK: ≥ 4 Zustandswechsel je Host|Dienst in 24 h — EIN Problem, nicht viele (Regel N1-FLAT, raster.py)",
     "modell-rauschen": "Relevanz-Modell hält die Gruppe für Rauschen (P ≥ Schwelle; trainiert auf Mensch- und "
                        "KI-Urteile, nie auf die Regeln) — die tragenden Gewichte stehen in den Gründen; wirkt nur über "

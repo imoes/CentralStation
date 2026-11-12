@@ -412,7 +412,7 @@ async def lade() -> dict | None:
 def fuer(stand: dict | None, schluessel: str = "", regel: str = "", host: str = "") -> dict:
     """Lösungswege für ein Problem — so wurde es zuletzt behoben, mit Quote, Basisrate und Belegen. Rein."""
     if not stand:
-        return {"wege": [], "grund": "noch nicht gelernt (Nachtlauf 03:50 UTC oder POST /log-watch/loesungen/lernen)"}
+        return {"wege": [], "grund": "noch nicht gelernt (stündlich zur Minute 50 oder POST /log-watch/loesungen/lernen)"}
     from app.services.log_watch.hosts import norm
     ziele = {schluessel} if schluessel else set()
     if host and not schluessel:

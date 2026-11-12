@@ -104,7 +104,7 @@ PARAMETER = {
 }
 
 #: Version der Definition, die dieser Code als Standard mitbringt, und warum es sie gibt.
-CODE_VERSION = 16
+CODE_VERSION = 17
 AENDERUNGEN = {
     1: "Festgelegt mit dem Nutzer am 06.11.2026",
     2: "R6 umfasst Firewall-Bedrohungen (Sinkhole, Stufe ab medium) — Nutzer 06.11.2026: "
@@ -142,6 +142,10 @@ AENDERUNGEN = {
     16: "Relevanz-Modell (Nutzer 12.11.2026: „auf diese Regeln und die Zusammenhänge kann auch eine KI trainiert "
         "werden“): neue Regel N1-MOD „Modell: Rauschen“ auf signal:modell-rauschen, im Testmodus, nach R5/R6/R1 und "
         "vor R2–R4 — das Modell stuft Schaden, Sicherheit und Störung in Produktion nie herab",
+    17: "Gelernte Auffälligkeiten (Nutzer 12.11.2026: „aufälligkeiten und lösungen direkt … trainieren“): Regel R4-AUF "
+        "„Auffällig (gelernt)“ leitet Muster-Fenster mit signal:auffaellig (IsolationForest) weiter, nach N3/N5/N1-MOD "
+        "und vor N1. Im Code-Standard beide Modellregeln im Testmodus; in Produktion aktiv (Nutzer: „kein "
+        "schattenbetrieb wir testen das in produktion“)",
 }
 
 def als_daten() -> tuple[list[dict], dict]:

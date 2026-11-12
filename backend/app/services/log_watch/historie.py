@@ -93,7 +93,7 @@ def dokument(t: Treffer, quell_id: str, zeit: datetime, text: str, roh: dict) ->
     Die ID ist `<quelle>:<ID in der Quelle>`: ein zweiter Lauf überschreibt, statt zu
     verdoppeln.
     """
-    if t.urteil != RELEVANT:
+    if t.urteil != RELEVANT and not getattr(t, "modell_entschied", False):
         raise ValueError(f"Urteil {t.urteil} ({', '.join(t.kriterien)}) gehört nicht in die Historie")
     return f"{t.quelle}:{quell_id}", {
         "zeit": zeit.astimezone(timezone.utc).isoformat(),

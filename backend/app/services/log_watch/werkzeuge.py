@@ -178,6 +178,15 @@ async def lw_modell(nachricht: str = "") -> dict:
                             key=lambda t: t[1])[:5]}
 
 
+async def lw_lernstand(stunden: float = 24) -> dict:
+    """Lernt das System dazu? Kennzahlen je Trainingslauf mit Trend, Wirkung in Produktion, Trefferquote."""
+    from app.services.log_watch import lernstand
+    v = await lernstand.vergleich(stunden, 24)
+    for teil in v["training"].values():          # für die KI kurz: nur die letzten 6 Läufe
+        teil["laeufe"] = teil["laeufe"][-6:]
+    return v
+
+
 async def lw_loesungen(schluessel: str = "", regel: str = "", host: str = "") -> dict:
     """So wurde ein Problem zuletzt behoben — gemessene Lösungswege mit Quote, Basisrate und Belegen."""
     from app.services.log_watch import loesungen
@@ -353,6 +362,9 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                   "mit Grund, Kennzahlen, stärkste Gewichte, Audit, Widersprüche zu den Regeln. Mit nachricht=<ID>: "
                   "P(Rauschen) dieser Nachricht und welche Gewichte das tragen.",
                   _p(nachricht={"type": "string"}), False),
+    "lw_lernstand": (lw_lernstand, "Lernt das System dazu? Kennzahlen je Trainingslauf (Relevanz-Modell, "
+                     "Auffälligkeiten, Lösungswege) mit Trend, Wirkung in Produktion (letzte N h gegen die N davor) und "
+                     "Trefferquote in Produktion laut KI-Urteil.", _p(stunden={"type": "number"}), False),
     "lw_loesungen": (lw_loesungen, "So wurde ein Problem zuletzt behoben: gemessene Lösungswege (Maßnahme, z. B. "
                      "dienst-neustart:filebeat) mit Quote gegen die Basisrate ohne Maßnahme, Modus (test/bestaetigt/"
                      "strittig) und Belegen (Incident-IDs). schluessel = muster:…/host:… eines Incidents, regel = "

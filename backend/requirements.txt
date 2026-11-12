@@ -79,3 +79,6 @@ pytest-asyncio>=0.24
 # Fehler-Cluster-Erkennung: Laufzeit-Abhängigkeit von drain3 (das selbst im Dockerfile
 # mit --no-deps installiert wird, siehe dort). cachetools kommt bereits über fastmcp.
 jsonpickle>=3,<5
+# Auffälligkeiten (log_watch/auffaellig.py): IsolationForest — Nutzer 12.11.2026, Rat der vi-mcp-Sitzung:
+# scikit-learn statt PyTorch (kleine Daten, lesbar, keine GPU)
+scikit-learn>=1.5,<1.8

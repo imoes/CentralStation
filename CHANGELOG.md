@@ -10,6 +10,44 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — Learned models act in production; anomalies via scikit-learn; a view to compare results
+
+You (12.11.):
+- „ja mache das“;
+- „nein es soll gleich trainieren ich muss da nichts mehr machen“;
+- „kein schattenbetrieb wir testen das in produktion. Du musst nur die ergebnisse vergleichen können um die
+  effizients fest zu stellen und ob das training das ergebnis verbessert“.
+
+### What is new
+
+- **The relevance model acts.** N1-MOD blocks what the model calls noise. It never touches damage (R5), security
+  (R6) or a production outage (R1).
+  - Blocked hits stay in the history (`signal:modell-entschied`) and never go to the AI.
+  - 5 % stay relevant as exploration (`signal:modell-erkundung`), so the AI measures the model's hit rate.
+- **No human verdicts needed.** Without gold labels the model is judged automatically (grouped AUC ≥ 0.75,
+  recall ≥ 0.99, CheckMK follow-up check, weight audit). Its mode is a quality statement, not a lock.
+- **Training hourly** (relevance at minute 35, remediation at minute 50) instead of nightly.
+- **Anomalies with scikit-learn** (`auffaellig.py`, IsolationForest, hourly at minute 20 and at start).
+  - New rule R4-AUF forwards anomalous pattern windows that would otherwise be dropped.
+  - These go to the AI for measurement (`signal:auffaellig-entschied`).
+  - `GET /log-watch/auffaellig`, `POST /log-watch/auffaellig/lernen`.
+- **Learning progress:** `GET /log-watch/lernstand` and MCP `lw_lernstand` show:
+  - metrics per training run with trend;
+  - production effect now vs. before;
+  - hit rate in production.
+- Definition code standard v17 (R4-AUF, both model rules in test mode for fresh installs). In production, both rules
+  are active in a new definition version, see below.
+- scikit-learn 1.7.2 in the backend image.
+
+### Evidence
+
+- Tests: `test_log_watch_relevanz_modell.py` 31, `test_log_watch_auffaellig.py` 8 (incl. the measured limit below).
+  Full suite in the new image: 913 passed; the same 7 failures and 3 collection errors as before.
+- **Measured limit:** a 500× volume spike of a well-known pattern on 30 hosts scores 0.613 against the threshold
+  0.637 (synthetic training data, 5 000 rows). IsolationForest saturates outside the training range. Such spikes stay
+  with the statistical rules (spike/spread).
+- Live evidence follows after the deploy.
+
 ## 2026-11-12 — CentralStation learns how incidents were fixed (test mode)
 
 You asked (12.11., via the vi-mcp session): „In Centralstation soll auch trainiert werden wie man Fehler behoben hat.

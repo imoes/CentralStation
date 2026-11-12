@@ -26,7 +26,10 @@ log = logging.getLogger(__name__)
 
 SCHALTER = "log_watch.ki_aktiv"
 #: Nachrichten dieser Prüfung lösen eine Analyse aus (Filtersprache)
-AUSLOESER = "(relevanz>=3 OR signal:neu) !quelle:(ki OR konsole)"
+#: !signal:modell-entschied: was das Relevanz-Modell geblockt hat, steht zur Messung in der Historie, geht aber nie zur KI
+#: signal:auffaellig-entschied: was erst die gelernte Auffälligkeit weiterleitet, beurteilt die KI — so ist die
+#: Trefferquote der Auffälligkeiten in Produktion messbar (lernstand.py)
+AUSLOESER = "(relevanz>=3 OR signal:neu OR signal:auffaellig-entschied) !signal:modell-entschied !quelle:(ki OR konsole)"
 STUNDEN = 2
 #: Fälle je Lauf — gemessen 06.11.: 56–101 s Modellzeit je Fall; mit 2 Fällen je 10 min wuchs die
 #: Warteschlange (20 → 58 Nachrichten in 40 min). ZEIT_BUDGET_S hält einen Lauf unter dem Takt.
