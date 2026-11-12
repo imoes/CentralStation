@@ -51,13 +51,22 @@ def token_gueltig(secret: str, frage_id: str, wahl: str, t: str) -> bool:
     return wahl in WAHL and hmac.compare_digest(token(secret, frage_id, wahl), t or "")
 
 
-def kandidaten(incidents: list[dict], gefragt: set[str], heute: int, jetzt: datetime) -> list[dict]:
-    """incidents: [{id, host, titel, geschlossen, nachrichten, massnahmen}] → die zu fragenden, größte zuerst,
-    höchstens MAX_JE_TAG − heute. Rein."""
+def offen(incidents: list[dict], gefragt: set[str], jetzt: datetime) -> list[dict]:
+    """Geschlossen in den letzten 24 h, ohne bekannte Maßnahme, noch nicht gefragt. Rein."""
+    return [i for i in incidents if i["id"] not in gefragt and not i.get("massnahmen")
+            and i.get("geschlossen") and jetzt - i["geschlossen"] <= timedelta(hours=24)]
+
+
+def kandidaten(incidents: list[dict], gefragt: set[str], heute: int, jetzt: datetime,
+               mit_empfaenger: set[str] | frozenset = frozenset()) -> list[dict]:
+    """incidents: [{id, host, titel, geschlossen, nachrichten, massnahmen}] → die zu fragenden, höchstens
+    MAX_JE_TAG − heute. Zuerst die mit Mail-Empfänger (Host im CheckMK-Filter eines Abonnenten), darin die größten.
+
+    Anlass 12.11.: die erste Runde fragte drei Incidents auf Hosts außerhalb jedes Filters — 0 Mails, die Fragen
+    standen nur in der Konsole. Ohne Empfänger wird weiter gefragt (Konsole), nur nachrangig. Rein."""
     frei = max(0, MAX_JE_TAG - heute)
-    offen = [i for i in incidents if i["id"] not in gefragt and not i.get("massnahmen")
-             and i.get("geschlossen") and jetzt - i["geschlossen"] <= timedelta(hours=24)]
-    return sorted(offen, key=lambda i: -(i.get("nachrichten") or 0))[:frei]
+    return sorted(offen(incidents, gefragt, jetzt),
+                  key=lambda i: (i["id"] not in mit_empfaenger, -(i.get("nachrichten") or 0)))[:frei]
 
 
 def frage_text(i: dict) -> str:
@@ -135,7 +144,12 @@ async def stellen(jetzt: datetime | None = None) -> dict:
         app_url = await notify._public_url(db)
     # beobachtete Maßnahmen am Host im Zeitraum (sudo/Ansible, loesungen.klassifiziere) — nur für die Vorauswahl
     gl = await _graylog_connector()
-    vor = kandidaten(incs, gefragt, heute, jetzt)
+    # Mail-Empfänger je offenem Incident vorab (CheckMK-Filter der Abonnenten) — sie bestimmen die Reihenfolge
+    empf: dict[str, tuple[list[str], str]] = {}
+    async with AsyncSessionLocal() as db:
+        for i in offen(incs, gefragt, jetzt):
+            empf[i["id"]] = await notify.empfaenger(db, [i["host"]])
+    vor = kandidaten(incs, gefragt, heute, jetzt, {k for k, (to, _) in empf.items() if to})
     gestellt, uebersprungen = [], []
     for i in vor:
         if gl is not None and i.get("beginn"):
@@ -154,14 +168,16 @@ async def stellen(jetzt: datetime | None = None) -> dict:
         await o.index(index=INDEX, id=fid, body=frage, refresh=True)
         links = {w: f"{app_url}/api/ki-fragen/{fid}/antwort?wahl={w}&t={token(settings.secret_key, fid, w)}"
                  for w in WAHL}
+        to, wahl_grund = empf.get(i["id"]) or ([], "keine Empfänger ermittelt")
         async with AsyncSessionLocal() as db:
-            to, wahl_grund = await notify.empfaenger(db, [i["host"]])
             mails = await notify._send(db, to, f"Kurze Frage der KI: {i['titel'][:80]}", mail_html(frage, links)) if to else 0
         await o.update(index=INDEX, id=fid, body={"doc": {"mails": mails, "empfaenger_wahl": wahl_grund}}, refresh=True)
         gestellt.append({"frage": fid, "incident": i["id"], "mails": mails})
-    log.info("KI-Fragen: %d gestellt, %d übersprungen (Kandidaten %d, heute schon %d)", len(gestellt),
-             len(uebersprungen), len(vor), heute)
-    return {"gestellt": gestellt, "uebersprungen": uebersprungen, "heute_vorher": heute}
+    mit_mail = sum(1 for to, _ in empf.values() if to)
+    log.info("KI-Fragen: %d gestellt, %d übersprungen (Kandidaten %d, offen %d, davon mit Mail-Empfänger %d, heute "
+             "schon %d)", len(gestellt), len(uebersprungen), len(vor), len(empf), mit_mail, heute)
+    return {"gestellt": gestellt, "uebersprungen": uebersprungen, "heute_vorher": heute,
+            "offen": len(empf), "offen_mit_empfaenger": mit_mail}
 
 
 async def beantworte(frage_id: str, wahl: str, von: str, text_: str = "") -> dict:

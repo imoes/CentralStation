@@ -22,6 +22,14 @@ def test_kandidaten_hoechstens_drei_am_tag_groesste_zuerst():
     assert kf.kandidaten(incs, set(), 3, J) == []
 
 
+def test_kandidaten_mit_mail_empfaenger_zuerst():
+    """12.11.: erste Runde fragte nur Hosts außerhalb jedes CheckMK-Filters (0 Mails) — Empfänger gehen jetzt vor."""
+    incs = [_inc("a", 5), _inc("b", 50), _inc("c", 10), _inc("d", 40), _inc("e", 1)]
+    assert [i["id"] for i in kf.kandidaten(incs, set(), 0, J, {"a", "e"})] == ["a", "e", "b"]
+    assert [i["id"] for i in kf.kandidaten(incs, set(), 2, J, {"a", "e"})] == ["a"]
+    assert [i["id"] for i in kf.kandidaten(incs, set(), 0, J, set())] == ["b", "d", "c"]   # ohne Empfänger: wie bisher
+
+
 def test_kandidaten_ohne_massnahme_ungefragt_und_juenger_24h():
     incs = [_inc("a", 9, ["ticket"]), _inc("b", 8), _inc("c", 7, vor_h=30)]
     assert [i["id"] for i in kf.kandidaten(incs, {"b"}, 0, J)] == []

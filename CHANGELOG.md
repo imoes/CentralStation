@@ -10,6 +10,28 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — KI-Fragen: incidents in your CheckMK filter are asked first
+
+### What was fixed
+
+- **The first round sent no mail.** It picked three incidents on hosts outside every subscriber's CheckMK filter
+  (mu-img-cueapp01.stage, docker216, nsa383). The result was 0 mails, and the questions appeared only in the console.
+- **Now:** among open incidents, those with a mail recipient come first, the largest first within that group. The
+  others follow and are asked in the console only. The limit of 3 a day is unchanged.
+
+### Evidence
+
+- Read-only measurement on 12.11.:
+  - 83 rule incidents were closed in the last 24 h, none with a known action.
+  - 33 of them have a mail recipient, e.g. aim012 with 14 messages and mu-img-docker50.
+- `test_ki_fragen.py`: 8 passed (new: recipients first, and unchanged order without recipients).
+
+### What is still missing
+
+- Today's 3 questions are already used, so the new order takes effect from the first run after 00:00 UTC.
+
+---
+
 ## 2026-11-12 — Local VI on vi-mcp 0.59.0: the console asks once per session for feedback
 
 ### What has changed

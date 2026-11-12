@@ -1409,7 +1409,11 @@ mail und in der konsole“).
 
 - **Known actions**, which suppress a question: ticket, resolution entry, an earlier answer, and an action observed in
   Graylog on that host during the incident.
-- **Limit:** at most **3 questions a day**, largest incidents first. Hourly at minute 55.
+- **Limit:** at most **3 questions a day**. Hourly at minute 55.
+- **Order:** incidents with a mail recipient come first; within each group, the largest first.
+  - A mail recipient is someone whose CheckMK filter covers the host (`notify.empfaenger`).
+  - The rest follow and are asked in the console only.
+  - The run logs how many open incidents had a recipient (`offen_mit_empfaenger`).
 - **Mail:** one-click answers, signed per question and answer, no login (`GET /api/ki-fragen/{id}/antwort`).
   Recipients follow the host scope, as for the immediate mail.
 - **Console:** the agent calls `ki_fragen_offen()` at the start of a session, asks you, and enters only your answer
