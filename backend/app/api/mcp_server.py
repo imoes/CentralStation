@@ -802,21 +802,31 @@ async def create_feed_exclusion(
     query_string = query_string.strip()
     if not query_string:
         return {"error": "query_string darf nicht leer sein"}
+    # Länge vorher prüfen (Spalte name VARCHAR(100)) — 12.11.2026 kam bei > 100 Zeichen ein roher asyncpg-Fehler mit dem
+    # kompletten INSERT zurück, und die Ausnahme wurde nicht angelegt (externe Analyse F7)
+    from app.services.feed_ausnahme import eingabe_fehler
+    fehler = eingabe_fehler(name)
+    if fehler:
+        return {"error": fehler}
 
-    async with (await _get_db_session()) as db:
-        search = FeedSearch(
-            user_id=None,
-            index_pattern=index_pattern,
-            name=name.strip() or "Hermes-Ausnahme",
-            query_string=query_string,
-            enabled=True,
-            is_system=True,
-            is_exclusion=True,
-            position=97,
-        )
-        db.add(search)
-        await db.commit()
-        await db.refresh(search)
+    try:
+        async with (await _get_db_session()) as db:
+            search = FeedSearch(
+                user_id=None,
+                index_pattern=index_pattern,
+                name=name.strip() or "Hermes-Ausnahme",
+                query_string=query_string,
+                enabled=True,
+                is_system=True,
+                is_exclusion=True,
+                position=97,
+            )
+            db.add(search)
+            await db.commit()
+            await db.refresh(search)
+    except Exception as exc:  # noqa: BLE001 — keine rohen SQL-Fehler (Statement, Werte) an Clients
+        log.warning("create_feed_exclusion fehlgeschlagen: %s", exc)
+        return {"error": f"Ausnahme nicht angelegt: {type(exc).__name__} (Details im Server-Log)"}
 
     log.info("create_feed_exclusion: '%s' query='%s' index='%s'", name, query_string, index_pattern)
     return {
