@@ -48,23 +48,44 @@ AUC_MIN = 0.7
 #: Von dem, was relevant ist, darf das Modell höchstens 1 % als Rauschen einstufen (Schwelle danach gewählt)
 RECALL_RELEVANT_MIN = 0.99
 L2 = 1e-3
-#: Tags, die nach dem Urteil entstehen oder das Label tragen — nie Merkmal
-OHNE = ("befund:", "incident:", "signal:modell")
+#: Positivliste: Tag-Arten, die das Raster BEIM EINGANG aus Feldern der Quelle setzt (raster.py, firewall.py,
+#: switch.py, hosts.py; thema: aus dem festen Vokabular vokabular.THEMEN). Gemessen 12.11.2026 an 22 206 Nachrichten
+#: mit Urteil: 11,7 Tags je Nachricht in 98 Arten; ~70 Arten setzt die KI NACHTRÄGLICH aus Befunden („eigenes Tag-Feld“,
+#: z. B. serie:, schaddomain:, ursache: an ~250 Nachrichten) — die wären ein Leck (gesetzt nach dem Urteil) und
+#: stehen darum nicht hier; befund:/incident: entstehen ebenfalls erst danach. Eine Art fehlt hier → kein Merkmal,
+#: gezählt in `arten_verworfen` (nichts verschwindet still).
+ARTEN_EINGANG = ("quelle", "host", "muster", "dienst", "app", "level", "kritikalitaet", "ort", "netz", "hg",
+                 "hostliste", "netzbereich", "zustand", "thema", "regel", "regelgruppe", "decoder", "logquelle",
+                 "mitre", "mitre-technik", "switch", "firewall", "zone", "zielzone", "aktion", "schwere", "zielland",
+                 "bedrohung", "gegenstelle", "ip")
+#: Was die Regeln ableiten — Merkmal nur für den Vergleich Modell ↔ Regel (Gegenlauf ohne sie: `ohne_regel`)
+ARTEN_REGEL = ("signal", "rauschen", "kriterium")
+#: Seltenes fällt nicht weg, es sammelt sich je Art in `art:_selten` (auch für Unbekanntes beim Bewerten)
+SELTEN = "_selten"
 TOP_N = 10
 
 
 # ── Merkmale ──────────────────────────────────────────────────────────────────────────────────────────────
-def merkmale(quelle: str, tags, level=None, kriterien=None, stunde: int | None = None) -> list[str]:
-    """Merkmale einer Nachrichtengruppe — dieselbe Funktion im Training und im Raster. Rein."""
+def art(merkmal: str) -> str:
+    return merkmal.split(":", 1)[0]
+
+
+def merkmale(quelle: str, tags, level=None, kriterien=None, stunde: int | None = None, *,
+             mit_regel: bool = True, nachtraeglich: set[str] | frozenset = frozenset()) -> list[str]:
+    """Merkmale einer Nachrichtengruppe — dieselbe Funktion im Training und im Raster. Nur Arten der Positivliste;
+    `nachtraeglich` = Tags, die laut Geschichte später jemand hinzugefügt hat (nie Merkmal). Rein."""
+    erlaubt = ARTEN_EINGANG + (ARTEN_REGEL if mit_regel else ())
     m = {f"quelle:{quelle}"} if quelle else set()
-    m |= {t for t in tags or [] if ":" in t and not t.startswith(OHNE)}
+    m |= {t for t in tags or [] if ":" in t and art(t) in erlaubt and t not in nachtraeglich
+          and not t.startswith("signal:modell")}
     try:
         if level is not None and str(level) != "":
             m.add(f"level:{int(float(level))}")
     except (TypeError, ValueError):
         pass
     # R7 setzt die Historie erst nachträglich (markiere_r7) — im Raster unbekannt, darum nie Merkmal
-    m |= {f"kriterium:{k}" for k in kriterien or [] if k != "R7"}
+    if mit_regel:
+        m |= {f"kriterium:{k}" for k in kriterien or [] if k != "R7"}
     if stunde is not None:
         m.add(f"stunde:{int(stunde):02d}")
     return sorted(m)
@@ -81,6 +102,16 @@ def label(doc: dict) -> tuple[int, str] | None:
     if ai is None or ai == "":
         return None
     return (1 if int(ai) <= 1 else 0), "silber"
+
+
+def nachtraeglich(aenderungen) -> set[str]:
+    """Tags, die laut Geschichte der Nachricht nachträglich hinzugefügt wurden („+art:wert“ von KI/Mensch). Rein."""
+    import re
+    out: set[str] = set()
+    for e in aenderungen or []:
+        if isinstance(e, dict):
+            out |= set(re.findall(r"\+([\w-]+:\S+)", str(e.get("was") or "")))
+    return out
 
 
 def _stunde(zeit) -> int | None:
@@ -101,6 +132,10 @@ class Beobachtung:
     urteil_regel: str = ""        # relevant | nicht_relevant (Urteil der Regeln bzw. des Menschen)
     kriterium: str = ""           # entscheidendes Kriterium
     text: str = ""
+    #: dieselbe Beobachtung ohne Regel-Merkmale (Gegenlauf: wie viel trägt die Regel?)
+    merkmale_ohne_regel: list[str] | None = None
+    #: Tag-Arten der Nachricht, die nicht auf der Positivliste stehen (gezählt, nie Merkmal)
+    verworfen_arten: list[str] | None = None
 
 
 def beobachtung(id_: str, doc: dict) -> Beobachtung | None:
@@ -113,10 +148,15 @@ def beobachtung(id_: str, doc: dict) -> Beobachtung | None:
     y, herkunft = lb
     krit = list(doc.get("kriterien") or [])
     # Bei einem Menschen-Urteil stehen dort SEINE Kriterien, nicht die der Regel → nicht als Merkmal (sonst Leck)
-    m = merkmale(doc.get("quelle") or "", doc.get("hashtags") or [], doc.get("level"),
-                 [] if herkunft == "gold" else krit, _stunde(doc.get("zeit")))
-    return Beobachtung(id_, str(doc.get("zeit") or ""), y, herkunft, m, str(doc.get("schluessel") or ""),
-                       str(doc.get("urteil") or ""), krit[0] if krit else "", str(doc.get("text") or "")[:200])
+    spaeter = nachtraeglich(doc.get("aenderungen"))
+    args = (doc.get("quelle") or "", doc.get("hashtags") or [], doc.get("level"),
+            [] if herkunft == "gold" else krit, _stunde(doc.get("zeit")))
+    return Beobachtung(id_, str(doc.get("zeit") or ""), y, herkunft, merkmale(*args, nachtraeglich=spaeter),
+                       str(doc.get("schluessel") or ""), str(doc.get("urteil") or ""), krit[0] if krit else "",
+                       str(doc.get("text") or "")[:200],
+                       merkmale_ohne_regel=merkmale(*args, mit_regel=False, nachtraeglich=spaeter),
+                       verworfen_arten=sorted({art(t) for t in doc.get("hashtags") or [] if ":" in t}
+                              - set(ARTEN_EINGANG) - set(ARTEN_REGEL)))
 
 
 # ── Kennzahlen ────────────────────────────────────────────────────────────────────────────────────────────
@@ -151,15 +191,20 @@ def _sig(z: float) -> float:
     return 1.0 / (1.0 + math.exp(-max(-35.0, min(35.0, z))))
 
 
+def abbilde(m: list[str], bekannt) -> list[str]:
+    """Merkmale auf das Vokabular: Unbekanntes/Seltenes → `art:_selten`, wenn es das gibt. Rein."""
+    return sorted({x if x in bekannt else f"{art(x)}:{SELTEN}" for x in m} & set(bekannt))
+
+
 def wahrscheinlichkeit(modell: dict, m: list[str]) -> float:
     g = modell.get("gewichte") or {}
-    return _sig(modell.get("bias", 0.0) + sum(g.get(x, 0.0) for x in m))
+    return _sig(modell.get("bias", 0.0) + sum(g.get(x, 0.0) for x in abbilde(m, g)))
 
 
 def tragend(modell: dict, m: list[str], n: int = 3) -> list[tuple[str, float]]:
     """Die Gewichte, die das Urteil tragen — größter Beitrag Richtung Rauschen zuerst. Rein."""
     g = modell.get("gewichte") or {}
-    return sorted(((x, g[x]) for x in m if x in g), key=lambda t: -t[1])[:n]
+    return sorted(((x, g[x]) for x in abbilde(m, g)), key=lambda t: -t[1])[:n]
 
 
 # ── Training ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -291,13 +336,7 @@ def trainiere(beob: list[Beobachtung], jetzt: datetime | None = None) -> dict:
         leer["modus"], leer["grund"] = modus(labels, {}, [])
         return leer
     train, ho = teile_zeitlich(beob)
-    zaehl = Counter(x for b in train for x in set(b.merkmale))
-    vok = sorted(f for f, n in zaehl.items() if n >= MIN_VORKOMMEN)
-    idx = {f: i for i, f in enumerate(vok)}
-    zeilen = [[idx[x] for x in b.merkmale if x in idx] for b in train]
-    gew = [1.0 if b.herkunft == "gold" else SILBER_GEWICHT for b in train]
-    w, bias = _fit(zeilen, [b.y for b in train], gew, len(vok))
-    modell = {"gewichte": {f: round(w[i], 4) for f, i in idx.items() if abs(w[i]) >= 1e-3}, "bias": round(bias, 4)}
+    modell, vok, zaehl = _lerne(train, lambda b: b.merkmale)
     p_train = [wahrscheinlichkeit(modell, b.merkmale) for b in train]
     schwelle = schwelle_fuer([p for p, b in zip(p_train, train) if b.y == 0])
     p_ho = [wahrscheinlichkeit(modell, b.merkmale) for b in ho]
@@ -314,11 +353,15 @@ def trainiere(beob: list[Beobachtung], jetzt: datetime | None = None) -> dict:
                 (sum(1 for p in rau if p >= schwelle) / len(rau)) if rau else None, len(sel))
 
     a, rr, re_, n = kennz(lambda b: True)
+    # Gegenlauf ohne Regel-Merkmale: liegt die AUC kaum darunter, lernt das Modell nicht bloß die Regeln nach
+    ohne, _, _ = _lerne(train, lambda b: b.merkmale_ohne_regel or [])
+    a_ohne = auc([wahrscheinlichkeit(ohne, b.merkmale_ohne_regel or []) for b in ho], [b.y for b in ho])
     a_neu, rr_neu, re_neu, n_neu = kennz(lambda b: b.schluessel not in train_schl)
     a_g, rr_g, re_g, n_g = kennz(lambda b: b.herkunft == "gold")
     kz = {"auc": a, "recall_relevant": rr, "rauschen_erkannt": re_, "holdout_n": n,
           "holdout_von": ho[0].zeit if ho else None, "holdout_bis": ho[-1].zeit if ho else None,
-          "train_n": len(train), "merkmale": len(vok), "merkmale_verworfen": len(zaehl) - len(vok),
+          "train_n": len(train), "merkmale": len(vok), "merkmale_selten": len(zaehl) - len(vok),
+          "auc_ohne_regel_merkmale": a_ohne,
           # Schlüssel, die im Training nie vorkamen: misst Verallgemeinerung statt Wiedererkennen
           "auc_unbekannte_schluessel": a_neu, "recall_relevant_unbekannt": rr_neu,
           "rauschen_erkannt_unbekannt": re_neu, "holdout_unbekannt_n": n_neu,
@@ -326,14 +369,31 @@ def trainiere(beob: list[Beobachtung], jetzt: datetime | None = None) -> dict:
           "basisrate_rauschen": round(sum(b.y for b in train) / len(train), 4)}
     kz = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in kz.items()}
     befunde = audit(modell["gewichte"], train,
-                    [b.merkmale for p, b in zip(p_ho, ho) if p >= schwelle])
+                    [abbilde(b.merkmale, modell["gewichte"]) for p, b in zip(p_ho, ho) if p >= schwelle])
     m, grund = modus(labels, kz, befunde)
     alle_p = p_train + p_ho
+    arten = Counter(art(x) for b in train for x in b.merkmale)
     return {"zeit": jetzt.isoformat(), "modus": m, "grund": grund, "labels": labels, **modell,
+            "merkmal_arten": dict(arten.most_common()),
+            "arten_verworfen": dict(Counter(a for b in beob for a in b.verworfen_arten or []).most_common()),
             "schwelle": round(schwelle, 4), "kennzahlen": kz, "audit": befunde,
             "staerkste": [{"merkmal": f, "gewicht": g} for f, g in
                           sorted(modell["gewichte"].items(), key=lambda t: -abs(t[1]))[:25]],
             "widersprueche": widersprueche(train + ho, alle_p, schwelle)}
+
+
+def _lerne(train: list[Beobachtung], mk) -> tuple[dict, list[str], Counter]:
+    """Vokabular (Seltenes → art:_selten), Fit, Gewichte. Rein bis auf numpy."""
+    zaehl = Counter(x for b in train for x in set(mk(b)))
+    haeufig = {f for f, n in zaehl.items() if n >= MIN_VORKOMMEN}
+    selten_arten = {art(f) for f, n in zaehl.items() if n < MIN_VORKOMMEN}
+    vok = sorted(haeufig | {f"{a}:{SELTEN}" for a in selten_arten})
+    idx = {f: i for i, f in enumerate(vok)}
+    zeilen = [[idx[x] for x in abbilde(mk(b), idx)] for b in train]
+    gew = [1.0 if b.herkunft == "gold" else SILBER_GEWICHT for b in train]
+    w, bias = _fit(zeilen, [b.y for b in train], gew, len(vok))
+    return ({"gewichte": {f: round(w[i], 4) for f, i in idx.items() if abs(w[i]) >= 1e-3}, "bias": round(bias, 4)},
+            vok, zaehl)
 
 
 def widersprueche(beob: list[Beobachtung], p: list[float], schwelle: float, n: int = 15) -> dict:
@@ -395,7 +455,7 @@ def pruefe(quelle: str, tags, felder: dict | None, kriterien, jetzt: datetime | 
 # ── Laden, Speichern, Daten ───────────────────────────────────────────────────────────────────────────────
 MAPPING = {"mappings": {"dynamic": False, "properties": {"zeit": {"type": "date"}, "modus": {"type": "keyword"}}}}
 QUELLFELDER = ["zeit", "quelle", "hashtags", "kriterien", "level", "ai_relevanz", "herkunft", "relevanz", "urteil",
-               "schluessel", "text"]
+               "schluessel", "text", "aenderungen"]
 
 
 async def lade() -> dict | None:

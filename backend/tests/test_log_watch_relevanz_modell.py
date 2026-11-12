@@ -28,6 +28,22 @@ def test_merkmale_ohne_label_und_nachtraegliches():
     assert m == sorted(["quelle:graylog", "host:a", "muster:m", "level:3", "kriterium:R2", "stunde:05"])
 
 
+def test_positivliste_ki_tags_und_nachtraegliches_nie_merkmal():
+    tags = ["host:a", "serie:x", "ursache:y", "thema:oom", "signal:neu", "rauschen:pam"]
+    assert rm.merkmale("graylog", tags) == ["host:a", "quelle:graylog", "rauschen:pam", "signal:neu", "thema:oom"]
+    assert rm.merkmale("graylog", tags, kriterien=["R2"], mit_regel=False) == ["host:a", "quelle:graylog", "thema:oom"]
+    spaeter = rm.nachtraeglich([{"wer": "ki", "was": "+thema:oom +zyklus:~24h"}, {"was": "verknüpft mit befund:1"}])
+    assert spaeter == {"thema:oom", "zyklus:~24h"}
+    assert "thema:oom" not in rm.merkmale("graylog", tags, nachtraeglich=spaeter)
+    b = rm.beobachtung("1", {"quelle": "graylog", "ai_relevanz": 1, "hashtags": tags, "zeit": "2026-11-01T00:00:00Z"})
+    assert b.verworfen_arten == ["serie", "ursache"]
+
+
+def test_seltenes_sammelt_sich_je_art():
+    assert rm.abbilde(["host:neu", "muster:m"], {"host:_selten": 0.4, "muster:m": 1.0}) == ["host:_selten", "muster:m"]
+    assert rm.abbilde(["host:neu"], {"muster:m": 1.0}) == []
+
+
 def test_label_mensch_vor_ki_und_regel_nie():
     assert rm.label({"herkunft": "mensch", "relevanz": 1, "ai_relevanz": 3}) == (1, "gold")
     assert rm.label({"herkunft": "mensch", "relevanz": 2}) == (0, "gold")
@@ -71,10 +87,11 @@ def _daten(n: int, gold_anteil: float = 0.0, seed: int = 1) -> list[rm.Beobachtu
         laerm = rnd.random() < 0.3
         y = 1 if (laerm and rnd.random() < 0.95) else 0
         herkunft = "gold" if rnd.random() < gold_anteil else "silber"
-        mk = rm.merkmale("graylog", [f"muster:{'laerm' if laerm else 'ernst'}", f"app:a{rnd.randint(0, 3)}"],
-                         kriterien=["R2"])
-        out.append(rm.Beobachtung(str(i), (T0 + timedelta(minutes=i)).isoformat(), y, herkunft, mk,
-                                  "muster:laerm" if laerm else "muster:ernst", "relevant", "R2", "x"))
+        tags = [f"muster:{'laerm' if laerm else 'ernst'}", f"app:a{rnd.randint(0, 3)}"]
+        out.append(rm.Beobachtung(str(i), (T0 + timedelta(minutes=i)).isoformat(), y, herkunft,
+                                  rm.merkmale("graylog", tags, kriterien=["R2"]),
+                                  "muster:laerm" if laerm else "muster:ernst", "relevant", "R2", "x",
+                                  merkmale_ohne_regel=rm.merkmale("graylog", tags, mit_regel=False)))
     return out
 
 
@@ -88,6 +105,7 @@ def test_nur_silber_bleibt_test_mit_grund_und_lernt_das_muster():
     assert m["modus"] == "test" and "Gold" in m["grund"]
     assert m["gewichte"]["muster:laerm"] > 0 > m["gewichte"]["muster:ernst"]
     assert m["kennzahlen"]["auc"] > 0.9
+    assert m["kennzahlen"]["auc_ohne_regel_merkmale"] > 0.9       # hier trägt das Muster, nicht die Regel
     w = m["widersprueche"]
     assert w["regel_relevant_modell_rauschen"] > 0 and w["je_kriterium"].get("R2")
     assert w["schluessel"][0]["schluessel"] == "muster:laerm"

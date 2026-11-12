@@ -40,10 +40,20 @@ System“. The written proposal it is built from: `docs/vorschlag-relevanz-model
 - **Data:** 22 206 messages with an independent verdict from `cs-logs-*` (last 30 days). Noise 2 818, relevant
   19 388, all silver; gold (human) 0 per class. Distinct keys: noise 157, relevant 754. Many silver labels are
   copies of one AI verdict at repetitions.
-- **Training:** 17 764 messages. 747 features kept, 1 236 dropped (< 10 occurrences). Loading 3.6 s, training 0.7 s.
+- **Features from an allowlist of tag kinds**, agreed with the vi-mcp session. You: „Die Nachrichten in
+  Centralstation haben sehr viele Tags. Rede mit der Session darüber, wie wir die Tags zum Trainieren verwenden
+  können.“ Measured on the same 22 206 messages: 98 tag kinds, 11.7 tags per message.
+  - ~65 kinds are added by the AI afterwards from findings (serie 43 messages, schaddomain 22, ursache 20 …); with
+    befund:/incident: they would leak. Now: 30 ingest kinds plus the rules' output marked separately.
+  - Tags the history marks as added later are removed. Rare values pool into `art:_selten`.
+  - The first dry run (07:38 UTC) still used „all tags except a deny list“; corrected.
+- **Training (07:46 UTC, allowlist):** 17 764 messages. 767 features, 1 090 rare ones pooled. Loading 3.6 s,
+  training < 1 s.
 - **Holdout:** 4 442 messages, 11.11. 04:16 – 12.11. 07:31 UTC.
-  - AUC 0.914. Threshold 0.54: recall of the relevant ones 0.944, noise caught 21.5 %.
-  - On 722 messages with keys never seen in training: AUC 0.759, recall 0.956, noise caught 13.4 %.
+  - AUC 0.915. Threshold 0.54: recall of the relevant ones 0.942, noise caught 21.2 %.
+  - Without the rules' features: AUC 0.922. The model does not just copy the rules; what it copies is the AI's
+    verdict per pattern.
+  - On 722 messages with keys never seen in training: AUC 0.778, recall 0.937, noise caught 13.4 %.
 - **Mode `test`**, reason: „nur KI-Urteile (Silber) reichen nicht: Mensch-Urteile (Gold) je Klasse rauschen 0,
   relevant 0 — nötig je 50“.
 - **The weight audit fires three times:**
@@ -51,14 +61,16 @@ System“. The written proposal it is built from: `docs/vorschlag-relevanz-model
   - `host:cue0148.example.com` (−1.36);
   - `dominant`: `muster:6350a2ae32ca08f6` (postfix „overriding earlier entry: relayhost“) carries 190 of 312 noise
     verdicts in the holdout.
-- **Model ↔ rules:** 2 298 messages the rules call relevant, the model calls noise (R3 1 268, R2 956, R6 74).
+- **Model ↔ rules:** 2 300 messages the rules call relevant, the model calls noise (R3 1 271, R2 955, R6 74); 24 the
+  other way round.
   Largest groups:
-  - postfix relayhost warning 595;
+  - postfix relayhost warning 605;
   - `sshd-session syslogin_perform_logout` 490;
-  - VMware GuestInfo interval 131;
+  - VMware GuestInfo interval 130;
   - three `ansible-* Invoked with` patterns 130/128/122. These are from 07.11., before ansible became N5.
   - Wazuh rule 31115 on CheckMK dashboard URLs 72.
-- **Tests:** `tests/test_log_watch_relevanz_modell.py`, 20 tests: labels, leaks, AUC, mode, audit, and the effect in
+- **Tests:** `tests/test_log_watch_relevanz_modell.py`, 20 tests (the first commit ecdb325 said 20; it had 18): labels,
+  allowlist and leaks, rare pooling, AUC, mode, audit, and the effect in
   the raster with the rule in test mode, active-but-not-ready and ready, never against R5. Full suite in the backend
   image: 869 passed; the same 7 failures and 3 collection errors as before.
 

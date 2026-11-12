@@ -1317,8 +1317,13 @@ are really noise (`services/log_watch/relevanz_modell.py`, proposal: `docs/vorsc
   (`POST /log-watch/nachrichten/{id}/urteil`, origin `mensch`); silver = the AI's verdict at the message
   (`ai_relevanz`, weight 0.3). Relevance ≤ 1 = noise. The rules' criteria are a *feature*, so the weights show where
   the model disagrees with them.
-- **Features:** the hashtags of the message (pattern, host, service, theme, signals …), source, level, the rules'
-  criteria (without R7, which is set later), hour. A feature counts from 10 occurrences.
+- **Features — an allowlist of tag kinds** set at ingest (`ARTEN_EINGANG`: quelle, host, muster, dienst, app, level,
+  kritikalitaet, ort, netz, hg, hostliste, netzbereich, zustand, thema, Wazuh and firewall fields …), plus the rules'
+  output marked separately (`ARTEN_REGEL`: signal, rauschen, kriterium — without R7, set later) and the hour. Tag
+  kinds the AI adds afterwards from findings (serie:, ursache: … — ~65 kinds) and befund:/incident: are never
+  features, and neither is any tag the message's history records as added later („+art:wert“); rejected kinds are
+  counted (`arten_verworfen`). A feature counts from 10 occurrences; rarer values pool into `art:_selten`. A second
+  fit without the rules' features (`auc_ohne_regel_merkmale`) shows whether the model merely copies the rules.
 - **Evaluation:** time-ordered holdout (newest 20 %, more if a class has < 20 cases); AUC, recall of the relevant ones
   at the threshold (chosen so that at most 1 % of the relevant ones in training are above it), AUC on patterns
   never seen in training, and the same against gold.
