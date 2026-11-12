@@ -181,13 +181,14 @@ def mit_modell(treffer: list[Treffer], d: Definition, b: datetime | None = None)
         auff = {}
     for t in treffer:
         neu_tags, neu_gr = [], []
-        if (t.quelle, t.schluessel) in auff:
-            wert, gr = auff[(t.quelle, t.schluessel)]
+        wert, gr, aus = auff.get((t.quelle, t.schluessel), (None, [], False))
+        if aus:
             neu_tags.append(auffaellig.SIGNAL)
             neu_gr.append(f"Auffällig (IsolationForest {wert:.2f}): {'; '.join(gr) or 'ungewöhnliche Kombination'}")
         try:
             sig = relevanz_modell.pruefe(t.quelle, t.hashtags, t.felder, t.kriterien, b,
-                                         breite=len(hosts.get((t.quelle, t.schluessel), ())) or None)
+                                         breite=len(hosts.get((t.quelle, t.schluessel), ())) or None,
+                                         schluessel=t.schluessel, auff_wert=wert)
         except Exception:  # noqa: BLE001
             sig = None
         if sig is not None:

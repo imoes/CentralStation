@@ -1,4 +1,5 @@
 """Relevanz-Modell: Labels unabhängig von den Regeln, Merkmale, Kennzahlen, Modus mit Grund, Audit, Wirkung im Raster."""
+import math
 import random
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -320,3 +321,69 @@ def test_pruefliste_widerspruch_und_unsicher_je_schluessel_einmal():
 
 def test_kriterien_der_definition_unveraendert():
     assert {k.id for k in KRITERIEN} >= {"N1", "R2"}
+
+
+# ── Herausforderer: Merkmale ändern, nie Gewichte (Rat der vi-mcp-Sitzung 12.11.) ───────────────────────────
+
+def test_skala_daempft_beitrag_einer_merkmalsart():
+    m = {"gewichte": {"host:a": 2.0, "muster:m": 1.0}, "bias": 0.0, "skala": {"host": 0.3}}
+    assert abs(rm.wahrscheinlichkeit(m, ["host:a", "muster:m"]) - rm._sig(0.6 + 1.0)) < 1e-9
+    assert rm.tragend(m, ["host:a", "muster:m"]) == [("muster:m", 1.0), ("host:a", 0.6)]
+
+
+def test_job_und_auff_merkmale_und_variante_beim_bewerten():
+    assert rm.job_merkmal({"abc|3"}, "muster:abc", 3) == ["job:fenster"]
+    assert rm.job_merkmal({"abc|3"}, "muster:abc", 4) == [] and rm.job_merkmal({"abc|3"}, "regel:1", 3) == []
+    g = {"hoch": 0.65, "erhoeht": 0.55}
+    assert [rm.auff_stufe(v, g) for v in (0.7, 0.6, 0.4, None)] == [["auffaellig:hoch"], ["auffaellig:erhoeht"],
+                                                                   ["auffaellig:normal"], []]
+    assert rm.variante_merkmale({"variante": "job_fenster", "jobs": ["abc|3"]}, "muster:abc", 3, None) == ["job:fenster"]
+    assert rm.variante_merkmale({"variante": "auffaellig", "auff_grenzen": g}, "muster:x", 3, 0.7) == ["auffaellig:hoch"]
+    assert rm.variante_merkmale({"variante": "basis"}, "muster:abc", 3, 0.7) == []
+
+
+def test_waehle_nur_wenn_nicht_schlechter_und_in_einem_besser():
+    b = {"auc": 0.78, "logloss": 0.40}
+    assert rm.waehle({"basis": b, "x": {"auc": 0.80, "logloss": 0.39}})[0] == "x"
+    assert rm.waehle({"basis": b, "x": {"auc": 0.80, "logloss": 0.41}})[0] == "basis"      # log loss schlechter
+    assert rm.waehle({"basis": b, "x": {"auc": 0.78, "logloss": 0.40}})[0] == "basis"      # nicht besser
+    assert rm.waehle({"basis": b, "x": {"uebersprungen": "keine Daten"}})[0] == "basis"
+    assert rm.waehle({"basis": b, "x": {"auc": 0.79, "logloss": 0.39}, "y": {"auc": 0.81, "logloss": 0.395}})[0] == "y"
+    assert abs(rm.logloss([0.9, 0.1], [1, 0]) + math.log(0.9)) < 1e-9
+
+
+def test_trainiere_waehlt_job_fenster_wenn_es_traegt():
+    """Rauschen kommt hier von Jobs (Muster zur festen Stunde) — ohne das Merkmal sieht das Modell nur Zufall."""
+    rnd = random.Random(5)
+    out = []
+    for i in range(4000):
+        job = rnd.random() < 0.3
+        y = 1 if (job and rnd.random() < 0.9) or (not job and rnd.random() < 0.05) else 0
+        k = f"muster:m{i}"                                   # jeder Schlüssel neu: nur Verallgemeinerung zählt
+        b = rm.Beobachtung(str(i), (T0 + timedelta(minutes=i)).isoformat(), y, "silber",
+                           rm.merkmale("graylog", [f"app:a{rnd.randint(0, 3)}"]), k, "relevant", "R2", "x",
+                           merkmale_ohne_regel=rm.merkmale("graylog", []))
+        b.extra = {"job_fenster": ["job:fenster"] if job else []}
+        out.append(b)
+    m = rm.trainiere(out)
+    assert m["variante"] == "job_fenster" and m["varianten"]["job_fenster"]["auc"] > m["varianten"]["basis"]["auc"]
+    assert m["varianten"]["auffaellig"].get("uebersprungen")
+    assert m["gewichte"]["job:fenster"] > 0 and "job_fenster" in m["variante_grund"]
+
+
+def test_audit_und_anzeige_auf_wirksamem_beitrag():
+    """Gedämpfte Hosts (Wert 0,3): das Audit bewertet 0,3 × Gewicht, nicht das rohe Gewicht."""
+    rnd = random.Random(9)
+    out = []
+    for i in range(3000):
+        laut = rnd.random() < 0.3
+        y = 1 if (laut and rnd.random() < 0.9) else 0
+        tags = [f"muster:m{i % 50}", "host:laut" if laut else f"host:h{i % 40}"]
+        out.append(rm.Beobachtung(str(i), (T0 + timedelta(minutes=i)).isoformat(), y, "silber",
+                                  rm.merkmale("graylog", tags), f"muster:m{i % 50}", "relevant", "R2", "x",
+                                  merkmale_ohne_regel=rm.merkmale("graylog", tags)))
+    m = rm.trainiere(out)
+    sk = m["skala"]
+    assert m["staerkste"] and all(abs(x["gewicht"] - x["roh"] * sk.get(rm.art(x["merkmal"]), 1.0)) < 1e-3
+                                  for x in m["staerkste"])
+    assert "host_gedaempft" in m["varianten"]          # alle Muster im Training: gruppierte AUC None, benannt

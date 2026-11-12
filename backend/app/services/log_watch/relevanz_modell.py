@@ -69,6 +69,17 @@ ARTEN_REGEL = ("signal", "rauschen", "kriterium")
 #: Seltenes fällt nicht weg, es sammelt sich je Art in `art:_selten` (auch für Unbekanntes beim Bewerten)
 SELTEN = "_selten"
 TOP_N = 10
+#: Herausforderer (Rat der vi-mcp-Sitzung 12.11.2026, Nutzer: „ja“): bemängelte Gewichte sind ein Hinweis auf fehlende
+#: Merkmale, nicht auf falsche Zahlen — darum ändert keine Variante Gewichte, sondern Merkmale; jede wird trainiert und
+#: auf dem gruppierten Holdout gegen „basis“ gemessen. Name → (Skala je Merkmalsart, Zusatz-Merkmal aus Beobachtung.extra)
+VARIANTEN: dict[str, tuple[dict, str | None]] = {
+    "basis": ({}, None),
+    "host_gedaempft": ({"host": 0.3}, None),     # Host-Merkmale mit Wert 0,3: bei L2 wie ein kleineres C für Hosts
+    "job_fenster": ({}, "job_fenster"),           # Muster kommt an ≥ JOB_TAGE Tagen zur selben Stunde (Job, nicht Uhrzeit)
+    "auffaellig": ({}, "auffaellig"),             # Stufe des IsolationForest-Werts (auffaellig.py) als Merkmal
+}
+JOB_TAGE = 3
+JOB_STUNDEN_JE_TAG_MAX = 4
 
 
 # ── Merkmale ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -158,6 +169,8 @@ class Beobachtung:
     regel_rauschen: int | None = None
     #: folgte binnen FOLGE_FENSTER ein CheckMK-CRIT am selben Host? (None = nicht prüfbar, z. B. CheckMK selbst)
     folge: int | None = None
+    #: Zusatz-Merkmale der Herausforderer (VARIANTEN), z. B. {"job_fenster": ["job:fenster"]}
+    extra: dict | None = None
 
 
 def beobachtung(id_: str, doc: dict, breite: int | None = None, regel_rauschen: int | None = None
@@ -221,23 +234,78 @@ def abbilde(m: list[str], bekannt) -> list[str]:
     return sorted({x if x in bekannt else f"{art(x)}:{SELTEN}" for x in m} & set(bekannt))
 
 
+def _wert(skala: dict | None, merkmal: str) -> float:
+    return (skala or {}).get(art(merkmal), 1.0)
+
+
 def wahrscheinlichkeit(modell: dict, m: list[str]) -> float:
-    g = modell.get("gewichte") or {}
-    return _sig(modell.get("bias", 0.0) + sum(g.get(x, 0.0) for x in abbilde(m, g)))
+    g, sk = modell.get("gewichte") or {}, modell.get("skala")
+    return _sig(modell.get("bias", 0.0) + sum(g.get(x, 0.0) * _wert(sk, x) for x in abbilde(m, g)))
 
 
 def tragend(modell: dict, m: list[str], n: int = 3) -> list[tuple[str, float]]:
-    """Die Gewichte, die das Urteil tragen — größter Beitrag Richtung Rauschen zuerst. Rein."""
-    g = modell.get("gewichte") or {}
-    return sorted(((x, g[x]) for x in abbilde(m, g)), key=lambda t: -t[1])[:n]
+    """Die Beiträge (Gewicht × Wert), die das Urteil tragen — größter Richtung Rauschen zuerst. Rein."""
+    g, sk = modell.get("gewichte") or {}, modell.get("skala")
+    return sorted(((x, round(g[x] * _wert(sk, x), 4)) for x in abbilde(m, g)), key=lambda t: -t[1])[:n]
+
+
+def job_merkmal(jobs: set[str] | list[str] | None, schluessel: str | None, stunde: int | None) -> list[str]:
+    """`job:fenster`, wenn das Muster an ≥ JOB_TAGE Tagen zu dieser Stunde auftrat (jobs = {"key|h"}). Rein."""
+    if not jobs or not schluessel or not schluessel.startswith("muster:") or stunde is None:
+        return []
+    return ["job:fenster"] if f"{schluessel[7:]}|{int(stunde)}" in jobs else []
+
+
+def auff_stufe(wert: float | None, grenzen: dict | None) -> list[str]:
+    """Stufe des IsolationForest-Werts als Merkmal: hoch (≥ Ausreißer-Schwelle) · erhoeht (≥ 90-%-Quantil) · normal. Rein."""
+    if wert is None or not grenzen:
+        return []
+    if wert >= grenzen.get("hoch", 1e9):
+        return ["auffaellig:hoch"]
+    return ["auffaellig:erhoeht"] if wert >= grenzen.get("erhoeht", 1e9) else ["auffaellig:normal"]
+
+
+def variante_merkmale(modell: dict, schluessel: str | None, stunde: int | None, auff_wert: float | None) -> list[str]:
+    """Die Zusatz-Merkmale der gewählten Variante — dieselben Funktionen wie im Training. Rein."""
+    v = modell.get("variante") or "basis"
+    if v == "job_fenster":
+        return job_merkmal(set(modell.get("jobs") or []), schluessel, stunde)
+    if v == "auffaellig":
+        return auff_stufe(auff_wert, modell.get("auff_grenzen"))
+    return []
+
+
+def logloss(p: list[float], y: list[int]) -> float | None:
+    if not y:
+        return None
+    return sum(-(math.log(max(q, 1e-9)) if t else math.log(max(1 - q, 1e-9))) for q, t in zip(p, y)) / len(y)
+
+
+def waehle(ergebnisse: dict[str, dict]) -> tuple[str, str]:
+    """(Sieger, Grund) — ein Herausforderer gewinnt nur, wenn AUC (gruppiert) nicht schlechter UND log loss nicht höher
+    als bei „basis“, und er in einem davon besser ist; unter mehreren der mit der besten AUC. Sonst bleibt „basis“. Rein."""
+    b = ergebnisse.get("basis") or {}
+    if b.get("auc") is None:
+        return "basis", "basis ohne Kennzahlen — kein Vergleich möglich"
+    gut = [(n, e) for n, e in ergebnisse.items() if n != "basis" and e.get("auc") is not None
+           and e["auc"] >= b["auc"] and e["logloss"] <= b["logloss"]
+           and (e["auc"] > b["auc"] or e["logloss"] < b["logloss"])]
+    if not gut:
+        return "basis", "kein Herausforderer besser auf ungesehenen Schlüsseln"
+    n, e = max(gut, key=lambda t: (t[1]["auc"], -t[1]["logloss"]))
+    return n, (f"{n}: AUC {e['auc']:.4f} ≥ {b['auc']:.4f}, log loss {e['logloss']:.4f} ≤ {b['logloss']:.4f} "
+               f"(gruppierter Holdout)")
 
 
 # ── Training ──────────────────────────────────────────────────────────────────────────────────────────────
-def _fit(zeilen: list[list[int]], y: list[int], gew: list[float], nf: int, schritte: int = 600):
-    """Logistische Regression mit L2, volle Gradienten mit Adam — dünn besetzte Binärmerkmale. numpy."""
+def _fit(zeilen: list[list[int]], y: list[int], gew: list[float], nf: int, schritte: int = 600,
+         werte: list[float] | None = None):
+    """Logistische Regression mit L2, volle Gradienten mit Adam — dünn besetzte Merkmale (Wert 1, oder je Spalte
+    `werte`, z. B. 0,3 für gedämpfte Arten). numpy."""
     import numpy as np
     rows = np.fromiter((i for i, r in enumerate(zeilen) for _ in r), dtype=np.int64)
     cols = np.fromiter((c for r in zeilen for c in r), dtype=np.int64)
+    vals = np.ones(len(cols)) if werte is None else np.asarray(werte, dtype=float)[cols]
     yv, sw = np.asarray(y, dtype=float), np.asarray(gew, dtype=float)
     n = len(zeilen)
     w, b = np.zeros(nf), 0.0
@@ -246,10 +314,10 @@ def _fit(zeilen: list[list[int]], y: list[int], gew: list[float], nf: int, schri
     m_w, v_w, m_b, v_b = np.zeros(nf), np.zeros(nf), 0.0, 0.0
     lr, b1, b2, eps = 0.05, 0.9, 0.999, 1e-8
     for t in range(1, schritte + 1):
-        z = np.bincount(rows, weights=w[cols], minlength=n) + b
+        z = np.bincount(rows, weights=w[cols] * vals, minlength=n) + b
         p = 1 / (1 + np.exp(-np.clip(z, -35, 35)))
         r = (p - yv) * sw / sw.sum()
-        g_w = np.bincount(cols, weights=r[rows], minlength=nf) + L2 * w
+        g_w = np.bincount(cols, weights=r[rows] * vals, minlength=nf) + L2 * w
         g_b = float(r.sum())
         m_w = b1 * m_w + (1 - b1) * g_w
         v_w = b2 * v_w + (1 - b2) * g_w ** 2
@@ -401,10 +469,32 @@ def trainiere(beob: list[Beobachtung], jetzt: datetime | None = None) -> dict:
         leer["modus"], leer["grund"] = modus(labels, {}, [])
         return leer
     train, ho, gr = teile(beob)
-    modell, vok, zaehl = _lerne(train, lambda b: b.merkmale)
-    p_train = [wahrscheinlichkeit(modell, b.merkmale) for b in train]
+
+    def mk_von(name: str):
+        extra = VARIANTEN[name][1]
+        return (lambda b: b.merkmale + ((b.extra or {}).get(extra) or [])) if extra else (lambda b: b.merkmale)
+    # Herausforderer: jede Variante trainieren, auf dem gruppierten Holdout messen (Champion gegen Herausforderer)
+    ergebnisse: dict[str, dict] = {}
+    gelernt: dict[str, tuple] = {}
+    for name, (skala, extra) in VARIANTEN.items():
+        if extra and not any((b.extra or {}).get(extra) for b in beob):
+            ergebnisse[name] = {"uebersprungen": f"keine Daten für das Merkmal {extra}"}
+            continue
+        mk_v = mk_von(name)
+        mod_v, vok_v, zaehl_v = _lerne(train, mk_v, skala)
+        p_gr_v = [wahrscheinlichkeit(mod_v, mk_v(b)) for b in gr]
+        y_gr = [b.y for b in gr]
+        ergebnisse[name] = {"auc": None if not gr else auc(p_gr_v, y_gr), "logloss": logloss(p_gr_v, y_gr),
+                            "merkmale": len(vok_v)}
+        ergebnisse[name] = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in ergebnisse[name].items()}
+        gelernt[name] = (mod_v, vok_v, zaehl_v)
+    sieger, sieger_grund = waehle(ergebnisse)
+    mk = mk_von(sieger)
+    modell, vok, zaehl = gelernt[sieger]
+    modell = {**modell, "variante": sieger}
+    p_train = [wahrscheinlichkeit(modell, mk(b)) for b in train]
     schwelle = schwelle_fuer([p for p, b in zip(p_train, train) if b.y == 0])
-    p_ho = [wahrscheinlichkeit(modell, b.merkmale) for b in ho]
+    p_ho = [wahrscheinlichkeit(modell, mk(b)) for b in ho]
     p_von = {b.id: q for b, q in zip(ho, p_ho)}
 
     def kennz(menge: list[Beobachtung]):
@@ -449,27 +539,30 @@ def trainiere(beob: list[Beobachtung], jetzt: datetime | None = None) -> dict:
           "auc_regel_gold": a_rg,
           "basisrate_rauschen": round(sum(b.y for b in train) / len(train), 4)}
     kz = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in kz.items()}
-    befunde = audit(modell["gewichte"], train,
-                    [abbilde(b.merkmale, modell["gewichte"]) for p, b in zip(p_ho, ho) if p >= schwelle])
+    # Audit und Anzeige auf dem WIRKSAMEN Beitrag (Gewicht × Wert der Merkmalsart) — bei gedämpften Hosts zählt 0,3 × w
+    wirksam = {f: round(g * _wert(modell.get("skala"), f), 4) for f, g in modell["gewichte"].items()}
+    befunde = audit(wirksam, train,
+                    [abbilde(mk(b), modell["gewichte"]) for p, b in zip(p_ho, ho) if p >= schwelle])
     # ohne den dominanten Schlüssel (Audit „dominant“ auf ein muster:/regel:-Merkmal): wie gut ohne diesen einen Fall?
     dom = next((x["merkmal"] for x in befunde if x["klasse"] == "dominant"), None)
     if dom:
-        kz["auc_ohne_dominantes"] = kennz([b for b in gr if dom not in b.merkmale])[0]
-        kz["auc_zeitlich_ohne_dominantes"] = kennz([b for b in ho if dom not in b.merkmale])[0]
+        kz["auc_ohne_dominantes"] = kennz([b for b in gr if dom not in mk(b)])[0]
+        kz["auc_zeitlich_ohne_dominantes"] = kennz([b for b in ho if dom not in mk(b)])[0]
     kz = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in kz.items()}
     m, grund = modus(labels, kz, befunde)
     alle_p = p_train + p_ho
-    arten = Counter(art(x) for b in train for x in b.merkmale)
+    arten = Counter(art(x) for b in train for x in mk(b))
     return {"zeit": jetzt.isoformat(), "modus": m, "grund": grund, "labels": labels, **modell,
+            "varianten": ergebnisse, "variante_grund": sieger_grund,
             "merkmal_arten": dict(arten.most_common()),
             "arten_verworfen": dict(Counter(a for b in beob for a in b.verworfen_arten or []).most_common()),
             "schwelle": round(schwelle, 4), "kennzahlen": kz, "audit": befunde,
-            "staerkste": [{"merkmal": f, "gewicht": g} for f, g in
-                          sorted(modell["gewichte"].items(), key=lambda t: -abs(t[1]))[:25]],
+            "staerkste": [{"merkmal": f, "gewicht": g, "roh": modell["gewichte"][f]} for f, g in
+                          sorted(wirksam.items(), key=lambda t: -abs(t[1]))[:25]],
             "widersprueche": widersprueche(train + ho, alle_p, schwelle)}
 
 
-def _lerne(train: list[Beobachtung], mk) -> tuple[dict, list[str], Counter]:
+def _lerne(train: list[Beobachtung], mk, skala: dict | None = None) -> tuple[dict, list[str], Counter]:
     """Vokabular (Seltenes → art:_selten), Fit, Gewichte. Rein bis auf numpy."""
     zaehl = Counter(x for b in train for x in set(mk(b)))
     haeufig = {f for f, n in zaehl.items() if n >= MIN_VORKOMMEN}
@@ -481,9 +574,9 @@ def _lerne(train: list[Beobachtung], mk) -> tuple[dict, list[str], Counter]:
     je = Counter((b.herkunft, b.schluessel or b.id, b.y) for b in train)
     gew = [(1.0 if b.herkunft == "gold" else SILBER_GEWICHT) / je[(b.herkunft, b.schluessel or b.id, b.y)]
            for b in train]
-    w, bias = _fit(zeilen, [b.y for b in train], gew, len(vok))
-    return ({"gewichte": {f: round(w[i], 4) for f, i in idx.items() if abs(w[i]) >= 1e-3}, "bias": round(bias, 4)},
-            vok, zaehl)
+    w, bias = _fit(zeilen, [b.y for b in train], gew, len(vok), werte=[_wert(skala, f) for f in vok])
+    return ({"gewichte": {f: round(w[i], 4) for f, i in idx.items() if abs(w[i]) >= 1e-3}, "bias": round(bias, 4),
+             "skala": dict(skala or {})}, vok, zaehl)
 
 
 def widersprueche(beob: list[Beobachtung], p: list[float], schwelle: float, n: int = 15) -> dict:
@@ -526,18 +619,20 @@ class Signal:
 
 
 def pruefe(quelle: str, tags, felder: dict | None, kriterien, jetzt: datetime | None = None,
-           modell: dict | None = None, breite: int | None = None) -> Signal | None:
+           modell: dict | None = None, breite: int | None = None, schluessel: str | None = None,
+           auff_wert: float | None = None) -> Signal | None:
     """Signal, wenn das Modell die Gruppe für Rauschen hält (P ≥ Schwelle) — sonst None. Rein bis auf den Cache."""
     m = modell if modell is not None else _MODELL
     if not m or m.get("modus") not in ("test", "bereit") or not m.get("gewichte"):
         return None
     st = (jetzt or datetime.now(timezone.utc)).hour
-    mk = merkmale(quelle, tags, (felder or {}).get("level"), kriterien, st, breite=breite)
+    mk = merkmale(quelle, tags, (felder or {}).get("level"), kriterien, st, breite=breite) \
+        + variante_merkmale(m, schluessel, st, auff_wert)
     p = wahrscheinlichkeit(m, mk)
     if p < m.get("schwelle", 1.0):
         return None
     tr = ", ".join(f"{f} ({w:+.2f})" for f, w in tragend(m, mk))
-    return Signal(p, f"Modell ({m['modus']}): Rauschen P = {p:.2f} ≥ {m['schwelle']:.2f} — {tr or 'nur Grundrate'}",
+    return Signal(p, f"Modell ({m['modus']}, {m.get('variante') or 'basis'}): Rauschen P = {p:.2f} ≥ {m['schwelle']:.2f} — {tr or 'nur Grundrate'}",
                   m["modus"])
 
 
@@ -623,10 +718,95 @@ async def _regeln():
         return (await aktuelle(db)).regeln
 
 
-async def beobachtungen(tage: float = 30) -> list[Beobachtung]:
-    """Alle Nachrichten mit unabhängigem Urteil (Mensch oder KI) aus cs-logs-* der letzten `tage`, mit Breite der
-    Episode und dem Urteil der geltenden Regeln."""
+async def _jobs() -> set[str]:
+    """{"key|h"}: Muster, die in den letzten 7 Tagen an ≥ JOB_TAGE Tagen zur Stunde h auftraten und höchstens
+    JOB_STUNDEN_JE_TAG_MAX Stunden je Tag aktiv sind (periodisch, nicht dauernd) — aus log_template_hourly."""
+    from sqlalchemy import text
+
+    from app.core.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(text(
+            "with h as (select key, date_trunc('day', hour_start) d, extract(hour from hour_start)::int st "
+            "from log_template_hourly where hour_start >= now() - interval '7 days' and count > 0), "
+            "k as (select key, count(*)::float / nullif(count(distinct d), 0) je_tag from h group by key) "
+            "select h.key, h.st from h join k using (key) where k.je_tag <= :maxh "
+            "group by h.key, h.st having count(distinct h.d) >= :tage"),
+            {"maxh": JOB_STUNDEN_JE_TAG_MAX, "tage": JOB_TAGE})).all()
+    return {f"{k}|{h}" for k, h in rows}
+
+
+async def _auff_werte(docs: list[dict]) -> tuple[dict[tuple[str, int], float], dict | None]:
+    """IsolationForest-Wert je (Muster, 5-min-Bucket) der Graylog-Nachrichten — mit dem Modell im Speicher
+    (auffaellig.aktuelles; im Backend-Prozess nach dem ersten Lauf). Ohne Modell: leer, benannt im Ergebnis."""
+    from datetime import timedelta as _td
+
+    from sqlalchemy import text
+
+    from app.core.database import AsyncSessionLocal
+    from app.services.log_watch import auffaellig
+    st = auffaellig.aktuelles()
+    if not st:
+        return {}, None
+    paare = set()
+    for d in docs:
+        k = str(d.get("schluessel") or "")
+        f = _fenster(d.get("zeit"))
+        if d.get("quelle") == "graylog" and k.startswith("muster:") and f is not None:
+            paare.add((k[7:], f))
+    if not paare:
+        return {}, None
+    keys, starts = zip(*paare)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(text(
+            "select b.key, b.bucket_start, b.count, b.n_entities from log_template_buckets b "
+            "join unnest(cast(:k as text[]), cast(:t as timestamptz[])) as p(key, bs) "
+            "on b.key = p.key and b.bucket_start = p.bs"),
+            {"k": list(keys), "t": [datetime.fromtimestamp(f * BREITE_FENSTER_S, timezone.utc) for f in starts]})).all()
+    if not rows:
+        return {}, None
+    xs, ids = [], []
+    for key, b, n, h in rows:
+        mittel, praesenz = st["stats"].get(key, (0.0, 0.0))
+        erst = st["erst"].get(key)
+        alter = (b - erst).total_seconds() / 3600 if erst else 0.0
+        xs.append(auffaellig.merkmal_zeile(int(n), mittel, int(h or 0), alter, praesenz))
+        ids.append((key, int(b.timestamp()) // BREITE_FENSTER_S))
+    werte = [-float(v) for v in st["modell"].score_samples(xs)]
+    return dict(zip(ids, werte)), {"hoch": st["schwelle"], "erhoeht": st.get("q90", st["schwelle"])}
+
+
+async def beobachtungen_mit_kontext(tage: float = 30) -> tuple[list[Beobachtung], dict]:
+    """Beobachtungen und der Kontext der Herausforderer (Job-Fenster, Auffälligkeits-Grenzen)."""
     docs = await _alle(tage)
+    kontext: dict = {}
+    try:
+        kontext["jobs"] = sorted(await _jobs())
+    except Exception as e:  # noqa: BLE001 — Variante fällt dann aus, benannt
+        kontext["jobs_fehler"] = f"{type(e).__name__}: {str(e)[:200]}"
+    try:
+        auff, grenzen = await _auff_werte([d for _, d in docs])
+        kontext["auff_grenzen"] = grenzen
+    except Exception as e:  # noqa: BLE001
+        auff, kontext["auff_fehler"] = {}, f"{type(e).__name__}: {str(e)[:200]}"
+    beob = await _beobachtungen_aus(docs)
+    jobs = set(kontext.get("jobs") or [])
+    for b in beob:
+        st = _stunde(b.zeit)
+        extra = {"job_fenster": job_merkmal(jobs, b.schluessel, st)}
+        f = _fenster(b.zeit)
+        if b.schluessel.startswith("muster:") and f is not None:
+            extra["auffaellig"] = auff_stufe(auff.get((b.schluessel[7:], f)), kontext.get("auff_grenzen"))
+        b.extra = extra
+    return beob, kontext
+
+
+async def beobachtungen(tage: float = 30) -> list[Beobachtung]:
+    return (await beobachtungen_mit_kontext(tage))[0]
+
+
+async def _beobachtungen_aus(docs: list[tuple[str, dict]]) -> list[Beobachtung]:
+    """Alle Nachrichten mit unabhängigem Urteil (Mensch oder KI), mit Breite der Episode und dem Urteil der geltenden
+    Regeln."""
     br = breiten([d for _, d in docs])
     crit = crit_zeiten([d for _, d in docs])
     regeln = await _regeln()
@@ -689,7 +869,8 @@ def pruefliste(modell: dict, docs: list[tuple[str, dict]], br: dict[tuple, int],
             continue
         mk = merkmale(d.get("quelle") or "", d.get("hashtags") or [], d.get("level"), d.get("kriterien") or [],
                       _stunde(d.get("zeit")), nachtraeglich=nachtraeglich(d.get("aenderungen")),
-                      breite=br.get((d.get("quelle"), d.get("schluessel"), _fenster(d.get("zeit")))))
+                      breite=br.get((d.get("quelle"), d.get("schluessel"), _fenster(d.get("zeit"))))) \
+            + variante_merkmale(modell, d.get("schluessel"), _stunde(d.get("zeit")), None)
         p = wahrscheinlichkeit(modell, mk)
         regel_rel = d.get("urteil") == "relevant"
         if art_ == "widerspruch":
@@ -723,9 +904,16 @@ async def lade_pruefliste(art_: str, tage: float = 7, limit: int = 20) -> dict:
 async def trainiere_und_speichere(tage: float = 30) -> dict:
     """Nachtlauf: Daten holen, trainieren, speichern, in den Raster-Cache setzen. Ergebnis ohne Gewichte."""
     from app.core.opensearch import get_opensearch
-    beob = await beobachtungen(tage)
+    beob, kontext = await beobachtungen_mit_kontext(tage)
     m = trainiere(beob)
-    m["daten"] = {"tage": tage, "beobachtungen": len(beob), "index": "cs-logs-*"}
+    m["daten"] = {"tage": tage, "beobachtungen": len(beob), "index": "cs-logs-*",
+                  **{k: v for k, v in kontext.items() if k.endswith("_fehler")},
+                  "jobs": len(kontext.get("jobs") or []), "auff_grenzen": kontext.get("auff_grenzen")}
+    # nur, was die gewählte Variante zum Bewerten braucht
+    if m.get("variante") == "job_fenster":
+        m["jobs"] = kontext.get("jobs") or []
+    if m.get("variante") == "auffaellig":
+        m["auff_grenzen"] = kontext.get("auff_grenzen")
     os_ = get_opensearch()
     if not await os_.indices.exists(index=INDEX):
         await os_.indices.create(index=INDEX, body=MAPPING)

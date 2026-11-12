@@ -168,8 +168,10 @@ async def lw_modell(nachricht: str = "") -> dict:
     if not r["hits"]["hits"]:
         return {"fehler": f"Nachricht {nachricht} nicht gefunden"}
     d = r["hits"]["hits"][0]["_source"]
+    st = relevanz_modell._stunde(d.get("zeit"))
     mk = relevanz_modell.merkmale(d.get("quelle") or "", d.get("hashtags") or [], d.get("level"),
-                                  d.get("kriterien") or [], relevanz_modell._stunde(d.get("zeit")))
+                                  d.get("kriterien") or [], st) \
+        + relevanz_modell.variante_merkmale(m, d.get("schluessel"), st, None)
     p = relevanz_modell.wahrscheinlichkeit(m, mk)
     return {"modus": m.get("modus"), "grund": m.get("grund"), "schwelle": m.get("schwelle"),
             "p_rauschen": round(p, 4), "rauschen": p >= m.get("schwelle", 1.0),

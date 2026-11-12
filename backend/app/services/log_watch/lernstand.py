@@ -91,7 +91,8 @@ async def vergleich(stunden: float = 24, n: int = 48) -> dict:
     from app.models.log_watch import RasterLauf
     jetzt = datetime.now(timezone.utc)
     rel = await _verlauf("cs-log-modell", {
-        "zeit": "zeit", "modus": "modus", "auc_ungesehen": "kennzahlen.auc", "auc_je_schluessel": "kennzahlen.auc_gruppen",
+        "zeit": "zeit", "modus": "modus", "variante": "variante", "varianten": "varianten",
+        "auc_ungesehen": "kennzahlen.auc", "auc_je_schluessel": "kennzahlen.auc_gruppen",
         "auc_zeitlich": "kennzahlen.auc_zeitlich", "recall_relevant": "kennzahlen.recall_relevant",
         "rauschen_erkannt": "kennzahlen.rauschen_erkannt", "folge_rauschen": "kennzahlen.folge_rauschen",
         "folge_relevant": "kennzahlen.folge_relevant", "labels": "labels.gesamt", "schwelle": "schwelle"}, n)

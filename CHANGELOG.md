@@ -10,6 +10,39 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — Relevance model: challengers that change features, not weights
+
+You read about weight-space programming and asked how the vi-mcp session does it. Its answer: weights are only
+*read* (`vi_model`, `vi_why`, fixed-rule audit), never written by an LLM, because a set weight does not survive the
+next fit and replaces measurement with opinion. Faulted weights point at missing features. You: „ja“.
+
+### What is new
+
+- Every hourly training compares four variants on the grouped holdout (unseen keys): `basis`, `host_gedaempft` (host
+  features 0.3), `job_fenster`, `auffaellig`. A challenger wins only if it is not worse in AUC and log loss and better
+  in one of them.
+- The chosen variant scores in the raster: job window and anomaly level are computed there with the same functions.
+- Audit and „strongest weights“ use the effective contribution (weight × value). Before this fix, the audit judged
+  damped hosts by their raw weight.
+- `lernstand` shows the variant and all variants' metrics per run.
+
+### Evidence (dry run 12.11. 10:25 UTC, 22 818 labelled messages, grouped holdout)
+
+| Variant | AUC | log loss |
+|---|---|---|
+| basis | 0.722 | 0.4805 |
+| **host_gedaempft** | **0.740** | **0.4675** |
+| job_fenster | 0.722 | 0.4807 |
+| auffaellig | 0.723 | 0.4801 |
+
+- `host_gedaempft` wins.
+- `job_fenster` (842 pattern×hour job windows, 371 messages): no gain; `stunde:03` stays at +1.54. **„Nightly jobs“
+  is not supported by this feature.**
+- `auffaellig`: no gain. In the dry run the level „erhoeht“ was empty, because the running backend did not yet store
+  the 90 % limit; the deploy fixes that.
+- `basis` reaches 0.722 here, against 0.778 at 09:18: the holdout is a different time slice with new data.
+- Tests: 919 passed; the same 7 failures and 3 collection errors as before.
+
 ## 2026-11-12 — Learned models act in production; anomalies via scikit-learn; a view to compare results
 
 You (12.11.):

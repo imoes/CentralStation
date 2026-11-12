@@ -1335,6 +1335,18 @@ are really noise (`services/log_watch/relevanz_modell.py`, proposal: `docs/vorsc
     without the audit's dominant feature, and the same against gold.
   - Recall of the relevant ones is reported at the threshold, chosen so that at most 1 % of the relevant ones in
     training are above it.
+- **Challengers — features, never weights** (vi-mcp session's advice, you: „ja“): every hourly run trains four variants
+  on the same data and compares them on the grouped holdout.
+  - `basis`;
+  - `host_gedaempft`: host features carry the value 0.3 instead of 1.0, which acts like a smaller C for hosts;
+  - `job_fenster`: feature `job:fenster` when the pattern appeared at this hour on ≥ 3 of the last 7 days and is active
+    ≤ 4 hours a day;
+  - `auffaellig`: IsolationForest level `auffaellig:hoch|erhoeht|normal`.
+
+  A challenger replaces `basis` only if its AUC is not lower *and* its log loss not higher, and one of them is better.
+  An LLM never writes weights: a set weight would not survive the next fit, and it would replace measurement with
+  opinion. Audit and „strongest weights“ use the effective contribution (weight × feature value). `GET
+  /log-watch/lernstand` shows per run the chosen variant and every variant's AUC and log loss.
 - **Mode, always with a reason — a quality statement:** `zu_wenig_daten` (< 50 labels per class, no signal) ·
   `test` (checks not passed, reason given) · `bereit`. No human verdicts are needed (you, 12.11.: „ich muss da nichts
   mehr machen“):

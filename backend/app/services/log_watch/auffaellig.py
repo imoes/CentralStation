@@ -137,9 +137,11 @@ def aktuelles() -> dict | None:
     return _STAND
 
 
-def pruefe_fenster(treffer, b: datetime | None, stand: dict | None = None) -> dict[tuple[str, str], tuple[float, list]]:
-    """Graylog-Treffer eines Fensters je Muster zusammenfassen (Anzahl, Hosts), bewerten, Ausreißer zurückgeben:
-    {(quelle, schluessel): (Auffälligkeit, Grund)}. Rein bis auf das Modell."""
+def pruefe_fenster(treffer, b: datetime | None, stand: dict | None = None
+                   ) -> dict[tuple[str, str], tuple[float, list, bool]]:
+    """Graylog-Treffer eines Fensters je Muster zusammenfassen (Anzahl, Hosts) und bewerten:
+    {(quelle, schluessel): (Auffälligkeit, Grund, Ausreißer)} — alle Muster, denn der Wert ist auch Merkmal des
+    Relevanz-Modells (Variante „auffaellig“). Rein bis auf das Modell."""
     st = stand if stand is not None else _STAND
     if not st:
         return {}
@@ -160,7 +162,7 @@ def pruefe_fenster(treffer, b: datetime | None, stand: dict | None = None) -> di
         zeilen.append({"key": key, "b": 0, "x": merkmal_zeile(g["anzahl"], mittel, len(g["hosts"]), alter, praesenz),
                        "schluessel": schl})
     bewerte(st["modell"], st["normal"], zeilen, st["schwelle"])
-    return {("graylog", z["schluessel"]): (z["auffaellig"], z["grund"]) for z in zeilen if z["ausreisser"]}
+    return {("graylog", z["schluessel"]): (z["auffaellig"], z["grund"], z["ausreisser"]) for z in zeilen}
 
 
 async def lerne(jetzt: datetime | None = None) -> dict:
@@ -188,7 +190,7 @@ async def lerne(jetzt: datetime | None = None) -> dict:
     nm = normal([z["x"] for z in train])
     schwelle = schwelle_aus(modell, [z["x"] for z in train])
     setze({"modell": modell, "normal": nm, "stats": stats, "erst": erst, "zeit": jetzt.isoformat(),
-           "schwelle": schwelle})
+           "schwelle": schwelle, "q90": schwelle_aus(modell, [z["x"] for z in train], 0.9)})
     bewerte(modell, nm, neu, schwelle)
     # Regeln und KI: gespeicherte Graylog-Nachrichten der letzten 24 h je (Muster, Bucket)
     weiter, ki = set(), {}
