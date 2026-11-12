@@ -1397,8 +1397,11 @@ evidence; nothing is ever executed.
   - MCP tool and funnel tool `lw_loesungen` — the AI can say „so wurde das zuletzt behoben“ with rate and incident
     IDs;
   - nightly 03:50 UTC over 30 days, stored in `cs-log-loesungen`.
-  - Confirmed paths go to the VI (`vi_lerne`, key `loesung:<problem>:<action>`, so a new run updates instead of
-    duplicating).
+  - Confirmed paths go to the VI as a skill via `vi_solved`. The name `loesung-<problem>-<action>` is the identity,
+    so a new run evolves the skill instead of duplicating it. Triggers: `host:<h>` or `fehler:<key>`; steps: the
+    action; instructions: the observed command line, the rate and the incident IDs. A skill then appears before
+    matching actions in every session and its use is measured there. If the server has no `vi_solved`, the path is
+    written with `vi_lerne` instead (same name as key).
 
 ### Log watch: history `cs-logs-*` (active since 2026-11-06 20:44 UTC)
 

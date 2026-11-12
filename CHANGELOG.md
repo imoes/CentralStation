@@ -22,7 +22,8 @@ Bspw. Bei einem incident“.
   and keeps a mode with a reason. Details: README, „Log watch: learned remediation“.
 - `GET /log-watch/loesungen`, `POST /log-watch/loesungen/lernen` (sysadmin, audited), MCP and funnel tool
   `lw_loesungen`, nightly run 03:50 UTC.
-- Confirmed paths are written to the VI with the observed command line; none are confirmed yet.
+- Confirmed paths are written to the VI as a skill (`vi_solved`, advised by the vi-mcp session) with the observed
+  command line and the incident IDs; none are confirmed yet.
 
 ### Evidence (dry run against live data, read only, nothing stored — 12.11.2026 07:56 UTC, 30 days)
 

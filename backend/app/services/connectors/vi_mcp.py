@@ -167,6 +167,18 @@ class ViMcpConnector(BaseConnector):
             arg["before_id"] = vorher_id
         return await self.werkzeug("vi_feedback", arg)
 
+    async def geloest(self, name: str, triggers: list[str], steps: list[str], instructions: str, reason: str,
+                      evidence: list[str] | None = None) -> ViAntwort:
+        """vi_solved: ein Problem gilt als gelöst — als Fähigkeit (skill) ablegen bzw. die gleichnamige weiterentwickeln.
+        triggers = Hashtags des Problems (host:, thema:, fehler:), steps = Maßnahmen, instructions = vollständige Lösung
+        mit Befehlen, evidence = VI-Objekt-IDs (Erfahrungen) — KEINE fremden IDs. Startet in der VI im Modus test und
+        erscheint vor passenden Aktionen (Rat der vi-mcp-Sitzung 12.11.2026)."""
+        arg: dict = {"name": name[:200], "triggers": triggers[:20], "steps": steps[:20],
+                     "instructions": instructions[:20000], "reason": reason[:1000]}
+        if evidence:
+            arg["evidence"] = evidence[:20]
+        return await self.werkzeug("vi_solved", arg)
+
     async def test_connection(self) -> ConnectorTestResult:
         try:
             async with self._client(timeout=15.0) as client:

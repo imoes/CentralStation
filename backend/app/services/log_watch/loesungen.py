@@ -349,30 +349,52 @@ async def lerne(tage: float = 30) -> dict:
     return z
 
 
+def vi_weg(w: dict) -> dict:
+    """Argumente für vi_solved aus einem bestätigten Lösungsweg. Der Name loesung-<problem>-<maßnahme> (nur a–z, 0–9, „-“
+    wie VI-Skill-Namen) ist die Identität: gleicher Name entwickelt den Weg weiter statt ihn zu verdoppeln. Trigger: host:<h> bei Host-Problemen, sonst
+    fehler:<schlüssel>. Incident-IDs stehen in Anleitung und Grund — evidence nimmt nur VI-Objekt-IDs. Rein."""
+    prob = w["problem"]
+    trig = [prob] if prob.startswith("host:") else [f"fehler:{prob}"]
+    anleitung = (f"Problem: {prob}\nMaßnahme: {w['massnahme']}\nBeobachtete Befehlszeile:\n{w['beispiel']}\n\n"
+                 f"Gemessen von CentralStation (loesungen.py): behoben in {w['behoben']} von {w['n']} Episoden "
+                 f"(Quote {w['quote']:.0%}, untere Grenze {w['quote_unten']:.0%}) gegen {w['basisrate']:.0%} ohne "
+                 f"Maßnahme ({w['basis_n']} Episoden). Behoben = derselbe Fehler kehrt binnen 24 h am Host nicht "
+                 f"wieder. Belege (CentralStation-Incidents): {', '.join(w['belege'])}")
+    def slug(x: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "-", x.lower()).strip("-")
+    return {"name": f"loesung-{slug(prob)}-{slug(w['massnahme'])}"[:200], "triggers": trig, "steps": [w["massnahme"]],
+            "instructions": anleitung,
+            "reason": f"CentralStation: {w['grund']} — Incidents {', '.join(w['belege'][:5])}"}
+
+
 async def _in_die_vi(wege: list[dict]) -> dict:
-    """Bestätigte Lösungswege als Erkenntnis in die VI — Schlüssel je (Problem, Maßnahme), damit ein neuer Lauf
-    aktualisiert statt verdoppelt; mit Quote, Basisrate, Belegen und der beobachteten Befehlszeile."""
+    """Bestätigte Lösungswege als Fähigkeit in die VI (vi_solved) — dann erscheinen sie vor passenden Aktionen in allen
+    Sitzungen, und ihr Nutzen wird dort gemessen. Kennt der Server vi_solved nicht, als Erkenntnis (vi_lerne, key)."""
     if not wege:
         return {"geschrieben": 0, "grund": "kein bestätigter Lösungsweg"}
     from app.core.database import AsyncSessionLocal
-    from app.services.connectors.vi_mcp import load_vi_mcp_connector
+    from app.services.connectors.vi_mcp import ViMcpFehler, load_vi_mcp_connector
     async with AsyncSessionLocal() as db:
         k = await load_vi_mcp_connector(db)
     if k is None:
         return {"geschrieben": 0, "grund": "kein vi-mcp-Konnektor"}
-    n, fehler = 0, []
+    n, weg_art, fehler = 0, "vi_solved", []
     for w in wege[:20]:
-        text_ = (f"Lösungsweg für {w['problem']}: {w['massnahme']} behob {w['behoben']} von {w['n']} Episoden "
-                 f"(Quote {w['quote']:.0%}, untere Grenze {w['quote_unten']:.0%}) gegen {w['basisrate']:.0%} ohne "
-                 f"Maßnahme ({w['basis_n']} Episoden). Beobachtet: {w['beispiel'][:200]}")
+        arg = vi_weg(w)
         try:
-            a = await k.lerne(text_, ["skill:loesungsweg", f"problem:{w['problem']}", f"massnahme:{w['massnahme']}"],
-                              f"CentralStation loesungen.py, Incidents {', '.join(w['belege'][:5])}", 2,
-                              key=f"loesung:{w['problem']}:{w['massnahme']}", ausgang="gut")
+            try:
+                a = await k.geloest(**arg)
+            except ViMcpFehler as ex:
+                if "vi_solved" not in str(ex) and "unknown" not in str(ex).lower():
+                    raise
+                weg_art = "vi_lerne"
+                a = await k.lerne(arg["instructions"][:1000], ["skill:loesungsweg", *arg["triggers"]],
+                                  f"CentralStation loesungen.py, Incidents {', '.join(w['belege'][:5])}", 2,
+                                  key=arg["name"], ausgang="gut")
             n += 0 if getattr(a, "fehler", False) else 1
         except Exception as ex:  # noqa: BLE001
             fehler.append(f"{type(ex).__name__}: {str(ex)[:120]}")
-    return {"geschrieben": n, "fehler": fehler[:3]}
+    return {"geschrieben": n, "weg": weg_art, "fehler": fehler[:3]}
 
 
 async def lade() -> dict | None:

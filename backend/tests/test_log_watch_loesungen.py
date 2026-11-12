@@ -137,3 +137,14 @@ def test_fuer_findet_problem_und_regel_und_nennt_leeres():
 def test_wilson_vorsichtig_bei_kleinem_n():
     assert lo.wilson_unten(2, 2) < lo.wilson_unten(20, 20) < 1.0
     assert lo.wilson_unten(0, 0) == 0.0
+
+
+def test_vi_weg_fuer_vi_solved():
+    w = {"problem": "host:web1.example.com", "massnahme": "dienst-neustart:nginx", "n": 12, "behoben": 11,
+         "quote": 0.857, "quote_unten": 0.64, "basisrate": 0.23, "basis_n": 20, "grund": "untere Grenze 64 % über 23 %",
+         "belege": ["i1", "i2"], "beispiel": "sudo: x : COMMAND=/usr/bin/systemctl restart nginx"}
+    a = lo.vi_weg(w)
+    assert a["name"] == "loesung-host-web1-example-com-dienst-neustart-nginx"
+    assert a["triggers"] == ["host:web1.example.com"] and a["steps"] == ["dienst-neustart:nginx"]
+    assert "systemctl restart nginx" in a["instructions"] and "i1, i2" in a["instructions"] and "evidence" not in a
+    assert lo.vi_weg({**w, "problem": "muster:abc"})["triggers"] == ["fehler:muster:abc"]
