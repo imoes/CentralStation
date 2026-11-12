@@ -114,3 +114,9 @@ def test_offline_schlechtere_reihenfolge_verwirft():
     s = gs.bewerte(s0, nah, _beob(4000, T0 + timedelta(hours=1), hilft=False))
     off = s["messung"]["offline"]
     assert off["auc_mit"] < off["auc_ohne"] and s["modus"] == "verworfen"
+
+
+def test_delta_das_das_gewicht_aufhebt_ist_loeschen():
+    d, _, weg = gs.pruefe_vorschlag([{"merkmal": "stunde:03", "delta": -1.5, "grund": "Uhrzeit ist keine Ursache"},
+                                     {"merkmal": "host:a", "delta": 1.7, "grund": "zu groß, kein Löschen"}], MODELL)
+    assert d == {"stunde:03": -1.5} and any("host:a" in w for w in weg)

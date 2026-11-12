@@ -38,6 +38,9 @@ one:
   (−0.00014 ± 0.00014). The prospective gate was never affected: it only uses messages after the proposal.
 - **Prompt:** now says what a weight means (P that the AI check calls it noise) and that severity is no reason.
 - **`loeschen`:** sets a weight to 0, also beyond |Δ| ≤ 1, only for training-side audit features with a fitted weight.
+  A delta that exactly cancels the weight now counts as `loeschen`. Measured 12.11. 10:43 UTC: with the leak-free card,
+  qwen proposed −1.54 for `stunde:03` (weight +1.54), +1.136 for `stunde:14` and −1.067 for `ort:DHW-0` — all three
+  meant „set to 0“, but the |Δ| ≤ 1 rule rejected the form.
 - **Δ = 0** is counted as „keine Änderung“, not as a range error.
 - **Second metric in the gate:** offline, an AUC drop > 0.005 rejects; activation needs log loss > 2 SE better *and*
   AUC not worse.

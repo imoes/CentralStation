@@ -97,6 +97,13 @@ def pruefe_vorschlag(vorschlag: list, modell: dict) -> tuple[dict[str, float], d
             continue
         f, d, g = e.get("merkmal"), e.get("delta"), str(e.get("grund") or "").strip()
         loeschen = e.get("loeschen") is True
+        # ein Delta, das das Gewicht genau aufhebt, IST ein Löschen (gemessen 12.11. 10:43: qwen schrieb −1,54 für
+        # stunde:03 mit Gewicht +1,54 statt "loeschen": true — die |Δ|-Regel lehnte die gemeinte Operation ab)
+        try:
+            if f in bekannt and abs(float(d) + float((modell.get("gewichte") or {})[f])) < 0.01:
+                loeschen = True
+        except (TypeError, ValueError):
+            pass
         if loeschen and f in bekannt:
             # Löschen (Wunsch des Nutzers über die vi-mcp-Sitzung): Gewicht auf 0, auch jenseits von |Δ| ≤ 1 —
             # nur für Audit-Merkmale mit gefittetem Gewicht
