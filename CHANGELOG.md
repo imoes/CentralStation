@@ -41,6 +41,10 @@ one:
   A delta that exactly cancels the weight now counts as `loeschen`. Measured 12.11. 10:43 UTC: with the leak-free card,
   qwen proposed −1.54 for `stunde:03` (weight +1.54), +1.136 for `stunde:14` and −1.067 for `ort:DHW-0` — all three
   meant „set to 0“, but the |Δ| ≤ 1 rule rejected the form.
+  After the fix (10:45 UTC), the deletion of all three came through and was measured on 718 unseen messages: log loss
+  +0.0105 ± 0.0029, AUC 0.741 → 0.718 — **clearly worse, rejected**. The flagged hour weights carry real signal on
+  unseen data; the audit flag „stunde“ is a suspicion, not a proof. **Hypothesis:** something behind the hour that we
+  do not have as a feature yet. The job-window feature did not explain it.
 - **Δ = 0** is counted as „keine Änderung“, not as a range error.
 - **Second metric in the gate:** offline, an AUC drop > 0.005 rejects; activation needs log loss > 2 SE better *and*
   AUC not worse.
