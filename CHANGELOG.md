@@ -69,6 +69,12 @@ You (12.11.):
     interrupted the AI fleet; this is not shown to come from the models.
 - **Local VI on vi-mcp 0.54.1** (update by the vi-mcp session, approved by you; package sha256 263b4f2f… checked
   against the Dockerfile).
+- **Local VI on vi-mcp 0.57.0** (12.11. 09:51 UTC; signed release, key c88aa8ce…, deb sha256 1e8f2f2e8430…; volumes
+  backed up to `~/vi-mcp-sicherung`, 20261112T095122Z).
+  - `/gesund` ok 0.57.0, network without violations, reviewer config kept.
+  - The console hook changed: WebSearch/WebFetch now send a masked result excerpt (≤ 4 000 characters) to the VI, so
+    it can learn solutions from web searches. You approved the rebuild; the backend carries the new hook.
+  - Hint lines now say „measured +X pts/N×“. `vi_bruecke` reads only the `[art:id]` part, so nothing changes there.
 - **The local VI now reviews network imports itself** (you, 12.11.: „ja“, model „qwen27b“). Before, every import
   waited for a human.
   - `/etc/vi-mcp/config.json` in volume `vi-mcp-konfig` got two keys:
