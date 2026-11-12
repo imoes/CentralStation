@@ -238,15 +238,26 @@ def _wert(skala: dict | None, merkmal: str) -> float:
     return (skala or {}).get(art(merkmal), 1.0)
 
 
+def _deltas(modell: dict) -> dict:
+    """Deltas der Gewichts-Schicht (gewichts_schicht.py) — nur im Modus „aktiv“, sonst keine. Rein."""
+    s = modell.get("schicht") or {}
+    return (s.get("deltas") or {}) if s.get("modus") == "aktiv" else {}
+
+
+def gewicht(modell: dict, x: str) -> float:
+    """Gefittetes Gewicht plus Delta der aktiven Schicht. Rein."""
+    return (modell.get("gewichte") or {}).get(x, 0.0) + _deltas(modell).get(x, 0.0)
+
+
 def wahrscheinlichkeit(modell: dict, m: list[str]) -> float:
-    g, sk = modell.get("gewichte") or {}, modell.get("skala")
-    return _sig(modell.get("bias", 0.0) + sum(g.get(x, 0.0) * _wert(sk, x) for x in abbilde(m, g)))
+    g, sk, d = modell.get("gewichte") or {}, modell.get("skala"), _deltas(modell)
+    return _sig(modell.get("bias", 0.0) + sum((g.get(x, 0.0) + d.get(x, 0.0)) * _wert(sk, x) for x in abbilde(m, g)))
 
 
 def tragend(modell: dict, m: list[str], n: int = 3) -> list[tuple[str, float]]:
-    """Die Beiträge (Gewicht × Wert), die das Urteil tragen — größter Richtung Rauschen zuerst. Rein."""
+    """Die Beiträge ((Gewicht + Delta) × Wert), die das Urteil tragen — größter Richtung Rauschen zuerst. Rein."""
     g, sk = modell.get("gewichte") or {}, modell.get("skala")
-    return sorted(((x, round(g[x] * _wert(sk, x), 4)) for x in abbilde(m, g)), key=lambda t: -t[1])[:n]
+    return sorted(((x, round(gewicht(modell, x) * _wert(sk, x), 4)) for x in abbilde(m, g)), key=lambda t: -t[1])[:n]
 
 
 def job_merkmal(jobs: set[str] | list[str] | None, schluessel: str | None, stunde: int | None) -> list[str]:
@@ -632,7 +643,8 @@ def pruefe(quelle: str, tags, felder: dict | None, kriterien, jetzt: datetime | 
     if p < m.get("schwelle", 1.0):
         return None
     tr = ", ".join(f"{f} ({w:+.2f})" for f, w in tragend(m, mk))
-    return Signal(p, f"Modell ({m['modus']}, {m.get('variante') or 'basis'}): Rauschen P = {p:.2f} ≥ {m['schwelle']:.2f} — {tr or 'nur Grundrate'}",
+    sch = " + KI-Schicht" if _deltas(m) else ""
+    return Signal(p, f"Modell ({m['modus']}, {m.get('variante') or 'basis'}{sch}): Rauschen P = {p:.2f} ≥ {m['schwelle']:.2f} — {tr or 'nur Grundrate'}",
                   m["modus"])
 
 
@@ -906,6 +918,15 @@ async def trainiere_und_speichere(tage: float = 30) -> dict:
     from app.core.opensearch import get_opensearch
     beob, kontext = await beobachtungen_mit_kontext(tage)
     m = trainiere(beob)
+    # Gewichts-Schicht (KI-Seite des Weight-Space Programming): laden oder vorschlagen lassen, gegen DIESES Modell messen
+    try:
+        from app.services.log_watch import gewichts_schicht
+        sch = await gewichts_schicht.schritt(m, beob) if m.get("gewichte") else None
+    except Exception as e:  # noqa: BLE001 — ohne Schicht wie bisher
+        log.warning("Gewichts-Schicht: %s", e)
+        sch = None
+    if sch:
+        m["schicht"] = {k: sch.get(k) for k in ("erstellt", "modus", "grund", "deltas", "gruende", "messung", "llm")}
     m["daten"] = {"tage": tage, "beobachtungen": len(beob), "index": "cs-logs-*",
                   **{k: v for k, v in kontext.items() if k.endswith("_fehler")},
                   "jobs": len(kontext.get("jobs") or []), "auff_grenzen": kontext.get("auff_grenzen")}

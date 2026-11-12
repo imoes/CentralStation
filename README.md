@@ -1347,6 +1347,20 @@ are really noise (`services/log_watch/relevanz_modell.py`, proposal: `docs/vorsc
   An LLM never writes weights: a set weight would not survive the next fit, and it would replace measurement with
   opinion. Audit and „strongest weights“ use the effective contribution (weight × feature value). `GET
   /log-watch/lernstand` shows per run the chosen variant and every variant's AUC and log loss.
+- **KI weight layer — weight-space programming, hybrid** (`gewichts_schicht.py`; you: „1 ja, 2 ja“, after the vi-mcp
+  session's plan, `weight_writer.py`):
+  - **Proposal:** the LLM configured in CentralStation reads a model card (feature names, effective weights, metrics,
+    audit findings — no message texts, so no log line can steer it) and proposes deltas.
+  - **Fixed rules check the answer:** ≤ 20 features, |Δ| ≤ 1, only audit findings, known features, a reason for each.
+  - **Placement:** the deltas form a layer beside the fitted weights; hourly training does not overwrite it.
+  - **Measured every hour against the new model:**
+    - offline on the grouped holdout, with vs. without the layer (paired log loss, mean ± SE);
+    - prospectively, only on messages that arrived after the proposal.
+  - **Modes:** `aktiv` from ≥ 300 prospective messages and more than 2 SE better; `verworfen` if more than 2 SE worse,
+    and then a new proposal; otherwise `test`. A layer still in test after 24 h is replaced by a new proposal.
+  - **Effect:** only an active layer changes verdicts (weight + delta).
+  - **Visibility:** stored in `cs-log-schicht`; the model doc and `lernstand` show the mode, reason, deltas and both
+    measurements.
 - **Mode, always with a reason — a quality statement:** `zu_wenig_daten` (< 50 labels per class, no signal) ·
   `test` (checks not passed, reason given) · `bereit`. No human verdicts are needed (you, 12.11.: „ich muss da nichts
   mehr machen“):

@@ -10,6 +10,34 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — KI weight layer: an LLM proposes weight corrections, measurement decides
+
+You: „1 ja, 2 ja“ — the KI side of weight-space programming, after the vi-mcp session's plan (vi-mcp 0.58.0,
+`weight_writer.py`).
+
+### What is new
+
+- `backend/app/services/log_watch/gewichts_schicht.py`:
+  - **Proposal:** an LLM proposes deltas for audit-flagged weights. It sees only a model card (numbers and feature
+    names, no message texts).
+  - **Rules:** fixed rules check the answer (≤ 20, |Δ| ≤ 1, only audit features, reason required).
+  - **Placement:** the layer sits beside the fitted weights, and hourly training does not overwrite it.
+  - **Measurement:** offline (grouped holdout, paired log loss) and prospectively (only messages after the proposal,
+    ≥ 300, > 2 SE better → `aktiv`).
+  - **Effect:** only `aktiv` changes verdicts. A rejected layer or one stuck in test for 24 h gets a new proposal.
+- `lernstand` and the model doc show the layer: mode, reason, deltas, offline and prospective measurement.
+
+### Evidence
+
+- Tests: `test_log_watch_gewichts_schicht.py`, 7 tests.
+  - Rules: audit only, size, duplicates, number, reason.
+  - Effect only when active.
+  - Paired log loss.
+  - Active / rejected / test with synthetic data where the delta helps or harms.
+  - The model card carries no message texts.
+- Full suite: 926 passed; the same 7 failures and 3 collection errors as before.
+- Live evidence follows after the deploy.
+
 ## 2026-11-12 — Relevance model: challengers that change features, not weights
 
 You read about weight-space programming and asked how the vi-mcp session does it. Its answer: weights are only
