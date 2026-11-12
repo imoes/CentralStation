@@ -10,6 +10,31 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — Relevance model: the running model must lose before it is replaced; identity features damped
+
+External analysis F2/F3/F4 (12.11. ~10:55 UTC), checked against code and data:
+
+- **F2 (anomaly detector „sign wrong?“):** checked, the sign is correct (`auffaellig.py:81/89/107`). „1 − score ≈
+  0.72“ means the same as our finding: here, anomalous windows are mostly noise. The forwarding via R4-AUF has been
+  off since definition v18 (09:35 UTC); the measured 335 forwards/h are from the 20 minutes before.
+- **F4 („relevant“ 5.77 M → 83 k):** explained, no data lost.
+  - One pattern, `muster:8c6cb1b2b4b8c491` (digicol „… referenced in the input file … does not exist“ on cue222,
+    cue224 and cue0174), ran from 10.11. 21:30 to 11.11. ~14:00 UTC at about 500 000 lines/h.
+  - Rule R2 kept it „new“ until the 09:05 window; then it fell under routine (N1). Before and after, the baseline is
+    100–4 000 relevant/h.
+  - The model blocked 2 messages in that period.
+- **F3 („gets worse with every run“):** partly a measurement artefact. The unchanged `basis` also fell from 0.787 to
+  0.722 because the holdout moved to new data, and the 6 runs in 90 min were test and deploy runs. Two valid points
+  are now built:
+  - **Champion vs. running model:** every training compares the new model with the running one on the *same*
+    grouped holdout. The running model stays if it is better in AUC **and** log loss (`champion` in the model doc
+    and in `lernstand`).
+  - **New challenger `identitaet_gedaempft`:** host, ort, switch, ip, gegenstelle and stunde at 0.3. The measurement
+    decides. Deleting the hour weights outright had measured clearly worse (10:45 UTC).
+- **Kept as decided by you:** training stays hourly (the analysis recommends ≥ 6 h). The champion check covers the
+  risk behind that recommendation.
+- Tests: +2 (champion keeps only when better in both, variant exists). Full suite: 940 passed. Not deployed yet.
+
 ## 2026-11-12 — Adopted old incidents get a fresh triage, not the empty one from 10.11.
 
 External analysis F5: „Triage ‚Fehlende Daten‘ bei übernommenen Alt-Incidents“, e.g. 9466979a (mu-img-docker50).

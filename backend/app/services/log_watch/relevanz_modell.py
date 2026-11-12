@@ -75,6 +75,9 @@ TOP_N = 10
 VARIANTEN: dict[str, tuple[dict, str | None]] = {
     "basis": ({}, None),
     "host_gedaempft": ({"host": 0.3}, None),     # Host-Merkmale mit Wert 0,3: bei L2 wie ein kleineres C für Hosts
+    # externe Analyse 12.11. (F3): stärkste Gewichte waren Identitäts-/Zeitmerkmale (ort:WOL-1, stunde:03,
+    # switch:nsa410, ip:…) — alle diese Arten gedämpft, nicht nur Hosts; die Messung entscheidet
+    "identitaet_gedaempft": ({"host": 0.3, "ort": 0.3, "switch": 0.3, "ip": 0.3, "gegenstelle": 0.3, "stunde": 0.3}, None),
     "job_fenster": ({}, "job_fenster"),           # Muster kommt an ≥ JOB_TAGE Tagen zur selben Stunde (Job, nicht Uhrzeit)
     "auffaellig": ({}, "auffaellig"),             # Stufe des IsolationForest-Werts (auffaellig.py) als Merkmal
 }
@@ -290,6 +293,32 @@ def logloss(p: list[float], y: list[int]) -> float | None:
     if not y:
         return None
     return sum(-(math.log(max(q, 1e-9)) if t else math.log(max(1 - q, 1e-9))) for q, t in zip(p, y)) / len(y)
+
+
+def champion_vergleich(alt: dict | None, neu: dict, beob: list) -> dict:
+    """Das LAUFENDE Modell gegen das neu trainierte auf DEMSELBEN gruppierten Holdout (externe Analyse F3: „neues
+    Modell nur übernehmen, wenn es nicht schlechter ist“). Das alte bleibt nur, wenn es in AUC UND log loss besser
+    ist. Rein."""
+    if not alt or not alt.get("gewichte") or not neu.get("gewichte"):
+        return {"behalten": False, "grund": "kein laufendes Modell zum Vergleich"}
+    _, _, gr = teile(beob)
+    if not gr:
+        return {"behalten": False, "grund": "gruppierter Holdout leer — kein Vergleich"}
+
+    def mk_von(m):
+        extra = VARIANTEN.get(m.get("variante") or "basis", ({}, None))[1]
+        return lambda b: b.merkmale + (((b.extra or {}).get(extra) or []) if extra else [])
+    y = [b.y for b in gr]
+    pa = [wahrscheinlichkeit(alt, mk_von(alt)(b)) for b in gr]
+    pn = [wahrscheinlichkeit(neu, mk_von(neu)(b)) for b in gr]
+    a_alt, a_neu, l_alt, l_neu = auc(pa, y), auc(pn, y), logloss(pa, y), logloss(pn, y)
+    r = {"n": len(gr), "auc_alt": a_alt, "auc_neu": a_neu, "logloss_alt": l_alt, "logloss_neu": l_neu,
+         "alt_zeit": alt.get("zeit"), "alt_variante": alt.get("variante")}
+    r = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in r.items()}
+    if a_alt is not None and a_neu is not None and a_alt > a_neu and l_alt < l_neu:
+        return {**r, "behalten": True, "grund": f"laufendes Modell besser auf denselben {len(gr)} ungesehenen: AUC "
+                                                f"{a_alt:.4f} > {a_neu:.4f}, log loss {l_alt:.4f} < {l_neu:.4f}"}
+    return {**r, "behalten": False, "grund": "neues Modell nicht schlechter (AUC oder log loss)"}
 
 
 def waehle(ergebnisse: dict[str, dict]) -> tuple[str, str]:
@@ -916,8 +945,16 @@ async def lade_pruefliste(art_: str, tage: float = 7, limit: int = 20) -> dict:
 async def trainiere_und_speichere(tage: float = 30) -> dict:
     """Nachtlauf: Daten holen, trainieren, speichern, in den Raster-Cache setzen. Ergebnis ohne Gewichte."""
     from app.core.opensearch import get_opensearch
+    alt = await lade()
     beob, kontext = await beobachtungen_mit_kontext(tage)
     m = trainiere(beob)
+    champ = champion_vergleich(alt, m, beob)
+    if champ.get("behalten"):
+        # das laufende Modell bleibt — als neue Version mit Zeitstempel, damit der Lernstand den Vergleich zeigt
+        m = {**alt, "zeit": m["zeit"], "labels": m.get("labels"),
+             "kennzahlen": {**(alt.get("kennzahlen") or {}), "auc": champ["auc_alt"]},
+             "varianten": m.get("varianten"), "variante_grund": f"laufendes Modell behalten — {champ['grund']}"}
+    m["champion"] = champ
     # Gewichts-Schicht (KI-Seite des Weight-Space Programming): laden oder vorschlagen lassen, gegen DIESES Modell messen
     from app.services.log_watch import gewichts_schicht
     try:

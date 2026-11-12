@@ -92,6 +92,7 @@ async def vergleich(stunden: float = 24, n: int = 48) -> dict:
     jetzt = datetime.now(timezone.utc)
     rel = await _verlauf("cs-log-modell", {
         "zeit": "zeit", "modus": "modus", "variante": "variante", "varianten": "varianten",
+        "champion_behalten": "champion.behalten", "champion_grund": "champion.grund",
         "schicht_modus": "schicht.modus", "schicht_grund": "schicht.grund", "schicht_deltas": "schicht.deltas",
         "schicht_offline": "schicht.messung.offline", "schicht_prospektiv": "schicht.messung.prospektiv",
         "auc_ungesehen": "kennzahlen.auc", "auc_je_schluessel": "kennzahlen.auc_gruppen",

@@ -387,3 +387,26 @@ def test_audit_und_anzeige_auf_wirksamem_beitrag():
     assert m["staerkste"] and all(abs(x["gewicht"] - x["roh"] * sk.get(rm.art(x["merkmal"]), 1.0)) < 1e-3
                                   for x in m["staerkste"])
     assert "host_gedaempft" in m["varianten"]          # alle Muster im Training: gruppierte AUC None, benannt
+
+
+
+def test_champion_bleibt_nur_wenn_in_auc_und_logloss_besser():
+    """F3 der externen Analyse: ein neues Modell nur übernehmen, wenn es nicht schlechter ist als das laufende."""
+    rnd = random.Random(7)
+    beob = []
+    for i in range(3000):
+        laerm = rnd.random() < 0.3
+        y = int(laerm and rnd.random() < 0.9)
+        beob.append(rm.Beobachtung(str(i), (T0 + timedelta(minutes=i)).isoformat(), y, "silber",
+                                   ["app:laerm"] if laerm else ["app:ruhig"], f"muster:k{i}", "relevant", "R2", "x"))
+    gut = {"gewichte": {"app:laerm": 3.0, "app:ruhig": -3.0}, "bias": 0.0, "zeit": "t0"}
+    schlecht = {"gewichte": {"app:laerm": -1.0, "app:ruhig": 1.0}, "bias": 0.0, "zeit": "t1"}
+    c = rm.champion_vergleich(gut, schlecht, beob)
+    assert c["behalten"] and c["auc_alt"] > c["auc_neu"] and "laufendes Modell besser" in c["grund"]
+    assert not rm.champion_vergleich(schlecht, gut, beob)["behalten"]
+    assert rm.champion_vergleich(None, gut, beob)["grund"] == "kein laufendes Modell zum Vergleich"
+
+
+def test_identitaet_gedaempft_ist_variante():
+    sk, extra = rm.VARIANTEN["identitaet_gedaempft"]
+    assert extra is None and {"host", "ort", "switch", "ip", "stunde"} <= set(sk) and all(v == 0.3 for v in sk.values())
