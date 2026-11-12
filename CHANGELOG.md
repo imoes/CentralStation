@@ -78,7 +78,8 @@ You (12.11.):
   - The old config is kept as `config.json.bak-20261112-vor-pruefer`.
   - Check 09:46 UTC: `/gesund` 200 (0.54.1). A sample object sent to qwen27b with this prompt came back as valid JSON
     in the schema (`kanarie: ROT`, verdict „zulassen“, 17.7 s).
-  - The route `/qwen27b` currently serves `qwen3.8-flash-next-unsloth-ud-iq4_xs`.
+  - The route `/qwen27b` is the `strata-27b` container; it reports itself as `qwen3.8-flash-next-unsloth-ud-iq4_xs`
+    (known since 06.11.). It is the 27B model, not a replacement.
   - A real network import has not passed through the reviewer yet.
 
 ### What is missing (production test)
