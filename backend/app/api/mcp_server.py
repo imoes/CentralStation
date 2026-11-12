@@ -2349,6 +2349,15 @@ async def lw_definition() -> dict:
 
 
 @mcp.tool()
+async def lw_modell(nachricht: str = "") -> dict:
+    """Relevanz-Modell (gelernt aus Mensch- und KI-Urteilen, nie aus den Regeln): Modus mit Grund, Labels je Klasse,
+    Holdout-Kennzahlen, stärkste Gewichte, Gewichts-Audit, Widersprüche zu den Regeln. Mit nachricht=<ID>:
+    P(Rauschen) dieser Nachricht und die Gewichte, die das tragen bzw. dagegen sprechen."""
+    from app.services.log_watch import werkzeuge
+    return await werkzeuge.lw_modell(nachricht)
+
+
+@mcp.tool()
 async def lw_gespraech(filter: str, tage: float = 7, sitzungen: int = 3) -> dict:
     """Gesprächsprotokolle früherer KI-Analysen zum Filter (z. B. host:cue0148.example.com): je Sitzung
     die Züge von Worker (Host-Objekt), KI, Werkzeugen und Befund — laden heißt suchen."""

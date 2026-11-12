@@ -155,7 +155,10 @@ async def _grundlagen():
         except Exception as e:  # noqa: BLE001 — ohne diese Liste urteilt das Raster wie bisher
             log.warning("Behandelt-Liste aus Incidents nicht geladen: %s", e)
             raster.setze_behandelt([])
-        return verz, d
+    # Relevanz-Modell (Nachtlauf) — je Lauf neu gelesen; fehlt es, setzt das Raster kein Modell-Signal
+    from app.services.log_watch import relevanz_modell
+    relevanz_modell.setze(await relevanz_modell.lade())
+    return verz, d
 
 
 #: Ein gespeicherter CheckMK-Zustand gilt nach einem Neustart nur so lange als Vergleich.

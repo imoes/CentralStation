@@ -1308,6 +1308,35 @@ user on 2026-11-06.
 - `POST /api/log-watch/definition` (admin): a new version with a reason. Every version must keep all
   criterion IDs, and unknown parameters are rejected.
 
+### Log watch: relevance model (learned, readable, in test mode)
+
+A small logistic regression (one weight per feature, no language model) learns which messages the rules forward
+are really noise (`services/log_watch/relevanz_modell.py`, proposal: `docs/vorschlag-relevanz-modell.md`).
+
+- **Labels never come from the rules**, or the model would just copy them. Gold = a human verdict on a message
+  (`POST /log-watch/nachrichten/{id}/urteil`, origin `mensch`); silver = the AI's verdict at the message
+  (`ai_relevanz`, weight 0.3). Relevance ≤ 1 = noise. The rules' criteria are a *feature*, so the weights show where
+  the model disagrees with them.
+- **Features:** the hashtags of the message (pattern, host, service, theme, signals …), source, level, the rules'
+  criteria (without R7, which is set later), hour. A feature counts from 10 occurrences.
+- **Evaluation:** time-ordered holdout (newest 20 %, more if a class has < 20 cases); AUC, recall of the relevant ones
+  at the threshold (chosen so that at most 1 % of the relevant ones in training are above it), AUC on patterns
+  never seen in training, and the same against gold.
+- **Mode, always with a reason:** `zu_wenig_daten` (< 50 labels per class) · `test` (judges, has no effect) ·
+  `bereit` (≥ 50 gold labels per class, gold AUC ≥ 0.7, gold recall ≥ 0.99, weight audit clean).
+- **Weight audit, fixed rules, no LLM:** `host` (a single host among the 10 strongest weights), `stunde` (hour among
+  them — time as cause would be post hoc), `dominant` (one feature carries ≥ 50 % of the noise verdicts in the
+  holdout), `widerspricht` (a strong weight whose sign contradicts the measured noise share).
+- **Effect:** the raster adds `signal:modell-rauschen` with the carrying weights as a reason („Modell (test):
+  Rauschen P = 0.93 ≥ 0.54 — muster:… (+1.92), …“). Only a rule decides: `N1-MOD` „Modell: Rauschen“ (BLOCK, test
+  mode), placed after R5, R6, R6-FW and R1 — damage, security and production outages are never downgraded — and
+  before R2–R4. An *active* N1-MOD takes effect only when the model is `bereit`; otherwise the verdict stays and the
+  reason says „N1-MOD übergangen: Modell nicht freigegeben“. `raster_lauf` counts `modell_rauschen` per verdict and
+  criterion each window.
+- **Training:** nightly 03:35 UTC on the last 30 days of `cs-logs-*` (read only), stored in `cs-log-modell`;
+  `POST /log-watch/modell/trainieren` (sysadmin) trains at once. `GET /log-watch/modell` and the MCP tool
+  `lw_modell` (with `nachricht=<id>`: P(noise) of one message and the weights for and against) read it.
+
 ### Log watch: history `cs-logs-*` (active since 2026-11-06 20:44 UTC)
 
 - **Content:** only messages that are relevant, or that were judged to be relevant or not. One document

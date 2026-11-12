@@ -359,6 +359,15 @@ async def run_log_trichter() -> None:
         logger.warning("KI-Agent fehlgeschlagen: %s", e)
 
 
+async def run_relevanz_modell() -> None:
+    """Relevanz-Modell nachts neu trainieren (relevanz_modell.py) — nur lesend auf cs-logs-*."""
+    from app.services.log_watch import relevanz_modell
+    try:
+        await relevanz_modell.trainiere_und_speichere()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Relevanz-Modell: Training fehlgeschlagen: %s", e)
+
+
 async def run_log_ki_pruefung() -> None:
     """Warteschlange der KI-Flotte messen: alle 10 min genau ein Messpunkt (offen, Fälle,
     verfallen) — getrennt von den Agenten, damit „verfallen“ nicht je Agent mehrfach zählt."""
@@ -541,6 +550,8 @@ async def start_scheduler() -> None:
     _scheduler.add_job(run_log_raster, "cron", minute="1-59/5",
                        id="log_watch_raster", replace_existing=True, max_instances=1,
                        coalesce=True)
+    _scheduler.add_job(run_relevanz_modell, "cron", hour=3, minute=35, id="log_watch_relevanz_modell",
+                       replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=3600)
     _scheduler.add_job(run_log_ki_pruefung, "cron", minute="*/10",
                        id="log_watch_ki_pruefung", replace_existing=True, max_instances=1, coalesce=True)
     # nach dem Raster (minute 1-59/5): neue Nachrichten sind dann geschrieben. misfire_grace_time: gemessen

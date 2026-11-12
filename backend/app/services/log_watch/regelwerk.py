@@ -36,7 +36,7 @@ AKTIV, TEST = "aktiv", "test"
 
 #: Signale, die die Quellen setzen (Hashtag `signal:<name>`) — erschöpfend benannt
 SIGNALE = ("stumm", "behandelt", "schaden", "frist", "neu", "ausbreitung", "anstieg", "dringend",
-           "bedrohung")
+           "bedrohung", "tagesmuster", "flattern", "modell-rauschen")
 
 
 @dataclass(frozen=True)
@@ -148,6 +148,9 @@ STANDARD_FILTER = (
     # Flattern: ≥ FLATTER_N Zustandswechsel in 24 h sind EIN Problem, nicht N relevante Nachrichten (raster.py)
     ("N1-FLAT", "N1", "Flattern (Zustandswechsel gehäuft)", BLOCK, "signal:flattern", 1, TEST),
     ("R1", "R1", "Störung in Produktion", FORWARD, "zustand:crit @Produktion", 1),
+    # Relevanz-Modell (relevanz_modell.py, Nutzer 12.11.2026): nach R5/R6/R1 — Schaden, Sicherheit und Störung in
+    # Produktion stuft es nie herab; vor R2–R4. Im Testmodus zählt es nur; aktiv wirkt es erst bei Modus „bereit“
+    ("N1-MOD", "N1", "Modell: Rauschen", BLOCK, "signal:modell-rauschen", 1, TEST),
     ("R2", "R2", "Neues Muster", FORWARD, "signal:neu", 1),
     ("R3", "R3", "Ausbreitung", FORWARD, "signal:ausbreitung", 1),
     ("R4", "R4", "Anstieg", FORWARD, "signal:anstieg", 1),

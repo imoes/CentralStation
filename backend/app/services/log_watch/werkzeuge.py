@@ -155,6 +155,29 @@ async def lw_definition() -> dict:
                         "kriterium": r.kriterium, "modus": r.modus} for r in (d.regeln or [])]}
 
 
+async def lw_modell(nachricht: str = "") -> dict:
+    """Relevanz-Modell lesen; mit nachricht (ID): sein Urteil über diese Nachricht mit den tragenden Gewichten."""
+    from app.services.log_watch import relevanz_modell
+    m = await relevanz_modell.lade()
+    if not (nachricht and m):
+        return relevanz_modell.zusammenfassung(m)
+    from app.core.opensearch import get_opensearch
+    from app.services.log_watch.historie import PRAEFIX
+    r = await get_opensearch().search(index=f"{PRAEFIX}*", ignore_unavailable=True, body={
+        "size": 1, "query": {"ids": {"values": [nachricht]}}, "_source": relevanz_modell.QUELLFELDER})
+    if not r["hits"]["hits"]:
+        return {"fehler": f"Nachricht {nachricht} nicht gefunden"}
+    d = r["hits"]["hits"][0]["_source"]
+    mk = relevanz_modell.merkmale(d.get("quelle") or "", d.get("hashtags") or [], d.get("level"),
+                                  d.get("kriterien") or [], relevanz_modell._stunde(d.get("zeit")))
+    p = relevanz_modell.wahrscheinlichkeit(m, mk)
+    return {"modus": m.get("modus"), "grund": m.get("grund"), "schwelle": m.get("schwelle"),
+            "p_rauschen": round(p, 4), "rauschen": p >= m.get("schwelle", 1.0),
+            "tragend": relevanz_modell.tragend(m, mk, 5),
+            "gegen": sorted(((x, w) for x, w in ((x, (m.get("gewichte") or {}).get(x)) for x in mk) if w and w < 0),
+                            key=lambda t: t[1])[:5]}
+
+
 async def lw_befund(titel: str, kern: str, relevanz: int, belege: list, fakten: list | None = None,
                     folge_von: list | None = None, hypothesen: list | None = None,
                     hashtags: list | None = None, vi_half: list | None = None, vi_falsch: list | None = None,
@@ -320,6 +343,10 @@ REGISTRY: dict[str, tuple[Callable[..., Awaitable[dict]], str, dict, bool]] = {
                       belege={"type": "array", "items": {"type": "string"}}), True),
     "lw_definition": (lw_definition, "Die geltende Relevanz-Definition: Kriterien R1–R8/N0–N6, Objekte, "
                       "Regeln (erste passende entscheidet).", _p(), False),
+    "lw_modell": (lw_modell, "Das Relevanz-Modell (gelernt aus Mensch- und KI-Urteilen, nicht aus den Regeln): Modus "
+                  "mit Grund, Kennzahlen, stärkste Gewichte, Audit, Widersprüche zu den Regeln. Mit nachricht=<ID>: "
+                  "P(Rauschen) dieser Nachricht und welche Gewichte das tragen.",
+                  _p(nachricht={"type": "string"}), False),
     "lw_befund": (lw_befund,
                   "Den Befund ablegen — beendet die Analyse. kern: EIN Satz (≤ 300 Zeichen) — was, wo, seit "
                   "wann, wie schlimm. fakten: 2–6 kurze Punkte (je ≤ 300 Zeichen), je ein Wert mit Zeit aus "

@@ -121,6 +121,7 @@ def _urteil(quelle, schluessel, host, bekannt, tags, felder, gruende, anzahl, be
     """Das Regelwerk entscheidet; Stufe: FORWARD 2 (dringend 3), BLOCK laut Regel 0/1."""
     tags, gruende = _behandelt(_ohne_doppel(tags), felder, list(gruende))
     e = bewerte(d.regeln, set(tags), felder)
+    tags, gruende, e = _modell(quelle, tags, felder, gruende, e, d)
     if e.aktion == FORWARD:
         urteil, st = RELEVANT, 3 if "signal:dringend" in tags else 2
     else:
@@ -129,6 +130,25 @@ def _urteil(quelle, schluessel, host, bekannt, tags, felder, gruende, anzahl, be
                    urteil=urteil, kriterien=e.kriterien, definition_v=d.version, regel=e.regel,
                    verdraengt=e.verdraengt, test_treffer=e.test_treffer, belege=list(belege or []),
                    felder=dict(felder or {}))
+
+
+def _modell(quelle, tags, felder, gruende, e, d: Definition):
+    """Relevanz-Modell (relevanz_modell.py): hält es die Gruppe für Rauschen, kommt `signal:modell-rauschen` mit den
+    tragenden Gewichten als Grund dazu, und das Regelwerk urteilt erneut. Eine AKTIVE Regel auf dieses Signal wirkt
+    nur bei Modus „bereit“ — sonst bleibt das Urteil ohne Signal, die Regel zählt als Testtreffer, der Grund steht da."""
+    from app.services.log_watch import relevanz_modell
+    try:
+        sig = relevanz_modell.pruefe(quelle, tags, felder, e.kriterien)
+    except Exception:  # noqa: BLE001 — ein kaputtes Modell darf das Raster nicht anhalten
+        return tags, gruende, e
+    if sig is None:
+        return tags, gruende, e
+    tags2, gruende2 = tags + [relevanz_modell.SIGNAL], gruende + [sig.grund]
+    e2 = bewerte(d.regeln, set(tags2), felder)
+    if (e2.aktion, e2.regel) != (e.aktion, e.regel) and not sig.freigegeben:
+        e.test_treffer = list(e.test_treffer) + [e2.regel]
+        return tags2, gruende2 + [f"Regel {e2.regel} übergangen: Modell nicht freigegeben (Modus {sig.modus})"], e
+    return tags2, gruende2, e2
 
 
 def _host_tags(name: str, verz: Hostverzeichnis) -> tuple[str, HostEintrag | None, list[str]]:
@@ -445,6 +465,8 @@ def zaehle(treffer: list[Treffer], kontingent: Kontingent, stunde: datetime) -> 
     je_regel = Counter()          # Entscheidungen je Regel (Nachrichten)
     verdraengt = Counter()        # passte, entschied aber nicht (eine frühere Regel war zuerst)
     test = Counter()              # Regeln im Testmodus: hätten gepasst
+    #: Relevanz-Modell hielt die Gruppe für Rauschen — je Urteil und Kriterium der Regeln (Widerspruch sichtbar)
+    mod_urteil, mod_krit = Counter(), Counter()
     gespeichert = 0
     tags = Counter()
     #: nicht zugeordnete Hosts je Grund (unbekannt | mehrdeutig | container-id)
@@ -461,6 +483,9 @@ def zaehle(treffer: list[Treffer], kontingent: Kontingent, stunde: datetime) -> 
             verdraengt[r] += t.anzahl
         for r in t.test_treffer:
             test[r] += t.anzahl
+        if "signal:modell-rauschen" in t.hashtags:
+            mod_urteil[t.urteil] += t.anzahl
+            mod_krit[(t.kriterien or ["?"])[0]] += t.anzahl
         n = kontingent.nimm(t, stunde)
         t.kontingent_n = n
         gespeichert += n
@@ -481,6 +506,8 @@ def zaehle(treffer: list[Treffer], kontingent: Kontingent, stunde: datetime) -> 
         "je_regel": dict(sorted(je_regel.items())),
         "regel_verdraengt": dict(sorted(verdraengt.items())),
         "regel_test": dict(sorted(test.items())),
+        "modell_rauschen": {"nachrichten": sum(mod_urteil.values()), "je_urteil": dict(mod_urteil),
+                            "je_kriterium": dict(sorted(mod_krit.items()))},
         "gespeichert_waere": gespeichert,
         "bytes_waere": byte,
         "unbekannte_hosts": sorted(unbekannt.get("unbekannt", set()))[:50],

@@ -96,6 +96,10 @@ SIGNALE: dict[str, str] = {
     "bedrohung": "Firewall-Bedrohung ab Stufe medium oder Sinkhole (R6)",
     "behandelt": "quittiert, in Downtime oder offenes Ticket am Incident (N2)",
     "stumm": "vom Admin stumm geschaltet (N6)",
+    "flattern": "CheckMK: ≥ 4 Zustandswechsel je Host|Dienst in 24 h — EIN Problem, nicht viele (Regel N1-FLAT, raster.py)",
+    "modell-rauschen": "Relevanz-Modell hält die Gruppe für Rauschen (P ≥ Schwelle; trainiert auf Mensch- und "
+                       "KI-Urteile, nie auf die Regeln) — die tragenden Gewichte stehen in den Gründen; wirkt nur über "
+                       "eine Regel (N1-MOD), aktiv erst bei Modus „bereit“ (relevanz_modell.py)",
     "tagesmuster": "Trendalarm eines Dateisystems im bekannten Tagesmuster (füllt sich, wird bereinigt) — N1 über "
                    "Regel N1-TAG; Hub, Grundwert und Tageshöchststand stehen in den Gründen (tagesmuster.py)",
 }

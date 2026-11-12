@@ -121,6 +121,29 @@ async def raster_trockenlauf(db: Annotated[AsyncSession, Depends(get_db)],
     return zusammenfassung([(r.quelle, r.fenster_start, r.werte) for r in rows], stunden)
 
 
+# ── Relevanz-Modell (relevanz_modell.py) ──────────────────────────────────────
+
+@router.get("/modell")
+async def get_modell(_user: CurrentUser, gewichte: bool = Query(False)):
+    """Das jüngste Relevanz-Modell: Modus mit Grund, Labels je Klasse und Herkunft, Holdout-Kennzahlen, stärkste
+    Gewichte, Gewichts-Audit, Widersprüche Modell ↔ Regeln. gewichte=true: zusätzlich alle Gewichte."""
+    from app.services.log_watch import relevanz_modell
+    m = await relevanz_modell.lade()
+    return m if (gewichte and m) else relevanz_modell.zusammenfassung(m)
+
+
+@router.post("/modell/trainieren", dependencies=[RequireSysAdmin])
+async def post_modell_trainieren(user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)],
+                                 tage: float = Query(30, ge=1, le=90)):
+    """Sofort trainieren (sonst nachts 03:35 UTC) — nur lesend auf cs-logs-*, schreibt das Modell nach cs-log-modell."""
+    from app.services.log_watch import relevanz_modell
+    r = await relevanz_modell.trainiere_und_speichere(tage)
+    db.add(AuditLog(action="relevanz_modell_trainiert", resource_type="log_watch", resource_id=r.get("zeit", "")[:200],
+                    user_id=user.id, details={"modus": r.get("modus"), "grund": r.get("grund")}))
+    await db.commit()
+    return r
+
+
 # ── Relevanz-Definition ───────────────────────────────────────────────────────
 
 @router.get("/definition")

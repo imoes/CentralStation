@@ -10,6 +10,69 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — A learned relevance model judges alongside the rules (test mode)
+
+You asked (12.11., via the vi-mcp session): „Ich möchte, dass in CentralStation KI auf die Fehlermeldungen trainiert
+wird und welche Meldungen relevant sind und welche nur Rauschen … auf diese Regeln und die Zusammenhänge kann auch
+eine KI trainiert werden“ — and then „Centralstation soll das gleich implementieren. Das ist sozusagen ein Test
+System“. The written proposal it is built from: `docs/vorschlag-relevanz-modell.md`.
+
+### What is new
+
+- **Relevance model** (`backend/app/services/log_watch/relevanz_modell.py`). A logistic regression learns P(noise)
+  for a forwarded message. Its labels come from humans (gold) and the AI's verdicts at the messages (silver),
+  never from the rules. The rules' criteria are a feature. Details: README, „Log watch: relevance model“.
+- **New rule `N1-MOD` „Modell: Rauschen“** on `signal:modell-rauschen`, in test mode. It sits after R5/R6/R1, so it
+  can never downgrade damage, security or a production outage. An active N1-MOD takes effect only when the model
+  is `bereit`.
+- **Reason on every message:** the raster writes P(noise), the threshold and the three carrying weights into
+  `gruende`. `raster_lauf` counts `modell_rauschen` per verdict and criterion.
+- **Reading the model:**
+  - `GET /log-watch/modell`, and with `?gewichte=true` all weights;
+  - `POST /log-watch/modell/trainieren` (sysadmin, audited);
+  - MCP tool `lw_modell`;
+  - nightly training at 03:35 UTC.
+- Code standard of the definition is now version 16 (adds N1-MOD). Your admin version 15 stays as it is; the
+  definition shows that the standard is ahead. You add N1-MOD in the rule editor when you want it.
+
+### Evidence (dry run against the live data, read only, nothing stored — 12.11.2026 07:38 UTC)
+
+- **Data:** 22 206 messages with an independent verdict from `cs-logs-*` (last 30 days). Noise 2 818, relevant
+  19 388, all silver; gold (human) 0 per class. Distinct keys: noise 157, relevant 754. Many silver labels are
+  copies of one AI verdict at repetitions.
+- **Training:** 17 764 messages. 747 features kept, 1 236 dropped (< 10 occurrences). Loading 3.6 s, training 0.7 s.
+- **Holdout:** 4 442 messages, 11.11. 04:16 – 12.11. 07:31 UTC.
+  - AUC 0.914. Threshold 0.54: recall of the relevant ones 0.944, noise caught 21.5 %.
+  - On 722 messages with keys never seen in training: AUC 0.759, recall 0.956, noise caught 13.4 %.
+- **Mode `test`**, reason: „nur KI-Urteile (Silber) reichen nicht: Mensch-Urteile (Gold) je Klasse rauschen 0,
+  relevant 0 — nötig je 50“.
+- **The weight audit fires three times:**
+  - `stunde:13` (+1.57);
+  - `host:cue0148.example.com` (−1.36);
+  - `dominant`: `muster:6350a2ae32ca08f6` (postfix „overriding earlier entry: relayhost“) carries 190 of 312 noise
+    verdicts in the holdout.
+- **Model ↔ rules:** 2 298 messages the rules call relevant, the model calls noise (R3 1 268, R2 956, R6 74).
+  Largest groups:
+  - postfix relayhost warning 595;
+  - `sshd-session syslogin_perform_logout` 490;
+  - VMware GuestInfo interval 131;
+  - three `ansible-* Invoked with` patterns 130/128/122. These are from 07.11., before ansible became N5.
+  - Wazuh rule 31115 on CheckMK dashboard URLs 72.
+- **Tests:** `tests/test_log_watch_relevanz_modell.py`, 20 tests: labels, leaks, AUC, mode, audit, and the effect in
+  the raster with the rule in test mode, active-but-not-ready and ready, never against R5. Full suite in the backend
+  image: 869 passed; the same 7 failures and 3 collection errors as before.
+
+### What is missing
+
+- **Gold labels:** 0 human verdicts so far. Without ≥ 50 per class the model cannot become `bereit`, by design.
+  The way to give one exists (`POST /log-watch/nachrichten/{id}/urteil`); a daily review list and a one-click
+  „relevant / Rauschen“ button in the feed are not built.
+- **Sample of blocked messages:** what the rules drop is not stored, so the model sees almost no noise the rules
+  already caught (222 stored `nicht_relevant`).
+- **Threshold:** chosen in training, it yields 0.944 instead of 0.99 recall on the newer holdout. It needs a
+  separate calibration slice before the model may decide anything.
+- Not deployed yet.
+
 ## 2026-11-11 — No more „Etwas Neues: neuer Host“ mails for old duplicate incidents
 
 You reported (11.11.): „ich bekomme auf einmal solche emails“ — „Bekannter Incident. Etwas Neues: neuer Host:
