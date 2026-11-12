@@ -266,4 +266,4 @@ Stufe 2 und 3 nutzen weitgehend den Regel-Editor, den es schon gibt.
   CentralStation-Host.
 - vi-mcp-Verfahren (`learning.py`, `bandit.py`, `weight_audit.py`, Kennzahlen von prod 12.11.2026
   07:28 UTC: 13 932 Beobachtungen, AUC 0,879): Beschreibung der Sitzung bewertung-weight-space-quellen;
-  Code unter `/home/mutkluge/Dev/code/vi-mcp`. Hier nicht selbst nachgeprüft.
+  Code im öffentlichen Repository github.com/imoes/vi-mcp. Hier nicht selbst nachgeprüft.
