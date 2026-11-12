@@ -177,6 +177,12 @@ You (12.11.):
   - The console hook changed: WebSearch/WebFetch now send a masked result excerpt (≤ 4 000 characters) to the VI, so
     it can learn solutions from web searches. You approved the rebuild; the backend carries the new hook.
   - Hint lines now say „measured +X pts/N×“. `vi_bruecke` reads only the `[art:id]` part, so nothing changes there.
+- **Local VI on vi-mcp 0.58.1** (12.11. 11:17 UTC; signed, key c88aa8ce…, deb sha256 f65b313830b5…; backup
+  20261112T111747Z).
+  - `/gesund` ok 0.58.1, network 0 violations, reviewer config kept; console hook unchanged, so no backend rebuild.
+  - New: documentation imports appear as hints only via exploration (0.57.1); LLM weight layer in sleep step 8c
+    (0.58.0); solutions need a specific trigger (0.58.1).
+  - With `llm` (qwen27b) set, the local VI also writes solutions from episodes in its sleep.
 - **The local VI now reviews network imports itself** (you, 12.11.: „ja“, model „qwen27b“). Before, every import
   waited for a human.
   - `/etc/vi-mcp/config.json` in volume `vi-mcp-konfig` got two keys:
