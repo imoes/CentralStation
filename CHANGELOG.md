@@ -36,7 +36,17 @@ You: „1 ja, 2 ja“ — the KI side of weight-space programming, after the vi-
   - Active / rejected / test with synthetic data where the delta helps or harms.
   - The model card carries no message texts.
 - Full suite: 926 passed; the same 7 failures and 3 collection errors as before.
-- Live evidence follows after the deploy.
+- **Live, first run after the deploy (12.11. 10:32 UTC):**
+  - **Challengers:** `host_gedaempft` won (AUC 0.7403 vs 0.7223, log loss 0.4673 vs 0.4804); `job_fenster` 0.7218.
+    `auffaellig` was skipped because this run happened outside the backend process, where the anomaly model was not
+    loaded; the hourly run inside the process has it.
+  - **Audit** on effective weights: the host findings are gone, because damped hosts now count at 0.3 × weight. Left:
+    `stunde:03` (+1.54), `stunde:14` (−1.14, contradicts: noise share 24 % against 14 %), `ort:DHW-0`.
+  - **First LLM proposal** (qwen3.8-27b): `stunde:03` −0.5 („Uhrzeit ist ein schwacher Proxy für Ursachen (post
+    hoc)“), `stunde:14` +0.5 („falsch herum oder zu extrem“).
+  - **Measured offline on 717 unseen messages:** log loss +0.0026 ± 0.0007 (worse by > 2 SE), AUC 0.7403 → 0.7377 —
+    **rejected**. Plausible reasons, worse measurement: the measurement decided, as intended. The next hourly run asks
+    for a new proposal.
 
 ## 2026-11-12 — Relevance model: challengers that change features, not weights
 
