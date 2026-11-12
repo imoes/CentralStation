@@ -10,6 +10,38 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-12 — Mails now come from centralstation@example.com
+
+### What was fixed
+
+- **Every CentralStation mail had the sender `centralstation@localhost.example.com`.**
+  - The SMTP connector „Mail Proxy“ (`mailrelay.example.com:25`) had no `from_email`, so the code default
+    `centralstation@localhost` applied (`backend/app/services/connectors/smtp.py`). The relay turned it into
+    `centralstation@localhost.example.com`.
+  - That domain has no A or MX record, and `_dmarc.example.com` is `p=reject`.
+  - The DMARC reports (parsedmarc on docker0154) show Microsoft rejecting the mails: 628 of 628 failed DKIM since
+    1 Nov, with disposition „reject“ since 27 Oct.
+  - Affected: incident mails, KI-Fragen and reports.
+  - Bounces to that address could not be delivered either, so the losses were invisible: a mail counted as sent as
+    soon as the relay accepted it.
+  - You confirmed the sender by tracing a mail through the PMG.
+- **Now:** the connector's sender is `CentralStation <centralstation@example.com>`, as you decided. Mails take
+  effect immediately, because the connector is read on every send.
+
+### Evidence
+
+- `_load_smtp` in the running backend builds the header `From: CentralStation <centralstation@example.com>`
+  (12.11.).
+- **Not yet observed:** a mail with the new sender passing DKIM and DMARC at Microsoft.
+
+### What is still missing
+
+- The code default `centralstation@localhost` remains for connectors without a sender. A connector without
+  `from_email` should be refused rather than silently fall back.
+- Rejections after the relay are still not visible in CentralStation, because there is no bounce handling.
+
+---
+
 ## 2026-11-12 — KI-Fragen: incidents in your CheckMK filter are asked first
 
 ### What was fixed
