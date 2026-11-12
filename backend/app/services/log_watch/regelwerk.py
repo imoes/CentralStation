@@ -37,7 +37,7 @@ AKTIV, TEST = "aktiv", "test"
 #: Signale, die die Quellen setzen (Hashtag `signal:<name>`) — erschöpfend benannt
 SIGNALE = ("stumm", "behandelt", "schaden", "frist", "neu", "ausbreitung", "anstieg", "dringend",
            "bedrohung", "tagesmuster", "flattern", "modell-rauschen", "modell-entschied", "modell-erkundung",
-           "auffaellig", "auffaellig-entschied")
+           "auffaellig", "auffaellig-entschied", "auffaellig-pruefen")
 
 
 @dataclass(frozen=True)

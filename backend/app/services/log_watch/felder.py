@@ -104,6 +104,7 @@ SIGNALE: dict[str, str] = {
                   "(Menge, Hosts, Neuheit, Seltenheit) — Grund mit σ-Abweichungen; Regel R4-AUF leitet weiter",
     "auffaellig-entschied": "Erst die Auffälligkeit (Regel R4-AUF) hat die Nachricht weitergeleitet — sonst wäre sie "
                             "verworfen worden",
+    "auffaellig-pruefen": "Stichprobe (20 %) der Weiterleitungen durch Auffälligkeit, die die KI zur Messung beurteilt",
     "flattern": "CheckMK: ≥ 4 Zustandswechsel je Host|Dienst in 24 h — EIN Problem, nicht viele (Regel N1-FLAT, raster.py)",
     "modell-rauschen": "Relevanz-Modell hält die Gruppe für Rauschen (P ≥ Schwelle; trainiert auf Mensch- und "
                        "KI-Urteile, nie auf die Regeln) — die tragenden Gewichte stehen in den Gründen; wirkt nur über "

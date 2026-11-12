@@ -83,6 +83,8 @@ def test_auffaelliges_fenster_wird_weitergeleitet_normales_nicht():
     assert af.SIGNAL in m1.hashtags and m1.urteil == "relevant" and m1.regel == "R4-AUF"
     assert raster.SIG_AUFF_ENTSCHIED in m1.hashtags and any("Auffällig (IsolationForest" in g for g in m1.gruende)
     assert af.SIGNAL not in m2.hashtags and m2.urteil == "nicht_relevant"
+    pruefen = [t for t in tr if raster.SIG_AUFF_PRUEFEN in t.hashtags]
+    assert 0 < len(pruefen) < len(tr)                            # nur eine Stichprobe geht zur Messung an die KI
     z = raster.zaehle(tr, raster.Kontingent(), B)
     assert z["auffaellig"]["entschied"] == z["auffaellig"]["nachrichten"] > 0
 

@@ -219,7 +219,7 @@ def test_erkundung_haelt_etwa_fuenf_prozent_zur_messung_relevant():
 def test_geblockte_gehen_nie_zur_ki():
     from app.services.log_watch import filter as flt, trichter
     q = str(flt.opensearch(trichter.AUSLOESER))
-    assert "signal:modell-entschied" in q and "must_not" in q and "signal:auffaellig-entschied" in q
+    assert "signal:modell-entschied" in q and "must_not" in q and "signal:auffaellig-pruefen" in q
 
 
 def test_aktive_regel_wirkt_bei_bereit_aber_nie_gegen_schaden():

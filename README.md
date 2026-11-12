@@ -1389,8 +1389,9 @@ window. It uses scikit-learn rather than PyTorch, on the vi-mcp session's advice
   - Rule `R4-AUF` „Auffällig (gelernt)“ (FORWARD, criterion R4) forwards such windows even if routine (N1) or no
     criterion (N0) would have dropped them. It sits after N3/N5/N1-MOD, so non-production, self-generated and
     model-noise stay out.
-  - A forward that only happened because of the anomaly carries `signal:auffaellig-entschied` and goes to the AI,
-    which measures the hit rate.
+  - A forward that only happened because of the anomaly carries `signal:auffaellig-entschied`. A fixed 20 % sample
+    of these also carries `signal:auffaellig-pruefen` and goes to the AI, which measures the hit rate. All of them
+    would have been a flood: 615 in 24 h on the first run (12.11. 09:21), against about 17 AI analyses per hour.
 - **Known limit, measured 12.11.:** a pure volume spike of a well-known pattern (500× on 30 hosts) stays below the
   threshold — IsolationForest saturates outside the training range. Those spikes are what the statistical rules
   (spike/spread) catch; the forest adds unusual *combinations* (new + rare + wide).

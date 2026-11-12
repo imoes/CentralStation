@@ -140,13 +140,22 @@ ERKUNDUNG = 0.05
 SIG_ENTSCHIED = "signal:modell-entschied"
 SIG_ERKUNDUNG = "signal:modell-erkundung"
 SIG_AUFF_ENTSCHIED = "signal:auffaellig-entschied"
+#: Von dem, was erst die Auffälligkeit weiterleitet, geht nur diese Stichprobe zur Messung an die KI — gemessen
+#: 12.11. 09:21: 615 solche Fenster in 24 h (≈ 25/h, meist dasselbe neue Muster in jedem Fenster) gegen ≈ 17
+#: KI-Analysen/h bisher; alle wären eine Flut. Weitergeleitet und sichtbar bleiben alle.
+AUFF_PRUEFEN = 0.2
+SIG_AUFF_PRUEFEN = "signal:auffaellig-pruefen"
+
+
+def zufall(t: Treffer, b: datetime | None, anteil: float, salz: str = "") -> bool:
+    """Deterministisch je (Quelle, Schlüssel, Host, Fenster) — derselbe Fall fällt immer gleich. Rein."""
+    import hashlib
+    h = hashlib.sha256(f"{salz}{t.quelle}|{t.schluessel}|{t.host}|{b.isoformat() if b else ''}".encode()).digest()
+    return int.from_bytes(h[:4], "big") / 2 ** 32 < anteil
 
 
 def erkundung(t: Treffer, b: datetime | None) -> bool:
-    """Deterministisch je (Quelle, Schlüssel, Host, Fenster) — derselbe Fall fällt immer gleich. Rein."""
-    import hashlib
-    h = hashlib.sha256(f"{t.quelle}|{t.schluessel}|{t.host}|{b.isoformat() if b else ''}".encode()).digest()
-    return int.from_bytes(h[:4], "big") / 2 ** 32 < ERKUNDUNG
+    return zufall(t, b, ERKUNDUNG)
 
 
 def mit_modell(treffer: list[Treffer], d: Definition, b: datetime | None = None) -> list[Treffer]:
@@ -209,6 +218,8 @@ def mit_modell(treffer: list[Treffer], d: Definition, b: datetime | None = None)
             t.modell_entschied = True
         if auff_leitet:
             t.hashtags.append(SIG_AUFF_ENTSCHIED)
+            if zufall(t, b, AUFF_PRUEFEN, "auffaellig|"):
+                t.hashtags.append(SIG_AUFF_PRUEFEN)
     return treffer
 
 
