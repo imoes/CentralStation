@@ -31,12 +31,11 @@ _EXPLAIN_SYSTEM_PROMPT = (
 async def _web_search(query: str, searxng_url: str, results_count: int = 5) -> str:
     """Run a SearXNG web search and return formatted snippets."""
     import httpx
+    from app.services.log_watch.websuche import suchmaschinen_parameter
     try:
+        params = {"q": query, "format": "json"} | await suchmaschinen_parameter()
         async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
-            r = await client.get(
-                f"{searxng_url}/search",
-                params={"q": query, "format": "json"},
-            )
+            r = await client.get(f"{searxng_url}/search", params=params)
             if r.status_code == 200:
                 results = [
                     f"- {x.get('title')}: {x.get('content', '')[:200]}"

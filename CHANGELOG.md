@@ -47,6 +47,45 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-13 — Local VI on vi-mcp 0.62.3, installed from the signed apt archive
+
+### What has changed
+
+- **Package source:** `vi-mcp/Dockerfile` installs `vi-mcp=0.62.3-1` from
+  `https://imoes.github.io/vi-mcp-packages/apt`. It no longer uses a `.deb` kept in the repo.
+  - The archive key is stored in the repo (`vi-mcp/repo-schluessel.gpg`).
+  - The build checks the key's fingerprint `4598315414EBF86CABD322D9730B75BFAC3036B7` and aborts on any other key.
+  - The fingerprint matches `deploy/repo-key.asc` in the vi-mcp repo.
+- **`vi-mcp/aktualisieren.sh`:**
+  - It still checks the release signature (key c88aa8ce…).
+  - It also requires the apt archive to list the same SHA-256 for that version.
+  - It no longer stores a package in `vi-mcp/pakete`.
+- **Console hook:** the backend copies it from the vi-mcp image (`backend/Dockerfile`, stage `vi-paket`). It no longer
+  extracts it from the `.deb`, so there is a single source.
+- **`vi_logic`:** `clingo 5.8.3` is in `/opt/vi-mcp-python` (`VI_MCP_EXTRA_PYTHON`).
+  - `/var/lib/vi-mcp` is a volume and would hide anything installed there.
+  - 0.62.3's `logic install --target` reports „still not importable“ unless the variable is already set during the
+    install, so the Dockerfile sets it there.
+- **New in the package** (vi-mcp CHANGELOG):
+  - logic layer `vi_logic`;
+  - `vi-mcp quarantine`;
+  - `vi-mcp release` creates its token itself;
+  - shell solutions must use the failed call's program;
+  - `vi_stats` with standard error.
+
+### Evidence
+
+- Release v0.62.3: signature valid, deb sha256 4be348fc81b2…, the same value in the apt archive's `Packages`.
+- Image: `vi_mcp.__version__` 0.62.3; `vi-mcp logic status` reports clingo 5.8.3; pip and gpg removed again.
+- Live, 13.11. at 15:02 UTC:
+  - `/gesund` reports ok 0.62.3, and `/health` returns 200;
+  - container healthy; log „migration: column idx added“;
+  - `netz status` reports 0 violations, 1 of 1 peer reachable;
+  - backup in `~/vi-mcp-sicherung/*-20261113T150234Z.tgz`.
+- Console hook changed (`e7f20f02…` → `a5874f2f…`), so the backend was rebuilt.
+
+---
+
 ## 2026-11-12 — The AI analysis gets web results from SearXNG again
 
 You: „Ich möchte das für die ki analyse searxng genutzt wird“ (SearXNG on llm-host03:8080).
@@ -73,8 +112,13 @@ You: „Ich möchte das für die ki analyse searxng genutzt wird“ (SearXNG on 
 
 ### What is still missing
 
-- `feed_enricher.py` and `project_planner.py` query SearXNG without an engine list and get no results either.
 - If bing and mojeek get blocked too, the result names it, but nothing raises an alert.
+- `feed_enricher.py` sends its queries to SearXNG without removing internal names (unlike `web_suche`).
+
+### Addendum (13.11.)
+
+- Feed enrichment and the project planner now use the same engine list (`websuche.suchmaschinen_parameter()`).
+  Previously they had no list and got no results either. Tests: 23 passed.
 
 ---
 

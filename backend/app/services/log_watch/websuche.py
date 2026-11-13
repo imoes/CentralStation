@@ -108,6 +108,13 @@ async def _engines() -> str:
     return ENGINES_STANDARD if v is None else str(v).strip()
 
 
+async def suchmaschinen_parameter() -> dict:
+    """{"engines": …} für jede SearXNG-Anfrage in CentralStation (KI-Analyse, Feed-Anreicherung, Projektplaner) —
+    eine Liste an einer Stelle; leer = SearXNG-Standard."""
+    e = await _engines()
+    return {"engines": e} if e else {}
+
+
 def auswerten(j: dict, q: str, entfernt: list[str], engines: str) -> dict:
     """SearXNG-Antwort → Ergebnis für die KI. Ausgefallene Suchmaschinen werden genannt; ohne Treffer, weil alle
     ausfielen, ist das ein benannter Fehler statt einer stillen leeren Liste. Rein."""

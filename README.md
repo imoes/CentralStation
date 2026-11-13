@@ -578,8 +578,22 @@ The search bar on `/feed` works like Graylog 5.2's search (`feed-query.ts`, port
   query (one `_msearch`). An unreadable input shows its reason under the bar.
 - **Console with VI.** claude_cli consoles get the local VI as MCP server `vi` plus the vi-mcp hook (hints before,
   outcome after every tool call; instance `konsole`).
-- **Local VI (Compose service `vi-mcp`).** vi-mcp from its Debian package runs inside CentralStation as the internal
-  memory; the network service `vi-p2p` (profile `netz`) will exchange it with other VIs. Set-up: `vi-mcp/Dockerfile`.
+- **Local VI (Compose service `vi-mcp`).** vi-mcp runs inside CentralStation as the internal memory; the network
+  service `vi-p2p` (profile `netz`) will exchange it with other VIs. Set-up: `vi-mcp/Dockerfile`.
+  - **Since 13.11.2026 it comes from the signed apt archive** `https://imoes.github.io/vi-mcp-packages/apt`.
+    - The version is pinned (`ARG VI_MCP_VERSION`).
+    - The archive key is kept in the repo (`vi-mcp/repo-schluessel.gpg`). The build checks its fingerprint
+      `4598315414EBF86CABD322D9730B75BFAC3036B7` and aborts on any other key.
+  - **Updates:** `vi-mcp/aktualisieren.sh <version>` performs these steps:
+    - checks the release signature (key `vi-mcp/release-schluessel.pem`);
+    - checks that the apt archive lists the same SHA-256 for that version;
+    - backs up the volumes;
+    - sets the version and the image tags (in `docker-compose.yml` and `backend/Dockerfile`);
+    - rebuilds, then checks `/gesund` and `netz status`.
+  - **One source for the console hook:** the backend copies it from this image (`backend/Dockerfile`, stage
+    `vi-paket`). If the hook changed, the script says so, and the backend must be rebuilt.
+  - **`clingo`** (for `vi_logic`) lives in `/opt/vi-mcp-python` (`VI_MCP_EXTRA_PYTHON`), not in the data volume,
+    which would hide it.
 - **Collective memory (connector `vi_mcp`).** CentralStation is one instance of the shared VI memory vi-mcp.
   Before an analysis the fleet asks what other instances know about the case's hosts and topics (prompt section
   "Kollektiv-Gedächtnis", context not evidence), reports the analysis as an action, and every 15 min pushes known
@@ -1860,6 +1874,8 @@ The AI only works when a check is true, and it only writes its own analysis.
       google/qwant access denied) and returned 0 results.
     - Failed engines are named in the result (`ausgefallen`). With no results because engines failed, the AI gets
       a `fehler` with the reason instead of an empty list.
+    - The same list applies to feed enrichment (`feed_enricher.py`) and the project planner (`project_planner.py`),
+      through `websuche.suchmaschinen_parameter()`.
 - **Every message is an object** (`nachricht.py`): fixed fields (`zeit`, `quelle`, `host`, `text`, `roh` …)
   never change; changeable fields only through methods (`verknuepfe`, `markiere`, `urteile`,
   `neu_bewerten`), each appending `{zeit, wer, was, grund}` to `aenderungen`; precedence human > AI > rule.

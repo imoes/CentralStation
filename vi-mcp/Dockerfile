@@ -1,30 +1,47 @@
-# Lokale VI für CentralStation: vi-mcp aus dem Debian-Paket (Release github.com/imoes/vi-mcp/releases/tag/v0.59.0).
+# Lokale VI für CentralStation: vi-mcp aus dem signierten apt-Archiv (https://imoes.github.io/vi-mcp-packages/,
+# Release github.com/imoes/vi-mcp/releases/tag/v0.62.3). Version fest gepinnt; vi-mcp/aktualisieren.sh setzt sie.
 # Ein Image, zwei Dienste im Compose: vi-mcp (Gedächtnis, Nutzer vi-mcp) und vi-p2p (Netzdienst, Nutzer vi-p2p,
 # Profil „netz“) — wie die beiden systemd-Dienste des Pakets, getrennt: der Netzdienst liest fremde Daten und
 # erreicht das Gedächtnis nur über das MCP-Werkzeugpaar vi_netz_ausgang/vi_netz_eingang.
+# Das Backend holt den Konsolen-Hook aus DIESEM Image (backend/Dockerfile, Stufe vi-paket) — eine Quelle.
 FROM ubuntu:24.04
 
 ARG HTTP_PROXY=""
 ARG HTTPS_PROXY=""
 ARG NO_PROXY=""
-ARG VI_MCP_DEB=vi-mcp_0.59.0-1_all.deb
-ARG VI_MCP_SHA256=0657e112aa062b462aa496a129340f7d9758e3201f83f781a8666f098414cab4
+ARG VI_MCP_VERSION=0.62.3-1
+ARG VI_MCP_REPO=https://imoes.github.io/vi-mcp-packages/apt
+#: Fingerabdruck des Archiv-Schlüssels (ed25519, 11.11.2026–10.11.2029), verglichen mit deploy/repo-key.asc im
+#: vi-mcp-Repo am 13.11.2026. Der Schlüssel liegt fest im Repo (vi-mcp/repo-schluessel.gpg), nie aus dem Download.
+ARG VI_MCP_REPO_FP=4598315414EBF86CABD322D9730B75BFAC3036B7
 ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY} no_proxy=${NO_PROXY} \
     HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} NO_PROXY=${NO_PROXY}
 
-COPY vi-mcp/pakete/${VI_MCP_DEB} /tmp/vi-mcp.deb
+COPY vi-mcp/repo-schluessel.gpg /usr/share/keyrings/vi-mcp.gpg
 
-# apt-get ignoriert http_proxy — es braucht Acquire::*::Proxy. Das Paket prüfen wir gegen die festgehaltene Prüfsumme.
+# apt-get ignoriert http_proxy — es braucht Acquire::*::Proxy. Erst ca-certificates und gpg (für das https-Archiv und
+# die Prüfung des Schlüssels), dann die Quelle, dann vi-mcp in genau der gepinnten Version.
 # Ohne Menü (VI_MCP_KEIN_MENUE), ohne Empfehlungen: python3-libtorrent nur, wenn das Netz Torrent nutzen soll.
-RUN echo "${VI_MCP_SHA256}  /tmp/vi-mcp.deb" | sha256sum -c - \
- && if [ -n "$HTTP_PROXY" ]; then \
+# clingo (vi_logic, ab 0.62.0) in ein eigenes Verzeichnis im Image — /var/lib/vi-mcp ist ein Volume und würde es
+# verdecken; vi-mcp findet es über VI_MCP_EXTRA_PYTHON. pip wird danach wieder entfernt. Die Variable schon beim
+# Installieren: 0.62.3 prüft nach --target nur VI_MCP_EXTRA_PYTHON und die Standardorte (sonst „still not importable“).
+RUN if [ -n "$HTTP_PROXY" ]; then \
         printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' \
             "$HTTP_PROXY" "${HTTPS_PROXY:-$HTTP_PROXY}" > /etc/apt/apt.conf.d/01proxy; \
     fi \
  && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates gpg \
+ && FP=$(gpg --show-keys --with-colons /usr/share/keyrings/vi-mcp.gpg | awk -F: '/^fpr/{print $10; exit}') \
+ && [ "$FP" = "$VI_MCP_REPO_FP" ] || { echo "Archiv-Schlüssel hat Fingerabdruck $FP, erwartet $VI_MCP_REPO_FP"; exit 1; } \
+ && chmod 0644 /usr/share/keyrings/vi-mcp.gpg \
+ && printf 'Types: deb\nURIs: %s\nSuites: stable\nComponents: main\nSigned-By: /usr/share/keyrings/vi-mcp.gpg\n' \
+        "$VI_MCP_REPO" > /etc/apt/sources.list.d/vi-mcp.sources \
+ && apt-get update \
  && DEBIAN_FRONTEND=noninteractive VI_MCP_KEIN_MENUE=1 \
-    apt-get install -y --no-install-recommends /tmp/vi-mcp.deb ca-certificates \
- && rm -rf /var/lib/apt/lists/* /etc/apt/apt.conf.d/01proxy /tmp/vi-mcp.deb
+    apt-get install -y --no-install-recommends "vi-mcp=${VI_MCP_VERSION}" python3-pip \
+ && VI_MCP_EXTRA_PYTHON=/opt/vi-mcp-python vi-mcp logic install --target /opt/vi-mcp-python \
+ && DEBIAN_FRONTEND=noninteractive apt-get purge -y --auto-remove python3-pip gpg \
+ && rm -rf /var/lib/apt/lists/* /etc/apt/apt.conf.d/01proxy /root/.cache
 
 # Im Container lauscht vi-mcp im Compose-Netz (nicht auf 127.0.0.1): nur Backend und vi-p2p erreichen ihn,
 # kein Port wird nach außen veröffentlicht. Rechte der Paket-Konfiguration bleiben (root:vi-mcp 0640).
@@ -40,7 +57,8 @@ PY
 
 # Laufzeit ohne Build-Proxy; der Netzdienst bekommt seinen Proxy, falls nötig, über das Override.
 ENV http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= \
-    VI_MCP_CONFIG=/etc/vi-mcp/config.json VI_P2P_CONFIG=/etc/vi-p2p/config.json PYTHONUNBUFFERED=1
+    VI_MCP_CONFIG=/etc/vi-mcp/config.json VI_P2P_CONFIG=/etc/vi-p2p/config.json PYTHONUNBUFFERED=1 \
+    VI_MCP_EXTRA_PYTHON=/opt/vi-mcp-python
 
 USER vi-mcp
 EXPOSE 8765

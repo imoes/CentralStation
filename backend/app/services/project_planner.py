@@ -59,12 +59,12 @@ class _TextExtractor(HTMLParser):
 async def _web_search(query: str, searxng_url: str) -> str:
     if not searxng_url:
         return "(Websuche nicht konfiguriert)"
+    from app.services.log_watch.websuche import suchmaschinen_parameter
     try:
+        # Suchmaschinen wie die KI-Analyse (websuche.ENGINES_STANDARD) — die SearXNG-Standards sind gesperrt (12.11.)
+        params = {"q": query, "format": "json", "categories": "general,it"} | await suchmaschinen_parameter()
         async with httpx.AsyncClient(timeout=12.0, verify=False) as client:
-            r = await client.get(
-                f"{searxng_url}/search",
-                params={"q": query, "format": "json", "categories": "general,it"},
-            )
+            r = await client.get(f"{searxng_url}/search", params=params)
             if r.status_code == 200:
                 results = r.json().get("results", [])[:SEARCH_RESULTS]
                 if not results:

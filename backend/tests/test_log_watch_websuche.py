@@ -67,3 +67,10 @@ def test_auswerten_mit_treffern_ohne_fehler():
 
 def test_standard_suchmaschinen_sind_die_gemessenen():
     assert ws.ENGINES_STANDARD == "bing,mojeek"
+
+
+def test_alle_searxng_nutzer_nehmen_dieselbe_suchmaschinenliste():
+    """Identität: Feed-Anreicherung und Projektplaner fragen SearXNG mit derselben Liste wie die KI-Analyse."""
+    import pathlib
+    for f in ("app/services/feed_enricher.py", "app/services/project_planner.py"):
+        assert "suchmaschinen_parameter()" in pathlib.Path(f).read_text(encoding="utf-8"), f
