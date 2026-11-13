@@ -165,7 +165,7 @@ def mit_modell(treffer: list[Treffer], d: Definition, b: datetime | None = None)
     - Relevanz-Modell → `signal:modell-rauschen` (Regel N1-MOD blockt, nach R5/R6/R1 — nie gegen Schaden, Sicherheit,
       Produktionsausfall). Blockt das Modell, bleibt der Treffer mit `signal:modell-entschied` in der Historie
       (auffindbar, nie zur KI); ERKUNDUNG der Fälle bleiben relevant (`signal:modell-erkundung`) zur Messung.
-    - Auffälligkeiten (IsolationForest, auffaellig.py) → `signal:auffaellig` (Regel R4-AUF leitet weiter, was sonst
+    - Auffälligkeiten (IsolationForest, auffaellig.py) → `signal:auffaellig` (bis 13.11. leitete Regel R4-AUF weiter, was sonst
       verworfen würde; dann `signal:auffaellig-entschied`).
     Jede Änderung mit Grund. Ändert die Treffer in place."""
     from app.services.log_watch import auffaellig, relevanz_modell

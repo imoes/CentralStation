@@ -15,7 +15,7 @@ Beobachtung = (Muster, 5-min-Bucket) aus log_template_buckets. Merkmale (alle au
   praesenz  Anteil der Trainings-Buckets, in denen das Muster vorkam            — selten vs. Dauerrauschen
 Wirkung (Nutzer 12.11.2026: „kein schattenbetrieb wir testen das in produktion“): das trainierte Modell liegt im
 Speicher des Backends (stündlich neu, nach einem Neustart sofort); raster.mit_modell bewertet jedes Graylog-Fenster
-je Muster und setzt bei Ausreißern `signal:auffaellig` mit Grund — die Regel R4-AUF leitet solche Fenster weiter,
+je Muster und setzt bei Ausreißern `signal:auffaellig` mit Grund — bis 13.11. leitete die Regel R4-AUF solche Fenster weiter (entfernt, Definition 19); jetzt wirkt der Wert nur als Merkmal im Relevanz-Modell,
 auch wenn die Regeln sie sonst verworfen hätten. Gemessen wird über lernstand.py.
 """
 from __future__ import annotations
@@ -218,7 +218,7 @@ async def lerne(jetzt: datetime | None = None) -> dict:
                 "auffaellig": z["auffaellig"], "grund": z["grund"], "regeln": (z["key"], z["b"]) in weiter,
                 "text": str(vorlagen.get(z["key"]) or "")[:200]}
     erg = {"zeit": jetzt.isoformat(), "modus": "aktiv",
-           "grund": "wirkt im Raster über signal:auffaellig (Regel R4-AUF); Vergleich mit Regeln und KI unten",
+           "grund": "wirkt als Merkmal im Relevanz-Modell (Variante auffaellig; R4-AUF entfernt 13.11.); Vergleich mit Regeln und KI unten",
            "schwelle": round(schwelle, 4), "quantil": QUANTIL,
            "training": {"von": start.isoformat(), "bis": grenze.isoformat(), "zeilen": len(train),
                         "muster": len(stats), "normal": {n: {"mittel": round(m, 3), "streuung": round(s, 3)}

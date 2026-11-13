@@ -1,4 +1,4 @@
-"""Auffälligkeiten (IsolationForest) und Lernstand: Merkmale, Schwelle, Grund, Wirkung im Raster über R4-AUF,
+"""Auffälligkeiten (IsolationForest) und Lernstand: Merkmale, Schwelle, Grund, Wirkung als Merkmal (R4-AUF entfernt 13.11.),
 Vergleich mit Regeln/KI, Trend je Trainingslauf, Wirkung je Zeitraum."""
 import random
 from dataclasses import replace
@@ -70,33 +70,24 @@ def _mit_aktiven_modellregeln():
     return Definition(17, [], dict(PARAMETER), regeln=regeln)
 
 
-def test_auffaelliges_fenster_wird_weitergeleitet_normales_nicht():
+def test_auffaelliges_fenster_bekommt_signal_wird_aber_nicht_mehr_weitergeleitet():
+    """13.11.: R4-AUF entfernt (Definition 19) — signal:auffaellig bleibt als Merkmal fürs Relevanz-Modell, leitet aber
+    nichts mehr weiter (AUC gegen das KI-Urteil 0,24; 336 weitergeleitet, 2 beurteilt, beide Rauschen)."""
     af.setze(_stand())
     d = _mit_aktiven_modellregeln()
-    # m1: 5000 Zeilen auf 30 Hosts (weit über Normal 10); m2: üblich. Beide ohne Signal → sonst Default N0
     tr = [raster._urteil("graylog", "muster:m1", f"h{i}", True, ["quelle:graylog", "muster:m1"], {}, [], 5000 // 30,
                          "x", d) for i in range(30)]
     tr.append(raster._urteil("graylog", "muster:m2", "h0", True, ["quelle:graylog", "muster:m2"], {}, [], 11, "x", d))
-    assert all(t.urteil == "nicht_relevant" for t in tr)
     raster.mit_modell(tr, d, B)
     m1, m2 = tr[0], tr[-1]
-    assert af.SIGNAL in m1.hashtags and m1.urteil == "relevant" and m1.regel == "R4-AUF"
-    assert raster.SIG_AUFF_ENTSCHIED in m1.hashtags and any("Auffällig (IsolationForest" in g for g in m1.gruende)
-    assert af.SIGNAL not in m2.hashtags and m2.urteil == "nicht_relevant"
-    pruefen = [t for t in tr if raster.SIG_AUFF_PRUEFEN in t.hashtags]
-    assert 0 < len(pruefen) < len(tr)                            # nur eine Stichprobe geht zur Messung an die KI
-    z = raster.zaehle(tr, raster.Kontingent(), B)
-    assert z["auffaellig"]["entschied"] == z["auffaellig"]["nachrichten"] > 0
+    assert af.SIGNAL in m1.hashtags and af.SIGNAL not in m2.hashtags
+    assert all(t.urteil == "nicht_relevant" and t.regel != "R4-AUF" for t in tr)
+    assert not any(raster.SIG_AUFF_ENTSCHIED in t.hashtags for t in tr)
 
 
-def test_auffaellig_nie_gegen_nicht_produktion_und_testregel_zaehlt_nur():
-    af.setze(_stand())
-    ids = [x[0] for x in STANDARD_FILTER]
-    assert ids.index("R4-AUF") > max(ids.index(r) for r in ("N3", "N5", "N1-MOD")) and ids.index("R4-AUF") < ids.index("N1")
-    tr = [raster._urteil("graylog", "muster:m1", f"h{i}", True, ["quelle:graylog", "muster:m1"], {}, [], 200, "x",
-                         STANDARD) for i in range(30)]
-    raster.mit_modell(tr, STANDARD, B)                               # Standard: R4-AUF im Testmodus
-    assert tr[0].urteil == "nicht_relevant" and "R4-AUF" in tr[0].test_treffer
+def test_r4_auf_ist_nicht_mehr_im_standard():
+    assert "R4-AUF" not in [x[0] for x in STANDARD_FILTER]
+    assert all(r.id != "R4-AUF" for r in STANDARD.regeln)
 
 
 def test_vergleich_mit_regeln_und_ki():

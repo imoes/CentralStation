@@ -104,7 +104,7 @@ PARAMETER = {
 }
 
 #: Version der Definition, die dieser Code als Standard mitbringt, und warum es sie gibt.
-CODE_VERSION = 17
+CODE_VERSION = 19
 AENDERUNGEN = {
     1: "Festgelegt mit dem Nutzer am 06.11.2026",
     2: "R6 umfasst Firewall-Bedrohungen (Sinkhole, Stufe ab medium) — Nutzer 06.11.2026: "
@@ -146,6 +146,11 @@ AENDERUNGEN = {
         "„Auffällig (gelernt)“ leitet Muster-Fenster mit signal:auffaellig (IsolationForest) weiter, nach N3/N5/N1-MOD "
         "und vor N1. Im Code-Standard beide Modellregeln im Testmodus; in Produktion aktiv (Nutzer: „kein "
         "schattenbetrieb wir testen das in produktion“)",
+    # 18 ist eine Admin-Version (R4-AUF in den Testmodus, Nutzer 12.11.) — der Code-Standard springt darüber
+    19: "R4-AUF entfernt (Nutzer 13.11.2026: „Ja, beides umsetzen“ nach der Recherche der vi-mcp-Sitzung): "
+        "IsolationForest misst Seltenheit, relevant ist hier das Wiederkehrende — AUC gegen das KI-Urteil 0,24 über "
+        "48 Läufe, von 336 Weiterleitungen 2 beurteilt, beide Rauschen. Der Wert wirkt weiter als Merkmal im "
+        "Relevanz-Modell (Variante „auffaellig“, gewählt nur, wenn auf demselben Holdout nicht schlechter)",
 }
 
 def als_daten() -> tuple[list[dict], dict]:

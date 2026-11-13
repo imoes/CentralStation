@@ -8,8 +8,8 @@ from app.services.log_watch import relevanz_modell as rm
 
 T0 = datetime(2026, 11, 1, tzinfo=timezone.utc)
 MODELL = {"gewichte": {"host:a": -2.0, "stunde:03": 1.5, "muster:m": 1.0}, "bias": -1.0, "skala": {},
-          "audit": [{"klasse": "host", "merkmal": "host:a", "gewicht": -2.0, "grund": "x"},
-                    {"klasse": "stunde", "merkmal": "stunde:03", "gewicht": 1.5, "grund": "y"}]}
+          "audit": [{"klasse": "host", "merkmal": "host:a", "gewicht": -2.0, "grund": "x", "n": 20},
+                    {"klasse": "stunde", "merkmal": "stunde:03", "gewicht": 1.5, "grund": "y", "n": 500}]}
 
 
 def test_lies_antwort_auch_mit_codeblock():
@@ -68,14 +68,39 @@ def test_bewerte_prospektiv_aktiv_test_verworfen():
     assert gs.bewerte({"erstellt": T0.isoformat(), "deltas": {}}, MODELL, [])["modus"] == "verworfen"
 
 
-def test_braucht_neuen():
-    j = T0 + timedelta(days=2)
+def test_braucht_neuen_hoechstens_alle_sieben_tage():
+    """13.11.: nach jedem Verwerfen kam stündlich ein neuer Vorschlag (17 verworfen, 0 aktiv) — jetzt ≤ 1 je 7 Tage."""
+    j = T0 + timedelta(days=10)
     assert gs.braucht_neuen(None, MODELL, j) == "noch keine Schicht"
-    assert gs.braucht_neuen({"modus": "verworfen", "erstellt": j.isoformat()}, MODELL, j)
-    assert gs.braucht_neuen({"modus": "test", "erstellt": (j - timedelta(hours=1)).isoformat()}, MODELL, j) is None
+    assert gs.braucht_neuen({"modus": "verworfen", "erstellt": (j - timedelta(hours=1)).isoformat()}, MODELL, j) is None
+    assert gs.braucht_neuen({"modus": "verworfen", "erstellt": (j - timedelta(days=6)).isoformat()}, MODELL, j) is None
+    assert "verworfen" in gs.braucht_neuen({"modus": "verworfen", "erstellt": T0.isoformat()}, MODELL, j)
+    assert gs.braucht_neuen({"modus": "test", "erstellt": (j - timedelta(days=3)).isoformat()}, MODELL, j) is None
     assert "ohne Aktivierung" in gs.braucht_neuen({"modus": "test", "erstellt": T0.isoformat()}, MODELL, j)
     assert gs.braucht_neuen({"modus": "aktiv", "erstellt": T0.isoformat()}, MODELL, j) is None
     assert gs.braucht_neuen(None, {**MODELL, "audit": []}, j) is None
+
+
+def test_delta_nur_fuer_kaltstart_loeschen_immer():
+    """Recherche 13.11.: die logistische Regression ist auf diesen Daten optimal — Deltas nur, wo Daten fehlen."""
+    d, _, weg = gs.pruefe_vorschlag([{"merkmal": "stunde:03", "delta": -0.5, "grund": "Uhrzeit"}], MODELL)
+    assert d == {} and "Kaltstart" in weg[0]
+    d, _, _ = gs.pruefe_vorschlag([{"merkmal": "stunde:03", "loeschen": True, "grund": "Uhrzeit statt Ursache"}],
+                                  MODELL)
+    assert d == {"stunde:03": -1.5}
+    d, _, _ = gs.pruefe_vorschlag([{"merkmal": "host:a", "delta": 0.5, "grund": "wenig Daten"}], MODELL)
+    assert d == {"host:a": 0.5}
+    assert all("n" in a for a in gs.karte(MODELL)["audit"])
+
+
+def test_kein_effekt_nach_tausend_prospektiven():
+    """Abbruchregel wie vi-mcp 0.62.5: ≥ 1000 prospektiv, Unterschied innerhalb 2 SE → endgültig verworfen."""
+    rnd = random.Random(3)
+    beob = [rm.Beobachtung(str(i), (T0 + timedelta(hours=1, minutes=i)).isoformat(), int(rnd.random() < 0.3),
+                           "silber", ["muster:m"], f"muster:k{i}", "relevant", "R2", "x") for i in range(6000)]
+    s = gs.bewerte({"erstellt": T0.isoformat(), "deltas": {"host:a": 0.5}, "modus": "test"}, MODELL, beob)
+    assert s["messung"]["prospektiv"]["n"] >= gs.KEIN_EFFEKT_NACH
+    assert s["modus"] == "verworfen" and s.get("endgueltig") and "kein Effekt" in s["grund"]
 
 
 def test_karte_ohne_nachrichtentexte():

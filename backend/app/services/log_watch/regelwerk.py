@@ -159,7 +159,6 @@ STANDARD_FILTER = (
     # Auffälligkeiten (auffaellig.py, IsolationForest, Nutzer 12.11.2026): ein Muster-Fenster weit weg vom eigenen
     # Normal geht weiter, auch wenn sonst Routine (N1) oder kein Kriterium (N0) gegriffen hätte. Nach N3/N5/N1-MOD:
     # Nicht-Produktion, Selbsterzeugtes und vom Modell als Rauschen Erkanntes bleiben draußen
-    ("R4-AUF", "R4", "Auffällig (gelernt)", FORWARD, "signal:auffaellig", 1, TEST),
     ("N1", "N1", "Routine", BLOCK, "@Routine-Quellen", 1),
 )
 

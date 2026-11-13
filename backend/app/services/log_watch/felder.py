@@ -101,7 +101,7 @@ SIGNALE: dict[str, str] = {
     "modell-erkundung": "Das Modell hätte geblockt, die Nachricht bleibt zur Messung relevant (5 % Zufall, raster.ERKUNDUNG) "
                         "— so misst die KI die Trefferquote des Modells in Produktion",
     "auffaellig": "IsolationForest (auffaellig.py): das Fenster dieses Musters weicht stark vom eigenen Normal ab "
-                  "(Menge, Hosts, Neuheit, Seltenheit) — Grund mit σ-Abweichungen; Regel R4-AUF leitet weiter",
+                  "(Menge, Hosts, Neuheit, Seltenheit) — Grund mit σ-Abweichungen; bis 13.11. leitete Regel R4-AUF weiter (entfernt), jetzt Merkmal im Relevanz-Modell",
     "auffaellig-entschied": "Erst die Auffälligkeit (Regel R4-AUF) hat die Nachricht weitergeleitet — sonst wäre sie "
                             "verworfen worden",
     "auffaellig-pruefen": "Stichprobe (20 %) der Weiterleitungen durch Auffälligkeit, die die KI zur Messung beurteilt",

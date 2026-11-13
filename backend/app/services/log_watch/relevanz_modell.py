@@ -583,6 +583,8 @@ def trainiere(beob: list[Beobachtung], jetzt: datetime | None = None) -> dict:
     wirksam = {f: round(g * _wert(modell.get("skala"), f), 4) for f, g in modell["gewichte"].items()}
     befunde = audit(wirksam, train,
                     [abbilde(mk(b), modell["gewichte"]) for p, b in zip(p_ho, ho) if p >= schwelle])
+    # Trainingsbeobachtungen je Befund — die Gewichtsschicht darf Deltas nur für Kaltstart-Merkmale vorschlagen
+    befunde = [{**x, "n": int(zaehl.get(x.get("merkmal"), 0))} for x in befunde]
     # ohne den dominanten Schlüssel (Audit „dominant“ auf ein muster:/regel:-Merkmal): wie gut ohne diesen einen Fall?
     dom = next((x["merkmal"] for x in befunde if x["klasse"] == "dominant"), None)
     if dom:

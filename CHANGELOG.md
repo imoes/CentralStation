@@ -47,6 +47,45 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-13 — KI weight layer narrowed; R4-AUF removed
+
+You: „Ja, beides umsetzen“, after the vi-mcp session's research.
+
+### What has changed
+
+- **KI weight layer** (`gewichts_schicht.py`). The measured state was 33 runs, 17 rejected, 0 active, and offline always
+  worse (log loss +0.011 to +0.019 at more than 2 SE). The layer changes as follows:
+  - **Deletions** are still allowed for any audit finding.
+  - **A real delta** is allowed only for cold-start features, with fewer than 50 training observations. The audit now
+    carries `n` per finding.
+    - Reason: the logistic regression is optimal on exactly these data, and LLMs are weak numeric optimisers.
+    - Sources: OPRO, arXiv 2309.03409; Revisiting OPRO, arXiv 2405.10276.
+  - **Cadence:** at most one new proposal per 7 days, also after a rejection. Until now a new one followed every
+    rejection, hourly.
+  - **Stop rule**, as in vi-mcp 0.62.5: from 1,000 prospective messages without a difference beyond 2 SE, the proposal
+    is finally rejected as „kein Effekt“.
+- **R4-AUF removed**, code standard definition 19.
+  - IsolationForest measures rarity, but what matters here is the recurring. AUC against the AI verdict was 0.24 over 48
+    runs. Of 336 forwarded messages the AI judged 2, both noise.
+  - `signal:auffaellig` stays as a feature in the relevance model. The variant `auffaellig` is chosen only when it is
+    not worse on the same holdout, which is the with/without comparison.
+
+### Evidence
+
+- Tests:
+  - `test_log_watch_gewichts_schicht.py` covers cold start, deletion, the 7-day cadence and the stop rule;
+  - `test_log_watch_auffaellig.py`: the signal is set but no longer forwards, and R4-AUF is not in the standard;
+  - all log-watch tests: 413 passed. The 2 failures in `test_log_watch_schreibweg.py` already failed before this
+    change (checked against HEAD).
+
+### What is still missing
+
+- **Production:** definition v18 is an admin version, so the code standard does not replace it. On rollout a DB
+  version 19 without R4-AUF has to be written, as for v17/v18.
+- **Anomaly sample to the AI:** the 20 % sample (`signal:auffaellig-pruefen`) still goes to the AI for measurement.
+
+---
+
 ## 2026-11-13 — Local VI on vi-mcp 0.62.5
 
 ### What has changed
