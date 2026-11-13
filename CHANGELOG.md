@@ -10,6 +10,43 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-13 — Mails no longer go out with a sender the relay has to rewrite
+
+### What was fixed
+
+- **Cause of the DKIM failures, now proven:**
+  - The relay smtp01 (PMG) signs a mail with DKIM first and only then completes a short sender:
+    `centralstation@localhost` becomes `…@localhost.example.com`.
+  - PMG signs the `From` header, so the rewritten header broke the signature.
+  - Before signing, the relay leaves headers from other hosts unchanged (`remote_header_rewrite_domain` empty).
+  - After signing, it re-injects the mail via `127.0.0.1:10025`, which counts as local
+    (`local_header_rewrite_clients = permit_inet_interfaces`), so it rewrites the header there.
+- **Now:**
+  - The SMTP connector refuses a missing sender, and a sender without a fully qualified domain, with the reason.
+    This applies when sending and in „Verbindung testen“. Before, it silently fell back to
+    `centralstation@localhost`.
+  - Every mail carries its own `Date` and `Message-ID`, so the relay adds nothing after signing.
+
+### Evidence
+
+- Test mails via smtp01:26 on 12.11., 16:07, `Authentication-Results` from Microsoft:
+  - With `From: …@localhost` and no Date/Message-ID: `dkim=fail (signature did not verify) … dmarc=fail
+    action=oreject`. The signature has `h=…from:from…`, and the delivered mail shows `From: …@localhost.example.com`.
+  - With a qualified sender plus Date/Message-ID: `dkim=pass … dmarc=pass`.
+- `test_smtp_connector.py`: 12 new tests, passed together with `test_error_cluster_notify.py` (36 passed).
+- The live connector („Mail Proxy“, sender `centralstation@example.com`) passes the new check.
+
+### What is still missing
+
+- **Other hosts have the same problem.**
+  - DMARC reports since 1.9. show mon02 (16 471 fail / 1 039 pass), systems.kas-3, mon010 and others.
+  - That can only be fixed on smtp01, by completing senders on port 26 before signing. This is not done; it needs a
+    decision on the production gateway.
+- **A mail from `centralstation@example.com` has not yet been seen passing at Microsoft.** The DMARC reports arrive
+  about a day later.
+
+---
+
 ## 2026-11-12 — The AI analysis gets web results from SearXNG again
 
 You: „Ich möchte das für die ki analyse searxng genutzt wird“ (SearXNG on llm-host03:8080).
