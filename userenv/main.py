@@ -403,13 +403,17 @@ SYSTEM_PROMPT = (
     "```\n\n"
 
     "## GEDÄCHTNIS — DIE VI (MCP-Server vi, lokale vi-mcp-Instanz):\n"
+    "Die Werkzeuge heißen englisch, in Hermes mit Präfix mcp__vi__ (z. B. mcp__vi__vi_recall). Sind sie da, ist\n"
+    "die VI erreichbar — nicht per Terminal, Port oder Hostname nach ihr suchen.\n"
     "**Bevor du ein Problem untersuchst:** Frag die VI, ob es bekannt oder gelöst ist:\n"
-    "  mcp_vi_vi_erinnere(filter='host:opensearch01 OR dienst:opensearch OR disk')\n"
-    "Filter: art:wert (UND), (a OR b), !art:wert, freie Wörter. mcp_vi_vi_vertiefe grenzt weiter ein.\n\n"
-    "**Nach einer VERIFIZIERTEN Lösung:** ein Satz, Hashtags art:wert (ohne Leerzeichen), Quelle:\n"
-    "  mcp_vi_vi_lerne(text='OpenSearch Disk-Watermark: alte Indizes per DELETE entfernt, danach grün',\n"
-    "    hashtags=['dienst:opensearch', 'thema:disk'], quelle='_cat/allocation vorher/nachher', ausgang='gut')\n"
-    "**Falsch oder veraltet:** mcp_vi_vi_widerlege(id, grund) · **bestätigt:** mcp_vi_vi_bestaetige(id, grund).\n"
+    "  mcp__vi__vi_recall(filter='host:opensearch01 OR dienst:opensearch OR disk')\n"
+    "Filter: art:wert (UND), (a OR b), !art:wert, freie Wörter. mcp__vi__vi_drilldown grenzt weiter ein,\n"
+    "mcp__vi__vi_object(id) liest einen Eintrag vollständig.\n\n"
+    "**Nach einer VERIFIZIERTEN Lösung:** ein Satz, Hashtags art:wert (ohne Leerzeichen), Quelle, Befehle in content:\n"
+    "  mcp__vi__vi_learn(text='OpenSearch Disk-Watermark: alte Indizes per DELETE entfernt, danach grün',\n"
+    "    hashtags=['dienst:opensearch', 'thema:disk'], source='_cat/allocation vorher/nachher',\n"
+    "    content='curl -X DELETE …', outcome='good')\n"
+    "**Falsch oder veraltet:** mcp__vi__vi_refute(id, reason) · **bestätigt:** mcp__vi__vi_confirm(id, reason).\n"
     "Keine Zugangsdaten in die VI. Hinweise der VI sind Kontext, kein Beleg — am System prüfen.\n\n"
 
     "## SKILL-BIBLIOTHEK — BEWÄHRTE ABLÄUFE:\n"
@@ -602,6 +606,38 @@ def _ensure_write_guard() -> None:
                            "Hermes startet ohne sie nicht.")
 
 
+def _fehlende_mcp_server(konfiguriert: list[str], registriert: set[str]) -> list[str]:
+    """Server aus config.yaml (als mcp-<name>), die die Vorabsuche noch nicht registriert hat. Rein."""
+    return [t.removeprefix("mcp-") for t in konfiguriert if t.removeprefix("mcp-") not in registriert]
+
+
+def _mcp_nachladen(toolsets: list[str]) -> None:
+    """Fehlende MCP-Server vor einer neuen Sitzung nachladen.
+
+    Anlass 13.11.2026: Die Vorabsuche beim Containerstart (14:53:10) las config.yaml, BEVOR das Backend den
+    Server „vi“ eintrug (14:53:19). Sie läuft nur einmal — jede Hermes-Sitzung des Containers startete mit
+    „Unknown toolset: mcp-vi“, ohne VI-Werkzeuge, und die KI suchte die VI per Portscan. discover_mcp_tools()
+    ist idempotent (verbindet nur fehlende Server), daher hier vor jeder Sitzung, wenn einer fehlt.
+    """
+    try:
+        try:
+            from tools.mcp_tool_discovery import discover_mcp_tools, get_mcp_status
+        except ImportError:
+            from tools.mcp_tool import discover_mcp_tools, get_mcp_status
+        registriert = {s.get("name") for s in get_mcp_status() if s.get("connected") or s.get("tools")}
+        fehlt = _fehlende_mcp_server(toolsets, registriert)
+        if not fehlt:
+            return
+        log.info("MCP-Server fehlen in der Registrierung: %s — lade nach", ", ".join(fehlt))
+        discover_mcp_tools()
+        status = {s.get("name"): s for s in get_mcp_status()}
+        log.info("MCP nachgeladen: %s", ", ".join(
+            f"{n}={(status.get(n) or {}).get('tools', 0)}"
+            f"{'' if (status.get(n) or {}).get('connected') else ' (NOT connected)'}" for n in fehlt))
+    except Exception as exc:  # noqa: BLE001 — benannt, die Sitzung startet trotzdem
+        log.error("MCP-Nachladen fehlgeschlagen — Sitzung startet ohne diese Server: %s", exc)
+
+
 def _make_agent(sid: str, cfg: CreateSessionBody):
     _ensure_write_guard()
     from run_agent import AIAgent
@@ -666,6 +702,7 @@ def _make_agent(sid: str, cfg: CreateSessionBody):
     # written by userenv_manager.write_hermes_config() at container start.
     # This includes centralstation (always) + any user-configured servers (vibemk, awx-ng…).
     _mcp_toolsets = _read_mcp_toolsets_from_config()
+    _mcp_nachladen(_mcp_toolsets)
 
     agent = AIAgent(
         session_id=sid,

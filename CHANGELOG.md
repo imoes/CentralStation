@@ -62,8 +62,22 @@ You: „warum geht hermes beim admin account nicht? auf llm-host03 kommen keine 
 - **Now:**
   - the instructions use `vi_recall`, `vi_drilldown`, `vi_object`, `vi_learn` (`source`, `content`, `outcome`),
     `vi_refute` and `vi_confirm`;
-  - they state the prefix (`mcp_vi_` in Hermes, `mcp__vi__` in Claude);
+  - they state the prefix `mcp__vi__`;
   - they say not to search for ports.
+- **Correction (same day):**
+  - The first version of this fix gave the Hermes prefix as `mcp_vi_`. That is wrong: Hermes names MCP tools
+    `mcp__<server>__<tool>`, as its log shows (`mcp__centralstation__…`).
+  - The old names were only half the cause. **Hermes had loaded no VI tools at all.**
+    - The container's MCP pre-discovery (14:53:10) read `config.yaml` before the backend added the server `vi`
+      (14:53:19).
+    - It runs only once, so every session of that container started with „⚠️ Unknown toolset: mcp-vi“. 3 servers
+      were registered; vi was missing, without any error.
+  - **Fixed in `userenv/main.py`:**
+    - Before each new session, `_mcp_nachladen` reloads servers that are in `config.yaml` but not yet registered.
+      Hermes' `discover_mcp_tools()` only retries missing servers.
+    - The Hermes system prompt likewise named `mcp_vi_vi_erinnere`; it now uses `mcp__vi__vi_recall` and the other
+      English names.
+  - Tests: `test_hermes_mcp_vi.py` (3).
 
 ### Evidence
 

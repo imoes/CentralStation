@@ -978,8 +978,8 @@ ist jederzeit erlaubt.)
 #: gelistete Werkzeuge — mit „vi_erinnere“ in der Anleitung fand er nichts und suchte die VI per Portscan.
 _VI_SECTION = """
 ## GEDÄCHTNIS — die VI (MCP-Server `vi`)
-Die Werkzeuge heißen englisch (vi-mcp ≥ 0.51); in Hermes mit Präfix `mcp_vi_` (z. B. `mcp_vi_vi_recall`), in Claude
-`mcp__vi__vi_recall`. Die VI ist erreichbar, sobald diese Werkzeuge da sind — nicht nach Ports oder Hosts suchen.
+Die Werkzeuge heißen englisch und tragen in Claude wie in Hermes das Präfix `mcp__vi__` (z. B. `mcp__vi__vi_recall`).
+Die VI ist erreichbar, sobald diese Werkzeuge da sind — nicht per Terminal, Port oder Hostname nach ihr suchen.
 Bevor du ein Problem untersuchst, frag die VI, ob es schon bekannt oder gelöst ist:
 
     vi_recall(filter="host:<hostname> OR dienst:<dienst> OR <stichwort>")
