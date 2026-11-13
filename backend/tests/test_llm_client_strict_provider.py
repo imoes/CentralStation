@@ -16,6 +16,14 @@ import pytest
 from app.services import llm_client
 
 
+@pytest.fixture(autouse=True)
+def _frisch():
+    """Der Rückfall wird je Endpunkt gemerkt — jeder Test beginnt ohne Gedächtnis."""
+    llm_client._OHNE_THINKING.clear()
+    yield
+    llm_client._OHNE_THINKING.clear()
+
+
 def _cfg() -> SimpleNamespace:
     # generate_text liest die Konfiguration nur über Attribute; LLMConfig selbst
     # zöge app.core.config mit, das ohne .env nicht lädt.
@@ -93,3 +101,42 @@ def test_strict_provider_retry_also_drops_chat_template_kwargs(monkeypatch):
     seen = _patch_transport(monkeypatch, handler)
     assert asyncio.run(llm_client.generate_text(_cfg(), [{"role": "user", "content": "x"}])) == "OK"
     assert len(seen) == 2 and "chat_template_kwargs" not in seen[1]
+
+
+_LLMBASE_FALSE = ("Model z-ai/glm-5.3-flash does not support the requested features: tools, max_tokens. "
+                  "Choose a compatible model or remove the unsupported option.")
+
+
+def _llmbase(request):
+    """Wortlaut von llmbase.ai, gemessen 13.11.2026: mit chat_template_kwargs abgelehnt, ohne ok."""
+    if "chat_template_kwargs" in json.loads(request.content):
+        return httpx.Response(400, json={"error": {"message": _LLMBASE_FALSE,
+                                                   "code": "unsupported_request_features"}})
+    return httpx.Response(200, json={"choices": [{"message": {
+        "content": "", "tool_calls": [{"id": "1", "type": "function",
+                                       "function": {"name": "zeit", "arguments": "{}"}}]}}]})
+
+
+def test_werkzeugaufruf_faellt_bei_llmbase_auf_anfrage_ohne_llama_felder_zurueck(monkeypatch):
+    seen = _patch_transport(monkeypatch, _llmbase)
+    tools = [{"type": "function", "function": {"name": "zeit", "parameters": {"type": "object"}}}]
+    a = asyncio.run(llm_client.generate_with_tools(_cfg(), [{"role": "user", "content": "x"}], tools))
+    assert [x for x in a.aufrufe] and len(seen) == 2
+    assert "chat_template_kwargs" in seen[0] and "chat_template_kwargs" not in seen[1]
+    assert "tools" in seen[1] and "max_tokens" not in seen[1]                 # globale Regel
+
+
+def test_rueckfall_wird_je_endpunkt_gemerkt(monkeypatch):
+    seen = _patch_transport(monkeypatch, _llmbase)
+    tools = [{"type": "function", "function": {"name": "zeit", "parameters": {"type": "object"}}}]
+    for _ in range(3):
+        asyncio.run(llm_client.generate_with_tools(_cfg(), [{"role": "user", "content": "x"}], tools))
+    assert len(seen) == 4                       # einmal abgelehnt, danach direkt ohne die Felder
+
+
+def test_ablehnung_ohne_feldnamen_im_text_wird_erkannt():
+    p = {"model": "m", "chat_template_kwargs": {}}
+    assert llm_client.lehnt_thinking_felder_ab(400, _LLMBASE_FALSE, p)
+    assert not llm_client.lehnt_thinking_felder_ab(400, "model not found", p)
+    assert not llm_client.lehnt_thinking_felder_ab(400, _LLMBASE_FALSE, {"model": "m"})
+    assert not llm_client.lehnt_thinking_felder_ab(500, _LLMBASE_FALSE, p)

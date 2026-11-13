@@ -47,6 +47,38 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-13 — AI analysis works with strict OpenAI-compatible providers (llmbase.ai)
+
+### What was fixed
+
+- **Every tool call failed after the global LLM connector was switched to llmbase.ai** (`z-ai/glm-5.3-flash`,
+  13.11. 15:47). There were 139 rejections in about 30 minutes, and the log-watch AI analysis stood still.
+  - The backend sends the llama.cpp field `chat_template_kwargs`, which llmbase.ai rejects.
+  - With `enable_thinking: false`, the error text names neither the field nor the real cause: „does not support the
+    requested features: tools, max_tokens“. The request contained no `max_tokens`.
+  - `generate_text` only retried when the error named the field. `generate_with_tools` never retried.
+- **Now:** both functions retry once without the llama.cpp fields when a 400 says a field is not supported.
+  - Recognised: a field name, „does not support“, „unsupported“ or „invalid/unknown request parameter“.
+  - Other 400s are still not retried, e.g. „model not found“.
+  - Per base URL and model the backend remembers the rejection, so later steps go straight without the fields.
+
+### Evidence
+
+- Direct probes against llmbase.ai, 13.11.:
+  - with tools, without the field: ok;
+  - with `enable_thinking: false`: the „tools, max_tokens“ error;
+  - with `enable_thinking: true`: „does not support chat_template_kwargs thinking controls“.
+- The new code against the live connector made two tool calls (`zeit`), the rejection was remembered after the first,
+  and a plain text call worked.
+- `test_llm_client_strict_provider.py`: 3 new tests, all `test_llm*` tests pass (10).
+
+### What is still missing
+
+- With thinking on, llmbase.ai expects `reasoning_effort` (low/high/max). We do not send it, so the model thinks
+  according to the provider's default.
+
+---
+
 ## 2026-11-13 — Hermes in the console finds the VI again
 
 You: „warum geht hermes beim admin account nicht? auf llm-host03 kommen keine anfragen an“.

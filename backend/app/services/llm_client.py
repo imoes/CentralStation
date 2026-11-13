@@ -244,6 +244,37 @@ ANTHROPIC_MAX_TOKENS = 32000
 
 #: llama.cpp-spezifische Felder im chat_completions-Payload (siehe generate_text).
 _THINKING_KEYS = frozenset({"enable_thinking", "thinking_budget", "chat_template_kwargs"})
+#: Wortlaute strenger Anbieter, wenn sie Felder ablehnen. Gemessen 13.11.2026 an llmbase.ai (z-ai/glm-5.3-flash):
+#: mit chat_template_kwargs {"enable_thinking": false} kam „does not support the requested features: tools,
+#: max_tokens“ — kein Feldname im Text, obwohl die Anfrage weder max_tokens enthielt noch an tools scheiterte (ohne
+#: das Feld lief derselbe Werkzeugaufruf). Mit true: „does not support chat_template_kwargs thinking controls“.
+_ABLEHNUNG = ("does not support", "unsupported", "invalid request parameter", "unknown request parameter")
+#: (base_url, Modell), die die llama.cpp-Felder ablehnen — danach ohne sie, statt jeden Schritt doppelt zu schicken.
+_OHNE_THINKING: set[tuple[str, str]] = set()
+
+
+def lehnt_thinking_felder_ab(status: int, text: str, payload: dict) -> bool:
+    """400, weil der Anbieter die llama.cpp-Felder nicht kennt? Ein anderer 400 („model not found“) nicht. Rein."""
+    if status != 400 or not (_THINKING_KEYS & payload.keys()):
+        return False
+    t = (text or "").lower()
+    return any(k in t for k in _THINKING_KEYS) or any(w in t for w in _ABLEHNUNG)
+
+
+async def _post_mit_rueckfall(client, url: str, headers: dict, payload: dict, llm_config: Any):
+    """POST; lehnt der Anbieter die llama.cpp-Felder ab, einmal ohne sie — und für diesen Endpunkt merken."""
+    schluessel = (str(getattr(llm_config, "base_url", "")), str(getattr(llm_config, "model", "")))
+    if schluessel in _OHNE_THINKING:
+        payload = {k: v for k, v in payload.items() if k not in _THINKING_KEYS}
+    response = await client.post(url, headers=headers, json=payload)
+    if lehnt_thinking_felder_ab(response.status_code, response.text, payload):
+        log.info("LLM %s lehnt llama.cpp-Felder ab (%s) — erneut ohne sie, für diesen Endpunkt gemerkt",
+                 llm_config.model, response.text[:160].strip())
+        payload = {k: v for k, v in payload.items() if k not in _THINKING_KEYS}
+        response = await client.post(url, headers=headers, json=payload)
+        if response.status_code < 400:
+            _OHNE_THINKING.add(schluessel)
+    return response
 
 
 async def generate_text(
@@ -383,16 +414,9 @@ async def generate_text(
         extract = _extract_chat_output
 
     async with httpx.AsyncClient(timeout=llm_config.timeout_seconds, verify=False) as client:
-        response = await client.post(url, headers=headers, json=payload)
-        # enable_thinking/thinking_budget sind llama.cpp-Erweiterungen. Strenge
-        # OpenAI-kompatible Anbieter lehnen die GANZE Anfrage ab ("Unknown request
-        # parameter: enable_thinking") — dann einmal ohne sie, statt zu scheitern.
-        if (response.status_code == 400 and _THINKING_KEYS & payload.keys()
-                and any(k in response.text for k in _THINKING_KEYS)):
-            log.info("LLM %s rejects thinking params — retrying without them",
-                     llm_config.model)
-            payload = {k: v for k, v in payload.items() if k not in _THINKING_KEYS}
-            response = await client.post(url, headers=headers, json=payload)
+        # enable_thinking/thinking_budget/chat_template_kwargs sind llama.cpp-Erweiterungen. Strenge
+        # OpenAI-kompatible Anbieter lehnen die GANZE Anfrage ab — dann einmal ohne sie, statt zu scheitern.
+        response = await _post_mit_rueckfall(client, url, headers, payload, llm_config)
 
     if response.status_code >= 400:
         detail = response.text[:500].strip()
@@ -470,7 +494,8 @@ async def generate_with_tools(llm_config: Any, messages: list[dict[str, Any]],
         payload["temperature"] = temperature
     url = _build_api_url(llm_config.base_url, "chat/completions")
     async with httpx.AsyncClient(timeout=llm_config.timeout_seconds, verify=False) as client:
-        response = await client.post(url, headers=headers, json=payload)
+        # 13.11.: llmbase.ai lehnte jeden Werkzeugaufruf mit chat_template_kwargs ab (41× in 10 min, KI-Analyse stand)
+        response = await _post_mit_rueckfall(client, url, headers, payload, llm_config)
     if response.status_code >= 400:
         msg = f"HTTP {response.status_code}: {response.text[:500].strip()}"
         log.warning("LLM tool call failed [%s]: %s", llm_config.model, msg)
