@@ -47,6 +47,24 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-13 — Local VI on vi-mcp 0.62.5
+
+### What has changed
+
+- **vi-mcp 0.62.5** from the apt archive. It adds three things (vi-mcp session):
+  - `vi-mcp quarantine` no longer crashes with `KeyError: 'herkunft'`, which we had reported;
+  - a new reason „ausgeschlossen“ for empty searches;
+  - the weight layer stops when it shows no effect.
+- The console hook is unchanged, so the backend was not rebuilt.
+
+### Evidence
+
+- Release v0.62.5: signature valid (key c88aa8ce…), deb sha256 7da8e429ebdd…, the same value in the apt archive.
+- Hook `a5874f2f…` and config fields unchanged.
+- Live: `/gesund` ok 0.62.5, container healthy, no error in the log, `netz status` 0 violations.
+
+---
+
 ## 2026-11-13 — AI analysis works with strict OpenAI-compatible providers (llmbase.ai)
 
 ### What was fixed
