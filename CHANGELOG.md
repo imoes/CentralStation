@@ -47,6 +47,43 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-13 — Hermes in the console finds the VI again
+
+You: „warum geht hermes beim admin account nicht? auf llm-host03 kommen keine anfragen an“.
+
+### What was fixed
+
+- **The console instructions named the VI tools by their old German names** (`vi_erinnere`, `vi_lerne`,
+  `vi_vertiefe`, `vi_widerlege`, `vi_bestaetige`; `userenv_manager._VI_SECTION`).
+  - vi-mcp 0.62.4 lists only the English names (61 tools: `vi_recall`, `vi_learn`, …). It still accepts the old ones
+    when called, but Hermes only knows listed tools.
+  - The admin session therefore found none of them („not_found“), took the VI for unreachable, and started probing
+    ports for vi-mcp.
+- **Now:**
+  - the instructions use `vi_recall`, `vi_drilldown`, `vi_object`, `vi_learn` (`source`, `content`, `outcome`),
+    `vi_refute` and `vi_confirm`;
+  - they state the prefix (`mcp_vi_` in Hermes, `mcp__vi__` in Claude);
+  - they say not to search for ports.
+
+### Evidence
+
+- **Requests do reach llm-host03.**
+  - Admin session `e3b3fdfd` (container `cs-userenv-5bfd1b3f…`) since 15:18 UTC: LLM calls #1–#5 to
+    `https://llm-host03.example.com/qwen27b/v1`, each with a server id (`chatcmpl-…`).
+  - On llm-host03, the nginx container log shows 143 requests to `/qwen27b/v1/chat` from 10.0.254.10 (hal) within
+    30 min, all 200.
+  - The first call took 102 s (12 775 prompt tokens, empty cache), later ones 15–45 s.
+- **Tool names checked against the server:** `tools/list` of the local vi-mcp returns no German name, while
+  `tools/call vi_erinnere` still answers.
+- `test_vi_konsole.py`: 11 passed. It now also checks that no old name remains in the instructions.
+
+### What is still missing
+
+- The backend connector and the log-watch bridge still call `vi_vorher`, `vi_nachher`, `vi_lerne` and `vi_erinnere`
+  (`connectors/vi_mcp.py`). This works only through the hidden aliases and breaks once vi-mcp drops them.
+
+---
+
 ## 2026-11-13 — Local VI on vi-mcp 0.62.4
 
 ### What has changed

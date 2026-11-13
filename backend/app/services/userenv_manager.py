@@ -973,20 +973,25 @@ ist jederzeit erlaubt.)
 
 
 #: Gedächtnis der Konsole: die lokale VI (vi-mcp, MCP-Server „vi“, Instanz konsole). Ersetzt seit 08.11.2026
-#: store_knowledge/search_knowledge (cs-knowledge, abgeschaltet).
+#: store_knowledge/search_knowledge (cs-knowledge, abgeschaltet). Werkzeugnamen englisch (13.11.2026): vi-mcp listet
+#: nur noch vi_recall/vi_learn/…; die alten deutschen Namen nimmt es beim Aufruf zwar an, Hermes kennt aber nur
+#: gelistete Werkzeuge — mit „vi_erinnere“ in der Anleitung fand er nichts und suchte die VI per Portscan.
 _VI_SECTION = """
 ## GEDÄCHTNIS — die VI (MCP-Server `vi`)
+Die Werkzeuge heißen englisch (vi-mcp ≥ 0.51); in Hermes mit Präfix `mcp_vi_` (z. B. `mcp_vi_vi_recall`), in Claude
+`mcp__vi__vi_recall`. Die VI ist erreichbar, sobald diese Werkzeuge da sind — nicht nach Ports oder Hosts suchen.
 Bevor du ein Problem untersuchst, frag die VI, ob es schon bekannt oder gelöst ist:
 
-    vi_erinnere(filter="host:<hostname> OR dienst:<dienst> OR <stichwort>")
+    vi_recall(filter="host:<hostname> OR dienst:<dienst> OR <stichwort>")
 
-Filter: `art:wert` (UND), `(a OR b)`, `!art:wert`, freie Wörter (Volltext). `vi_vertiefe` grenzt weiter ein.
+Filter: `art:wert` (UND), `(a OR b)`, `!art:wert`, freie Wörter (Volltext). `vi_drilldown` grenzt weiter ein,
+`vi_object(id)` liest einen Eintrag vollständig.
 Nach einer **verifizierten** Lösung lege sie ab — ein Satz, Hashtags `art:wert` (ohne Leerzeichen im Wert) und
-eine Quelle (Befehl, Ausgabe, Ticket):
+eine Quelle (Befehl, Ausgabe, Ticket); Befehle und Code vollständig in `content`:
 
-    vi_lerne(text="…", hashtags=["host:…", "dienst:…", "thema:…"], quelle="…", ausgang="gut")
+    vi_learn(text="…", hashtags=["host:…", "dienst:…", "thema:…"], source="…", content="…", outcome="good")
 
-Ist ein Eintrag falsch oder veraltet: `vi_widerlege(id, grund)`; bestätigt er sich: `vi_bestaetige(id, grund)`.
+Ist ein Eintrag falsch oder veraltet: `vi_refute(id, reason)`; bestätigt er sich: `vi_confirm(id, reason)`.
 Keine Zugangsdaten in die VI. Hinweise der VI sind Kontext, kein Beleg — prüfe sie am System.
 """
 

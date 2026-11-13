@@ -62,7 +62,10 @@ def test_briefing_nennt_die_vi_statt_store_knowledge():
     from app.services.userenv_manager import agent_instructions
     for kb in (True, False):
         t = agent_instructions("marvin", kb_available=kb)
-        assert "vi_erinnere" in t and "vi_lerne" in t and "store_knowledge" not in t
+        assert "vi_recall" in t and "vi_learn" in t and "store_knowledge" not in t
+        # 13.11.: vi-mcp listet nur englische Namen — Hermes fand „vi_erinnere“ nicht und suchte die VI per Portscan
+        for alt in ("vi_erinnere", "vi_lerne", "vi_vertiefe", "vi_widerlege", "vi_bestaetige"):
+            assert alt not in t, alt
 
 
 def test_wissens_werkzeuge_sind_vom_mcp_server_entfernt():
