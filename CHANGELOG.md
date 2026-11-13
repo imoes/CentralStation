@@ -47,6 +47,29 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-13 — Local VI on vi-mcp 0.62.4
+
+### What has changed
+
+- **vi-mcp 0.62.4** from the apt archive. It fixes `logic install --target`, which no longer reports „still not
+  importable“, and adds one documentation entry.
+- The console hook is unchanged, so the backend was not rebuilt. It picks up the new image tag with its next build.
+
+### Evidence
+
+- Release v0.62.4:
+  - signature valid (key c88aa8ce…);
+  - deb sha256 0a0091269ad2…, the same value in the apt archive.
+- Hook `a5874f2f…` is identical to 0.62.3. The config fields are the same: bind, db, instances, origins, p2p, port,
+  ttl.
+- Live, 13.11. at 15:16 UTC:
+  - `/gesund` reports ok 0.62.4; container healthy; no error in the log;
+  - `netz status` reports 0 violations, 1 of 1 peer reachable;
+  - clingo 5.8.3 is active;
+  - backup in `~/vi-mcp-sicherung/*-20261113T151628Z.tgz`.
+
+---
+
 ## 2026-11-13 — Local VI on vi-mcp 0.62.3, installed from the signed apt archive
 
 ### What has changed

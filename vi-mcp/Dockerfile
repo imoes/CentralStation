@@ -1,5 +1,5 @@
 # Lokale VI für CentralStation: vi-mcp aus dem signierten apt-Archiv (https://imoes.github.io/vi-mcp-packages/,
-# Release github.com/imoes/vi-mcp/releases/tag/v0.62.3). Version fest gepinnt; vi-mcp/aktualisieren.sh setzt sie.
+# Release github.com/imoes/vi-mcp/releases/tag/v0.62.4). Version fest gepinnt; vi-mcp/aktualisieren.sh setzt sie.
 # Ein Image, zwei Dienste im Compose: vi-mcp (Gedächtnis, Nutzer vi-mcp) und vi-p2p (Netzdienst, Nutzer vi-p2p,
 # Profil „netz“) — wie die beiden systemd-Dienste des Pakets, getrennt: der Netzdienst liest fremde Daten und
 # erreicht das Gedächtnis nur über das MCP-Werkzeugpaar vi_netz_ausgang/vi_netz_eingang.
@@ -9,7 +9,7 @@ FROM ubuntu:24.04
 ARG HTTP_PROXY=""
 ARG HTTPS_PROXY=""
 ARG NO_PROXY=""
-ARG VI_MCP_VERSION=0.62.3-1
+ARG VI_MCP_VERSION=0.62.4-1
 ARG VI_MCP_REPO=https://imoes.github.io/vi-mcp-packages/apt
 #: Fingerabdruck des Archiv-Schlüssels (ed25519, 11.11.2026–10.11.2029), verglichen mit deploy/repo-key.asc im
 #: vi-mcp-Repo am 13.11.2026. Der Schlüssel liegt fest im Repo (vi-mcp/repo-schluessel.gpg), nie aus dem Download.
@@ -23,8 +23,9 @@ COPY vi-mcp/repo-schluessel.gpg /usr/share/keyrings/vi-mcp.gpg
 # die Prüfung des Schlüssels), dann die Quelle, dann vi-mcp in genau der gepinnten Version.
 # Ohne Menü (VI_MCP_KEIN_MENUE), ohne Empfehlungen: python3-libtorrent nur, wenn das Netz Torrent nutzen soll.
 # clingo (vi_logic, ab 0.62.0) in ein eigenes Verzeichnis im Image — /var/lib/vi-mcp ist ein Volume und würde es
-# verdecken; vi-mcp findet es über VI_MCP_EXTRA_PYTHON. pip wird danach wieder entfernt. Die Variable schon beim
-# Installieren: 0.62.3 prüft nach --target nur VI_MCP_EXTRA_PYTHON und die Standardorte (sonst „still not importable“).
+# verdecken; vi-mcp findet es zur Laufzeit über VI_MCP_EXTRA_PYTHON (ENV unten). pip wird danach wieder entfernt.
+# Die Variable auch beim Installieren: bis 0.62.3 prüfte `logic install --target` nur sie und die Standardorte
+# („still not importable“); ab 0.62.4 behoben (vi-mcp 1977805), schadet aber nicht.
 RUN if [ -n "$HTTP_PROXY" ]; then \
         printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' \
             "$HTTP_PROXY" "${HTTPS_PROXY:-$HTTP_PROXY}" > /etc/apt/apt.conf.d/01proxy; \
