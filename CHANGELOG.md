@@ -47,6 +47,46 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-13 — Log analysis and incident triage ask the local VI, then the company network
+
+You: „dann mache die log analyse lokal und die incident-triage auch lokal“, option „Lokale VI + Firmennetz“.
+
+### What has changed
+
+- **One source for VI context, used by both** (`vi_bruecke.lokaler_kontext`):
+  - It first asks the local VI (`vi_recall`, read-only).
+  - When that finds nothing, it asks the company network `firma` live (`vi_net_search`). Firma holds the internal
+    documentation, e.g. Confluence runbooks.
+  - Every outcome is named: `lokal`, `firma`, `nichts`, `aus` or `fehler`.
+- **Log analysis:** this replaces the earlier search in the central VI (`vi_erinnere` with `!instanz:centralstation`).
+  - Hints and experiences still go to the central VI (`vi_vorher`/`vi_nachher`/`vi_feedback`), so the router keeps
+    learning.
+  - The prompt names the source; firma hits are marked as unreviewed data, not instructions.
+- **Incident triage:** it now gets this context too, field `gedaechtnis` in the prompt.
+  - The system prompt says: use it for cause and check steps, name it as a source, treat it as context, not as
+    evidence.
+  - The result records where the context came from (`gedaechtnis`).
+- **No self-confirmation:** CentralStation's own findings come back through firma without an instance name
+  („CentralStation-Befund …“, „Bekannter Fehler (Relevanz …“). They are removed, as `!instanz:centralstation` did
+  centrally.
+
+### Evidence
+
+- Live, 13.11.:
+  - `host:cue0124.example.com thema:solr`: nothing locally → firma, 10 hits, 5 own removed, 5 left, among them
+    „Confluence IT: [KB] mu-img-cuesolr02.stage …“;
+  - `host:swarm02.example.com`: 2 local hits, firma not asked.
+- `test_vi_lokal_kontext.py`: 6 tests. With the related tests (`test_error_cluster_notify`, VI bridge and funnel):
+  50 passed.
+  - The 2 notify failures seen earlier came only from `cs_policy` missing on the path in the test container.
+
+### What is still missing
+
+- The local VI is reached with the console instance's token (`vi.konsole_token`), so the backend searches as
+  instance `konsole`. Read-only, but not a separate identity.
+
+---
+
 ## 2026-11-13 — The local VI is a member of the company network `firma`
 
 You: „du solltest dem netz firma beitreten wie die peer session gesagt hat“.
