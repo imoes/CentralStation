@@ -190,6 +190,27 @@ services:
       vi-mcp:
         condition: service_healthy
 
+  # Firmennetz „firma“ (kind company, peerhost llm-host03; Nutzer 13.11.2026): trägt INTERNES Wissen (z. B. die
+  # Confluence-Server-Doku) nur zu eingeladenen Mitgliedern — das offene Netz standard liefert per Konstruktion nur
+  # geteiltes. Läuft im Netz-Namensraum von vi-mcp: der Netzdienst lauscht für die Live-Suche fest auf 127.0.0.1
+  # (net_service.py), und das Gedächtnis erreicht ihn so unter derselben Adresse; mcp_url ist 127.0.0.1:8765.
+  # Eigene Dateien im selben Volume: /etc/vi-p2p/firma.json, firma-mcp-token, /var/lib/vi-p2p/firma/.
+  vi-p2p-firma:
+    image: centralstation-vi-mcp:0.62.5
+    profiles: ["netz"]
+    restart: unless-stopped
+    user: vi-p2p
+    command: ["vi-mcp", "net", "--network", "firma", "run"]
+    network_mode: "service:vi-mcp"
+    healthcheck:
+      disable: true
+    volumes:
+      - vi-p2p-daten:/var/lib/vi-p2p
+      - vi-p2p-konfig:/etc/vi-p2p
+    depends_on:
+      vi-mcp:
+        condition: service_healthy
+
   nginx:
     image: nginx:alpine
     restart: unless-stopped

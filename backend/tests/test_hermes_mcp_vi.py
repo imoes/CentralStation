@@ -42,3 +42,10 @@ def test_systemprompt_nennt_die_vi_werkzeuge_wie_hermes_sie_registriert():
     assert "mcp__vi__vi_recall" in src and "mcp__vi__vi_learn" in src
     for alt in ("mcp_vi_vi_", "vi_erinnere", "vi_lerne", "vi_vertiefe", "vi_widerlege", "vi_bestaetige"):
         assert alt not in src, alt
+
+
+def test_firmennetz_als_rueckfall_mit_richtigem_tag():
+    """13.11.: interne Doku (12 994 Confluence-Objekte) liegt nur in der Firmen-VI — Netz „firma“, live über
+    vi_net_search; ein Agent suchte „quelle:confluence“ statt „quelle_art:confluence“."""
+    src = _MAIN.read_text()
+    assert "vi_net_search(network='firma'" in src and "quelle_art:confluence" in src

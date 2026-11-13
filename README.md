@@ -594,6 +594,16 @@ The search bar on `/feed` works like Graylog 5.2's search (`feed-query.ts`, port
     `vi-paket`). If the hook changed, the script says so, and the backend must be rebuilt.
   - **`clingo`** (for `vi_logic`) lives in `/opt/vi-mcp-python` (`VI_MCP_EXTRA_PYTHON`), not in the data volume,
     which would hide it.
+  - **Company network `firma`** (since 13.11.2026), Compose service `vi-p2p-firma`, profile `netz`.
+    - It carries internal knowledge to invited members only. Example: the Confluence server documentation of the
+      central VI on llm-host03 (`quelle_art:confluence`).
+    - The open network `standard` returns shared knowledge only, by design.
+    - The console asks it live with `vi_net_search(network="firma", query="…")` when `vi_recall` finds nothing
+      locally.
+    - The service runs in the network namespace of `vi-mcp` (`network_mode: service:vi-mcp`), because its live-search
+      listener is bound to `127.0.0.1`.
+    - Its own files sit in the shared volumes: `/etc/vi-p2p/firma.json`, `firma-mcp-token` and `/var/lib/vi-p2p/firma/`.
+    - In the memory it has the instance `netz-firma` and the entry `p2p.networks.firma`.
 - **Collective memory (connector `vi_mcp`).** CentralStation is one instance of the shared VI memory vi-mcp.
   Before an analysis the fleet asks what other instances know about the case's hosts and topics (prompt section
   "Kollektiv-Gedächtnis", context not evidence), reports the analysis as an action, and every 15 min pushes known

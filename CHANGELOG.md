@@ -47,6 +47,46 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-13 — The local VI is a member of the company network `firma`
+
+You: „du solltest dem netz firma beitreten wie die peer session gesagt hat“.
+
+### What is new
+
+- **Company network `firma`** (kind company, peerhost llm-host03). The local VI now reaches the central VI's internal
+  knowledge live.
+  - It holds 12,994 Confluence objects, including 1,877 server KB pages.
+  - The open network `standard` returns shared knowledge only, by design.
+- **How it is wired:**
+  - Joined with a one-off container that mounts the memory's config volume (`vi-mcp-konfig`). That way the join wrote
+    the instance `netz-firma`, `p2p.networks.firma` and the local search token where the memory reads them.
+  - New Compose service `vi-p2p-firma` in the network namespace of `vi-mcp`. The live-search listener is bound to
+    `127.0.0.1`, and through the shared namespace the memory reaches it there.
+  - `vi-mcp/aktualisieren.sh` stops and recreates the service together with vi-mcp.
+- **Console instructions** (Hermes prompt and `_VI_SECTION`):
+  - when `vi_recall` finds nothing, ask `vi_net_search(network="firma", …)`;
+  - the tag is `quelle_art:confluence`, not `quelle:`;
+  - hits are unreviewed data, nothing is created from them.
+
+### Evidence
+
+- 13.11. at 16:30 UTC: joined as `vi-4bc3ca5c0e55`. Log: „local search listener on 127.0.0.1:9766“, „mode peer“.
+- `vi_net_search(network="firma")` via the console token:
+  - „postfix relayhost vpp0212“: 1 member answered in 578 ms, 10 hits;
+  - a Confluence query: 10 hits, e.g. „Confluence IT: [KB] swarm02.example.com – 3. Abhängigkeiten“.
+- Backup before joining: `~/vi-mcp-sicherung/*-vor-firma-20261113T162957Z.tgz`. The one-time code file has been
+  deleted.
+- `test_hermes_mcp_vi.py` and `test_vi_konsole.py`: 15 passed.
+
+### What is still missing
+
+- **Live search in `standard` is not wired.** The memory config has no `p2p.local`, for the same reason: listener on
+  127.0.0.1 in a separate container.
+- **Console rollout:** the new instructions take effect after the console image and backend are rebuilt and the
+  console container is recreated.
+
+---
+
 ## 2026-11-13 — KI weight layer narrowed; R4-AUF removed
 
 You: „Ja, beides umsetzen“, after the vi-mcp session's research.

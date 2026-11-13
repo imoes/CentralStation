@@ -47,7 +47,7 @@ HOOK_ALT=$(docker run --rm --entrypoint cat "$ALT_IMG" /usr/share/vi-mcp/hook/vi
 
 echo "== 2. Volumes sichern nach $SICHERUNG"
 mkdir -p "$SICHERUNG"; chmod 700 "$SICHERUNG"
-docker compose --profile netz stop vi-p2p vi-mcp >/dev/null
+docker compose --profile netz stop vi-p2p-firma vi-p2p vi-mcp >/dev/null   # firma läuft im Netz von vi-mcp
 STEMPEL=$(date -u +%Y%m%dT%H%M%SZ)
 for vol in vi-mcp-daten vi-mcp-konfig vi-p2p-daten vi-p2p-konfig; do
     docker run --rm -u 0 --entrypoint tar -v "centralstation_${vol}:/q:ro" -v "$SICHERUNG:/z" "$ALT_IMG" \
@@ -61,7 +61,7 @@ sed -i -E "s/centralstation-vi-mcp:[0-9.]+/centralstation-vi-mcp:$V/g" docker-co
 
 echo "== 4. Bauen und neu erstellen"
 timeout 900 docker compose build vi-mcp 2>&1 | grep -E "ERROR|Built" | tail -2
-docker compose --profile netz up -d vi-mcp vi-p2p 2>&1 | tail -2
+docker compose --profile netz up -d vi-mcp vi-p2p vi-p2p-firma 2>&1 | tail -3
 
 echo "== 5. Prüfen"
 for i in $(seq 1 30); do
