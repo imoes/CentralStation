@@ -47,6 +47,29 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-14 — Local VI on vi-mcp 0.64.1
+
+### What has changed
+
+- **vi-mcp 0.64.1** from the apt archive. New (vi-mcp CHANGELOG):
+  - `vi_stats` measures what it did not measure before:
+    - opening a hint that the hook showed in another session now counts;
+    - a kept router champion gets its own measured AUC instead of "None".
+  - The fine-tuning kit trains in float32 on a GPU (`--fp32`), gives every stage held-out test groups, and has
+    `heldout_loss.py`.
+  - AGENTS.md gains a fine-tuning runbook.
+- The console hook is unchanged, so the backend was not rebuilt.
+
+### Evidence
+
+- Release v0.64.1: signature valid (key c88aa8ce…), deb sha256 124f7a7a5db4…, the same value in the apt archive.
+- Live, 14.11. about 20:05 UTC:
+  - `/gesund` ok vi-mcp 0.64.1, healthy;
+  - `netz status`: 0 violations, 1 of 1 peers reachable, 2 members;
+  - `vi-p2p` and `vi-p2p-firma` running.
+
+---
+
 ## 2026-11-14 — Local VI on vi-mcp 0.64.0
 
 ### What has changed
