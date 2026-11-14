@@ -47,6 +47,31 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-14 — Local VI on vi-mcp 0.64.0
+
+### What has changed
+
+- **vi-mcp 0.64.0** from the apt archive. New (vi-mcp CHANGELOG):
+  - executable VI machines and a kNN-LM inference backend with exact retrieval drafts;
+  - long questions and answers between AIs are kept whole, and `vi_questions(id=…)` shows them completely;
+  - entries held in quarantine are no longer readable by id by other instances;
+  - `vi_stats` names the dominant error class of a low project success rate. The 13.11. LLM-provider burst of the log-watch
+    analysis now shows up there as "one burst within an hour".
+  - The 0.63.3 retry without llama.cpp fields for other OpenAI-compatible providers (llmbase.ai) is included.
+- The console hook is unchanged, so the backend was not rebuilt.
+
+### Evidence
+
+- Release v0.64.0: signature valid (key c88aa8ce…), deb sha256 be5c2ed9a01a…, the same value in the apt archive.
+- In the image, `import vi_mcp, clingo_object` reports 0.64.0 / 0.64.0.
+- Live, 14.11. at about 14:57 UTC:
+  - `/gesund` ok vi-mcp 0.64.0 and healthy;
+  - `netz status`: 0 violations, 1 of 1 peers reachable, 2 members;
+  - `vi-p2p` and `vi-p2p-firma` running;
+  - backup in `~/vi-mcp-sicherung/*-20261114T145732Z.tgz`.
+
+---
+
 ## 2026-11-14 — Local VI on vi-mcp 0.63.2
 
 ### What has changed
