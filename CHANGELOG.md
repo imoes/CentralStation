@@ -47,6 +47,29 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-14 — Local VI on vi-mcp 0.63.2
+
+### What has changed
+
+- **vi-mcp 0.63.2** from the apt archive. New (vi-mcp CHANGELOG):
+  - the logic language core is now the package `clingo_object`, included in the deb;
+  - `vi_logic` gains `answer`: a natural-language question over the memory's objects;
+  - answers are kept as training data;
+  - networks for separate containers (`net setup/join --memory-config/--memory-url/--local-bind`).
+- The console hook is unchanged, so the backend was not rebuilt. Our way into `firma` (`network_mode`) stays as it is.
+
+### Evidence
+
+- Release v0.63.2: signature valid (key c88aa8ce…), deb sha256 ad9597f55557…, the same value in the apt archive.
+- Hook `a5874f2f…`, dependencies and config fields are unchanged.
+- In the image, `import vi_mcp, clingo_object` reports 0.63.2 / 0.63.2, and `logic status` reports clingo 5.8.3.
+- Live, 14.11. at 08:30 UTC:
+  - `/gesund` ok 0.63.2, healthy, no error in the log, `netz status` 0 violations;
+  - `vi-p2p-firma` is connected again with 2 members known;
+  - backup in `~/vi-mcp-sicherung/*-20261114T08….tgz`.
+
+---
+
 ## 2026-11-13 — Log analysis and incident triage ask the local VI, then the company network
 
 You: „dann mache die log analyse lokal und die incident-triage auch lokal“, option „Lokale VI + Firmennetz“.
