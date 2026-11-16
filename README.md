@@ -1440,6 +1440,15 @@ mail und in der konsole“).
   - The run logs how many open incidents had a recipient (`offen_mit_empfaenger`).
 - **Mail:** one-click answers, signed per question and answer, no login (`GET /api/ki-fragen/{id}/antwort`).
   Recipients follow the host scope, as for the immediate mail.
+- **The incident is part of the question** (`incident_auszug`), so you can decide without opening anything. Mail and
+  console show the same excerpt:
+  - period and duration, messages and hosts;
+  - why it was reported and why it was closed;
+  - the AI assessment at the time, with its suspected cause and confidence;
+  - up to three example lines;
+  - links to the incident and to the error network map.
+
+  A part that is missing is named as missing („keine gespeichert“), not left out.
 - **Console:** the agent calls `ki_fragen_offen()` at the start of a session, asks you, and enters only your answer
   with `ki_frage_beantworten` (write approval as for every writing tool).
 - **What an answer does:**

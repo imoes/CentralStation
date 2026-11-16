@@ -10,6 +10,39 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-16 — The KI question mail shows the incident it asks about
+
+### What has changed
+
+- **Before,** the mail „Kurze Frage der KI: …“ carried only the incident title and the answer buttons. You (16.11.):
+  „muss der incident auch angezeigt werden. Sonst kann man nicht entscheiden.“
+- **Now** an excerpt of the incident sits above the buttons. It comes from the stored incident context (`error_cluster`
+  entry), so nothing is looked up again:
+  - period and duration, messages and hosts;
+  - why it was reported (rule and reason) and why it was closed;
+  - the AI assessment at the time, with suspected cause and confidence;
+  - up to three example lines;
+  - links „Incident öffnen“ and „Im Fehler-Netzplan“.
+- **The excerpt is stored in the question itself** (`incident` field in `cs-ki-fragen`). The console tool
+  `ki_fragen_offen` therefore shows the same thing as the mail.
+- **Log lines and titles are now HTML-escaped in this mail.** Before, the question text went into the mail unescaped.
+
+### Evidence
+
+- Tests: `tests/test_ki_fragen.py` 11 passed, 3 of them new. They use the context of the real incident
+  `48f0194e` (cue0111, LayoutChampApp segfaults) and check the excerpt, its position before the buttons, the
+  escaping, and the named gaps.
+- Rendered against the real DB, read-only and without sending: the cue0111 mail shows period
+  15.11. 16:44 – 16.11. 00:19 UTC (455 min), rule I-KRITISCH, close reason „360 min unter den Mindestwerten“,
+  the AI assessment „Häufte Segfaults von LayoutChampApp …“ (confidence medium) and the three segfault lines.
+
+### What is still missing
+
+- Questions asked before this release have no excerpt. Their mail has already gone out, and the console shows
+  „Incident-Daten nicht gespeichert“ for them.
+
+---
+
 ## 2026-11-13 — Mails no longer go out with a sender the relay has to rewrite
 
 ### What was fixed

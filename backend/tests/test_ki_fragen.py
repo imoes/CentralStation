@@ -72,3 +72,48 @@ def test_konsole_werkzeuge_und_anweisung():
 def test_loesungswege_kennen_ticket_und_antwort_als_massnahme():
     from app.services.log_watch import loesungen as lo
     assert {"ticket", "neustart", "konfiguration"} <= set(lo.ARTEN)
+
+
+# Nutzer 16.11.2026: „bei der Mail Kurze Frage der KI: Kritische Kernelmeldung gehäuft: cue0111 … muss der incident
+# auch angezeigt werden. Sonst kann man nicht entscheiden.“ — Kontext gekürzt aus Incident 48f0194e (DB, 16.11.).
+_CUE = {"id": "48f0194e-9272-423b-8332-5d20213f107b", "host": "cue0111.example.com", "nachrichten": 3,
+        "titel": "Kritische Kernelmeldung gehäuft: cue0111.example.com · 1 Hosts · 3 Meldungen",
+        "beginn": datetime(2026, 11, 15, 16, 44, tzinfo=timezone.utc),
+        "geschlossen": datetime(2026, 11, 16, 0, 19, tzinfo=timezone.utc),
+        "kontext": {"type": "error_cluster", "hosts": ["cue0111.example.com"], "regel": "I-KRITISCH",
+                    "reasons": ["Regel I-KRITISCH „Kritische Kernelmeldung gehäuft“: quelle:graylog signal:schaden — "
+                                "3 fenster (mindestens 3) in 360 min"],
+                    "resolved_reason": "Regel I-KRITISCH: 360 min unter den Mindestwerten",
+                    "examples": ["cue0111 kernel: LayoutChampApp[3794845]: segfault at 51000000 ip 0000000051000000",
+                                 "cue0111 kernel: LayoutChampApp[3762913]: segfault at 7fd81b00e1 <x>",
+                                 "drei", "vier"],
+                    "triage": {"titel": "Häufte Segfaults von LayoutChampApp auf cue0111 (CUE Print)",
+                               "zusammenfassung": "LayoutChampApp stürzt wiederholt mit Segfaults ab.",
+                               "vermutete_ursache": "Vermutung: fehlerhafte Speicherzugriffe", "konfidenz": "mittel"}}}
+
+
+def test_auszug_hat_alles_zum_entscheiden():
+    a = kf.incident_auszug(_CUE, "https://cs")
+    assert a["url"] == "https://cs/feed?incident=48f0194e-9272-423b-8332-5d20213f107b"
+    assert a["dauer_min"] == 455 and a["nachrichten"] == 3 and a["hosts"] == ["cue0111.example.com"]
+    assert a["gemeldet_weil"][0].startswith("Regel I-KRITISCH") and "Mindestwerten" in a["geschlossen_weil"]
+    assert a["ki"]["titel"].startswith("Häufte Segfaults") and a["ki"]["konfidenz"] == "mittel"
+    assert len(a["beispiele"]) == 3 and "LayoutChampApp" in a["beispiele"][0]
+
+
+def test_mail_zeigt_den_incident_vor_den_knoepfen():
+    f = {"id": "f1", "frage": kf.frage_text(_CUE), "incident": kf.incident_auszug(_CUE, "https://cs")}
+    h = kf.mail_html(f, {w: f"https://cs/api/ki-fragen/f1/antwort?wahl={w}&t=x" for w in kf.WAHL})
+    assert h.index("Häufte Segfaults") < h.index("ging von selbst weg")
+    for teil in ("Gemeldet, weil", "Geschlossen, weil", "Mindestwerten", "segfault at 51000000", "455 min",
+                 "/feed?incident=48f0194e", "Fehler-Netzplan"):
+        assert teil in h, teil
+    assert "&lt;x&gt;" in h and "<x>" not in h                     # Logzeilen escaped
+    assert h.count("<a href=") == len(kf.WAHL) + 2                 # Antworten + Incident + Netzplan
+
+
+def test_auszug_ohne_kontext_benennt_die_luecken():
+    a = kf.incident_auszug({"id": "i", "host": "h", "titel": "t"}, "https://cs")
+    assert a["ki"] is None and a["beispiele"] == [] and a["dauer_min"] is None
+    h = kf.incident_html(a)
+    assert "keine gespeichert" in h and "kein Grund gespeichert" in h and "Dauer unbekannt" in h

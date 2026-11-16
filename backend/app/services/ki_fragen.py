@@ -74,13 +74,73 @@ def frage_text(i: dict) -> str:
             f"konnte. Was hat geholfen?")
 
 
+def incident_auszug(i: dict, app_url: str) -> dict:
+    """Was man zum Antworten braucht, aus dem gespeicherten Incident-Kontext (error_cluster-Eintrag). Rein.
+
+    Nutzer 16.11.2026 zur Mail „Kurze Frage der KI: Kritische Kernelmeldung gehäuft: cue0111…“: „muss der incident
+    auch angezeigt werden. Sonst kann man nicht entscheiden.“ — der Auszug steht in der Frage selbst, also in Mail
+    und Konsole gleich."""
+    k = i.get("kontext") or {}
+    t = k.get("triage") or {}
+    beginn, ende = i.get("beginn"), i.get("geschlossen")
+    dauer = round((ende - beginn).total_seconds() / 60) if beginn and ende else None
+    return {
+        "url": f"{app_url}/feed?incident={i['id']}",
+        "netzplan_url": f"{app_url}/topology?modus=fehler&filter=incident:{i['id']}",
+        "beginn": beginn.isoformat() if beginn else None, "geschlossen": ende.isoformat() if ende else None,
+        "dauer_min": dauer, "nachrichten": i.get("nachrichten") or 0, "hosts": k.get("hosts") or [i["host"]],
+        "regel": k.get("regel"), "gemeldet_weil": list(k.get("reasons") or []),
+        "geschlossen_weil": k.get("resolved_reason"),
+        "ki": ({"titel": t.get("titel"), "zusammenfassung": t.get("zusammenfassung"),
+                "ursache": t.get("vermutete_ursache"), "konfidenz": t.get("konfidenz")} if t else None),
+        "beispiele": [str(b)[:400] for b in (k.get("examples") or [])[:3]],
+    }
+
+
+def _zeit(iso: str | None) -> str:
+    try:
+        return datetime.fromisoformat(str(iso)).strftime("%d.%m. %H:%M")
+    except (TypeError, ValueError):
+        return "unbekannt"
+
+
+def incident_html(a: dict) -> str:
+    """Der Incident in der Frage-Mail — kompakt, jeder leere Teil benannt statt weggelassen. Rein."""
+    from html import escape as e
+    dauer = f"{a['dauer_min']} min" if a.get("dauer_min") is not None else "Dauer unbekannt"
+    zeilen = [f"<b>Zeitraum:</b> {_zeit(a.get('beginn'))} – {_zeit(a.get('geschlossen'))} UTC ({dauer}) · "
+              f"{a.get('nachrichten', 0)} Meldungen · {len(a.get('hosts') or [])} Host(s): "
+              f"{e(', '.join(a.get('hosts') or []))}"]
+    zeilen.append("<b>Gemeldet, weil:</b> " + (e("; ".join(a["gemeldet_weil"])) if a.get("gemeldet_weil")
+                                               else "kein Grund gespeichert"))
+    zeilen.append(f"<b>Geschlossen, weil:</b> {e(a.get('geschlossen_weil') or 'kein Grund gespeichert')}")
+    ki = a.get("ki")
+    if ki:
+        zeilen.append(f"<b>KI-Einschätzung damals:</b> {e(ki.get('titel') or '')} — {e(ki.get('zusammenfassung') or '')}"
+                      f"<br><b>Vermutete Ursache:</b> {e(ki.get('ursache') or 'keine')} "
+                      f"<span style='color:#777'>(Konfidenz: {e(ki.get('konfidenz') or 'unbekannt')})</span>")
+    else:
+        zeilen.append("<b>KI-Einschätzung damals:</b> keine gespeichert")
+    bsp = "".join(f"<pre style='white-space:pre-wrap;background:#f4f4f4;padding:6px;margin:4px 0;font-size:12px'>"
+                  f"{e(b)}</pre>" for b in a.get("beispiele") or []) or "<p style='margin:2px 0'>keine gespeichert</p>"
+    return (f"<div style='margin:10px 0;padding:8px;border:1px solid #ccc;border-radius:6px'>"
+            + "".join(f"<p style='margin:2px 0 6px'>{z}</p>" for z in zeilen)
+            + f"<p style='margin:6px 0 2px'><b>Beispiele:</b></p>{bsp}"
+            f"<p style='margin:8px 0 0'><a href=\"{e(a['url'])}\">Incident öffnen (Timeline, Einschätzung)</a> · "
+            f"<a href=\"{e(a['netzplan_url'])}\">Im Fehler-Netzplan</a></p></div>")
+
+
 def mail_html(frage: dict, links: dict[str, str]) -> str:
-    """Kurze Mail mit Ein-Klick-Antworten. Rein."""
-    knoepfe = " ".join(f'<a href="{url}" style="display:inline-block;margin:4px;padding:6px 10px;border:1px solid #888;'
+    """Kurze Mail mit Ein-Klick-Antworten, darüber der Incident (ohne ihn kann man nicht entscheiden). Rein."""
+    from html import escape as e
+    knoepfe = " ".join(f'<a href="{e(url)}" style="display:inline-block;margin:4px;padding:6px 10px;border:1px solid #888;'
                        f'border-radius:4px;text-decoration:none">{WAHL[w][0]}</a>' for w, url in links.items())
-    return (f"<p>{frage['frage']}</p><p>{knoepfe}</p>"
+    inc = incident_html(frage["incident"]) if frage.get("incident") else \
+        "<p style='color:#777'>Incident-Daten nicht gespeichert.</p>"
+    return (f"<div style='font-family:Arial,sans-serif;font-size:14px;max-width:760px'>"
+            f"<p>{e(frage['frage'])}</p>{inc}<p>{knoepfe}</p>"
             f"<p style='color:#666;font-size:12px'>Ein Klick genügt — die Antwort wird als Maßnahme bzw. Urteil "
-            f"gelernt (CentralStation, Frage {frage['id']}). Dieselbe Frage steht auch in der Konsole.</p>")
+            f"gelernt (CentralStation, Frage {e(frage['id'])}). Dieselbe Frage steht auch in der Konsole.</p></div>")
 
 
 def wirkung(wahl: str) -> dict:
@@ -117,12 +177,13 @@ async def _incident_daten(db, seit: datetime) -> list[dict]:
         "(select max((e->>'nachrichten')::int) from jsonb_array_elements(i.causal_context::jsonb) e "
         " where e->>'type' = 'error_cluster'), "
         "(select jsonb_agg(e->>'type') from jsonb_array_elements(i.causal_context::jsonb) e "
-        " where e->>'type' in ('ticket', 'resolution', 'massnahme')) "
+        " where e->>'type' in ('ticket', 'resolution', 'massnahme')), "
+        "(select e from jsonb_array_elements(i.causal_context::jsonb) e where e->>'type' = 'error_cluster' limit 1) "
         "from incidents i where i.status = 'resolved' and i.resolved_at >= :seit and exists (select 1 from "
         "jsonb_array_elements(i.causal_context::jsonb) e where e->>'type' = 'error_cluster' and e->>'regel' is not null)"),
         {"seit": seit})).all()
     return [{"id": i, "host": h or "", "titel": (t or "")[:160], "geschlossen": z, "beginn": b, "nachrichten": n or 0,
-             "massnahmen": list(m or [])} for i, h, t, z, b, n, m in rows]
+             "massnahmen": list(m or []), "kontext": k or {}} for i, h, t, z, b, n, m, k in rows]
 
 
 async def stellen(jetzt: datetime | None = None) -> dict:
@@ -166,7 +227,7 @@ async def stellen(jetzt: datetime | None = None) -> dict:
         fid = uuid.uuid4().hex[:16]
         frage = {"id": fid, "incident_id": i["id"], "host": i["host"], "titel": i["titel"], "frage": frage_text(i),
                  "optionen": {w: v[0] for w, v in WAHL.items()}, "erstellt": jetzt.isoformat(), "status": "offen",
-                 "kanaele": ["mail", "konsole"]}
+                 "kanaele": ["mail", "konsole"], "incident": incident_auszug(i, app_url)}
         await o.index(index=INDEX, id=fid, body=frage, refresh=True)
         links = {w: f"{app_url}/api/ki-fragen/{fid}/antwort?wahl={w}&t={token(settings.secret_key, fid, w)}"
                  for w in WAHL}
