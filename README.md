@@ -798,6 +798,18 @@ CheckMK-Alerts der betroffenen Hosts —
 die Daten, auf denen die Einschätzung beruht; leere Funde stehen als „keine" da. Der
 Incident-Link steht oben und unten.
 
+**Websuche (SearXNG) bei jeder KI-Einschätzung** (`triage.websuche_fuer`, seit 17.11.2026). Parallel zum
+VI-Gedächtnis sucht SearXNG nach der ersten Beispielzeile:
+- **Anfrage:** Variable Teile kommen vorher heraus (PIDs, Adressen, Hex-Werte, Datum, Zeit, Verbindungsnummern).
+  Interne Namen entfernt `websuche.bereinige`.
+- **Rückfall:** Findet die Anfrage nichts, folgt eine zweite ohne Produkt- und Eigennamen.
+- **Gelesen** wird die erste Stack-Exchange-Frage über deren API, mit der besten Antwort.
+- **In der Einschätzung:** Treffer und Seitentext gehen als Feld `websuche` an die KI. Sie gelten als Kontext, nicht
+  als Beleg, und eine genutzte Stelle wird mit URL genannt.
+- **In der Mail** steht der Abschnitt **Websuche** mit Anfrage und Treffern, „(gelesen)" an der geladenen Seite.
+  Bei keinem Ergebnis steht der Grund dort, etwa ausgefallene Suchmaschinen.
+- **Zeitlimit:** 25 s je Abruf. Gemessen 17.11. mit drei echten Fehlerzeilen: 0,8–2,6 s.
+
 Docker liefert stdout pauschal als Level 6. Mitgelesen werden davon Container-Zeilen, deren
 **erstes Level-Wort** ERROR/FATAL/CRITICAL/SEVERE ist (sonst `level=error`, JSON-`level`,
 Traceback); `INFO … outcome=ERROR` zählt nicht. Muster, die in den ersten 2 h nach dem Lesen
@@ -1887,8 +1899,12 @@ The AI only works when a check is true, and it only writes its own analysis.
   (hosts, IPs, internal domains, mails, UUIDs, secrets, user paths) are removed before a query leaves; pages only
   from public addresses; Stack Exchange through its API with the newest answer; long pages keep their end (in a
   forum the last post is usually the solution). Results are context, never evidence.
-  - **Search engines:** SearXNG is asked for `bing,mojeek` (setting `log_watch.websuche_engines`; an empty
-    value means SearXNG's default).
+  - **Search engines:** SearXNG is asked for
+    `stackoverflow,superuser,askubuntu,serverfault,startpage,duckduckgo,mojeek`. The setting
+    `log_watch.websuche_engines` overrides this; an empty value means SearXNG's default.
+    - Measured 17.11.2026: mojeek is blocked and bing returns only home pages. duckduckgo and startpage answer at
+      times and are blocked at times. The Stack Exchange engines answered every test.
+    - Stack Exchange short URLs (`/q/<id>`) are read through the API too.
     - Measured 12.11.2026: the default engines are blocked (brave rate-limited, duckduckgo/startpage CAPTCHA,
       google/qwant access denied) and returned 0 results.
     - Failed engines are named in the result (`ausgefallen`). With no results because engines failed, the AI gets

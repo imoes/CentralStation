@@ -10,6 +10,72 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-17 — Incident assessments ask SearXNG; search engines that actually answer
+
+### What has changed
+
+- **Correction:**
+  - On 12./13.11. I wired SearXNG only into the log analysis (`web_suche` in the funnel), and into the engine list
+    of the feed enrichment and the project planner.
+  - The AI assessment that every incident and its mail get had **no web search**, and I did not say so.
+  - You (17.11.): „Aber das hatte ich dir gesagt!! Es soll searxng hergenommen werden.“
+- **Now every incident assessment asks SearXNG** (`triage.websuche_fuer`), in parallel with the VI memory:
+  - **Query:** built from the first example line; PIDs, addresses, hex values, dates and connection numbers are
+    removed, and internal names are removed by `websuche.bereinige`.
+  - **Fallback:** a query with no hits is followed by a second one without product and proper names.
+  - **Page:** the first Stack Exchange question is read through its API, with the best answer.
+  - **AI:** hits and page text go to the AI as `websuche`, as context and not evidence; it names the URL when it uses
+    one.
+  - **Mail:** a new section **Websuche** shows the query and the hits. With no result, the reason stands there, for
+    example the engines that failed.
+- **Default search engines** are now `stackoverflow,superuser,askubuntu,serverfault,startpage,duckduckgo,mojeek`
+  instead of `bing,mojeek`. This applies to the log analysis, feed enrichment and project planner as well.
+  The setting `log_watch.websuche_engines` still overrides it.
+
+### What was fixed
+
+- **Stack Exchange short URLs** (`https://superuser.com/q/1641830`), which SearXNG's Stack Exchange engines return,
+  are read through the API.
+  - Before, only `/questions/<id>` was recognised. A short URL went straight to the site, which refuses scripts
+    (measured 07.11.: 403).
+  - This also affects `web_seite` in the log analysis.
+
+### Evidence
+
+- **Engines measured 17.11.** against `llm-host03:8080`, each with the same 3 error lines:
+
+  | Engine | Result |
+  |---|---|
+  | mojeek | „Suspended: access denied“ |
+  | bing | 0/0/10 hits, home pages only; „ORA-12541“ returned a car brand |
+  | google, qwant | access denied |
+  | brave | „too many requests“ |
+  | yahoo | HTTP error |
+  | duckduckgo, startpage | 9–10 hits at first, duckduckgo later „CAPTCHA“ |
+  | stackoverflow, superuser, askubuntu | matching questions in every test |
+
+- **Assessment run on the real cue0111 incident** (`48f0194e`) with the real LLM, not stored and not mailed:
+  - total 7.4 s;
+  - query `kernel LayoutChampApp segfault at ip sp error 14` → 0 hits, fallback `kernel segfault at ip sp error 14`
+    → 5 hits (superuser, stackoverflow, askubuntu);
+  - duckduckgo („CAPTCHA“) and mojeek were named as failed.
+- **Three real error lines, measured 0.8–2.6 s each:** segfault, OOM kill, nginx upstream timeout. Each got matching
+  hits plus a page read through the API: superuser/q/1641830, askubuntu/q/1464586, stackoverflow/questions/18740635.
+- **Tests:**
+  - `tests/test_triage_websuche.py`, 10 new: query, fallback, page reading, named error, timeout, prompt, mail;
+  - `test_log_watch_websuche.py`, 1 new: short URL;
+  - whole backend suite: 1293 passed. `test_log_watch_schreibweg.py` was left out; its failures predate this change.
+
+### What is still missing
+
+- **Hit quality:** for in-house software such as LayoutChampApp the web has only general hits (segfaults in other
+  programs). The AI treats them as context; nothing filters them.
+- **Incident view in the feed:** it does not show the search yet. It is stored with the assessment
+  (`triage.websuche`) and shown in the mail.
+- **Engine monitoring:** an engine that gets blocked is named in each result, but nothing raises an alert.
+
+---
+
 ## 2026-11-16 — The KI question mail shows the incident it asks about
 
 ### What has changed

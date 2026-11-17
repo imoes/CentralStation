@@ -66,7 +66,7 @@ def test_auswerten_mit_treffern_ohne_fehler():
 
 
 def test_standard_suchmaschinen_sind_die_gemessenen():
-    assert ws.ENGINES_STANDARD == "bing,mojeek"
+    assert "stackoverflow" in ws.ENGINES_STANDARD and "bing" not in ws.ENGINES_STANDARD   # 17.11. gemessen
 
 
 def test_alle_searxng_nutzer_nehmen_dieselbe_suchmaschinenliste():
@@ -74,3 +74,11 @@ def test_alle_searxng_nutzer_nehmen_dieselbe_suchmaschinenliste():
     import pathlib
     for f in ("app/services/feed_enricher.py", "app/services/project_planner.py"):
         assert "suchmaschinen_parameter()" in pathlib.Path(f).read_text(encoding="utf-8"), f
+
+
+def test_kurz_url_der_searxng_stackexchange_maschinen():
+    """17.11.: SearXNG (stackoverflow/superuser/askubuntu) liefert https://superuser.com/q/1641830 — ohne Erkennung
+    ginge web_seite direkt auf die Seite (Stack Exchange sperrt Skripte, 07.11.: 403) statt über die API."""
+    assert ws.stackexchange("https://superuser.com/q/1641830") == ("superuser", "1641830")
+    assert ws.stackexchange("https://stackoverflow.com/q/71546771") == ("stackoverflow", "71546771")
+    assert ws.stackexchange("https://stackoverflow.com/questions/18740635/x") == ("stackoverflow", "18740635")

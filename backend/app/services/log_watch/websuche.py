@@ -24,8 +24,13 @@ EINSTELLUNG = "log_watch.websuche_url"
 #: SearXNG-Standard). Gemessen 12.11.2026 an llm-host03:8080 (SearXNG 2026.9.25): die Standard-Maschinen sind
 #: gesperrt — brave „too many requests“, duckduckgo/startpage „CAPTCHA“, google „access denied“, qwant „access
 #: denied“ — und lieferten 0 Treffer; bing und mojeek je 10.
+#: Gemessen 17.11.2026 (je Maschine dieselben 3 Fehlerzeilen): mojeek „Suspended: access denied“, bing 0/0/10 Treffer
+#: und nur Startseiten (für „ORA-12541“ eine Automarke), duckduckgo und startpage wieder 9–10 mit Stack Overflow/Red
+#: Hat — die Verfügbarkeit wechselt also. Darum eine breite Liste: die Stack-Exchange-Maschinen gehen über deren API
+#: und lieferten in jedem Test passende Fragen; duckduckgo/startpage/mojeek tragen bei, wenn sie gerade antworten,
+#: ausgefallene nennt `auswerten`. bing ist raus (verdrängt passende Treffer).
 EINSTELLUNG_ENGINES = "log_watch.websuche_engines"
-ENGINES_STANDARD = "bing,mojeek"
+ENGINES_STANDARD = "stackoverflow,superuser,askubuntu,serverfault,startpage,duckduckgo,mojeek"
 TREFFER_MAX = 5
 SEITE_MAX = 6000
 INTERNE_DOMAINS = ("example.com", "example.org", "example.net", "zo-intern.de", "local", "intern", "lan")
@@ -165,7 +170,7 @@ def stackexchange(url: str) -> tuple[str, str] | None:
     u = urlparse(url)
     h = (u.hostname or "").lower().removeprefix("www.")
     site = _SE_SITES.get(h) or (h.split(".")[0] if h.endswith(".stackexchange.com") else None)
-    m = re.match(r"/questions/(\d+)", u.path or "")
+    m = re.match(r"/(?:questions|q)/(\d+)", u.path or "")       # SearXNGs Stack-Exchange-Maschinen liefern /q/<id>
     return (site, m.group(1)) if site and m else None
 
 

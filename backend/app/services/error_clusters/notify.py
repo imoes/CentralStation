@@ -121,6 +121,7 @@ def render_html(ctx: dict, triage: dict | None, incident_url: str | None,
         </div>""")
 
     rows.append(_research_html(ctx))
+    rows.append(_websuche_html((triage or {}).get("websuche") or ctx.get("websuche")))
 
     containers = ctx.get("containers") or []
     cont_html = "".join(f"<tr><td>{_esc(c['name'])}</td><td style='text-align:right'>"
@@ -224,6 +225,22 @@ def _research_html(ctx: dict) -> str:
     return ("<div style='margin:12px 0;padding:8px;border:1px solid #ccc;border-radius:6px'>"
             "<b>Recherche</b> <span style='color:#777;font-size:12px'>(automatisch, nur lesend — "
             "Grundlage der KI-Einschätzung)</span>" + "".join(parts) + "</div>")
+
+
+def _websuche_html(w: dict | None) -> str:
+    """Was die Websuche (SearXNG) zur Meldung fand — Grundlage der Einschätzung wie die Recherche. Nicht gesucht
+    (keine Einschätzung) → nichts; gesucht ohne Ergebnis → der Grund. Rein."""
+    if not w:
+        return ""
+    kopf = ("<div style='margin:12px 0;padding:8px;border:1px solid #ccc;border-radius:6px'><b>Websuche</b> "
+            "<span style='color:#777;font-size:12px'>(SearXNG, Kontext für die KI — kein Beleg für diesen Host)</span>")
+    anfrage = f"<p style='margin:6px 0 2px'>Gesucht: <code>{_esc(w.get('anfrage') or '—')}</code></p>"
+    if w.get("fehler"):
+        return f"{kopf}{anfrage}<p style='margin:2px 0;color:#777'>Kein Ergebnis: {_esc(w['fehler'])}</p></div>"
+    items = "".join(f"<li><a href=\"{_esc(t.get('url'))}\">{_esc(t.get('titel') or t.get('url'))}</a>"
+                    f"{' <b>(gelesen)</b>' if t.get('url') == w.get('gelesen') else ''}</li>"
+                    for t in (w.get("treffer") or [])[:5])
+    return f"{kopf}{anfrage}<ul style='margin:0'>{items}</ul></div>"
 
 
 def _hm(iso: str | None) -> str:
