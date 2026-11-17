@@ -10,6 +10,27 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-17 — Local VI on vi-mcp 0.69.7 (philosophy check finds clingo after a restart)
+
+### What was fixed
+
+- In 0.69.6, `vi_philosophy` failed with "No module named 'clingo'" when the logic layer lived in its own directory
+  (`vi-mcp logic install`) and no `vi_logic` call had come first in the same process. 0.69.7 makes the logic layer
+  visible at start, and `vi_philosophy` checks it before check, evaluate, install and explain. Requested by the
+  vi-mcp session on the user's order; installed under the standing approval for signed releases.
+
+### Evidence
+
+- Release v0.69.7: signature valid with the fixed key (c88aa8ce…), `.deb` sha256 `b728fc5b…2789`, the same in the
+  apt archive (`vi-mcp/aktualisieren.sh 0.69.7`, 17.11. 16:30 UTC; volumes backed up as `*-20261117T163050Z.tgz`).
+- Console hook unchanged (sha `a5874f2f`), so the backend was not rebuilt. `required` is identical, 68 tools.
+- `/gesund`: "ok vi-mcp 0.69.7"; `vi-mcp netz status` without violations.
+- First call after the restart, with no `vi_logic` call before it, from the backend container against
+  `http://vi-mcp:8765/mcp`: `vi_philosophy check messung` reports "Package passes every check", 19/19 worlds as
+  expected. The start log has no "logic layer off" line; the initial skills are reported as `current`.
+
+---
+
 ## 2026-11-17 — Local VI on vi-mcp 0.69.6 (philosophy suggestions, sharper archive hints)
 
 ### What is new
