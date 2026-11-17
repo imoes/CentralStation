@@ -164,7 +164,7 @@ services:
     build:
       context: .
       dockerfile: vi-mcp/Dockerfile
-    image: centralstation-vi-mcp:0.69.4
+    image: centralstation-vi-mcp:0.69.6
     restart: unless-stopped
     volumes:
       - vi-mcp-daten:/var/lib/vi-mcp
@@ -174,7 +174,7 @@ services:
   # Fremdes in Quarantäne. Eigener Nutzer, eigenes Volume, kein Zugriff auf vi-mcp-daten.
   # Läuft erst nach `vi-mcp netz einrichten …` — daher Profil „netz“: docker compose --profile netz up -d vi-p2p
   vi-p2p:
-    image: centralstation-vi-mcp:0.69.4
+    image: centralstation-vi-mcp:0.69.6
     profiles: ["netz"]
     restart: unless-stopped
     user: vi-p2p
@@ -196,7 +196,7 @@ services:
   # (net_service.py), und das Gedächtnis erreicht ihn so unter derselben Adresse; mcp_url ist 127.0.0.1:8765.
   # Eigene Dateien im selben Volume: /etc/vi-p2p/firma.json, firma-mcp-token, /var/lib/vi-p2p/firma/.
   vi-p2p-firma:
-    image: centralstation-vi-mcp:0.69.4
+    image: centralstation-vi-mcp:0.69.6
     profiles: ["netz"]
     restart: unless-stopped
     user: vi-p2p

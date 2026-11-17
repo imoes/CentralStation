@@ -10,6 +10,33 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-17 — Local VI on vi-mcp 0.69.6 (philosophy suggestions, sharper archive hints)
+
+### What is new
+
+- The local VI (console, instance `konsole`) runs vi-mcp 0.69.6. Requested by the vi-mcp session on the user's order
+  ("ja, pushe und deploye auch in centralstation"); installed under the standing approval for signed releases.
+- Archive hints before shell commands count only specific triggers, no longer `tool:Bash` or `topic:grep`.
+  Archive hits that are shown are recorded and `vi_feedback` counts them.
+- `vi_philosophy` gains `export`, `suggest` and `rate`: the VI learns which philosophy fits which situation. The
+  prompt context of a console session carries at most one line per conversation "[Philosophy] This situation fits
+  the philosophy X …".
+
+### Evidence
+
+- Release v0.69.6: signature valid with the fixed key (c88aa8ce…), `.deb` sha256 `43c22510…80db`, the same in the
+  apt archive (`vi-mcp/aktualisieren.sh 0.69.6`, 17.11. 16:20 UTC; volumes backed up as `*-20261117T162002Z.tgz`).
+- Console hook unchanged (sha `a5874f2f` in 0.69.4 and 0.69.6, and in the running backend container), so the backend
+  was not rebuilt. `required` of vi_before/vi_after/vi_learn/vi_recall/vi_net_search is identical, 68 tools each.
+- The hook passes the server's hint lines through unchanged (`"\n".join(hints)` in `prompt_context`); CentralStation
+  does not filter or reformat them, so the "[Philosophy]" line reaches the console.
+- `/gesund`: "ok vi-mcp 0.69.6"; `vi-mcp netz status` without violations.
+- From the backend container against `http://vi-mcp:8765/mcp`: `vi_philosophy suggest` for "benchmark measurement of
+  the new router" lists `messung` (score 0.766; topic:measurement and topic:benchmark declared);
+  `vi_philosophy export messung` returns JSON with `manifest`, `seed` and `worlds` (17 977 characters, 19 worlds).
+
+---
+
 ## 2026-11-17 — Local VI on vi-mcp 0.69.4 (skills live in the VI)
 
 ### What is new
