@@ -299,6 +299,7 @@ async def hochschreiben() -> dict:
     from app.core.database import AsyncSessionLocal
     from app.models.log_watch import FeldBedeutung
     from app.services.connectors.vi_mcp import ViMcpFehler, load_vi_mcp_connector
+    from app.services import vi_qualifikation as vq
     from app.services.log_watch import bekannt
     from app.services.settings import get_setting, set_setting
     t0 = time.monotonic()
@@ -319,7 +320,8 @@ async def hochschreiben() -> dict:
         for e in neu_bek:
             erk = erkenntnis_aus_bekannt(e)
             if erk:
-                r = await k.lerne(*erk, ausgang="schlecht")      # ein bekannter Fehler ist eine Störung
+                r = await k.lerne(*erk, ausgang="schlecht",        # ein bekannter Fehler ist eine Störung
+                                  qualifikation=vq.bekannter_fehler(e, erk[4]))
                 abg = abgelehnt(r)
                 geschrieben += 0 if abg else 1
                 zurueckgewiesen += 1 if abg else 0
@@ -327,7 +329,7 @@ async def hochschreiben() -> dict:
         for fb in felder:
             erk = erkenntnis_aus_feld(fb)
             if erk:
-                r = await k.lerne(*erk)
+                r = await k.lerne(*erk, qualifikation=vq.feldbedeutung(fb.name, fb.bedeutung or "", fb.herkunft))
                 abg = abgelehnt(r)
                 geschrieben += 0 if abg else 1
                 zurueckgewiesen += 1 if abg else 0

@@ -608,6 +608,23 @@ The search bar on `/feed` works like Graylog 5.2's search (`feed-query.ts`, port
   Before an analysis the fleet asks what other instances know about the case's hosts and topics (prompt section
   "Kollektiv-Gedächtnis", context not evidence), reports the analysis as an action, and every 15 min pushes known
   errors and field meanings as insights with source. Nothing raw leaves (no message texts, no tool results).
+- **What CentralStation learns arrives qualified** (vi-mcp ≥ 0.69.3, `services/vi_qualifikation.py`). Storing
+  something in the VI means tagging and qualifying it in the same `vi_learn` call. CentralStation sends about five
+  English question-and-answer pairs, plus `answers`/`memory`, which say what question an entry answers and what
+  kind of knowledge it is:
+
+  | Entry | answers / memory |
+  |---|---|
+  | known error | `what`/`fact` |
+  | field meaning | `what`/`fact` |
+  | recipe | `how`/`procedure` |
+  | solved console session | `how`/`episode` |
+  | solution path (fallback only) | `how`/`procedure` |
+
+  - The pairs come from fixed templates over the same fields the text is built from; no model writes them.
+  - Every answer is a verbatim excerpt of the text or the source, so vi-mcp's fixed rules accept it.
+  - The server names whatever it still rejects in its reply.
+  - Older servers ignore the fields.
 - **The log watch as a VI (virtuelle Intelligenz).** The *intuition* (raster, rules, signals, known errors) sees
   everything and judges without a model; the *consciousness* (agentic AI) sees only what passes
   (`relevanz>=3 OR signal:neu`). What it learns (known errors, test rules, field meanings, tag kinds) becomes

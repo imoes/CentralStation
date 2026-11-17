@@ -1255,7 +1255,7 @@ async def computer_resolve_alert(
 
     # Gelöste Sitzung → Erkenntnis in der lokalen VI (bis 08.11.2026: cs-knowledge)
     try:
-        from app.services import vi_konsole
+        from app.services import vi_konsole, vi_qualifikation
         # cmk:<host>:<service> → Dienst und Host; bis 2026-10-11 landete hier "cmk"/"ecl".
         _parts = external_id.split(":")
         _service = _parts[2] if _parts[0] == "cmk" and len(_parts) > 2 else ""
@@ -1264,7 +1264,8 @@ async def computer_resolve_alert(
             db, f"Gelöst ({external_id}): {summary}"[:1000],
             ["herkunft:konsole-geloest", *([f"dienst:{_service}"] if _service else []),
              *([f"host:{_host}"] if _host else [])],
-            f"CentralStation Konsolen-Sitzung als gelöst markiert: {external_id}", 2, ausgang="gut")
+            f"CentralStation Konsolen-Sitzung als gelöst markiert: {external_id}", 2, ausgang="gut",
+            qualifikation=vi_qualifikation.geloest(external_id, summary, _host, _service))
         log.info("computer-resolve: VI %s", _r[:120])
     except Exception as _know_exc:
         log.warning("computer-resolve: VI write failed: %s", _know_exc)

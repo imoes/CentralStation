@@ -79,7 +79,8 @@ def mcp_server(vi: dict) -> dict:
     return {"transport": "streamable-http", "url": vi["url"], "headers": {"Authorization": f"Bearer {vi['token']}"}}
 
 
-async def lerne(db, text: str, hashtags: list[str], quelle: str, wichtigkeit: int = 1, ausgang: str | None = None) -> str:
+async def lerne(db, text: str, hashtags: list[str], quelle: str, wichtigkeit: int = 1, ausgang: str | None = None,
+                qualifikation: dict | None = None) -> str:
     """Erkenntnis in die lokale VI (Instanz konsole) — ersetzt die Spiegelung nach cs-knowledge.
     Ohne Konfiguration: benannt übersprungen, nicht still."""
     vi = await lade(db)
@@ -88,7 +89,8 @@ async def lerne(db, text: str, hashtags: list[str], quelle: str, wichtigkeit: in
     from app.services.connectors.vi_mcp import ViMcpConnector
     from app.services.log_watch.vi_bruecke import vi_tag
     tags = sorted({t for t in (vi_tag(h) for h in hashtags) if t})
-    return await ViMcpConnector(vi["url"], {"token": vi["token"]}).lerne(text, tags, quelle, wichtigkeit, ausgang=ausgang)
+    return await ViMcpConnector(vi["url"], {"token": vi["token"]}).lerne(text, tags, quelle, wichtigkeit, ausgang=ausgang,
+                                                                     qualifikation=qualifikation)
 
 
 async def lade(db) -> dict | None:

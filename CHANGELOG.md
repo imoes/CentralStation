@@ -10,6 +10,61 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-17 — What CentralStation learns arrives qualified
+
+### What is new
+
+- Since vi-mcp 0.69.3, storing something in the VI means tagging and qualifying it in one `vi_learn` call.
+  Requested by the vi-mcp session and approved by the user ("ja").
+- CentralStation now sends the qualification with everything it learns:
+  - about five English question/answer pairs;
+  - `answers` (what question the entry answers) and `memory` (what kind of knowledge it is).
+- Where it applies:
+
+  | Entry | answers / memory | Goes to |
+  |---|---|---|
+  | known error | what/fact | production VI |
+  | field meaning | what/fact | production VI |
+  | recipe | how/procedure | local VI |
+  | solved console session | how/episode | local VI |
+  | solution path, fallback without `vi_solved` | how/procedure, labels only | production VI |
+
+- How the pairs are built (`services/vi_qualifikation.py`):
+  - from fixed templates over the same fields the text is built from, without a language model;
+  - every answer is a verbatim excerpt of the text or the source;
+  - each question names its subject briefly, in at most four words. A long shared subject would make two
+    questions overlap by 0.5 Jaccard or more, and vi-mcp would drop them as "too close to the probe".
+- Before this change, a newly learned object had no pairs and no labels. vi-mcp asked for them afterwards
+  (QUALIFY …) or left them to its nightly sleep.
+
+### Evidence
+
+- **vi-mcp's own rules**, run in the 0.69.3 image: `qa_pairs.select` and `split_probe`, with the document built as
+  in `dataset._answer` and `_clean`. Checked against real CentralStation data of 17.11.:
+
+  | Entry | pairs kept |
+  |---|---|
+  | 40 active known errors | 200 of 200 (12 later dropped as too close to the probe; 40 probes) |
+  | 15 field meanings | 41 of 42 (1 "not grounded in the document") |
+  | 1 recipe | 3 of 3 |
+  | 1 solved session | 3 of 3, after a fix — the first version scored 2 of 3 ("names no subject") |
+
+- **Live against the local VI 0.69.3,** before the deploy, using the new code mounted into a one-off backend container.
+  The real field meaning `quellfeld:checkmk.state` was learned as `insight:00baf0d85b0a14547bf48139`. The reply was
+  "qualified: 1 pairs + probe, answers:what memory:fact", with no QUALIFY request.
+- **Tests:** `tests/test_vi_qualifikation.py`, 7 tests. Full suite: 1300 passed;
+  `test_log_watch_schreibweg.py` is excluded as before.
+
+### What is still missing
+
+- **The production VI runs 0.69.2.** Known errors and field meanings go there, and until it is updated the fields
+  are ignored. A hypothesis based on reading the 0.68.0 code: the `vi_learn` handler reads only the arguments it
+  knows (`args.get`), so learning stays valid.
+- **Solution paths** (fallback only) carry labels without pairs. Their text is an instruction written by a language
+  model, and fixed templates have nothing in it they could ground a question on.
+
+---
+
 ## 2026-11-17 — Local VI on vi-mcp 0.69.3
 
 ### What has changed
@@ -46,7 +101,7 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 - The qualification fields are not sent yet. CentralStation learns findings ("Bekannter Fehler …") through
   `vi_bruecke` without `pairs`, `answers` and `memory`, so those objects stay unqualified until the call is
-  extended.
+  extended. → Done the same day: see "What CentralStation learns arrives qualified" above.
 - That learning goes to the production VI on llm-host03, and it still runs 0.69.2.
 
 ---

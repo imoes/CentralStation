@@ -393,9 +393,11 @@ async def _in_die_vi(wege: list[dict]) -> dict:
                 if "vi_solved" not in str(ex) and "unknown" not in str(ex).lower():
                     raise
                 weg_art = "vi_lerne"
+                from app.services import vi_qualifikation
                 a = await k.lerne(arg["instructions"][:1000], ["skill:loesungsweg", *arg["triggers"]],
                                   f"CentralStation loesungen.py, Incidents {', '.join(w['belege'][:5])}", 2,
-                                  key=arg["name"], ausgang="gut")
+                                  key=arg["name"], ausgang="gut",
+                                  qualifikation=vi_qualifikation.loesungsweg())
             n += 0 if getattr(a, "fehler", False) else 1
         except Exception as ex:  # noqa: BLE001
             fehler.append(f"{type(ex).__name__}: {str(ex)[:120]}")
