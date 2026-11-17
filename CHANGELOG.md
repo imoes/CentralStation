@@ -57,9 +57,10 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ### What is still missing
 
-- **The production VI runs 0.69.2.** Known errors and field meanings go there, and until it is updated the fields
-  are ignored. A hypothesis based on reading the 0.68.0 code: the `vi_learn` handler reads only the arguments it
-  knows (`args.get`), so learning stays valid.
+- ~~The production VI runs 0.69.2.~~ Resolved the same day: the production VI on llm-host03 runs 0.69.3 since about
+  13:04 UTC. The vi-mcp session reports `dpkg-query` 0.69.3-1. My own check, `vi_status` against it, returned
+  "vi-mcp 0.69.3 — 68 tools". The fields now apply there too, and the question whether 0.69.2 ignores them no
+  longer matters.
 - **Solution paths** (fallback only) carry labels without pairs. Their text is an instruction written by a language
   model, and fixed templates have nothing in it they could ground a question on.
 
@@ -102,7 +103,8 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 - The qualification fields are not sent yet. CentralStation learns findings ("Bekannter Fehler …") through
   `vi_bruecke` without `pairs`, `answers` and `memory`, so those objects stay unqualified until the call is
   extended. → Done the same day: see "What CentralStation learns arrives qualified" above.
-- That learning goes to the production VI on llm-host03, and it still runs 0.69.2.
+- That learning goes to the production VI on llm-host03, and it still runs 0.69.2. → Resolved the same day: the production VI runs 0.69.3 since about 13:04 UTC (`vi_status` "vi-mcp 0.69.3 — 68 tools").
+
 
 ---
 
