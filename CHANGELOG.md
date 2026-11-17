@@ -10,6 +10,33 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-17 — Local VI on vi-mcp 0.69.4 (skills live in the VI)
+
+### What is new
+
+- The local VI (console, instance `konsole`) runs vi-mcp 0.69.4. Requested by the vi-mcp session on the user's order
+  ("pushe und deploye auch in centralstation"); installed under the standing approval for signed releases.
+- Skills now live in the VI as knowledge (`knowledge_kind:skill`, `docs:<name>`, key `skill:<name>`). On start the
+  server writes its first skills itself: `clingo`, `finetune`, `philosophy` (reserved names). `vi_capabilities`
+  lists them, and the console hook brings the list into the first prompt of each session.
+- `vi_logic` reports contradictions as "contradiction" instead of "widerspruch". CentralStation does not parse
+  `vi_logic` output (grep over `backend/` and `frontend/src`, 17.11.), so nothing changes here.
+
+### Evidence
+
+- Release v0.69.4: signature valid with the fixed key (c88aa8ce…), `.deb` sha256 `6584043e…d457`, the same in the
+  apt archive (`vi-mcp/aktualisieren.sh 0.69.4`, 17.11. 15:47 UTC; volumes backed up as `*-20261117T154736Z.tgz`).
+- Console hook unchanged (sha `a5874f2f` in 0.69.3 and 0.69.4), so the backend was not rebuilt. `required` of
+  vi_before/vi_after/vi_learn/vi_recall/vi_net_search is identical in both versions, 68 tools each (read from
+  `vi_mcp.tools.TOOLS` of both packages).
+- `/gesund`: "ok vi-mcp 0.69.4"; `vi-mcp netz status` without violations (0 verstoesse, 1/1 peers reachable).
+- Start log 15:48:31 UTC: `initial skills: {'clingo': 'created', 'finetune': 'created', 'philosophy': 'created'}`.
+- From the backend container against `http://vi-mcp:8765/mcp`: `vi_status` "vi-mcp 0.69.4 — 68 tools";
+  `vi_capabilities` contains the lines "- clingo:", "- finetune:", "- philosophy:"; `vi_object insight:skill-clingo`
+  returns the whole skill (13 128 characters).
+
+---
+
 ## 2026-11-17 — What CentralStation learns arrives qualified
 
 ### What is new
