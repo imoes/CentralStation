@@ -1,5 +1,5 @@
 # Lokale VI als Quelle des Konsolen-Hooks (Tag wie in docker-compose.yml; vi-mcp/aktualisieren.sh setzt beide).
-ARG VI_MCP_IMAGE=centralstation-vi-mcp:0.68.0
+ARG VI_MCP_IMAGE=centralstation-vi-mcp:0.69.3
 FROM ${VI_MCP_IMAGE} AS vi-paket
 
 FROM python:3.12-slim

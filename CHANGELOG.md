@@ -10,6 +10,47 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-17 — Local VI on vi-mcp 0.69.3
+
+### What has changed
+
+- **vi-mcp 0.69.3** from the apt archive, requested by the vi-mcp session on behalf of the user ("central station
+  soll auch installieren"). New (vi-mcp CHANGELOG 0.69.3):
+  - `vi_learn` takes optional `pairs` (about five English question/answer pairs), `answers`
+    (how|why|what|who|where|rule) and `memory` (fact|procedure|episode|rule). Without them, its reply asks for
+    them (QUALIFY …).
+  - New tool `vi_qualify(id, pairs, answers, memory, tags)` for objects that ask for qualification.
+  - Self-confirmation now counts 0.5 and is marked "self"; each instance (centralstation, claude-code …) is its
+    own line. Two other instances refuting gives "refuted".
+  - New tool `vi_rate(grade, reason, evidence, certainty)`: an agent grade for a conversation. It is not a human
+    grade and counts for learning only after calibration against human grades.
+  - Also new: `vi_doc_sync` and `vi_feature_propose`. The tool count went from 64 to 68.
+- The console hook is unchanged, so the backend was not rebuilt.
+- Our calls are unaffected. The `required` fields of every tool that existed before are unchanged. Compared
+  were the `vi_mcp.tools.TOOLS` of 0.68.0 and 0.69.3: `vi_before` [tool], `vi_after` [ok, tool], `vi_learn`
+  [hashtags, source, text], `vi_recall` [filter], `vi_net_search` [query].
+
+### Evidence
+
+- Release v0.69.3: signature valid (key c88aa8ce…), deb sha256 2607b8d63601…, the same value in the apt archive
+  and in the vi-mcp session's message.
+- Hook sha256 a5874f2f… in both 0.68.0 and 0.69.3.
+- Volumes backed up first: `~/vi-mcp-sicherung/*-20261117T125221Z.tgz`.
+- Live, 17.11. about 12:53 UTC:
+  - `/gesund`: ok vi-mcp 0.69.3;
+  - `netz status`: 0 violations, 1 of 1 peers reachable, 2 members;
+  - from the backend container through the console's own connector (`vi_konsole.lade`, `http://vi-mcp:8765/mcp`):
+    `vi_status` reports "vi-mcp 0.69.3 — 68 tools", and a read-only `vi_recall graylog` returned 2 hits in 131 ms.
+
+### What is still missing
+
+- The qualification fields are not sent yet. CentralStation learns findings ("Bekannter Fehler …") through
+  `vi_bruecke` without `pairs`, `answers` and `memory`, so those objects stay unqualified until the call is
+  extended.
+- That learning goes to the production VI on llm-host03, and it still runs 0.69.2.
+
+---
+
 ## 2026-11-17 — Incident assessments ask SearXNG; search engines that actually answer
 
 ### What has changed
