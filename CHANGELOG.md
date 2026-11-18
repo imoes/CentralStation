@@ -53,6 +53,13 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
   apt archive. `required` is unchanged (68 tools). Hook sha: `26189ae3` in the package, `a5874f2f` before.
 - After freeing space: vi.db `PRAGMA integrity_check` ok; `/gesund` "ok vi-mcp 0.69.8"; `vi-mcp netz status`
   without violations. Backend, database, Redis and OpenSearch logged no disk-full errors in the 3 hours before.
+- After the backend rebuild (18.11., restart guard: no console or agent containers), the backend was healthy:
+  - The hook in the backend container is `26189ae3`, the same as in the 0.69.8 package.
+  - `vi_qualifikation.FORMEN` = 4 in the running container.
+  - From the backend container against the local VI, `vi_recall "index:ansible docker"` returned 6 hits, and
+    `vi_object` shows `index ansible` for all 6. Without `index:`, "docker" finds `global` objects too.
+  - The reply header still says "searched as text, no hashtag kind: index:ansible" even though the filter applies
+    (reported to the vi-mcp session).
 
 ### What is still missing
 
