@@ -622,6 +622,10 @@ The search bar on `/feed` works like Graylog 5.2's search (`feed-query.ts`, port
   | solution path (fallback only) | `how`/`procedure` |
 
   - The pairs come from fixed templates over the same fields the text is built from; no model writes them.
+  - Each entry type has four template sets. The entry's key picks one (stable hash), so the wording varies across
+    entries but stays the same when the same entry is learned again.
+  - Within a set, no two questions overlap by 0.45 word Jaccard or more (vi-mcp drops pairs from 0.5 as "too close
+    to the probe").
   - Every answer is a verbatim excerpt of the text or the source, so vi-mcp's fixed rules accept it.
   - The server names whatever it still rejects in its reply.
   - Older servers ignore the fields.

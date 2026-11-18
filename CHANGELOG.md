@@ -10,6 +10,57 @@ This file starts on 2026-09-17. Earlier history lives in the commit log only.
 
 ---
 
+## 2026-11-18 — Learned entries ask in four wordings; local VI on vi-mcp 0.69.8
+
+### What is new
+
+- The question/answer pairs CentralStation sends with what it learns now come in four wordings per entry type
+  (known error, field meaning, recipe, solved console session). The entry's key picks the wording (stable hash):
+  the same entry gets the same questions when it is learned again, different entries get different ones.
+  Suggested by the vi-mcp session for more variety in later fine-tuning (a hypothesis, not measured); approved by the
+  user on 18.11.
+- The local VI (console, instance `konsole`) runs vi-mcp 0.69.8, approved by the user on 18.11. The new version adds:
+  - an `index:<name>` filter that applies as an AND condition;
+  - `vi_feedback` that also counts hints from the prompt context;
+  - joining the public wiki network only by consent.
+  The console hook changed in one line (`vi_context` is read as text), so the backend was rebuilt.
+
+### What was fixed
+
+- The first version of the pairs (17.11.) had questions that overlapped by exactly 0.5 word Jaccard (vi-mcp's own
+  word split), and vi-mcp dropped them as "too close to the probe". The new wordings stay below 0.45. For solved
+  sessions, the subject is cut to four words, because a long service name would have made every question too similar.
+- `/data1` (Docker's data root) was full during the update: 108 GB, 0 bytes free. vi-mcp 0.69.8 then failed to start
+  with `sqlite3.OperationalError: disk I/O error` at `PRAGMA journal_mode=WAL`. With the user's approval, 31 old
+  vi-mcp images (0.14.0–0.69.6) and the unused build cache were removed, which freed 36 GB. 0.69.7 stays as the
+  fallback image.
+
+### Evidence
+
+- Measured against vi-mcp 0.69.8's own `qa_pairs.select` and `split_probe`, with the same real data as on 17.11.:
+
+  | | old | new |
+  |---|---|---|
+  | 40 known errors: training pairs | 148 | 160 |
+  | 40 known errors: "too close to the probe" | 12 | 0 |
+  | 15 field meanings: training pairs | 21 | 26 |
+  | 15 field meanings: "too close to the probe" | 5 | 0 |
+
+  The 40 known errors spread over the four sets as 7/11/13/9.
+- `tests/test_vi_qualifikation.py` covers every set, using vi-mcp's word split: Jaccard < 0.45, the same key gives
+  the same questions, and another set shares no question. Full backend suite: 1301 passed.
+- Release v0.69.8: signature valid with the fixed key (c88aa8ce…), `.deb` sha256 `81e39ddc…c000`, the same in the
+  apt archive. `required` is unchanged (68 tools). Hook sha: `26189ae3` in the package, `a5874f2f` before.
+- After freeing space: vi.db `PRAGMA integrity_check` ok; `/gesund` "ok vi-mcp 0.69.8"; `vi-mcp netz status`
+  without violations. Backend, database, Redis and OpenSearch logged no disk-full errors in the 3 hours before.
+
+### What is still missing
+
+- `vi-mcp/aktualisieren.sh` keeps every old image (about 1.5 GB each); removing them stays manual. Since 18.11. it at
+  least stops before the backup and build when the Docker root has less than 5 GB free (`VI_FREI_MIN_GB`).
+
+---
+
 ## 2026-11-17 — Local VI on vi-mcp 0.69.7 (philosophy check finds clingo after a restart)
 
 ### What was fixed

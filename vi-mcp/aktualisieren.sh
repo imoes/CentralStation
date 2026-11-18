@@ -45,6 +45,13 @@ echo "   $DEB  sha256 $H  — gleich im apt-Archiv  (bisher: $ALT_IMG)"
 HOOK_NEU=$(dpkg-deb --fsys-tarfile "$TMP/$DEB" | tar -xO ./usr/share/vi-mcp/hook/vi_hook.py | sha256sum | cut -d' ' -f1)
 HOOK_ALT=$(docker run --rm --entrypoint cat "$ALT_IMG" /usr/share/vi-mcp/hook/vi_hook.py 2>/dev/null | sha256sum | cut -d' ' -f1)
 
+# Platz vor dem Bau: am 18.11.2026 lief /data1 (Docker-Root) beim Bau von 0.69.8 voll, die neue VI startete mit
+# „sqlite3.OperationalError: disk I/O error“. Neues Image ≈ 1,5 GB plus Build-Cache — unter FREI_MIN_GB nicht anfangen.
+FREI_MIN_GB="${VI_FREI_MIN_GB:-5}"
+FREI_GB=$(df -BG --output=avail "$(docker info -f '{{.DockerRootDir}}')" | tail -1 | tr -dc 0-9)
+[ "${FREI_GB:-0}" -ge "$FREI_MIN_GB" ] || { echo "ABBRUCH: Docker-Root hat nur ${FREI_GB:-?} GB frei (mindestens $FREI_MIN_GB) — alte Images/Build-Cache prüfen (docker system df)"; exit 1; }
+echo "   Docker-Root: $FREI_GB GB frei"
+
 echo "== 2. Volumes sichern nach $SICHERUNG"
 mkdir -p "$SICHERUNG"; chmod 700 "$SICHERUNG"
 docker compose --profile netz stop vi-p2p-firma vi-p2p vi-mcp >/dev/null   # firma läuft im Netz von vi-mcp
